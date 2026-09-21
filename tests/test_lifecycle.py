@@ -93,7 +93,9 @@ def test_failure_record_round_trips_through_the_ledger():
     assert record.to_json()["kind"] == "did not converge"
 
 
-def test_a_job_that_died_is_ledgered_as_not_terminated(tmp_path: Path):
+def test_a_job_that_died_is_ledgered_as_not_terminated(
+    tmp_path: Path, orca_error_termination: Path
+):
     """The ledger must name the job, not the parser, when the job is what failed.
 
     Driven through the real ORCA engine over a captured ORCA 6.1.1 abort, because the
@@ -101,13 +103,9 @@ def test_a_job_that_died_is_ledgered_as_not_terminated(tmp_path: Path):
     """
     from chemrefine.engines.api import get_engine
 
-    fixture = Path(__file__).parent / "data" / "orca_failures" / "startup"
-    out = tmp_path / "step2_5-54.out"
-    out.write_text((fixture / "step2_5-54.out").read_text(), encoding="utf-8")
-    out.with_suffix(".err").write_text((fixture / "step2_5-54.err").read_text(), encoding="utf-8")
-
+    out = orca_error_termination
     ctx = replace(_ctx(tmp_path), step_cfg=StepConfig(step=2, engine="orca", operation="opt_sp"))
-    inputs = StepInputs(files=((tmp_path / "step2_5-54.inp", out, "5-54"),))
+    inputs = StepInputs(files=((tmp_path / f"{out.stem}.inp", out, "5-54"),))
 
     successes, failures = lifecycle.parse_with_failures(get_engine("orca"), inputs, ctx)
 
@@ -142,7 +140,7 @@ def test_a_fanout_failure_carries_its_lowest_energy_bad_frame(tmp_path: Path):
     out = tmp_path / "s.out"
     out.write_text("fine", encoding="utf-8")
 
-    def _frame(sid: str, energy: float) -> Structure:
+    def _frame(sid: str, energy: float | None) -> Structure:
         return Structure(id=sid, atoms=Atoms("H"), energy_hartree=energy, converged=False)
 
     class _Engine:
@@ -152,6 +150,7 @@ def test_a_fanout_failure_carries_its_lowest_energy_bad_frame(tmp_path: Path):
                     Structure(id="0-0", atoms=Atoms("H"), energy_hartree=-2.0, converged=True),
                     _frame("0-1", -0.5),
                     _frame("0-2", -1.0),  # lower energy: the geometry the failure must carry
+                    _frame("0-3", None),  # no energy at all: sorts last, never "lowest"
                 )
             )
 
@@ -474,11 +473,13 @@ def test_both_schedulers_agree(cls, tmp_path: Path):
 
 
 def test_results_come_back_in_manifest_order_not_completion_order(tmp_path: Path):
-    """Completion order is nondeterministic; `parents_digest` is order-sensitive.
+    """Completion order is nondeterministic; the step fingerprint is not.
 
-    Emitting results as they land would give the *next* step a different fingerprint on every
-    run and invalidate its cache for nothing. `_StreamingRecorder` completes in reverse, so a
-    ledger that appended as it went would show it.
+    `StepKey.of` composes it from the row keys *in order*, so the same structures in a
+    different order are a different step. Emitting results as they land would give the
+    *next* step a new fingerprint on every run and invalidate its cache for nothing.
+    `_StreamingRecorder` completes in reverse, so a ledger that appended as it went would
+    show it.
     """
     successes, _failures = _run(_StreamingRecorder(unconverged=set()), tmp_path, ("0", "1", "2"))
 
@@ -618,7 +619,10 @@ def test_an_engine_with_no_prepared_jobs_still_gets_submitted(tmp_path: Path):
 class _FakeRound:
     """A `ChildRound` that gives every named parent two children in a directory of its own."""
 
-    def __init__(self, *, wanted: set[str], unconverged: set[str] | None = None) -> None:
+    def __init__(
+        self, root: Path, *, wanted: set[str], unconverged: set[str] | None = None
+    ) -> None:
+        self.root = root
         self.wanted = set(wanted)
         self.unconverged = set(unconverged or ())
         self.asked: list[str] = []
@@ -629,7 +633,8 @@ class _FakeRound:
         self.asked.append(structure.id)
         if structure.id not in self.wanted:
             return None
-        directory = structure_dir_of(structure)
+        # Where a parent's children go — the real shape, one level down.
+        directory = self.root / structure.id / "attempt1"
         kids = tuple(
             Structure(
                 id=f"{structure.id}_c{i}",
@@ -645,17 +650,7 @@ class _FakeRound:
         self.settled_at[origin_sid] = [s.id for s in successes]
 
 
-def structure_dir_of(structure):
-    """Where `_FakeRound` puts a parent's children — the real shape, one level down."""
-    return _ROUND_ROOT / structure.id / "attempt1"
-
-
-_ROUND_ROOT = Path()
-
-
 def _run_with_round(cls, tmp_path: Path, ids, round_):
-    global _ROUND_ROOT
-    _ROUND_ROOT = tmp_path
     engine = cls(unconverged=round_.unconverged)
     seeds = tuple(
         Structure(id=i, atoms=Atoms("H", positions=[[0, 0, 0]]), parent_id="P") for i in ids
@@ -672,7 +667,7 @@ def test_a_child_round_lands_in_its_own_ledger(cls, tmp_path: Path):
     A step whose ledger held them would emit a survivor per child and fingerprint the next
     step on geometries it discarded.
     """
-    round_ = _FakeRound(wanted={"1"})
+    round_ = _FakeRound(tmp_path, wanted={"1"})
     _engine, (successes, failures) = _run_with_round(cls, tmp_path, ("0", "1"), round_)
 
     assert [s.id for s in successes] == ["0", "1"], "no child reached the step's results"
@@ -687,7 +682,7 @@ def test_a_child_is_retried_once_in_its_own_directory(cls, tmp_path: Path):
     `ctx.step_dir` is what `archive_previous` and `prepare` nest by, so the scope's context is
     what puts a child's second attempt beside its first instead of beside the step's.
     """
-    round_ = _FakeRound(wanted={"0"}, unconverged={"0_c0"})
+    round_ = _FakeRound(tmp_path, wanted={"0"}, unconverged={"0_c0"})
     _engine, (successes, _f) = _run_with_round(cls, tmp_path, ("0",), round_)
 
     assert [s.id for s in successes] == ["0"]
@@ -699,7 +694,7 @@ def test_a_child_is_retried_once_in_its_own_directory(cls, tmp_path: Path):
 @pytest.mark.parametrize("cls", [_Recorder, _StreamingRecorder], ids=["batched", "streaming"])
 def test_a_child_never_earns_a_round_of_its_own(cls, tmp_path: Path):
     """Rounds are second rounds; a child spawning one would recurse with nothing to stop it."""
-    round_ = _FakeRound(wanted={"0", "0_c0", "0_c1"})
+    round_ = _FakeRound(tmp_path, wanted={"0", "0_c0", "0_c1"})
     _engine, _out = _run_with_round(cls, tmp_path, ("0",), round_)
 
     assert round_.asked == ["0"], "only root-scope structures are asked"
@@ -713,7 +708,7 @@ def test_only_a_structure_that_succeeded_earns_a_round(cls, tmp_path: Path):
     Fanning out first would spend a whole round on a geometry the retry supersedes, and would
     put the children in the very `attempt1/` the retry is about to archive round 1 into.
     """
-    round_ = _FakeRound(wanted={"0"}, unconverged={"0"})
+    round_ = _FakeRound(tmp_path, wanted={"0"}, unconverged={"0"})
     _engine, (successes, _f) = _run_with_round(cls, tmp_path, ("0",), round_)
 
     assert [s.id for s in successes] == ["0"]
@@ -732,7 +727,7 @@ def test_a_round_settles_only_after_its_queue_drains(cls, tmp_path: Path):
     completion order and is nobody's business (`_resolve_all` reads the results back in
     manifest order), but a round arriving with one of its two children would be the bug.
     """
-    round_ = _FakeRound(wanted={"0", "1"})
+    round_ = _FakeRound(tmp_path, wanted={"0", "1"})
     engine, _out = _run_with_round(cls, tmp_path, ("0", "1"), round_)
 
     submitted_children = [b for b in engine.submitted if any("_c" in s for s in b)]
@@ -743,7 +738,7 @@ def test_a_round_settles_only_after_its_queue_drains(cls, tmp_path: Path):
 
 def test_run_child_rounds_submits_nothing_when_no_parent_earns_one(tmp_path: Path):
     """The entry point for a caller whose round 1 came off disk, with nothing to do."""
-    round_ = _FakeRound(wanted=set())
+    round_ = _FakeRound(tmp_path, wanted=set())
     engine = _Recorder(unconverged=set())
     ctx = _ctx(tmp_path)
     parents = (Structure(id="0", atoms=Atoms("H", positions=[[0, 0, 0]])),)
@@ -803,3 +798,112 @@ def test_a_retry_of_an_engine_that_prepares_the_wrong_number_of_jobs_says_so(tmp
     best = Structure(id="0", atoms=Atoms("H", positions=[[0, 0, 0]]))
     with pytest.raises(ChemRefineError, match="expected one prepared job, got 2"):
         lifecycle._retry_input(_PreparesTwo(unconverged=set()), _ctx(tmp_path), best)
+
+
+# ---------------------------------------------------------------------------
+# The survivor order a step caches is a function of the parent order alone
+# ---------------------------------------------------------------------------
+
+
+class _FanOut:
+    """An engine whose every seed parses into three frames, one of which may fail once.
+
+    A retried frame comes back as a job of its own, under the frame's id — which is what
+    used to put it *after* its siblings in the cache, so the tail's key depended on which
+    frame had needed a second attempt.
+    """
+
+    name = "fake"  # unregistered: handed to `run_step` directly
+
+    def __init__(self, fail_frame: int | None) -> None:
+        self.fail_frame = fail_frame
+        self.parses: dict[str, int] = {}
+
+    def prepare(self, ctx: StepContext) -> StepInputs:
+        files = []
+        for s in ctx.prev_state.structures:
+            inp = ctx.step_dir / s.id / f"step1_{s.id}.inp"
+            inp.parent.mkdir(parents=True, exist_ok=True)
+            inp.write_text("in", encoding="utf-8")
+            files.append((inp, inp.with_suffix(".out"), s.id))
+        return StepInputs(files=tuple(files))
+
+    def submit(self, inputs: StepInputs, ctx: StepContext) -> JobBatch:
+        for _inp, out, _sid in inputs.files:
+            out.write_text("out", encoding="utf-8")
+        return JobBatch(jobs={})
+
+    def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
+        def frame(i: int, *, converged: bool) -> ParsedResult:
+            return ParsedResult(
+                symbols=("H",),
+                positions=np.zeros((1, 3)),
+                energy_hartree=-1.0 - i * 1e-3,  # the frame's own, whichever job produced it
+                forces_ev_per_a=None,
+                converged=converged,
+                terminated_normally=True,
+            )
+
+        parsed = []
+        for _inp, _out, sid in inputs.files:
+            self.parses[sid] = self.parses.get(sid, 0) + 1
+            if "-" in sid:  # a retried frame: one structure, its own id, its own energy
+                parsed.append((sid, [frame(int(sid.rsplit("-", 1)[1]), converged=True)]))
+                continue
+            first = self.parses[sid] == 1
+            parsed.append(
+                (sid, [frame(i, converged=not (first and i == self.fail_frame)) for i in range(3)])
+            )
+        return build_structures(parsed, ctx.prev_state)
+
+
+def test_a_retried_fan_out_frame_lands_back_in_its_place(tmp_path: Path):
+    """Frame 1 of three fails once; the step still caches ``0-0, 0-1, 0-2``.
+
+    Driven through ``run_step`` because the order is fixed at :func:`lifecycle.finalize`,
+    which the full step ends in — ``run_with_retries`` alone still hands back the retried
+    frame last. The fingerprint of the step after is the assertion that matters: it is
+    composed from the row keys in order, so a frame out of place re-keys the whole tail.
+    """
+    from chemrefine import cache
+    from chemrefine.config import Config
+    from chemrefine.step import run_step
+
+    def survivors(fail_frame: int | None) -> tuple[list[str], str]:
+        root = tmp_path / str(fail_frame)
+        config = Config(
+            output_dir=root / "outputs",
+            steps=[
+                StepConfig(step=1, engine="fake", operation="opt_sp"),
+                StepConfig(step=2, engine="fake", operation="opt_sp"),
+            ],
+        )
+        engine = _FanOut(fail_frame)
+        seeds = PipelineState(structures=(Structure(id="0", atoms=Atoms("H")),))
+        outcome = run_step(config, config.steps[0], seeds, engine=engine)
+        assert engine.parses == ({"0": 1} if fail_frame is None else {"0": 1, f"0-{fail_frame}": 1})
+        key = cache.StepKey.of(config.steps[1], outcome.state.structures, None)
+        return [s.id for s in outcome.state.structures], key.fingerprint
+
+    clean = survivors(None)
+    assert clean[0] == ["0-0", "0-1", "0-2"]
+    assert survivors(1) == clean
+
+
+def test_a_structure_from_no_known_parent_sorts_last_and_keeps_its_order():
+    """The one shape no path mints: an origin the parents do not contain.
+
+    Sorted last rather than raised on, in arrival order, because the cache has to be
+    written whatever produced the structure — and the known ones must still land in
+    their parents' order around it.
+    """
+    parents = PipelineState(
+        structures=(Structure(id="a", atoms=Atoms("H")), Structure(id="b", atoms=Atoms("H")))
+    )
+    orphan = Structure(id="z", atoms=Atoms("H"))  # no parent at all
+    stranger = Structure(id="y-0", atoms=Atoms("H"), parent_id="y")  # a parent nobody has
+    b, a = (Structure(id=i, atoms=Atoms("H")) for i in ("b", "a"))
+
+    ordered = lifecycle._in_parent_order([orphan, b, stranger, a], parents)
+
+    assert [s.id for s in ordered] == ["a", "b", "z", "y-0"]

@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes are applied to the latest released `2.0.x` line.
+Security fixes are applied to the `2.0.x` line — the current release line.
 
 | Version | Supported |
 | ------- | --------- |
@@ -28,5 +28,5 @@ itself a vulnerability. Only run projects you trust.
 Escaping a boundary ChemRefine *does* defend **is** in scope — for example
 reaching the ExtOpt server without its token, or executing code merely by
 loading a config or a cached result. The
-[Security & Trust Boundaries](https://sterling-group.github.io/ChemRefine/concepts/security/)
+[Security & Trust Boundaries](https://sterling-group.github.io/ChemRefine/internals/security/)
 page describes those boundaries in detail.

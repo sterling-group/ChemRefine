@@ -31,17 +31,14 @@ _LOCAL_POLL_SECONDS = 0.25
 
 
 def _header_name(engine: JobExecutable, ctx: StepContext) -> str:
-    """Pick the SLURM header for this step.
+    """The SLURM header for this step: :func:`chemrefine.slurm.header_name_for_step`.
 
-    An explicit per-step ``slurm_template`` wins; otherwise a GPU step (``engine.gpus`` > 0)
-    auto-selects the cuda header so the job lands on a GPU node, and everything else uses the
-    global ``Config.slurm_template``.
+    The engine answers the GPU demand from the step's validated options; the rule that
+    turns the answer into a header name is the scheduler's and the validator's alike.
     """
-    if ctx.step_cfg.slurm_template:
-        return ctx.step_cfg.slurm_template
-    if engine.gpus(ctx) > 0:
-        return slurm.header_name_for_device("cuda")
-    return ctx.slurm_template
+    return slurm.header_name_for_step(
+        ctx.step_cfg.slurm_template, gpus=engine.gpus(ctx), default=ctx.slurm_template
+    )
 
 
 def _header_path(engine: JobExecutable, ctx: StepContext) -> Path:
@@ -70,6 +67,10 @@ class _BatchPlan:
 
     header_path: Path
     pal: int
+    ntasks: int
+    cpus_per_task: int
+    memory_mb: int | None
+    single_node: bool
     gpus: int
     local: bool
     gpu_budget: throttle.GpuBudget
@@ -83,11 +84,29 @@ class _BatchPlan:
         below used to sit after that fork: the same ``max_gpus: 0`` that raised a
         :class:`~chemrefine.errors.ConfigError` per job submitted silently as an array, and
         ``pal`` and the header were re-resolved in the array branch by hand.
+
+        The core count is the engine's ``slurm_layout`` product, not a bare ``pal``: the
+        default layout carries the historical ``min(pal, max_cores)`` clamp itself, and a
+        layout that *names* both factors (an MPI x threads step) cannot be clamped by
+        squeezing the product — the factorization is the job's shape — so exceeding the
+        budget is refused outright instead of silently reshaped.
         """
         # Header first, so a missing template still reports itself before anything about
         # GPUs — the order these were resolved in before they moved here.
         header_path = _header_path(engine, ctx)
-        pal = min(engine.pal(ctx), ctx.max_cores)
+        ntasks, cpus_per_task = engine.slurm_layout(ctx)
+        if ntasks < 1 or cpus_per_task < 1:
+            raise ChemRefineError(
+                f"step {ctx.step_cfg.step}: engine laid out {ntasks} task(s) x "
+                f"{cpus_per_task} cpu(s); both must be at least 1"
+            )
+        pal = ntasks * cpus_per_task
+        if pal > ctx.max_cores:
+            raise ConfigError(
+                f"step {ctx.step_cfg.step} lays out {ntasks} task(s) x {cpus_per_task} "
+                f"cpu(s) = {pal} cores, more than max_cores={ctx.max_cores}; lower the "
+                f"step's cores/nprocs or raise max_cores"
+            )
         gpus = engine.gpus(ctx)
         gpu_budget = slurm.resolve_gpu_budget(ctx.max_gpus, local=local)
         if local and gpus > 1:
@@ -110,6 +129,10 @@ class _BatchPlan:
         return cls(
             header_path=header_path,
             pal=pal,
+            ntasks=ntasks,
+            cpus_per_task=cpus_per_task,
+            memory_mb=engine.memory_mb(ctx),
+            single_node=engine.single_node(ctx),
             gpus=gpus,
             local=local,
             gpu_budget=gpu_budget,
@@ -155,7 +178,7 @@ def run_batch(
     )
     try:
         jobs = _run_queue(engine, plan, ctx, throttler, inputs, sink)
-    finally:
+    except BaseException:
         # Any job still active here means the stack is unwinding on an exception — a
         # ThrottleTimeoutError, a mid-batch JobSubmissionError, a KeyboardInterrupt.
         # Local jobs are real background processes owned by this interpreter, so
@@ -163,6 +186,12 @@ def run_batch(
         # cores of whatever the user runs next. (SLURM jobs are the scheduler's;
         # cancelling them here would be presumptuous.)
         slurm.terminate_local_jobs(throttler.active_jobs)
+        # The local jobs just died with their leases' reason; the SLURM ones run on,
+        # so their leases stay — they are what the resume fence reads once this
+        # process, and the run lock it held, are gone.
+        slurm.release_leases(ctx.step_dir, keep_slurm=True)
+        raise
+    slurm.release_leases(ctx.step_dir)
     return JobBatch(jobs=jobs)
 
 
@@ -187,7 +216,10 @@ def _submit_one(
     script_path = inp.with_suffix(".slurm")
     slurm.build_script(
         job_name=inp.stem,
-        pal=plan.pal,
+        ntasks=plan.ntasks,
+        cpus_per_task=plan.cpus_per_task,
+        memory_mb=plan.memory_mb,
+        single_node=plan.single_node,
         template_path=plan.header_path,
         script_path=script_path,
         input_path=inp,
@@ -204,6 +236,9 @@ def _submit_one(
         extra_header_fields=engine.extra_header_fields(ctx),
     )
     job_id = slurm.submit(script_path, env=env, dispatch=ctx.dispatch)
+    # Leased before anyone waits on it, so the record survives a driver that dies
+    # without unwinding — the case the resume fence exists for.
+    slurm.record_lease(ctx.step_dir, job_id)
     throttler.register(job_id, plan.pal, gpus=plan.gpus, device=device)
     logger.info("submitted %s as job %s (pal=%d, gpus=%d)", inp.name, job_id, plan.pal, plan.gpus)
     return job_id
@@ -311,7 +346,10 @@ def _run_array(
     script_path = output_dir / f"{step_label}_array.slurm"
     slurm.build_array_script(
         step_label=step_label,
-        pal=plan.pal,
+        ntasks=plan.ntasks,
+        cpus_per_task=plan.cpus_per_task,
+        memory_mb=plan.memory_mb,
+        single_node=plan.single_node,
         template_path=plan.header_path,
         script_path=script_path,
         output_dir=output_dir,
@@ -336,6 +374,7 @@ def _run_array(
         parent_id = slurm.submit_array(
             script_path, n_tasks=len(chunk), max_concurrent=max_concurrent, manifest=manifest
         )
+        slurm.record_lease(output_dir, parent_id)
         for inp, _out, _sid in chunk:
             jobs[inp] = parent_id
         logger.info(
@@ -353,4 +392,7 @@ def _run_array(
         poll=slurm.poll_jobs,
         max_wait_seconds=ctx.job_timeout_seconds,
     )
+    # A drained array's leases are spent; an *interrupted* wait skips this on purpose —
+    # array jobs are all SLURM's, and their leases are the resume fence's evidence.
+    slurm.release_leases(output_dir)
     return JobBatch(jobs=jobs)

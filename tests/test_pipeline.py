@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -133,6 +134,65 @@ def test_bootstrap_unsupported_format_raises(tmp_path: Path):
         pipeline.bootstrap(cfg)
 
 
+@pytest.mark.parametrize(
+    ("name", "body"),
+    [
+        ("missing.xyz", None),
+        ("short.xyz", "3\n\nH 0 0 0\nH 0.7 0 0\n"),
+        ("header.xyz", "abc\n\nH 0 0 0\n"),
+        ("words.xyz", "1\n\nH x y z\n"),
+        ("binary.xyz", b"\xff\xfe\x00garbage\n"),
+        ("empty.xyz", ""),
+        ("blank.xyz", "\n\n\n"),
+        ("missing.csv", None),
+        ("nocolumn.csv", "name\nwater\n"),
+    ],
+)
+def test_bootstrap_refuses_a_seed_it_cannot_use_by_name(
+    tmp_path: Path, name: str, body: str | bytes | None
+):
+    """A missing, malformed or empty seed is a ``ConfigError`` naming the file, not a traceback.
+
+    ASE and pandas raise their own ``OSError``s and ``ValueError``s for these, and left to
+    escape they reached the user as a traceback with exit 1 — outside the exit-code
+    contract the template and header checks honour — while an empty file read as zero
+    frames and the run exited 0 having computed nothing. The same net
+    ``build_structures`` puts around its own read of an ``xyz_text``.
+    """
+    seed = tmp_path / name
+    if body is not None:
+        seed.write_bytes(body if isinstance(body, bytes) else body.encode("utf-8"))
+    with pytest.raises(ConfigError, match=re.escape(name)):
+        pipeline.bootstrap(_config(tmp_path, input=seed))
+
+
+def test_bootstrap_refuses_a_seed_directory_whose_files_hold_no_frames(tmp_path: Path):
+    """The emptiness guard is on the result, so a directory of empty files is refused too."""
+    seeds = tmp_path / "seeds"
+    seeds.mkdir()
+    (seeds / "a.xyz").write_text("", encoding="utf-8")
+    with pytest.raises(ConfigError, match="holds no structures"):
+        pipeline.bootstrap(_config(tmp_path, input=seeds))
+
+
+@pytest.mark.parametrize("literal", ["nan", "inf", "-inf"])
+def test_bootstrap_refuses_a_non_finite_seed_coordinate(tmp_path: Path, literal: str):
+    """A seed geometry that is not numbers must be refused where the file can be named.
+
+    ASE's reader accepts these, and a seed is the one geometry no parse boundary ever
+    sees — so left alone it reaches `cache.save`, whose coordinates go to the `arrays.npz`
+    sidecar rather than through `write_json`'s `allow_nan=False`. Nothing downstream would
+    object: it round-trips the cache and `structure_digest` hashes it to a stable key, so
+    every later step would be computed from it silently. `on_failure: best` is the path
+    that carries it there, backfilling the seed itself in place of a parse.
+    """
+    seed = tmp_path / "diverged.xyz"
+    seed.write_text(f"2\nseed\nH 0.0 0.0 0.0\nH {literal} 0.0 1.5\n", encoding="utf-8")
+    cfg = _config(tmp_path, input=seed)
+    with pytest.raises(ConfigError, match="non-finite coordinate"):
+        pipeline.bootstrap(cfg)
+
+
 def test_bootstrap_from_smiles_csv(tmp_path: Path):
     csv = tmp_path / "smiles.csv"
     csv.write_text("smiles\nC\nCC\n", encoding="utf-8")
@@ -146,7 +206,7 @@ def test_bootstrap_from_smiles_csv_empty_raises(tmp_path: Path):
     csv = tmp_path / "smiles.csv"
     csv.write_text("smiles\n", encoding="utf-8")
     cfg = _config(tmp_path, input=csv)
-    with pytest.raises(ConfigError):
+    with pytest.raises(ConfigError, match="converted to 3D structures"):
         pipeline.bootstrap(cfg)
 
 
@@ -336,7 +396,7 @@ def test_run_stops_when_no_survivors(tmp_path: Path):
     seed_dir = tmp_path / "seeds"
     seed_dir.mkdir()
     cfg = _config(tmp_path, input=seed_dir)
-    with pytest.raises(ConfigError):
+    with pytest.raises(ConfigError, match=r"no \.xyz files found under"):
         pipeline.run(cfg)
 
 
@@ -454,6 +514,64 @@ def test_steps_csv_defaults_to_electronic_without_a_sample(tmp_path: Path):
     assert set(df["Energy type"]) == {"electronic"}
 
 
+def test_steps_csv_is_summarised_at_the_steps_own_temperature(tmp_path: Path):
+    """``_write_step_csv``'s stated contract — 'at that step's own ``temperature_k``'.
+
+    Nothing asserted it: replacing the threaded value with the default passed the
+    entire suite (proven by a full-run mutant), so a 77 K step's report carried
+    room-temperature Boltzmann columns that silently contradict the survivor set the
+    filter produced. Asserted against the io writer's own output at both temperatures,
+    so the test fails if the threading breaks in either direction.
+    """
+    import pandas as pd
+    from ase import Atoms
+
+    from chemrefine.config import BoltzmannSample
+    from chemrefine.state import PipelineState, Structure
+
+    cfg = _config(
+        tmp_path,
+        steps=[
+            StepConfig(
+                step=1,
+                engine="fake",
+                operation="opt_sp",
+                sample=BoltzmannSample(
+                    method="boltzmann", percent_cumulative=99.0, temperature_k=77.0
+                ),
+            )
+        ],
+    )
+    state = PipelineState(
+        structures=tuple(
+            Structure(id=str(i), atoms=Atoms("H"), energy_hartree=e)
+            for i, e in enumerate([-1.0, -0.997])
+        )
+    )
+    pipeline._write_step_csv(cfg, cfg.steps[0], state)
+
+    energies = [s.energy_hartree for s in state.structures]
+    ids = [s.id for s in state.structures]
+    io.save_step_csv(
+        energies_hartree=energies,
+        structure_ids=ids,
+        step_number=1,
+        output_dir=tmp_path / "at77",
+        temperature_k=77.0,
+    )
+    io.save_step_csv(
+        energies_hartree=energies,
+        structure_ids=ids,
+        step_number=1,
+        output_dir=tmp_path / "at_room",
+    )
+    written = pd.read_csv(cfg.output_dir / "steps.csv")
+    cold = pd.read_csv(tmp_path / "at77" / "steps.csv")
+    room = pd.read_csv(tmp_path / "at_room" / "steps.csv")
+    assert list(written["% Total"]) == list(cold["% Total"])
+    assert list(written["% Total"]) != list(room["% Total"])
+
+
 def _preflighted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, plan: RunPlan) -> list[list[str]]:
     """Run a two-step pipeline under ``plan`` and return what `preflight_backends` was handed."""
     calls: list[list[str]] = []
@@ -472,6 +590,56 @@ def _preflighted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, plan: RunPlan)
     with pytest.raises(ChemRefineError):
         pipeline.run(cfg, plan)
     return calls
+
+
+def test_the_run_walks_every_submittable_steps_own_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``preflight_steps`` rides beside ``preflight_backends``: same list, same t=0.
+
+    The engine-owned refusals (``PreflightChecking``) fire for exactly the steps that
+    may submit — keyed on ``may_submit`` for the same rebuild-cache reason the backend
+    walk is — and receive the config's charge/multiplicity defaults so each hook can
+    resolve its step's effective species.
+    """
+    calls: list[tuple[list[str], int, int]] = []
+    monkeypatch.setattr(
+        pipeline,
+        "preflight_steps",
+        lambda steps, *, charge, multiplicity: calls.append(
+            ([s.engine for s in steps], charge, multiplicity)
+        ),
+    )
+    cfg = Config(
+        template_dir=tmp_path / "templates",
+        output_dir=tmp_path / "outputs",
+        steps=[StepConfig(step=1, engine="fake", operation="opt_sp")],
+    )
+    with pytest.raises(ChemRefineError):
+        pipeline.run(cfg)
+    assert calls == [(["fake"], 0, 1)]
+
+
+def test_the_run_logs_the_keys_no_reader_declares(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The undeclared-key rule rides the t=0 walk, as a warning, in ``validate``'s words.
+
+    ``chemrefine validate`` was the only place that named a key nothing reads — and a
+    ``resume`` after an edit, the GUI's Run button and an agent's ``start_run`` never pass
+    through it, so ``target: ts`` misspelt on an NMS step ran a *minimum* search in silence.
+    The run now says the same sentence at its start: a warning, not a refusal, because the
+    lenient script-engine read is the documented design.
+    """
+    cfg = Config(
+        template_dir=tmp_path / "templates",
+        output_dir=tmp_path / "outputs",
+        steps=[StepConfig(step=1, engine="fake", operation="opt_sp", options={"targt": "ts"})],
+    )
+    with caplog.at_level("WARNING", logger="chemrefine.pipeline"), pytest.raises(ChemRefineError):
+        pipeline.run(cfg)
+    assert "step 1: keys ['targt']" in caplog.text
+    assert "typo" in caplog.text
 
 
 def test_rebuild_cache_requires_no_backend_from_any_of_its_steps(
@@ -508,6 +676,111 @@ def test_a_step_that_can_submit_is_still_preflighted(
         RunPlan(default=StepMode.CACHE_ONLY, overrides={2: StepMode.RESUME}),
     )
     assert calls == [["fake"]], "the step that will submit must still be checked"
+
+
+# ---------------------------------------------------------------------------
+# scoped rebuilds — the best-effort tail
+# ---------------------------------------------------------------------------
+
+
+def _two_step_seeded(tmp_path: Path) -> Config:
+    """A two-seed, two-step fake-engine config, ready for `pipeline.run`."""
+    seed_dir = tmp_path / "seeds"
+    io.write_xyz([_h2(), _h2()], ["a", "b"], 0, seed_dir)
+    return _config(
+        tmp_path,
+        input=seed_dir,
+        steps=[
+            StepConfig(step=1, engine="fake", operation="opt_sp"),
+            StepConfig(step=2, engine="fake", operation="opt_sp"),
+        ],
+    )
+
+
+def _rebuild_step1_plan() -> RunPlan:
+    """The plan `rebuild-cache 1` resolves to (`recovery._rebuild_plan`)."""
+    return RunPlan(default=StepMode.CACHE_ONLY, overrides={1: StepMode.REBUILD}, stop_after=1)
+
+
+def test_a_scoped_rebuild_re_reports_the_still_valid_tail(tmp_path: Path):
+    """``steps.csv`` survives a rebuild whose re-parse changed nothing.
+
+    The report is rewritten from step 1 on every run, so before the best-effort tail walk
+    a ``stop_after`` plan deleted every later step's rows even though their caches were
+    untouched and valid — after ``rebuild-cache 1`` the report claimed a one-step pipeline
+    over a two-step tree.
+    """
+    cfg = _two_step_seeded(tmp_path)
+    pipeline.run(cfg)
+    before = (cfg.output_dir / "steps.csv").read_text(encoding="utf-8")
+
+    outcomes = pipeline.run(cfg, _rebuild_step1_plan())
+
+    assert len(outcomes) == 2, "the tail step was served, not skipped"
+    assert outcomes[1].cache_hit is True, "served from its cache — nothing recomputed"
+    after = (cfg.output_dir / "steps.csv").read_text(encoding="utf-8")
+    assert after == before, "same results, same filter — the report is byte-identical"
+
+
+def test_a_scoped_rebuild_stops_reporting_where_validity_ends(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    """A rebuild under an edited filter must not resurrect the old tail rows.
+
+    Narrowing step 1's ``sample`` leaves step 1's own cache valid (the filter is excluded
+    from its fingerprint) but changes the survivors that feed step 2, so step 2's cache no
+    longer matches. The report ends at step 1 and the stop names ``resume`` —
+    ``rebuild-cache 2`` would refuse, step 2's outputs having been produced for other
+    parents. The stale step-2 artifacts stay on disk for ``resume`` to overwrite; a
+    rebuild deletes nothing it did not write.
+    """
+    import logging
+
+    import pandas as pd
+
+    cfg = _two_step_seeded(tmp_path)
+    pipeline.run(cfg)
+
+    narrowed = cfg.model_copy(
+        update={
+            "steps": [
+                StepConfig(
+                    step=1,
+                    engine="fake",
+                    operation="opt_sp",
+                    sample={"method": "min", "count": 1},
+                ),
+                cfg.steps[1],
+            ]
+        }
+    )
+    with caplog.at_level(logging.INFO):
+        outcomes = pipeline.run(narrowed, _rebuild_step1_plan())
+
+    assert len(outcomes) == 1, "step 2's cache no longer matches; the report ends before it"
+    df = pd.read_csv(narrowed.output_dir / "steps.csv")
+    assert set(df["Step"]) == {1} and len(df) == 1, "one surviving row under the new filter"
+    assert "chemrefine resume" in caplog.text, "upstream changed — recomputation is the repair"
+    assert (narrowed.output_dir / "step2" / "step2_ensemble.xyz").is_file(), (
+        "stale tail artifacts are left for resume to overwrite, not deleted"
+    )
+
+
+def test_an_unscoped_plan_still_fails_on_an_unusable_earlier_cache(tmp_path: Path):
+    """``rerun-errors``' shape — ``CACHE_ONLY`` before the target, no ``stop_after``.
+
+    Best-effort is a property of the region past a rebuild's target, not of ``CACHE_ONLY``
+    itself: an earlier step this plan cannot serve is a real failure the command must
+    report, never a place for the report to quietly end.
+    """
+    from chemrefine import cache
+
+    cfg = _two_step_seeded(tmp_path)
+    pipeline.run(cfg)
+    cache.invalidate((cfg.output_dir / "step1").resolve())
+
+    with pytest.raises(ChemRefineError, match="no cache this configuration can use"):
+        pipeline.run(cfg, RunPlan(default=StepMode.CACHE_ONLY, overrides={2: StepMode.RESUME}))
 
 
 # ---------------------------------------------------------------------------
@@ -565,6 +838,25 @@ def test_run_lock_is_reentrant_within_one_process(tmp_path: Path):
             assert lock.exists()
         assert lock.exists(), "the inner exit must not release the outer's lock"
     assert not lock.exists()
+
+
+def test_an_error_under_the_reentrant_lock_carries_no_lock_context(tmp_path: Path):
+    """The inner acquisition yields outside the handler, so a traceback starts at the error.
+
+    Yielding from inside ``except FileExistsError`` ran the whole inner action with that
+    exception still active, and any error the action raised was chained to it: every
+    traceback that escaped a run opened with "During handling of the above exception
+    (FileExistsError: … run.lock)", pointing the reader at the lock before the real error.
+    """
+    outputs = tmp_path / "outputs"
+    with (
+        pytest.raises(RuntimeError, match="the real error") as excinfo,
+        pipeline.run_lock(outputs),
+        pipeline.run_lock(outputs),
+    ):
+        raise RuntimeError("the real error")
+    assert excinfo.value.__context__ is None
+    assert not (outputs / pipeline.RUN_LOCK_NAME).exists()
 
 
 def test_a_live_holders_lock_raises_and_survives(tmp_path: Path):
@@ -672,6 +964,63 @@ def test_a_fresh_lock_swept_up_by_a_reclaim_is_restored(
     assert not list(outputs.glob(f"{pipeline.RUN_LOCK_NAME}.reclaim.*"))
 
 
+def test_a_swept_up_lock_that_cannot_be_restored_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    """A restore that loses to a third driver's lock is reported, and its claim kept.
+
+    Once a third lock lands in the rename→link window the swept-up driver is already
+    running with no lock on the path — nothing can un-overlap the two, so the residue
+    must at least be loud: an error names both drivers, and the claim file survives as
+    the only remaining copy of the swept-up record.
+    """
+    import os
+    import socket
+
+    from chemrefine.errors import RunLockError
+
+    outputs = tmp_path / "outputs"
+    _write_lock(outputs, host=socket.gethostname(), pid=_dead_pid())
+    lock = outputs / pipeline.RUN_LOCK_NAME
+    winner_pid = os.getppid()
+    third_pid = 1  # a live pid that is neither this process nor its parent
+    real_replace = os.replace
+    real_link = os.link
+
+    def overtaken(src: object, dst: object) -> None:
+        # The winner's reclaim-and-create lands first; the loser's rename then sweeps
+        # up the *fresh* lock rather than the stale one it probed.
+        _write_lock(outputs, host=socket.gethostname(), pid=winner_pid)
+        real_replace(src, dst)
+
+    def third_driver_got_there_first(src: object, dst: object) -> None:
+        # Only the *restore* link is overtaken: the acquisition's own claim link (the
+        # lock is linked into place from a complete record) goes through untouched. A
+        # third driver's lock lands inside the rename→link window, so the real os.link
+        # fails with the real OS answer: FileExistsError.
+        if ".reclaim." in str(src):
+            _write_lock(outputs, host=socket.gethostname(), pid=third_pid)
+        real_link(src, dst)
+
+    monkeypatch.setattr(os, "replace", overtaken)
+    monkeypatch.setattr(os, "link", third_driver_got_there_first)
+    with (
+        caplog.at_level("ERROR"),
+        pytest.raises(RunLockError, match=rf"pid {third_pid} on"),
+        pipeline.run_lock(outputs),
+    ):
+        pass
+    monkeypatch.setattr(os, "replace", real_replace)
+    monkeypatch.setattr(os, "link", real_link)
+    assert f"pid {winner_pid}" in caplog.text, "the swept-up run must be named"
+    holder = pipeline._lock_holder(lock)
+    assert holder is not None and holder[1] == third_pid, "the third driver's lock stands"
+    claims = list(outputs.glob(f"{pipeline.RUN_LOCK_NAME}.reclaim.*"))
+    assert claims, "the claim must survive as the swept-up record"
+    swept = pipeline._lock_holder(claims[0])
+    assert swept is not None and swept[1] == winner_pid
+
+
 def test_release_leaves_a_lock_that_is_no_longer_ours(tmp_path: Path):
     """Exit must not unlink a lock another driver now holds.
 
@@ -707,6 +1056,28 @@ def test_a_foreign_hosts_lock_is_never_reclaimed(tmp_path: Path):
         pass
 
 
+def test_a_filesystem_that_refuses_hard_links_is_the_locks_own_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A mount with no hard links cannot hold the lock; that is a RunLockError, not a
+    traceback — the exit-code contract holds for the one primitive the lock is built on."""
+    import os
+
+    from chemrefine.errors import RunLockError
+
+    def refuse(src, dst, **kwargs):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(os, "link", refuse)
+    with (
+        pytest.raises(RunLockError, match="refuses hard links"),
+        pipeline.run_lock(tmp_path / "outputs"),
+    ):
+        pass  # pragma: no cover - never entered
+    assert not (tmp_path / "outputs" / pipeline.RUN_LOCK_NAME).exists()
+    assert not list((tmp_path / "outputs").glob(".chemrefine.lock.claim.*")), "no claim left"
+
+
 def test_an_unreadable_lock_raises(tmp_path: Path):
     """A lock with no readable holder cannot be liveness-checked, so it refuses the run."""
     from chemrefine.errors import RunLockError
@@ -715,6 +1086,96 @@ def test_an_unreadable_lock_raises(tmp_path: Path):
     (tmp_path / "outputs" / pipeline.RUN_LOCK_NAME).write_text("", encoding="utf-8")
     with pytest.raises(RunLockError, match="unreadable"), pipeline.run_lock(tmp_path / "outputs"):
         pass
+
+
+def test_a_failed_record_write_leaves_no_lock_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A full disk at the moment the record is written strands nothing.
+
+    Created empty with `O_EXCL` and written afterwards, the lock existed with no record for
+    as long as the write took — and for good when it failed: the ownership-checked release
+    could not recognise a 0-byte file as its own, and every later driver refused the tree as
+    "unreadable" until someone deleted it by hand. The record is now complete before the
+    lock exists, so the failure is the write's alone and the next command acquires cleanly.
+    """
+    import errno
+
+    outputs = tmp_path / "outputs"
+    real_write_text = Path.write_text
+
+    def disk_full(self: Path, *args: object, **kwargs: object) -> int:
+        if self.name.startswith(pipeline.RUN_LOCK_NAME):
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real_write_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", disk_full)
+    with pytest.raises(OSError, match="No space left"), pipeline.run_lock(outputs):
+        pass
+    monkeypatch.setattr(Path, "write_text", real_write_text)
+    assert not (outputs / pipeline.RUN_LOCK_NAME).exists()
+    assert not list(outputs.glob(f"{pipeline.RUN_LOCK_NAME}.claim.*"))
+    with pipeline.run_lock(outputs):  # the tree is not stranded
+        assert pipeline._lock_holder(outputs / pipeline.RUN_LOCK_NAME) is not None
+
+
+def test_the_lock_is_linked_from_a_complete_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The lock and its record are one operation: what is linked already names this process.
+
+    Asserted on the link's source at the moment of linking, since that ordering is the whole
+    guarantee — a lock that exists is a record, never a file waiting for one.
+    """
+    import json
+    import os
+
+    outputs = tmp_path / "outputs"
+    real_link = os.link
+    linked: list[dict[str, object]] = []
+
+    def link_after_reading(src: object, dst: object, **kwargs: object) -> None:
+        linked.append(json.loads(Path(str(src)).read_text(encoding="utf-8")))
+        real_link(src, dst, **kwargs)
+
+    monkeypatch.setattr(os, "link", link_after_reading)
+    with pipeline.run_lock(outputs):
+        holder = pipeline._lock_holder(outputs / pipeline.RUN_LOCK_NAME)
+    monkeypatch.setattr(os, "link", real_link)
+    assert linked and linked[0]["pid"] == os.getpid()
+    assert holder is not None and holder[1] == os.getpid()
+    assert not list(outputs.glob(f"{pipeline.RUN_LOCK_NAME}.claim.*"))
+
+
+def test_a_claimant_that_loses_the_link_race_answers_to_the_winner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Two drivers link at once; exactly one lands, and the other reads the winner's record.
+
+    The loser's `os.link` fails with the lock already present — a live same-host holder it
+    must not reclaim — and refuses naming that pid, leaving the winner's lock and no claim
+    residue of its own behind.
+    """
+    import os
+    import socket
+
+    from chemrefine.errors import RunLockError
+
+    outputs = tmp_path / "outputs"
+    outputs.mkdir()
+    lock = outputs / pipeline.RUN_LOCK_NAME
+    winner_pid = os.getppid()
+    real_link = os.link
+
+    def winner_landed_first(src: object, dst: object, **kwargs: object) -> None:
+        _write_lock(outputs, host=socket.gethostname(), pid=winner_pid)
+        raise FileExistsError(dst)
+
+    monkeypatch.setattr(os, "link", winner_landed_first)
+    with pytest.raises(RunLockError, match=rf"pid {winner_pid}"), pipeline.run_lock(outputs):
+        pass
+    monkeypatch.setattr(os, "link", real_link)
+    holder = pipeline._lock_holder(lock)
+    assert holder is not None and holder[1] == winner_pid, "the winner's lock must survive"
+    assert not list(outputs.glob(f"{pipeline.RUN_LOCK_NAME}.claim.*"))
 
 
 def test_pid_alive_reads_permission_denied_as_alive(monkeypatch: pytest.MonkeyPatch):
@@ -737,20 +1198,23 @@ def test_pid_alive_reads_permission_denied_as_alive(monkeypatch: pytest.MonkeyPa
 # ---------------------------------------------------------------------------
 
 
-def test_sigterm_inside_the_lock_unwinds_and_releases_it(tmp_path: Path):
-    """A SIGTERM while the lock is held becomes SystemExit(143) and the lock is released.
+def test_the_installed_sigterm_handler_unwinds_and_releases_the_lock(tmp_path: Path):
+    """The handler the lock installs raises SystemExit(143), and the unwind releases it.
 
-    Python's default SIGTERM disposition terminates without unwinding — no ``finally``,
-    no ``atexit`` — which is how a ``scancel``-ed driver left the tree locked. Raising
-    from the handler is what lets every ``finally`` on the stack do its job.
+    Invoked through ``signal.getsignal`` rather than delivered with ``os.kill``: sent to the
+    pytest process itself, a regression in the handler (the very case this guards) would
+    terminate the runner under Python's default disposition, with no report for any test.
+    Called as a function, a missing handler is ``SIG_DFL`` — not callable — and this test
+    fails on its own. The delivery half is proven in a child process one test down.
     """
-    import os
     import signal
 
     lock = tmp_path / "outputs" / pipeline.RUN_LOCK_NAME
     with pytest.raises(SystemExit) as excinfo, pipeline.run_lock(tmp_path / "outputs"):
         assert lock.exists()
-        os.kill(os.getpid(), signal.SIGTERM)
+        handler = signal.getsignal(signal.SIGTERM)
+        assert callable(handler), "the unwind handler is not installed"
+        handler(signal.SIGTERM, None)
     assert excinfo.value.code == 143
     assert not lock.exists()
 
@@ -832,3 +1296,221 @@ def test_a_sigtermed_driver_process_releases_the_lock_on_disk(tmp_path: Path):
         finally:
             if proc.poll() is None:
                 proc.kill()
+
+
+# ---------------------------------------------------------------------------
+# job-lease fence — a dead driver's jobs still hold the tree
+# ---------------------------------------------------------------------------
+
+
+def _plant_leases(step_dir: Path, *leases: dict) -> Path:
+    """Write a lease ledger as a dead driver would have left it.
+
+    By hand rather than through :func:`chemrefine.slurm.record_lease`: the on-disk JSON
+    is the contract between the run that recorded and the run that fences, and these
+    tests hold the reading side to it independently of the writing side.
+    """
+    import json
+
+    from chemrefine import slurm
+
+    path = slurm.lease_path(step_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(list(leases)), encoding="utf-8")
+    return path
+
+
+def test_the_fence_refuses_while_a_recorded_slurm_job_is_still_queued(tmp_path: Path):
+    """A queued job from a dead driver stops a new run before it touches anything.
+
+    The config here has no seed input at all — a run that got past the fence would
+    raise `ConfigError` from bootstrap, so the `RunLockError` doubles as proof the
+    refusal fires before any tree mutation. The evidence is left in place: a refused
+    run must still be refusable tomorrow.
+    """
+    from unittest.mock import patch
+
+    from chemrefine import slurm
+    from chemrefine.errors import RunLockError
+
+    cfg = _config(tmp_path, input=None)
+    step_dir = cfg.step_dir(cfg.steps[0])
+    _plant_leases(step_dir, {"id": "424242", "host": "cluster-login", "pid": None})
+
+    with (
+        patch.object(slurm, "scheduler_reachable", return_value=True),
+        patch.object(slurm, "finished_jobs", return_value=set()),
+        pytest.raises(RunLockError, match="424242"),
+    ):
+        pipeline.run(cfg)
+
+    assert slurm.load_leases(step_dir), "the refusal must not consume its own evidence"
+    assert not (cfg.output_dir / pipeline.RUN_LOCK_NAME).exists()
+
+
+def test_a_drained_slurm_jobs_lease_is_swept_and_the_run_proceeds(tmp_path: Path):
+    """Once the queue says the recorded jobs are gone, the stale ledger is garbage."""
+    from unittest.mock import patch
+
+    from chemrefine import slurm
+
+    seed = tmp_path / "step0_seed.xyz"
+    io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=tmp_path)
+    cfg = _config(tmp_path, input=seed)
+    step_dir = cfg.step_dir(cfg.steps[0])
+    _plant_leases(step_dir, {"id": "424242", "host": "cluster-login", "pid": None})
+
+    with (
+        patch.object(slurm, "scheduler_reachable", return_value=True),
+        patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids)),
+    ):
+        outcomes = pipeline.run(cfg)
+
+    assert outcomes, "a provably-drained ledger must not block the run"
+    assert not slurm.lease_path(step_dir).exists()
+
+
+def test_without_squeue_recorded_slurm_jobs_warn_and_the_run_proceeds(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    """A tree copied to a laptop must not be fenced harder than the original.
+
+    The SLURM ids cannot be verified without a scheduler, so the fence warns and keeps
+    their ledger (still unverified — the next cluster-side run must re-check it), while
+    a ledger it *could* verify — a same-host local job with a dead pid — is swept.
+    """
+    from unittest.mock import patch
+
+    from chemrefine import slurm
+
+    seed = tmp_path / "step0_seed.xyz"
+    io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=tmp_path)
+    cfg = _config(
+        tmp_path,
+        input=seed,
+        steps=[
+            StepConfig(step=1, engine="fake", operation="opt_sp"),
+            StepConfig(step=2, engine="fake", operation="opt_sp"),
+        ],
+    )
+    import socket
+
+    slurm_ledger = _plant_leases(
+        cfg.step_dir(cfg.steps[0]), {"id": "424242", "host": "cluster-login", "pid": None}
+    )
+    local_ledger = _plant_leases(
+        cfg.step_dir(cfg.steps[1]),
+        {"id": "local-2", "host": socket.gethostname(), "pid": _dead_pid()},
+    )
+
+    with (
+        patch.object(slurm, "scheduler_reachable", return_value=False),
+        caplog.at_level("WARNING"),
+    ):
+        outcomes = pipeline.run(cfg)
+
+    assert len(outcomes) == 2
+    assert "cannot verify" in caplog.text
+    assert not local_ledger.exists(), "the provably-dead local lease is the fence's to sweep"
+    assert slurm_ledger.exists(), "unverified SLURM ids must stay on record for the cluster side"
+
+
+def test_without_squeue_a_mixed_ledger_sheds_its_dead_local_lease_and_keeps_the_slurm_id(
+    tmp_path: Path,
+):
+    """One ledger, two kinds: the dead local pid goes, the unverifiable SLURM id stays.
+
+    Left in place, the dead pid is re-probed by every later resume and, once the kernel
+    recycles the number, refuses a run over a process that was never ours — with no
+    escape but deleting the SLURM evidence beside it.
+    """
+    import json
+    import socket
+    from unittest.mock import patch
+
+    from chemrefine import slurm
+
+    seed = tmp_path / "step0_seed.xyz"
+    io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=tmp_path)
+    cfg = _config(
+        tmp_path, input=seed, steps=[StepConfig(step=1, engine="fake", operation="opt_sp")]
+    )
+    ledger = _plant_leases(
+        cfg.step_dir(cfg.steps[0]),
+        {"id": "424242", "host": "cluster-login", "pid": None},
+        {"id": "local-2", "host": socket.gethostname(), "pid": _dead_pid()},
+    )
+
+    with patch.object(slurm, "scheduler_reachable", return_value=False):
+        pipeline.run(cfg)
+
+    assert [r["id"] for r in json.loads(ledger.read_text(encoding="utf-8"))] == ["424242"]
+
+
+def test_the_fence_refuses_a_dead_drivers_live_local_job(tmp_path: Path):
+    """A SIGKILLed driver's local jobs run on in their own sessions; their pids fence."""
+    import socket
+    import subprocess
+    from unittest.mock import patch
+
+    from chemrefine import slurm
+    from chemrefine.errors import RunLockError
+
+    cfg = _config(tmp_path, input=None)
+    step_dir = cfg.step_dir(cfg.steps[0])
+    child = subprocess.Popen(["sleep", "30"])
+    try:
+        _plant_leases(step_dir, {"id": "local-1", "host": socket.gethostname(), "pid": child.pid})
+        with (
+            patch.object(slurm, "scheduler_reachable", return_value=True),
+            pytest.raises(RunLockError, match="still running"),
+        ):
+            pipeline.run(cfg)
+    finally:
+        child.kill()
+        child.wait()
+    assert slurm.load_leases(step_dir)
+
+
+def test_the_fence_refuses_a_foreign_hosts_local_job(tmp_path: Path):
+    """A local job recorded on another host cannot be probed from here — refuse, don't guess."""
+    from chemrefine.errors import RunLockError
+
+    cfg = _config(tmp_path, input=None)
+    _plant_leases(
+        cfg.step_dir(cfg.steps[0]), {"id": "local-1", "host": "some-other-node", "pid": 12345}
+    )
+    with pytest.raises(RunLockError, match="cannot be probed"):
+        pipeline.run(cfg)
+
+
+def test_the_fence_refuses_a_local_lease_with_no_pid(tmp_path: Path):
+    """A local lease that lost its pid cannot be proven dead; the fence must not guess."""
+    import socket
+
+    from chemrefine.errors import RunLockError
+
+    cfg = _config(tmp_path, input=None)
+    _plant_leases(
+        cfg.step_dir(cfg.steps[0]), {"id": "local-1", "host": socket.gethostname(), "pid": None}
+    )
+    with pytest.raises(RunLockError, match="not provably dead"):
+        pipeline.run(cfg)
+
+
+def test_a_dead_local_lease_alone_is_swept_without_asking_the_queue(tmp_path: Path):
+    """All-local, all-dead: nothing to ask squeue about, the ledger goes, the run runs."""
+    import socket
+
+    from chemrefine import slurm
+
+    seed = tmp_path / "step0_seed.xyz"
+    io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=tmp_path)
+    cfg = _config(tmp_path, input=seed)
+    step_dir = cfg.step_dir(cfg.steps[0])
+    _plant_leases(step_dir, {"id": "local-1", "host": socket.gethostname(), "pid": _dead_pid()})
+
+    outcomes = pipeline.run(cfg)
+
+    assert outcomes
+    assert not slurm.lease_path(step_dir).exists()

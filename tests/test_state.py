@@ -26,6 +26,23 @@ def test_pipeline_state_bool_reflects_emptiness():
     assert PipelineState(structures=(Structure(id="0", atoms=Atoms("H")),))
 
 
+def test_pipeline_state_indexes_its_structures_once():
+    """``by_id`` is the one index every per-job reader shares, built on first use and kept.
+
+    Rebuilt per reader it made a step's parse quadratic in its parent count; cached on the
+    frozen state it cannot go stale, because the structures it indexes never change.
+    """
+    a = Structure(id="a", atoms=Atoms("H"))
+    b = Structure(id="b", atoms=Atoms("H"))
+    state = PipelineState(structures=(a, b))
+
+    index = state.by_id
+
+    assert index == {"a": a, "b": b}
+    assert state.by_id is index
+    assert PipelineState().by_id == {}
+
+
 def test_structure_parent_id_defaults_to_none():
     """Seed structures don't pass parent_id; the default is None."""
     seed = Structure(id="0", atoms=Atoms("H"))

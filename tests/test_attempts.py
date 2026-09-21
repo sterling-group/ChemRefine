@@ -47,7 +47,7 @@ def test_begin_creates_the_directory_seal_fills_it(tmp_path: Path):
 
     (sid_dir / "step1_0.out").write_text("round 1", encoding="utf-8")
     attempts.seal(sid_dir, attempt)
-    assert (attempt / "step1_0.out").read_text() == "round 1"
+    assert (attempt / "step1_0.out").read_text(encoding="utf-8") == "round 1"
     assert not (sid_dir / "step1_0.out").exists()
 
 
@@ -61,18 +61,18 @@ def test_seal_takes_the_engine_written_directory_with_it(tmp_path: Path):
     """
     structure_dir = tmp_path / "0"
     (structure_dir / "tensors").mkdir(parents=True)
-    (structure_dir / "tensors" / "active.npz").write_text("round 1")
-    (structure_dir / "step1_0.out").write_text("round 1")
+    (structure_dir / "tensors" / "active.npz").write_text("round 1", encoding="utf-8")
+    (structure_dir / "step1_0.out").write_text("round 1", encoding="utf-8")
     (structure_dir / "attempt1").mkdir()
-    (structure_dir / "attempt1" / "step1_0.out").write_text("round 0")
+    (structure_dir / "attempt1" / "step1_0.out").write_text("round 0", encoding="utf-8")
 
     dest = attempts.archive(structure_dir)
 
     assert dest.name == "attempt2"
-    assert (dest / "tensors" / "active.npz").read_text() == "round 1"
-    assert (dest / "step1_0.out").read_text() == "round 1"
+    assert (dest / "tensors" / "active.npz").read_text(encoding="utf-8") == "round 1"
+    assert (dest / "step1_0.out").read_text(encoding="utf-8") == "round 1"
     assert sorted(p.name for p in structure_dir.iterdir()) == ["attempt1", "attempt2"]
-    assert (structure_dir / "attempt1" / "step1_0.out").read_text() == "round 0"
+    assert (structure_dir / "attempt1" / "step1_0.out").read_text(encoding="utf-8") == "round 0"
 
 
 def test_promote_rewrites_the_id_prefix_not_the_suffix(tmp_path: Path):
@@ -95,9 +95,9 @@ def test_promote_rewrites_the_id_prefix_not_the_suffix(tmp_path: Path):
         "step1_0_m6_pos.property.json",
         "unrelated.log",
     ):
-        (child / name).write_text(name)
+        (child / name).write_text(name, encoding="utf-8")
     (child / "tensors").mkdir()
-    (child / "tensors" / "active.npz").write_text("winner tensors")
+    (child / "tensors" / "active.npz").write_text("winner tensors", encoding="utf-8")
 
     attempts.promote(attempt, step=1, source_id="0_m6_pos", target_id="0")
 
@@ -108,8 +108,10 @@ def test_promote_rewrites_the_id_prefix_not_the_suffix(tmp_path: Path):
         "step1_0_trj.xyz",
         "tensors",
     ]
-    assert (tmp_path / "0" / "step1_0.out").read_text() == "step1_0_m6_pos.out"
-    assert (tmp_path / "0" / "tensors" / "active.npz").read_text() == "winner tensors"
+    assert (tmp_path / "0" / "step1_0.out").read_text(encoding="utf-8") == "step1_0_m6_pos.out"
+    assert (tmp_path / "0" / "tensors" / "active.npz").read_text(
+        encoding="utf-8"
+    ) == "winner tensors"
     assert (child / "step1_0_m6_pos.out").is_file(), "the source dir is copied from, not emptied"
 
 
@@ -124,14 +126,16 @@ def test_promoting_a_retried_source_leaves_its_own_attempt_behind(tmp_path: Path
     attempt = tmp_path / "0" / "attempt1"
     child = attempt / "0_m5_pos"
     (child / "attempt1").mkdir(parents=True)
-    (child / "attempt1" / "step1_0_m5_pos.out").write_text("the child's discarded run")
-    (child / "step1_0_m5_pos.out").write_text("the run that won")
-    (attempt / "step1_0.out").write_text("round 1, archived")
+    (child / "attempt1" / "step1_0_m5_pos.out").write_text(
+        "the child's discarded run", encoding="utf-8"
+    )
+    (child / "step1_0_m5_pos.out").write_text("the run that won", encoding="utf-8")
+    (attempt / "step1_0.out").write_text("round 1, archived", encoding="utf-8")
 
     attempts.promote(attempt, step=1, source_id="0_m5_pos", target_id="0")
 
-    assert (tmp_path / "0" / "step1_0.out").read_text() == "the run that won"
-    assert (attempt / "step1_0.out").read_text() == "round 1, archived", (
+    assert (tmp_path / "0" / "step1_0.out").read_text(encoding="utf-8") == "the run that won"
+    assert (attempt / "step1_0.out").read_text(encoding="utf-8") == "round 1, archived", (
         "the discarded run must not overwrite the archived round 1"
     )
     assert sorted(p.name for p in attempt.iterdir()) == ["0_m5_pos", "step1_0.out"]
@@ -142,10 +146,33 @@ def test_archive_previous_skips_a_structure_with_no_loose_files(tmp_path: Path):
     step_dir = tmp_path / "step1"
     (step_dir / "0").mkdir(parents=True)
     (step_dir / "1").mkdir()
-    (step_dir / "1" / "step1_1.out").write_text("previous run")
+    (step_dir / "1" / "step1_1.out").write_text("previous run", encoding="utf-8")
 
     archived = attempts.archive_previous(step_dir, ["0", "1", "missing"])
 
     assert [p.parent.name for p in archived] == ["1"]
     assert not (step_dir / "0" / "attempt1").exists()
-    assert (step_dir / "1" / "attempt1" / "step1_1.out").read_text() == "previous run"
+    assert (step_dir / "1" / "attempt1" / "step1_1.out").read_text(
+        encoding="utf-8"
+    ) == "previous run"
+
+
+def test_archive_previous_archives_an_engine_directory_left_alone(tmp_path: Path):
+    """A canonical holding only an engine-written directory is prior work, not a first run.
+
+    A crash mid-seal moves the loose files and dies before the ``tensors/`` — the trigger
+    must see what ``seal`` moves, or the re-run's copy-back merges into the leftover and
+    the directory describes two calculations. Attempts alone still mean nothing to archive.
+    """
+    step_dir = tmp_path / "step1"
+    (step_dir / "0" / "tensors").mkdir(parents=True)
+    (step_dir / "0" / "tensors" / "hessian.npy").write_bytes(b"\x00")
+    (step_dir / "1" / "attempt1").mkdir(parents=True)
+    (step_dir / "1" / "attempt1" / "step1_1.out").write_text("sealed already", encoding="utf-8")
+
+    archived = attempts.archive_previous(step_dir, ["0", "1"])
+
+    assert [p.parent.name for p in archived] == ["0"]
+    assert (step_dir / "0" / "attempt1" / "tensors" / "hessian.npy").is_file()
+    assert not (step_dir / "0" / "tensors").exists()
+    assert not (step_dir / "1" / "attempt2").exists()

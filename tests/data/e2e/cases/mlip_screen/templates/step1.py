@@ -9,3 +9,6 @@ atoms = mlip.optimize(read("$XYZ_PATH"), fmax=0.05)
 
 energy_hartree = atoms.get_potential_energy() / Hartree
 positions_angstrom = atoms.get_positions()
+# False when LBFGS ran out of steps before reaching fmax: ledgered as a convergence
+# failure and retried from this geometry, instead of ranking as a survivor.
+converged = mlip.last_converged

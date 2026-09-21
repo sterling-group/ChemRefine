@@ -95,7 +95,7 @@ def test_displaced_copies_rather_than_mutating_the_parent():
     `Structure.atoms` travels by reference and, unlike the force arrays, cannot have its
     write flag cleared (ASE writes through it), so the `.copy()` is the whole protection.
     Dropped, nothing crashes: the parent's geometry silently becomes the child's, and
-    `parents_digest` re-fingerprints every downstream step's cache key.
+    `structure_digest` re-fingerprints every downstream step's cache key.
     """
     parent = _h2("0")
     before = parent.atoms.get_positions().copy()
@@ -248,6 +248,19 @@ def test_best_ranks_by_the_energy_the_step_filters_on():
     assert nms._best(children, lo_elec, "gibbs_hartree") is lo_gibbs
 
 
+def test_best_never_promotes_a_child_without_the_ranking_energy():
+    """``None`` sorts last: a child with no thermochemistry cannot win a Gibbs ranking.
+
+    Keyed on ``value or 0.0`` alone it would key as ``0.0`` and beat every real (negative)
+    Gibbs energy — promoting the one child whose calculation reported no such number, and
+    copying its output over the real winner's.
+    """
+    no_gibbs = replace(_h2("no_gibbs"), energy_hartree=-2.0, gibbs_hartree=None)
+    real = replace(_h2("real"), energy_hartree=-0.9, gibbs_hartree=-0.7)
+    assert nms._best([no_gibbs, real], no_gibbs, "gibbs_hartree") is real
+    assert nms._best([no_gibbs], real, "gibbs_hartree") is no_gibbs  # the only candidate
+
+
 @pytest.mark.parametrize(
     ("sample", "expected"),
     [
@@ -263,9 +276,19 @@ def test_energy_attr_follows_the_steps_sample_filter(sample, expected):
     assert nms._energy_attr(step_cfg) == expected
 
 
-def test_is_resolved_false_for_non_terminated_child():
-    child = Structure(id="c", atoms=Atoms("H"), terminated_normally=False)
-    assert nms._is_resolved(child, 0) is False
+@pytest.mark.parametrize("target", [0, 1, None])
+def test_a_child_whose_program_died_is_never_resolved(target: int | None):
+    """A crash refuses the child whatever its frequency table says — and under ``random`` too.
+
+    The table is deliberately the one that *would* resolve the target: a truncated output
+    can still carry a full frequency block from before the program died, and the
+    termination clause is the only thing standing between that and a promotion. With
+    no table at all the other clause refuses the child anyway, which is why a crashed
+    child with no table proved nothing about this one.
+    """
+    table = {} if target in (0, None) else {6: -100.0}
+    child = Structure(id="c", atoms=Atoms("H"), terminated_normally=False, imaginary_freqs=table)
+    assert nms._is_resolved(child, target) is False
 
 
 # ---------------------------------------------------------------------------
@@ -289,12 +312,20 @@ def test_is_resolved_false_for_non_terminated_child():
         ({6: -100.0}, 1, True),  # a verified first-order saddle
         ({}, 1, False),  # fell into a minimum — NOT a transition state
         ({6: -100.0, 8: -50.0}, 1, False),  # second-order saddle — not a TS either
+        (None, 0, False),  # no frequency table — nothing is verified, not even zero
+        (None, 1, False),  # no frequency table — no saddle can be claimed either
     ],
 )
 def test_is_resolved_requires_the_exact_imaginary_count(
-    imaginary: dict[int, float], target: int, resolved: bool
+    imaginary: dict[int, float] | None, target: int, resolved: bool
 ):
-    """Both sides of the target, so neither `<=` nor `>=` can pass for `==`."""
+    """Both sides of the target, so neither `<=` nor `>=` can pass for `==`.
+
+    And no table at all: a parse that found no frequencies has counted nothing, so it
+    cannot claim zero imaginary modes. Branch coverage cannot hold that clause — the
+    predicate is one `return`, so the short-circuit leaves no arc — which is why it is a
+    row here and an entry in the mutation gate.
+    """
     child = Structure(id="c", atoms=Atoms("H"), terminated_normally=True, imaginary_freqs=imaginary)
     assert nms._is_resolved(child, target) is resolved
 
@@ -307,10 +338,12 @@ def test_is_resolved_requires_the_exact_imaginary_count(
         ({6: -100.0}, 1, True),
         ({}, 1, False),  # a minimum is not "already at" a ts target
         ({6: -100.0, 8: -50.0}, 1, False),
+        (None, 0, False),  # no frequency table — cannot claim to be anywhere
+        (None, 1, False),
     ],
 )
 def test_already_at_target_requires_the_exact_imaginary_count(
-    imaginary: dict[int, float], target: int, at_target: bool
+    imaginary: dict[int, float] | None, target: int, at_target: bool
 ):
     """The short-circuit is held to the same rule as the round-2 verdict.
 
@@ -332,20 +365,53 @@ def _cfg(**over) -> StepConfig:
     return StepConfig(**base)
 
 
-def test_nms_reuse_fingerprint_ignores_search_params():
-    base = _cfg(options={"target": "minimum", "displacement_value": 1.0})
-    tuned = _cfg(options={"target": "minimum", "displacement_value": 2.0})
-    assert cache.reuse_fingerprint(base, ("0",)) == cache.reuse_fingerprint(tuned, ("0",))
+def _structure(sid: str) -> Structure:
+    return Structure(id=sid, atoms=Atoms("H"))
 
 
-def test_nms_reuse_fingerprint_changes_on_criterion():
-    mn = _cfg(options={"target": "minimum"})
-    ts = _cfg(options={"target": "ts"})
-    assert cache.reuse_fingerprint(mn, ("0",)) != cache.reuse_fingerprint(ts, ("0",))
+def _resolution_of(cfg: StepConfig) -> cache.ResolutionSpec:
+    """Split the step's NMS reading the way ``derive_step_key`` does."""
+    return nms.NmsOptions.from_raw(cfg.options).resolution_spec()
 
 
-def test_nms_reuse_fingerprint_empty_for_non_nms():
-    assert cache.reuse_fingerprint(_cfg(nms=False), ("0",)) == ""
+def test_the_resolution_split_partitions_every_nms_field():
+    """Every NMS knob belongs to exactly one half of the key.
+
+    A field in neither would steer the resolution at run time while moving no key — the
+    step would serve a cache computed under other settings. A field in both would move
+    the criterion on a search retune and forfeit the attempt reuse the split exists for.
+    """
+    spec = nms.NmsOptions().resolution_spec()
+    assert set(spec.criterion).isdisjoint(spec.search)
+    assert set(spec.criterion) | set(spec.search) == set(nms.NmsOptions.model_fields)
+
+
+def _key_of(cfg: StepConfig, parent: Structure) -> cache.StepKey:
+    resolution = _resolution_of(cfg) if cfg.nms else None
+    return cache.StepKey.of(cfg, (parent,), None, resolution=resolution)
+
+
+def test_search_params_move_no_row_and_no_criterion():
+    """Tuning the hunt re-runs neither round 1 nor the trust in existing resolutions."""
+    parent = _structure("0")
+    base = _key_of(_cfg(options={"target": "minimum", "displacement_value": 1.0}), parent)
+    tuned = _key_of(_cfg(options={"target": "minimum", "displacement_value": 2.0}), parent)
+    assert base.row_keys == tuned.row_keys
+    assert base.criterion_key == tuned.criterion_key
+    assert base.fingerprint != tuned.fingerprint  # still a different step
+
+
+def test_the_criterion_moves_its_key_and_nothing_of_round_1():
+    parent = _structure("0")
+    mn = _key_of(_cfg(options={"target": "minimum"}), parent)
+    ts = _key_of(_cfg(options={"target": "ts"}), parent)
+    assert mn.row_keys == ts.row_keys
+    assert mn.criterion_key != ts.criterion_key
+
+
+def test_a_non_resolving_step_has_no_resolution_identity():
+    key = _key_of(_cfg(nms=False), _structure("0"))
+    assert key.criterion_key == "" and key.search_key == ""
 
 
 # ---------------------------------------------------------------------------
@@ -688,9 +754,21 @@ def test_random_mode_selection_is_per_structure_not_stream_order():
     modes[0, 0, :] = 1.0
 
     def drawn(structure_id: str) -> str:
-        struct = Structure(id=structure_id, atoms=Atoms("H3", positions=np.zeros((3, 3))))
-        rng = nms.rng_for(struct.id, opts.seed)
-        return nms.select_displacements(struct, {}, modes, opts, rng)[0][0]
+        """The mode suffix the *coordinator's own* fan-out draws for this structure.
+
+        Through ``_children_for`` — the seam both coordinators share — never through a
+        hand-built ``rng_for``: a helper that constructs the per-id generator itself is
+        order-independent by construction and proves nothing about the code under test.
+        A coordinator regressed to a shared module-level stream fails here; a fresh
+        per-structure draw passes.
+        """
+        struct = Structure(
+            id=structure_id,
+            atoms=Atoms("H3", positions=np.zeros((3, 3))),
+            normal_modes=modes,
+        )
+        [first_child, _neg] = nms._children_for(struct, opts)
+        return first_child.id.removeprefix(f"{structure_id}_")
 
     visited_all = [drawn(sid) for sid in ("0", "1", "2")]
     skipped_one = [drawn(sid) for sid in ("0", "2")]
@@ -749,17 +827,26 @@ def test_rebuilding_does_not_rewrite_the_children_it_reads(tmp_path: Path):
 
 
 def _calls_in(obj) -> set[str]:
-    """Every plain-name function call in ``obj``'s source."""
+    """Every function call in ``obj``'s source, by its last name.
+
+    Attribute-spelled calls count too — ``nms._install_winner(...)`` and
+    ``self._install_winner(...)`` both read as ``_install_winner`` — so the negative
+    assertions below cannot be dodged by spelling the call through a module or ``self``.
+    """
     import ast
     import inspect
     import textwrap
 
     tree = ast.parse(textwrap.dedent(inspect.getsource(obj)))
-    return {
-        n.func.id
-        for n in ast.walk(tree)
-        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
-    }
+    names: set[str] = set()
+    for n in ast.walk(tree):
+        if not isinstance(n, ast.Call):
+            continue
+        if isinstance(n.func, ast.Name):
+            names.add(n.func.id)
+        elif isinstance(n.func, ast.Attribute):
+            names.add(n.func.attr)
+    return names
 
 
 def test_rebuilding_cannot_install_a_winner():
@@ -792,13 +879,17 @@ def test_one_loop_resolves_both_modes():
 def test_an_edited_template_invalidates_the_reuse_before_a_reattempt(tmp_path: Path):
     """The second invariant: a stale input can never be resubmitted from the manifest.
 
-    `reuse_fingerprint` covers `template_digest`, so editing a template changes the key that
-    gates this path — the re-attempt is not reached with inputs the user has since changed.
+    The row keys cover the template digest — so editing a template moves every row and
+    no re-attempt (which adopts rows) is reached with inputs the user has since changed.
     """
     cfg = StepConfig(step=1, engine="orca", operation="opt_sp", nms=True)
-    first = cache.reuse_fingerprint(cfg, ("0",), template_digest="original")
-    edited = cache.reuse_fingerprint(cfg, ("0",), template_digest="edited")
-    assert first and first != edited
+    parent = _structure("0")
+    tpl_a, tpl_b = tmp_path / "a.inp", tmp_path / "b.inp"
+    tpl_a.write_text("original", encoding="utf-8")
+    tpl_b.write_text("edited", encoding="utf-8")
+    first = cache.StepKey.of(cfg, (parent,), tpl_a, resolution=_resolution_of(cfg))
+    edited = cache.StepKey.of(cfg, (parent,), tpl_b, resolution=_resolution_of(cfg))
+    assert first.row_keys != edited.row_keys
 
 
 def test_every_parents_children_share_one_queue(tmp_path: Path):
@@ -954,6 +1045,23 @@ def test_the_two_schedulers_resolve_identically(cls, tmp_path: Path):
     assert not (ctx.step_dir / "2" / "attempt1").exists(), "already at target, never displaced"
 
 
+def test_the_two_schedulers_produce_identical_records(tmp_path: Path):
+    """Batched and streaming runs are compared to *each other*, record for record.
+
+    The parametrized test above runs each scheduler against its own expectations, and
+    its record comparison sorts a run's survivors against themselves — an ordering
+    check. Cross-scheduler identity of the full content (energy, geometry, lineage,
+    ``resolved_from``) is only held by comparing the two runs' records directly.
+    """
+    records = {}
+    for label, cls in (("batched", _FakeNms), ("streaming", _StreamingFakeNms)):
+        engine = cls(freqs={**_two_parents_needing_nms(), "2": _Freq(imaginary={}, modes=None)})
+        ctx = _ctx(tmp_path / label, (_h2("0"), _h2("1"), _h2("2")))
+        res = _resolve_like_a_step(engine, ctx)
+        records[label] = [cache.structure_record(s) for s in res.survivors]
+    assert records["batched"] == records["streaming"]
+
+
 # ---------------------------------------------------------------------------
 # The resolution sidecar — nms owns this format through cache's raw primitives
 # ---------------------------------------------------------------------------
@@ -991,3 +1099,31 @@ def test_an_attempt_that_resolved_nothing_has_no_sidecar_and_is_not_an_error(tmp
     (struct_dir / "attempt1").mkdir(parents=True)
 
     assert nms._read_resolution(struct_dir) is None
+
+
+def test_an_untrusted_passthrough_disowns_its_resolution_sidecar(tmp_path: Path):
+    """A label written under another criterion is cleared on disk, not only in memory.
+
+    The resume that distrusts it goes on to stamp the manifest with the criterion it ran
+    under, after which the next resume trusts what it finds — so a sidecar merely skipped
+    would be worn again one resume later. Trusted first, the same sidecar stays and is worn.
+    """
+    engine = _FakeNms(freqs={"0": _Freq(imaginary={}, modes=None)})  # at target: passthrough
+    ctx = _ctx(tmp_path, (_h2("0"),))
+    round1 = _seed_round1(engine, ctx)
+    attempt = ctx.step_dir / "0" / "attempt1"
+    attempt.mkdir(parents=True)
+    nms._write_resolution(attempt, "0_m5_pos")
+
+    trusted = nms.resume_nms(engine, round1, [], ctx, trust_resolutions=True)
+    assert trusted.survivors[0].resolved_from == "0_m5_pos"
+    assert (attempt / "resolution.json").is_file()
+
+    disowned = nms.resume_nms(engine, round1, [], ctx, trust_resolutions=False)
+    assert disowned.survivors[0].resolved_from is None
+    assert not (attempt / "resolution.json").exists()
+    # No resurrection: the next trusting resume finds nothing to wear.
+    assert (
+        nms.resume_nms(engine, round1, [], ctx, trust_resolutions=True).survivors[0].resolved_from
+        is None
+    )

@@ -9,7 +9,9 @@ fixtures never stales them.
 
 from __future__ import annotations
 
+import csv
 import json
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -72,13 +74,29 @@ def test_conformers_full_pipeline(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert fan_out == min(3, len(ensemble)), "step 2 runs step 1's three survivors"
     assert len(outcomes[1].state.structures) == min(2, fan_out)
     assert len(outcomes[2].state.structures) == 1
-    csv_text = (case.output_dir / "steps.csv").read_text()
-    assert csv_text.count("\n") >= 4, "steps.csv gains rows for all three steps"
+    # Per step, not a total: the case is 3 -> 2 -> 1 survivors, so the report's exact
+    # shape is knowable. The `count("\n") >= 4` this replaces was satisfied by the header
+    # plus step 1's rows alone — dropping step 2's and step 3's CSV emission entirely
+    # stayed green, the same class 944aade pinned with literals elsewhere.
+    with (case.output_dir / "steps.csv").open(encoding="utf-8", newline="") as fh:
+        rows_per_step = Counter(row["Step"] for row in csv.DictReader(fh))
+    assert rows_per_step == {"1": 3, "2": 2, "3": 1}, "every step reports its survivors"
 
 
-def test_conformers_sorts_by_gibbs_not_electronic(
+def test_conformers_survivors_follow_the_steps_ranking_energy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Step 2's survivors are the lowest structures by the energy its filter names.
+
+    Named for what this recording can actually test. The old name promised
+    "sorts by Gibbs, *not* electronic" — a discrimination these three conformers cannot
+    make: they order identically by both energies (the KNOWN DEGENERACY the case's own
+    input.yaml documents), so inverting the `energy_type` handling stayed green here. The
+    Gibbs-vs-electronic distinction is pinned at the unit tier with adversarial orderings
+    (test_filtering); what the replay adds is the end-to-end fact that the ranking energy
+    reaches the filter at all, and that Gibbs values survive to the survivors. A future
+    re-record with split orderings can take the stronger name back.
+    """
     case, _submitter, config = _replay("conformers", tmp_path, monkeypatch)
     outcomes = pipeline.run(config)
 
@@ -105,11 +123,11 @@ def test_conformers_inputs_carry_charge_and_clamped_pal(
     case, _submitter, config = _replay("conformers", tmp_path, monkeypatch)
     pipeline.run(config)
 
-    goat_inp = (case.output_dir / "step1" / "0" / "step1_0.inp").read_text()
+    goat_inp = (case.output_dir / "step1" / "0" / "step1_0.inp").read_text(encoding="utf-8")
     assert f"nprocs {config.max_cores}" in goat_inp, "the template's 16 cores are clamped"
     assert "nprocs 16" not in goat_inp
     assert "* xyzfile 0 1 " in goat_inp
-    step2_inp = next(case.output_dir.glob("step2/*/step2_*.inp")).read_text()
+    step2_inp = next(case.output_dir.glob("step2/*/step2_*.inp")).read_text(encoding="utf-8")
     assert "* xyzfile 0 1 " in step2_inp
 
 
@@ -152,16 +170,20 @@ def test_nms_resolves_saddle_via_round_two(tmp_path: Path, monkeypatch: pytest.M
     # ...and the canonical location holds exactly one calculation — the winner's. Before,
     # only the winning *geometry* was written back, leaving a .xyz from one calculation
     # beside the .out of another with nothing to show they disagreed.
-    canonical_out = (structure_dir / "step1_0.out").read_text()
-    child_outs = [p.read_text() for p in sorted(attempt.glob("*/step1_*.out"))]
-    assert canonical_out != (attempt / "step1_0.out").read_text(), "not round 1's output"
+    canonical_out = (structure_dir / "step1_0.out").read_text(encoding="utf-8")
+    child_outs = [p.read_text(encoding="utf-8") for p in sorted(attempt.glob("*/step1_*.out"))]
+    assert canonical_out != (attempt / "step1_0.out").read_text(encoding="utf-8"), (
+        "not round 1's output"
+    )
     assert child_outs.count(canonical_out) == 1, "canonical is one specific child's output"
-    assert (structure_dir / "step1_0.xyz").read_text().splitlines()[1] == "NMS-resolved 0"
+    assert (structure_dir / "step1_0.xyz").read_text(encoding="utf-8").splitlines()[
+        1
+    ] == "NMS-resolved 0"
 
     (survivor,) = outcomes[0].state.structures
     assert survivor.id == "0", "the resolved child is written back under the parent id"
     assert survivor.converged
-    assert not survivor.imaginary_freqs
+    assert survivor.imaginary_freqs == {}, "a verified minimum — a table, with nothing in it"
     assert len(outcomes[1].state.structures) == 1
 
 
@@ -205,7 +227,7 @@ def test_host_guest_pipeline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
         assert {s.id for s in outcomes[0].state.structures} <= {
             f"0-{i}" for i in range(len(poses))
         }, "docker children carry the seed's lineage"
-    step2_inp = next(case.output_dir.glob("step2/*/step2_*.inp")).read_text()
+    step2_inp = next(case.output_dir.glob("step2/*/step2_*.inp")).read_text(encoding="utf-8")
     assert "* xyzfile -1 1 " in step2_inp, "the per-step charge override reaches the input"
     assert len(submitter.calls[1].files) == kept
     assert outcomes[1].state.structures, "solvator output parses into survivors"
@@ -227,7 +249,7 @@ def test_mlip_screen_renders_options_and_parses(
     outcomes = pipeline.run(config)
 
     assert len(submitter.calls[0].files) == 2
-    rendered = (case.output_dir / "step1" / "0" / "step1_0.py").read_text()
+    rendered = (case.output_dir / "step1" / "0" / "step1_0.py").read_text(encoding="utf-8")
     assert '"small"' in rendered, "the model alias reaches the script"
     assert '"mace_off"' in rendered, "the task alias reaches the script"
     assert '"cpu"' in rendered, "device: cpu reaches the script"
@@ -246,7 +268,7 @@ def test_mlip_extopt_renders_server_block_and_parses(
 
     outcomes = pipeline.run(config)
 
-    rendered = (case.output_dir / "step1" / "0" / "step1_0.inp").read_text()
+    rendered = (case.output_dir / "step1" / "0" / "step1_0.inp").read_text(encoding="utf-8")
     assert "ProgExt" in rendered, "ExtOpt inputs must point ORCA at the gradient wrapper"
     (survivor,) = outcomes[0].state.structures
     assert survivor.converged
@@ -266,7 +288,8 @@ class _StubModelSubmitter(ReplaySubmitter):
     its bytes — so recording it would dwarf every other archive combined for a file whose
     content no offline assertion can see. Stub bytes keep both facts true; the real model
     is the live tier's business, and the parse-only rebuild that genuinely needs its bytes
-    (step 3's fingerprint) is excluded in `test_e2e_relocate.ALL_CASES` for the same reason.
+    (step 3's fingerprint) is why `replay.VERIFIABLE_STEPS` stops that case's drift check
+    after step 1.
     """
 
     def _satisfy(self, inputs: StepInputs) -> None:
@@ -302,12 +325,12 @@ def test_mlip_train_full_pipeline(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 
     # The rendered trainer config names the dataset the step just wrote.
     run_dir = case.output_dir / "step2" / "train"
-    rendered = (run_dir / "step2_train.yaml").read_text()
+    rendered = (run_dir / "step2_train.yaml").read_text(encoding="utf-8")
     assert str(run_dir / "train.xyz") in rendered and (run_dir / "train.xyz").is_file()
     assert str(run_dir / "valid.xyz") in rendered and (run_dir / "valid.xyz").is_file()
 
     # The sidecar cites what was produced, and for which library.
-    sidecar = json.loads((run_dir / "trained_model.json").read_text())
+    sidecar = json.loads((run_dir / "trained_model.json").read_text(encoding="utf-8"))
     assert sidecar["task_name"] == "mace_off"
     assert sidecar["backend"] == "mlip-mace"
     assert sidecar["n_structures"] == 4
@@ -315,10 +338,46 @@ def test_mlip_train_full_pipeline(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     # The ensemble passes through training untouched; step 3 runs all of it on the model.
     labelled = [s.id for s in outcomes[0].state.structures]
     assert [s.id for s in outcomes[1].state.structures] == labelled
-    rendered3 = (case.output_dir / "step3" / "0" / "step3_0.py").read_text()
+    rendered3 = (case.output_dir / "step3" / "0" / "step3_0.py").read_text(encoding="utf-8")
     assert str(run_dir / "train.model") in rendered3, "step 3 loads the model step 2 produced"
     assert len(outcomes[2].state.structures) == 4
     assert all(s.energy_hartree is not None for s in outcomes[2].state.structures)
+
+
+def _replay_mlip_train(root: Path, monkeypatch: pytest.MonkeyPatch) -> ReplayCase:
+    """The label → train → run replay, rooted wherever the caller says."""
+    case = extract_case("mlip_train", root)
+    monkeypatch.setattr(RUN_BATCH, _StubModelSubmitter(case))
+    config = load_config(case.config_path)
+    for step in (1, 2, 3):
+        config = _with_backend_python(config, step)
+    pipeline.run(config)
+    return case
+
+
+def test_mlip_train_replays_at_two_roots_derive_the_same_fingerprints(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tree copied elsewhere keys every step — the model-consuming one included — the same.
+
+    Step 3 names the model by ``model_path: ./outputs/step2/train/train.model``, which the
+    loader resolves to an absolute path, and that string used to ride into the row key: the
+    same recording replayed at two roots derived two fingerprints for step 3, so a copied
+    tree recomputed it on ``resume`` and was refused by ``rebuild-cache``. The relocation
+    tests cannot see this case (its real model is too large to record), which is exactly
+    where it hid; this replays it twice with the stub model and compares.
+    """
+    first = _replay_mlip_train(tmp_path / "cluster", monkeypatch)
+    second = _replay_mlip_train(tmp_path / "laptop", monkeypatch)
+
+    def fingerprints(case: ReplayCase) -> dict[str, str]:
+        return {
+            doc.parent.parent.name: json.loads(doc.read_text(encoding="utf-8"))["fingerprint"]
+            for doc in sorted(case.output_dir.glob("step*/_cache/step.json"))
+        }
+
+    assert set(fingerprints(first)) == {"step1", "step2", "step3"}
+    assert fingerprints(first) == fingerprints(second)
 
 
 def test_mlip_train_second_run_hits_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -342,3 +401,32 @@ def test_mlip_train_second_run_hits_cache(tmp_path: Path, monkeypatch: pytest.Mo
     assert all(outcome.cache_hit for outcome in second)
     assert len(submitter.calls) == calls_after_first, "a cache hit submits nothing"
     assert [s.id for s in second[-1].state.structures] == [s.id for s in first[-1].state.structures]
+
+
+# ---------------------------------------------------------------------------
+# The archives themselves
+# ---------------------------------------------------------------------------
+
+
+def test_every_recording_holds_each_file_once() -> None:
+    """A recording is a set of files, and a tar can hold the same name many times.
+
+    ``pack_case`` walks the staged tree with ``rglob`` and adds each entry, and
+    ``TarFile.add`` recurses by default — so every file was archived once per ancestor
+    directory as well as for itself, six copies deep under an ``attemptK/``. Nothing
+    failed: extraction overwrote each copy with identical bytes and ``xz`` squeezed the
+    repeats to a couple of percent. What it cost is the property asserted here — that
+    the archive's own member list describes the tree it captured, which is what anyone
+    reads it with, and what the next packer change would be checked against.
+    """
+    from collections import Counter
+    from tarfile import open as tar_open
+
+    from replay import DATA_DIR
+
+    archives = sorted(DATA_DIR.glob("*.tar.xz"))
+    assert archives, "no recordings to check"
+    for archive in archives:
+        with tar_open(archive) as tar:
+            repeated = [name for name, n in Counter(tar.getnames()).items() if n > 1]
+        assert not repeated, f"{archive.name} archives {len(repeated)} name(s) more than once"

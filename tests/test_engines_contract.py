@@ -64,7 +64,7 @@ def _context(case_dir: Path, meta: dict[str, Any]) -> StepContext:
 @pytest.mark.parametrize("case_dir", CASES, ids=CASE_IDS)
 def test_contract_case(case_dir: Path, request: pytest.FixtureRequest) -> None:
     """The engine's parse of the native fixture must match the golden records."""
-    meta = json.loads((case_dir / "case.json").read_text())
+    meta = json.loads((case_dir / "case.json").read_text(encoding="utf-8"))
     engine = get_engine(case_dir.parent.name)
     out = _native_output(case_dir)
     ctx = _context(case_dir, meta)
@@ -81,7 +81,7 @@ def test_contract_case(case_dir: Path, request: pytest.FixtureRequest) -> None:
         golden_path.write_text(json.dumps(document, indent=2) + "\n")
         return
     assert golden_path.is_file(), f"{case_dir}: missing golden — run with --update-goldens"
-    golden = json.loads(golden_path.read_text())
+    golden = json.loads(golden_path.read_text(encoding="utf-8"))
     assert document["result_format"] == golden["result_format"]
     assert document["structures"] == golden["structures"]
 

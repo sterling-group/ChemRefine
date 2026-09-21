@@ -14,9 +14,9 @@ from pathlib import Path
 
 import pytest
 import replay
-from replay import extract_case, forbid_run_batch, relocate, replay_run_batch
+from replay import extract_case, forbid_run_batch, forget_provenance, relocate, replay_run_batch
 
-from chemrefine import pipeline
+from chemrefine import cache, pipeline
 from chemrefine.config import Config, MinSample, load_config
 from chemrefine.errors import ChemRefineError
 from chemrefine.step import RunPlan, StepMode
@@ -24,26 +24,11 @@ from chemrefine.step import RunPlan, StepMode
 RUN_BATCH = "chemrefine.engines._execution.run_batch"
 
 ORCA_CASES = ["conformers", "nms_minimum", "ts_pes", "host_guest"]
+"""The replays that submit through a stubbed `run_batch`.
 
-ALL_CASES = [
-    *ORCA_CASES,
-    "mlip_screen",
-    "mlip_extopt",
-    "fairchem_sp",
-    "pyscf_sp",
-    "pyscf_extopt",
-]
-"""Every recorded case, for the checks that only re-parse.
-
-The ORCA-only list above is for replays that submit through a stubbed `run_batch`; a
-parse-only rebuild needs no backend at all, so the drift detector — the one thing standing
-between a recording and becoming a fossil — covers every case that has an archive.
-
-`mlip_train` has an archive but sits out of this list: the parse-only rebuild of its step 3
-validates a fingerprint that covers the trained model's **bytes** (`option_file_digests`),
-and the 4.7 MB model cannot live in a 1 MB recording — no stub can hash like the original.
-Its offline coverage is `test_e2e_replay.test_mlip_train_full_pipeline`, a fresh replay
-that computes its fingerprints from a stubbed model self-consistently."""
+A parse-only rebuild needs no backend at all, so the drift detector — the one thing
+standing between a recording and becoming a fossil — covers every recording on disk
+instead, each as far as `replay.VERIFIABLE_STEPS` says it can be re-derived."""
 
 
 def _with_step_update(config: Config, step_number: int, **updates: object) -> Config:
@@ -91,7 +76,7 @@ def test_rebuild_cache_reparses_outputs_without_submitting(
         ], f"rebuilding step {step_number} changed the survivors"
 
 
-@pytest.mark.parametrize("name", ALL_CASES)
+@pytest.mark.parametrize("name", replay.recorded_cases())
 def test_rebuilt_records_match_the_archived_ones_field_for_field(
     name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ) -> None:
@@ -103,6 +88,11 @@ def test_rebuilt_records_match_the_archived_ones_field_for_field(
     not match what the code produces is not a fixture, it is a fossil, and the whole value
     of record/replay rests on the difference.
 
+    Every recording on disk is checked, as far as it can be: one that is verifiable only
+    up to a step (`replay.VERIFIABLE_STEPS`) is rebuilt over that prefix and must carry no
+    cache document past it — nothing could check one, so it would be a fossil from the
+    day it was packed.
+
     A failure here means the parse changed on purpose and the recordings need
     regenerating (a parse-only rebuild from these same archived outputs — no ORCA and
     no MLIP stack required), not that the assertion is too strict.
@@ -110,16 +100,37 @@ def test_rebuilt_records_match_the_archived_ones_field_for_field(
     case = extract_case(name, tmp_path)
     relocate(case)
     monkeypatch.setattr(RUN_BATCH, forbid_run_batch)
+    config = load_config(case.config_path)
+    prefix = replay.VERIFIABLE_STEPS.get(name, len(config.steps))
+    verifiable, beyond = config.steps[:prefix], config.steps[prefix:]
+    config = config.model_copy(update={"steps": verifiable})
 
     archived = {
-        doc.relative_to(case.output_dir): json.loads(doc.read_text())
-        for doc in sorted(case.output_dir.rglob("_cache/step.json"))
+        doc.relative_to(case.output_dir): json.loads(doc.read_text(encoding="utf-8"))
+        for step in verifiable
+        for doc in sorted((case.output_dir / step.dir_name()).rglob("_cache/step.json"))
     }
     assert archived, "the recording carries no cache documents to compare against"
 
-    pipeline.run(load_config(case.config_path), RunPlan(default=StepMode.REBUILD))
+    update = request.config.getoption("--update-recordings")
+    if update:
+        # An archive whose keys moved is the thing being regenerated, and the rebuild refuses
+        # rows keyed under another configuration — so the archived provenance is dropped
+        # first (unprovable rather than wrong) and written back under today's key.
+        forget_provenance(case)
+    else:
+        fossils = sorted(
+            str(doc.relative_to(case.output_dir))
+            for step in beyond
+            for doc in (case.output_dir / step.dir_name()).rglob("_cache/*")
+        )
+        assert not fossils, (
+            f"{fossils} sit past what a parse-only rebuild can verify — fossils by "
+            f"construction; `pack_case` no longer archives them, so regenerate the recording"
+        )
+    pipeline.run(config, RunPlan(default=StepMode.REBUILD))
 
-    if request.config.getoption("--update-recordings"):
+    if update:
         # The rebuild above rewrote every cache in `case.output_dir` from the archived native
         # outputs, with `forbid_run_batch` proving nothing was submitted. That tree is exactly
         # what `pack_case` trims and re-archives, so regenerating is a re-pack — no ORCA, no
@@ -128,19 +139,29 @@ def test_rebuilt_records_match_the_archived_ones_field_for_field(
         return
 
     for rel, before in archived.items():
-        after = json.loads((case.output_dir / rel).read_text())
-        assert [structure_record_keys(s) for s in after["structures"]] == [
-            structure_record_keys(s) for s in before["structures"]
-        ], f"{rel}: rebuilt records differ from the archive — regenerate the recording"
-
-
-def structure_record_keys(record: dict[str, object]) -> dict[str, object]:
-    """One cached structure record, minus the coordinates.
-
-    Geometry round-trips through JSON exactly, but it is bulky and its equality adds
-    nothing here: the fields that silently drift are the *status and energy* ones.
-    """
-    return {k: v for k, v in record.items() if k not in ("positions", "forces_ev_per_a")}
+        after = json.loads((case.output_dir / rel).read_text(encoding="utf-8"))
+        assert after["structures"] == before["structures"], (
+            f"{rel}: rebuilt records differ from the archive — regenerate the recording"
+        )
+        # The geometry half. Coordinates and forces are not in these records — the
+        # sidecar split moved them to arrays.npz before the document is written — so a
+        # record comparison alone left a coordinate or forces parse free to drift with
+        # no signal (an earlier version even filtered the two keys out of records that
+        # no longer carry them). The document's `arrays_digest` is a content hash over
+        # the sidecar's values, so one equality pins every coordinate and force byte
+        # without unpacking anything.
+        assert after["arrays_digest"] == before["arrays_digest"], (
+            f"{rel}: the rebuilt coordinate sidecar differs from the archive — a geometry "
+            f"or forces parse changed; regenerate the recording"
+        )
+        # The key half: a fingerprint that moves means the cache-key payload changed
+        # (an options default, a digest input), which strands every user's tree the
+        # same way it strands this archive — a fact to surface here, not discover in
+        # a user's resume.
+        assert after["fingerprint"] == before["fingerprint"], (
+            f"{rel}: the rebuilt fingerprint differs from the archive — the cache-key "
+            f"payload changed; note the migration in the changelog and regenerate"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +191,7 @@ def test_on_failure_stop_halts_and_records_the_ledger(
 
     ledger = case.output_dir / "step2" / "_cache" / "failed_jobs.json"
     assert ledger.is_file()
-    assert sid in ledger.read_text()
+    assert sid in ledger.read_text(encoding="utf-8")
 
 
 def test_on_failure_skip_drops_the_failed_structure(
@@ -189,26 +210,39 @@ def test_on_failure_skip_drops_the_failed_structure(
     assert len(outcomes) == 2, "skip lets the pipeline finish"
     survivors = {s.id for s in outcomes[1].state.structures}
     assert sid not in survivors
-    ran = len(submitter.calls[1].files)
-    assert len(survivors) == min(3, ran - 1)
+    # Step 2 samples `count: 2` (the conformers case) from the two that succeeded: exactly
+    # two survive, and none of them is the dropped one.
+    assert len(survivors) == 2
 
 
 def test_on_failure_best_keeps_the_structure_with_its_best_geometry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    case, config, _sid = _fail_one_step2_structure(tmp_path)
+    """``best`` keeps the pipeline going; a backfilled input is kept but never ranked.
+
+    The structure whose job left no output is backfilled from its submitted input — the
+    geometry alone, with no energy of this step's — so it lands in the step's cache and
+    ledger, and the ``sample:`` filter, which cannot rank what has no energy, drops it
+    from the survivors rather than placing it by the previous step's number.
+    """
+    case, config, sid = _fail_one_step2_structure(tmp_path)
     config = _with_step_update(
         config, 2, on_failure="best", sample=MinSample(method="min", count=3)
     )
     config = config.model_copy(update={"steps": config.steps[:2]})
-    submitter = replay_run_batch(case, allow_missing={_sid})
+    submitter = replay_run_batch(case, allow_missing={sid})
     monkeypatch.setattr(RUN_BATCH, submitter)
 
     outcomes = pipeline.run(config)
 
     assert len(outcomes) == 2, "best lets the pipeline finish"
     ran = len(submitter.calls[1].files)
-    assert len(outcomes[1].state.structures) == min(3, ran)
+    survivors = outcomes[1].state.structures
+    assert len(survivors) == min(3, ran) - 1
+    assert all(s.energy_hartree is not None for s in survivors)
+    cached = cache.load(config.step_dir(config.steps[1]).resolve())
+    assert cached is not None
+    assert [s.id for s in cached.results.structures if s.energy_hartree is None] == [sid]
 
 
 def test_resume_after_stop_resubmits_only_the_failed_structure(

@@ -25,24 +25,26 @@ import signal
 import socket
 import threading
 from collections.abc import Generator, Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from types import FrameType
 from typing import NoReturn
 
+import numpy as np
 from ase import Atoms
 
 from chemrefine import filtering, io, slurm
 from chemrefine.config import Config, StepConfig
-from chemrefine.engines import preflight_backends
-from chemrefine.errors import ConfigError, RunLockError
+from chemrefine.engines import preflight_backends, preflight_steps
+from chemrefine.errors import ConfigError, NoUsableCacheError, RunLockError
 from chemrefine.quantities import DEFAULT_TEMPERATURE_K
 from chemrefine.state import PipelineState, Structure
 
 # Importing :mod:`chemrefine.step` pulls in :mod:`chemrefine.engines.api`,
 # which runs :mod:`chemrefine.engines`'s ``__init__`` and self-registers every
 # bundled engine. No explicit ``import chemrefine.engines`` needed.
-# No ``StepMode`` import: with the three questions about it answered by the enum's own
+# No ``StepMode`` import: with every question about it answered by the enum's own
 # predicates, this module composes modes without naming a single member.
 from chemrefine.step import (
     RunPlan,
@@ -51,6 +53,7 @@ from chemrefine.step import (
     rebuild_cache_step,
     run_step,
 )
+from chemrefine.validate import undeclared_options
 
 logger = logging.getLogger(__name__)
 
@@ -72,19 +75,38 @@ def bootstrap(config: Config) -> PipelineState:
     2. ``config.input`` is None → fall back to
        ``templates/step1.xyz`` (the conventional default).
 
-    Raises :class:`ConfigError` if no seed source can be located.
+    Raises :class:`ConfigError` if no seed source can be located — or can be located but
+    not used. The readers raise their own exceptions for a file that is missing, malformed
+    or not text (ASE's ``XYZError`` and ``FileNotFoundError``, a ``ValueError`` for a
+    coordinate that is not a number, a ``UnicodeDecodeError``, pandas' own for a CSV), and
+    left to escape they reached the user as a traceback with exit 1 — outside the exit-code
+    contract the template and header checks honour — while ``chemrefine validate`` said OK.
+    The net is the one :func:`chemrefine.agent_tools.build_structures` puts around the same
+    read. A seed that parses to no structure at all is refused for the same reason: a
+    zero-byte ``.xyz`` reads as zero frames, and a run over zero seeds exited 0 having
+    computed nothing.
     """
     path = config.input
     if path is None:
         default = config.template_dir / "step1.xyz"
         if not default.is_file():
             raise ConfigError(f"no 'input' declared and default {default} does not exist")
-        return _seed_from_xyz(default)
+        path = default
+    try:
+        state = _seed(path, config.output_dir / "_seed")
+    except (OSError, ValueError, IndexError, KeyError) as e:
+        raise ConfigError(f"cannot seed from {path}: {e}") from e
+    if not state.structures:
+        raise ConfigError(f"{path} holds no structures")
+    return state
 
+
+def _seed(path: Path, smiles_out_dir: Path) -> PipelineState:
+    """Dispatch on what ``path`` is — a directory, a SMILES CSV or an XYZ file."""
     if path.is_dir():
         return _seed_from_directory(path)
     if path.suffix.lower() == ".csv":
-        return _seed_from_smiles_csv(path, config.output_dir / "_seed")
+        return _seed_from_smiles_csv(path, smiles_out_dir)
     if path.suffix.lower() == ".xyz":
         return _seed_from_xyz(path)
     raise ConfigError(f"unsupported input format: {path}")
@@ -95,10 +117,31 @@ def _state_from_frames(frames: Iterable[Atoms]) -> PipelineState:
 
     The shared tail of every seeder: continuous IDs in iteration order, so a
     directory's frames number straight on from the previous file's.
+
+    It is also where a seed geometry is checked for finiteness, and being the shared tail is
+    why: one guard covers the file, the directory and the SMILES paths alike. ASE's reader
+    accepts a ``nan`` coordinate, and a seed is the one geometry no parse boundary ever sees
+    — so left here it would reach :func:`chemrefine.cache.save`, whose coordinates go to the
+    ``arrays.npz`` sidecar rather than through ``write_json``'s ``allow_nan=False``. Nothing
+    downstream would object: it round-trips the cache and :func:`~chemrefine.cache.structure_digest`
+    hashes it to a perfectly stable key, so every later step would be computed from
+    coordinates that are not numbers, silently. The engine's own parse guard cannot catch
+    this one, because on the ``on_failure: best`` path the seed is carried forward *instead*
+    of a parse.
+
+    :class:`~chemrefine.errors.ConfigError` rather than a parse error: the offending file is
+    the user's input, and it is named so they can find the row.
     """
-    return PipelineState(
-        structures=tuple(Structure(id=str(i), atoms=atoms) for i, atoms in enumerate(frames))
-    )
+    structures = []
+    for i, atoms in enumerate(frames):
+        if not np.isfinite(atoms.get_positions()).all():
+            raise ConfigError(
+                f"seed structure {i} has a non-finite coordinate (nan/inf). A geometry that "
+                f"is not numbers cannot be computed on, and nothing downstream would reject "
+                f"it — check the input file this seed was read from."
+            )
+        structures.append(Structure(id=str(i), atoms=atoms))
+    return PipelineState(structures=tuple(structures))
 
 
 def _seed_from_xyz(path: Path) -> PipelineState:
@@ -147,8 +190,10 @@ def _lock_holder(lock: Path) -> tuple[str, int, str] | None:
     """The ``(host, pid, started)`` recorded in ``lock``, or ``None`` if unreadable.
 
     ``None`` covers both a lock vacated between the failed claim and this read, and one
-    whose writer died between creating the file and writing it — the caller treats the
-    two alike, because neither names a holder whose liveness can be checked.
+    damaged from outside — a partial copy, a truncating editor. This program never creates
+    the path without its record (:func:`run_lock` links a complete claim into place), so an
+    unreadable lock is never one of its own half-written. The caller treats the two alike,
+    because neither names a holder whose liveness can be checked.
     """
     try:
         record = json.loads(lock.read_text(encoding="utf-8"))
@@ -172,6 +217,53 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
+@dataclass(frozen=True)
+class LockStatus:
+    """One read of the run lock, for a *reporting* caller (status tools, the GUI).
+
+    ``held`` is what a would-be driver cares about: a lock file this read cannot prove
+    safe to claim — one naming a holder not provably dead, or one that exists but is
+    unreadable (every holder field then ``None``: the claim path refuses that file too,
+    so held is the answer the two readers must share). ``alive`` is three-valued —
+    ``True`` / ``False`` only for a same-host holder, ``None`` when the holder is on
+    another host and liveness cannot be probed from here (still ``held``: the reclaim
+    machinery, not a status read, is the only thing entitled to call a foreign lock
+    stale). Reporting only — claiming the lock remains :func:`run_lock`'s job, with
+    its atomic-rename reclaim dance.
+    """
+
+    held: bool
+    host: str | None
+    pid: int | None
+    started: str | None
+    alive: bool | None
+
+
+def lock_status(output_dir: Path) -> LockStatus:
+    """Read ``output_dir``'s run lock without touching it.
+
+    The status view :func:`run_lock`'s internals already imply, made public for the
+    agent tools and the GUI: *is a driver running this tree, and which one?* A lock
+    naming a same-host dead pid reports ``held=False`` — that is exactly the stale case
+    :func:`run_lock` would reclaim on the next claim.
+
+    A lock file that exists but names no holder reports ``held=True`` with every
+    holder field ``None`` — the same side of "held" :func:`run_lock` puts it on. That
+    file was damaged from outside (a partial copy, a truncating editor — this program
+    never creates the lock without its record), and the claim path refuses it until
+    someone deletes a lock they know is dead; reporting it "not held" here sent
+    :func:`~chemrefine.agent_tools.start_run` past its own gate into a child that exited
+    into a log nobody was watching yet.
+    """
+    lock = output_dir / RUN_LOCK_NAME
+    holder = _lock_holder(lock)
+    if holder is None:
+        return LockStatus(held=lock.exists(), host=None, pid=None, started=None, alive=None)
+    host, pid, started = holder
+    alive = _pid_alive(pid) if host == socket.gethostname() else None
+    return LockStatus(held=alive is not False, host=host, pid=pid, started=started, alive=alive)
+
+
 def _reclaim_stale(lock: Path, holder: tuple[str, int, str]) -> bool:
     """Atomically take a dead holder's lock off its path; ``True`` if this process did.
 
@@ -186,19 +278,39 @@ def _reclaim_stale(lock: Path, holder: tuple[str, int, str]) -> bool:
     the caller's read and the rename, another process can have completed its *own* reclaim
     **and** created a fresh live lock at the same path, and the rename cannot tell those
     apart. A claim whose record no longer matches is therefore put back with ``os.link``,
-    the atomic fail-if-exists primitive: if a third process created a lock meanwhile, the
-    link fails and that lock stands, which leaves the swept-up holder no worse off than
-    before this function ran. Either way the reclaim is reported as not-ours, and the
-    caller's next pass answers to whatever the path now holds.
+    the atomic fail-if-exists primitive. If a third process created a lock in that window,
+    the link fails and the restore is impossible: the swept-up driver is already running
+    with no lock on the path, beside the third one, and nothing here can un-overlap them.
+    That residue is reported rather than swallowed — an error names both drivers, and the
+    claim file is kept as the only surviving copy of the swept-up record. Either way the
+    reclaim is reported as not-ours, and the caller's next pass answers to whatever the
+    path now holds.
     """
     claim = lock.with_name(f"{RUN_LOCK_NAME}.reclaim.{os.getpid()}")
     try:
         lock.replace(claim)
     except FileNotFoundError:
         return False
-    if _lock_holder(claim) != holder:
-        with contextlib.suppress(OSError):
+    swept = _lock_holder(claim)
+    if swept != holder:
+        try:
             os.link(claim, lock)
+        except OSError:
+            # The restore lost to a third driver's fresh lock. The swept-up driver is
+            # already running unlocked beside it and nothing here can un-overlap them,
+            # so the residue is reported — loudly — and the claim survives as the only
+            # remaining copy of the swept-up record.
+            current = _lock_holder(lock)
+            logger.error(
+                "run lock %s: a stale-lock reclaim swept up a live lock and could not "
+                "restore it (the path is now held by %s); the swept-up run %s may be "
+                "sharing this tree — its record is kept at %s",
+                lock,
+                f"pid {current[1]} on {current[0]}" if current else "an unreadable lock",
+                f"(pid {swept[1]} on {swept[0]}, started {swept[2]})" if swept else "(unreadable)",
+                claim,
+            )
+            return False
         claim.unlink(missing_ok=True)
         return False
     claim.unlink(missing_ok=True)
@@ -242,20 +354,31 @@ def run_lock(output_dir: Path) -> Generator[None]:
     """Hold ``output_dir`` for one driver; raise :class:`RunLockError` if another has it.
 
     **Why a lock at all.** The resume machinery cannot tell a live concurrent driver from
-    a dead one: :func:`chemrefine.step._partial_step_outcome` treats a manifest whose
+    a dead one: :func:`chemrefine.step._incremental_step_outcome` treats a manifest whose
     fingerprint matches as proof it is safe to continue, and a *running* driver leaves
     exactly that state on disk. A second driver would then parse outputs the first one's
     jobs are still writing, archive their directories out from under those jobs, and
     resubmit duplicates — silently, since nothing in that sequence is an error.
 
     **Why a pidfile and not ``flock``.** The output tree lives on a shared filesystem on
-    HPC, where ``flock`` semantics are the least reliable part of NFS; an ``O_EXCL``
-    create is atomic everywhere. The cost is that a lock can outlive a killed driver.
+    HPC, where ``flock`` semantics are the least reliable part of NFS; a fail-if-exists
+    ``os.link`` is atomic on every filesystem that offers it, and one that does not (a
+    vfat or exfat drive, some FUSE and SMB mounts) is refused by name rather than being
+    left to raise from inside the claim. The cost is that a lock can outlive a killed
+    driver.
     :func:`_sigterm_unwinds` narrows that to SIGKILL alone — a ``scancel`` or walltime
     SIGTERM unwinds and releases — and a SIGKILLed holder on *this* host is probed with
     ``os.kill(pid, 0)`` and reclaimed when dead. A holder on another host cannot be probed
     from here — that lock is treated as live, and the error says to delete it once its run
     is known dead.
+
+    **The record and the lock are one operation.** The record is written to a per-pid
+    claim beside the lock and *linked* into place, so the lock never exists without a
+    complete record from this program. Created empty and written afterwards, it could:
+    a full disk at that instant left a 0-byte lock the ownership-checked release below
+    could not recognise as its own, and every later driver refused the tree as
+    "unreadable" until someone deleted it by hand. An unreadable lock can now only have
+    been damaged from outside.
 
     **Reclaim is an atomic rename, and release is ownership-checked.** Deleting a stale
     lock with ``unlink()`` let two drivers that both probed the same dead pid interleave —
@@ -273,17 +396,50 @@ def run_lock(output_dir: Path) -> Generator[None]:
     :func:`run` starts — and :func:`run` takes it again for callers that drive the
     pipeline directly. The inner acquisition sees its own pid in the record and yields
     without ownership, so the one release still happens at the outermost exit.
+
+    **The lock fences drivers, not their jobs.** A dead holder's SLURM jobs run on
+    after its lock is reclaimed (and a SIGKILLed holder's local ones too); the leases
+    every submission records are the fence for that window — see
+    :func:`require_no_live_jobs`, which both takers of this lock call before touching
+    the tree.
     """
     with _sigterm_unwinds():
         output_dir.mkdir(parents=True, exist_ok=True)
         lock = output_dir / RUN_LOCK_NAME
+        # The record in `_lock_holder`'s field order, so the release below compares whole.
+        me = (socket.gethostname(), os.getpid(), datetime.now(UTC).isoformat(timespec="seconds"))
+        # Complete on disk before the lock exists — see "the record and the lock are one
+        # operation" above. `os.link` is the fail-if-exists primitive `_reclaim_stale`
+        # already relies on; exactly one claimant's link lands.
+        claim = lock.with_name(f"{RUN_LOCK_NAME}.claim.{me[1]}")
         reclaimed = False
-        while True:
-            try:
-                fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                break
-            except FileExistsError:
-                holder = _lock_holder(lock)
+        try:
+            claim.write_text(
+                json.dumps({"pid": me[1], "host": me[0], "started": me[2]}), encoding="utf-8"
+            )
+            while True:
+                try:
+                    os.link(claim, lock)
+                    break
+                except FileExistsError:
+                    holder = _lock_holder(lock)
+                except OSError as e:
+                    # Not "held by someone" but "this filesystem cannot hold a lock at
+                    # all": a mount that refuses hard links (vfat/exfat, some FUSE and SMB
+                    # shares). Named as the lock's own refusal, with its exit code, rather
+                    # than escaping as a traceback from inside the claim.
+                    raise RunLockError(
+                        f"cannot lock {output_dir}: the filesystem refuses hard links "
+                        f"({e}), which the run lock is built on. Put output_dir on a "
+                        f"filesystem that supports them."
+                    ) from e
+                # Every decision about a held lock is made here, past the handler, on purpose.
+                # The reentrant `yield` used to sit inside it, which ran the whole inner action
+                # with the FileExistsError still active — so any error the action raised was
+                # chained to it, and every traceback that escaped a run opened with "During
+                # handling of the above exception (FileExistsError: … run.lock)", pointing the
+                # reader at the lock before the real error. Out here the exception is over,
+                # and the refusal below needs no `from None` to keep it out of its traceback.
                 if holder is not None and holder[0] == socket.gethostname():
                     host, pid, started = holder
                     if pid == os.getpid():
@@ -303,8 +459,6 @@ def run_lock(output_dir: Path) -> Generator[None]:
                                 started,
                             )
                         continue
-                # `from None`: the FileExistsError is this branch's condition, not a cause —
-                # everything it could say is already in the message.
                 raise RunLockError(
                     f"another ChemRefine run holds this output tree: {lock} "
                     + (
@@ -315,12 +469,10 @@ def run_lock(output_dir: Path) -> Generator[None]:
                     + ". Two drivers on one tree archive and resubmit each other's work, so "
                     "this run stops here. Wait for that run to finish — or, if it is known "
                     "dead (e.g. killed on another node), delete the lock file and retry."
-                ) from None
-        # The record in `_lock_holder`'s field order, so the release below compares whole.
-        me = (socket.gethostname(), os.getpid(), datetime.now(UTC).isoformat(timespec="seconds"))
+                )
+        finally:
+            claim.unlink(missing_ok=True)
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump({"pid": me[1], "host": me[0], "started": me[2]}, fh)
             yield
         finally:
             # On success and on failure alike: a raise must not leave the tree locked, and
@@ -328,6 +480,93 @@ def run_lock(output_dir: Path) -> Generator[None]:
             # Only while the file is still ours — see "release is ownership-checked".
             if _lock_holder(lock) == me:
                 lock.unlink(missing_ok=True)
+
+
+def require_no_live_jobs(config: Config) -> None:
+    """Refuse to drive a tree while a dead driver's recorded jobs are still running.
+
+    The lock above fences *drivers*, and its release does not outlive their **jobs**: a
+    SIGTERM unwind deliberately leaves SLURM jobs running, a SIGKILL leaves the local
+    ones too, and the reclaim machinery then hands the lock to the next driver — which
+    would archive and re-parse directories the old jobs' exit traps are still copying
+    into, the very overlap the lock exists to prevent, reopened through its own release.
+    Every submission therefore records a lease
+    (:func:`chemrefine.slurm.dispatch.record_lease`, released when its batch drains),
+    and this fence — called with the lock already held, before anything mutates the
+    tree — walks every step's ledger and answers each lease by kind:
+
+    * a **SLURM id** is put to the queue, all ids in one probe. A host with no
+      ``squeue`` cannot verify them, and a tree copied to a laptop must not be fenced
+      harder than the original — so that case warns and proceeds instead of refusing
+      on evidence no one there can produce, keeping those ids on record for the next
+      run that can ask.
+    * a **local job** is probed by pid on its own host; recorded on another host it
+      cannot be probed from here, and the fence refuses until someone who knows that
+      run is dead deletes the record — the lock's own escape, worded the same way.
+
+    Leases every probe proves dead are garbage from a run that never unwound; the fence
+    deletes them (it holds the lock, so they are its to clean), which is also what keeps
+    a long-lived tree from re-probing long-drained ids on every resume — and, once the
+    kernel recycles a dead pid, from refusing a run over a process that was never ours.
+    """
+    hostname = socket.gethostname()
+    visited: list[Path] = []
+    slurm_ids: dict[str, Path] = {}
+    for step_cfg in config.steps:
+        step_dir = config.step_dir(step_cfg)
+        leases = slurm.load_leases(step_dir)
+        if not leases:
+            continue
+        ledger = slurm.lease_path(step_dir)
+        for lease in leases:
+            if not lease.local:
+                slurm_ids[lease.id] = ledger
+            elif lease.host != hostname:
+                raise RunLockError(
+                    f"a previous run left local job {lease.id} recorded on {lease.host} "
+                    f"({ledger}), and its liveness cannot be probed from {hostname}. Two "
+                    f"drivers on one tree archive and resubmit each other's work, so this "
+                    f"run stops here. If that run is known dead, delete the record and retry."
+                )
+            elif lease.pid is None or _pid_alive(lease.pid):
+                state = (
+                    f"(pid {lease.pid}) is still running" if lease.pid else "is not provably dead"
+                )
+                raise RunLockError(
+                    f"a previous run's local job {lease.id} {state} on this host "
+                    f"({ledger} records it), and its exit trap will still write into "
+                    f"this tree, so this run stops here. Wait for it to finish — or "
+                    f"kill it, delete the record, and retry."
+                )
+        visited.append(step_dir)
+    if slurm_ids:
+        if not slurm.scheduler_reachable():
+            logger.warning(
+                "cannot verify %d recorded SLURM job(s) from this host (no squeue); "
+                "proceeding — if the run that submitted them is still live on the "
+                "cluster, stop this one now",
+                len(slurm_ids),
+            )
+            # Every local lease above was proven dead (any other kind raised) and only
+            # the SLURM ids are unverified — so shed exactly the former and keep exactly
+            # the latter, whether or not they share a ledger. A dead pid left beside a
+            # SLURM id would be re-probed by every later resume and, once recycled,
+            # refuse a run whose only escape deletes the SLURM evidence with it.
+            for step_dir in visited:
+                slurm.release_leases(step_dir, keep_slurm=True)
+            return
+        live = sorted(set(slurm_ids) - slurm.finished_jobs(tuple(slurm_ids)))
+        if live:
+            ledgers = ", ".join(sorted({str(slurm_ids[jid]) for jid in live}))
+            raise RunLockError(
+                f"a previous run's SLURM job(s) {', '.join(live)} are still queued or "
+                f"running (recorded in {ledgers}), and their exit traps still write into "
+                f"this tree, so this run stops here. Wait for them to drain or scancel "
+                f"them — or, if the record is known stale (a transient squeue failure "
+                f"reports every job live), delete it and retry."
+            )
+    for step_dir in visited:
+        slurm.release_leases(step_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -379,6 +618,9 @@ def run(config: Config, plan: RunPlan | None = None) -> list[StepOutcome]:
     """
     plan = plan if plan is not None else RunPlan()
     with run_lock(config.output_dir):
+        # Lock first, fence second: the lock answers for live *drivers*, the fence for a
+        # dead driver's live *jobs* — and it must run before anything mutates the tree.
+        require_no_live_jobs(config)
         logger.info(
             "config: max_cores=%d, max_gpus=%s, output_dir=%s",
             config.max_cores,
@@ -386,7 +628,9 @@ def run(config: Config, plan: RunPlan | None = None) -> list[StepOutcome]:
             config.output_dir,
         )
         # Fail fast: every step's backend env must be resolvable before ANY job submits,
-        # and `dispatch: slurm` must actually have sbatch available.
+        # every step's own preflight refusals (a training step without a device, an
+        # open-shell save_tensors) must fire now rather than at that step's turn, and
+        # `dispatch: slurm` must actually have sbatch available.
         #
         # The steps checked are the ones that *can* submit, which is `StepMode.may_submit` and
         # nothing else. A guard for something that will not happen is just a wall: it would
@@ -400,8 +644,19 @@ def run(config: Config, plan: RunPlan | None = None) -> list[StepOutcome]:
         # leaves the wall standing on all the others, and a two-step MLIP config still cannot
         # be rebuilt off-cluster. Nothing is weakened by the wider exemption: a step that
         # cannot submit reaches `ChemRefineError` from `run_step` if its cache is unusable,
-        # never the engine.
-        preflight_backends([cfg for cfg in config.steps if plan.for_step(cfg.step).may_submit()])
+        # never the engine — and its own `prepare` repeats the preflight checks anyway.
+        submittable = [cfg for cfg in config.steps if plan.for_step(cfg.step).may_submit()]
+        preflight_backends(submittable)
+        preflight_steps(submittable, charge=config.charge, multiplicity=config.multiplicity)
+        # The one config-decidable rule the walk lacked: a key no reader declares changes
+        # nothing, and `chemrefine validate` was the only place that said so — which a
+        # `resume` after an edit, the GUI's Run button and an agent's `start_run` never
+        # pass through. A warning rather than a refusal, for the report's own reason: the
+        # lenient script-engine read is the documented design, and on an ORCA or Q-Chem
+        # step the NMS knobs share this dict with the engine's.
+        for step_cfg in submittable:
+            if (silent := undeclared_options(step_cfg)) is not None:
+                logger.warning("step %d: %s", step_cfg.step, silent)
         slurm.dispatch_locally(config.dispatch)
         state = bootstrap(config)
         logger.info("bootstrapped pipeline with %d seed structure(s)", len(state.structures))
@@ -415,11 +670,24 @@ def run(config: Config, plan: RunPlan | None = None) -> list[StepOutcome]:
                 step_cfg.engine,
             )
             mode = plan.for_step(step_cfg.step)
-            outcome = (
-                run_step(config, step_cfg, state, mode=mode)
-                if mode.runs_through_run_step()
-                else rebuild_cache_step(config, step_cfg, state)
-            )
+            if plan.best_effort(step_cfg.step):
+                # Past a scoped rebuild's target the walk is reporting, not computing:
+                # serve what the current configuration can vouch for — a cache *load*,
+                # never a re-parse and never a submission — and let the first cache it
+                # cannot serve end the run instead of failing it. The exception's own
+                # message names the cheapest command that repairs the tail (see
+                # `run_step`'s diagnosis), so it is logged verbatim.
+                try:
+                    outcome = run_step(config, step_cfg, state, mode=mode)
+                except NoUsableCacheError as e:
+                    logger.info("stopping the report at step %d: %s", step_cfg.step, e)
+                    break
+            else:
+                outcome = (
+                    run_step(config, step_cfg, state, mode=mode)
+                    if mode.runs_through_run_step()
+                    else rebuild_cache_step(config, step_cfg, state)
+                )
             outcomes.append(outcome)
             # Summarise before halting, so a run that stops still reports the work it
             # actually completed — otherwise the halted step's cached successes are
@@ -435,10 +703,6 @@ def run(config: Config, plan: RunPlan | None = None) -> list[StepOutcome]:
                     "step %d produced no survivors; stopping pipeline early",
                     step_cfg.step,
                 )
-                break
-            # A scoped plan can end before the last step — see `RunPlan.stop_after`.
-            if not plan.covers(step_cfg.step):
-                logger.info("step %d is the last this action covers; stopping here", step_cfg.step)
                 break
         logger.info("pipeline finished after %d step(s)", len(outcomes))
         return outcomes

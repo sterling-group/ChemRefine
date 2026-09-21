@@ -1,6 +1,6 @@
 """PySCF engine — importing this module registers ``pyscf`` and ``pyscf-extopt``.
 
-Two engines ship in this package:
+The engines in this package:
 
 * ``PyscfEngine`` (registered as ``"pyscf"``) — template-driven direct
   PySCF. The user supplies ``step{N}.py``; ChemRefine renders one per

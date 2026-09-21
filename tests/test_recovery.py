@@ -7,9 +7,9 @@ from pathlib import Path
 import pytest
 from ase import Atoms
 
-from chemrefine import io
+from chemrefine import cache, io
 from chemrefine.config import Config, StepConfig
-from chemrefine.errors import ChemRefineError
+from chemrefine.errors import ChemRefineError, ConfigError
 from chemrefine.recovery import Action, execute, invalidate_step, resolve_target
 from chemrefine.state import FailureKind
 
@@ -60,8 +60,9 @@ def test_resolve_target_by_numeric_string(tmp_path: Path):
 
 
 def test_resolve_target_missing_raises(tmp_path: Path):
+    """A target no step matches is a ``ConfigError`` (exit 2), as the agent tools answer it."""
     cfg = _two_step_config(tmp_path)
-    with pytest.raises(ChemRefineError):
+    with pytest.raises(ConfigError, match="no step matches 'missing'"):
         resolve_target(cfg, "missing")
 
 
@@ -71,50 +72,119 @@ def test_resolve_target_missing_raises(tmp_path: Path):
 
 
 def test_execute_run_invalidates_and_re_executes(tmp_path: Path):
+    """``run`` recomputes both steps: every cache document and output is rewritten.
+
+    Asserted by identity (:func:`_stamp`), not existence — a file that exists before and
+    after says nothing about whether anything ran in between.
+    """
     cfg = _two_step_config(tmp_path)
-    # First run populates caches.
     execute(cfg, Action.RESUME)
-    step1_dir = (cfg.output_dir / "step1_screen").resolve()
-    assert (step1_dir / "_cache" / "step.json").is_file()
-    # RUN should invalidate and re-execute.
+    outputs = cfg.output_dir.resolve()
+    watched = [
+        outputs / "step1_screen" / "_cache" / "step.json",
+        outputs / "step2_refine" / "_cache" / "step.json",
+        outputs / "step1_screen" / "0" / "step1_0.out",
+        outputs / "step2_refine" / "0" / "step2_0.out",
+    ]
+    before = [_stamp(p) for p in watched]
+
     assert execute(cfg, Action.RUN) == 0
-    # Cache should exist again after re-execution.
-    assert (step1_dir / "_cache" / "step.json").is_file()
+
+    after = [_stamp(p) for p in watched]
+    assert all(now != then for now, then in zip(after, before, strict=True))
+
+
+def _stamp(path: Path) -> tuple[int, int]:
+    """A file's identity for "was it rewritten": inode and mtime.
+
+    The cache's atomic writes replace the inode, so a re-saved document differs on the first
+    field however fine the clock; the fake engine rewrites an output in place, which the
+    second field catches.
+    """
+    st = path.stat()
+    return st.st_ino, st.st_mtime_ns
 
 
 def test_execute_resume_keeps_caches(tmp_path: Path):
+    """A second resume serves both steps from their caches: nothing is re-run or re-saved.
+
+    ``== 0`` alone was true of a resume that recomputed everything; the cache documents
+    and the outputs are what a cache hit leaves untouched.
+    """
     cfg = _two_step_config(tmp_path)
     execute(cfg, Action.RESUME)
-    # Caches now exist; calling resume again should hit them.
+    outputs = cfg.output_dir.resolve()
+    watched = [
+        outputs / "step1_screen" / "_cache" / "step.json",
+        outputs / "step2_refine" / "_cache" / "step.json",
+        outputs / "step1_screen" / "0" / "step1_0.out",
+        outputs / "step2_refine" / "0" / "step2_0.out",
+    ]
+    before = [_stamp(p) for p in watched]
+
     assert execute(cfg, Action.RESUME) == 0
+
+    assert [_stamp(p) for p in watched] == before
+    assert not (outputs / "step1_screen" / "0" / "attempt1").exists()
 
 
 def test_execute_rebuild_cache_invalidates_only_target(tmp_path: Path):
+    """``rebuild-cache 2`` rewrites step 2's document from its outputs and touches nothing else.
+
+    Step 1's document and both steps' outputs keep their identity (:func:`_stamp`): the
+    rebuild re-parses what is on disk and submits nothing. Existence checks passed for a
+    rebuild of every step, or of none.
+    """
     cfg = _two_step_config(tmp_path)
     execute(cfg, Action.RESUME)
-    step1_cache = (cfg.output_dir / "step1_screen").resolve() / "_cache" / "step.json"
-    step2_cache = (cfg.output_dir / "step2_refine").resolve() / "_cache" / "step.json"
-    # Both caches present.
-    assert step1_cache.is_file()
-    assert step2_cache.is_file()
+    outputs = cfg.output_dir.resolve()
+    step2_cache = outputs / "step2_refine" / "_cache" / "step.json"
+    untouched = [
+        outputs / "step1_screen" / "_cache" / "step.json",
+        outputs / "step1_screen" / "0" / "step1_0.out",
+        outputs / "step2_refine" / "0" / "step2_0.out",
+    ]
+    before = [_stamp(p) for p in untouched]
+    rebuilt_before = _stamp(step2_cache)
 
-    # Invalidate only step 2.
-    execute(cfg, Action.REBUILD_CACHE, target=2)
-    assert step1_cache.is_file()
-    assert step2_cache.is_file()  # re-created by the resume run
+    assert execute(cfg, Action.REBUILD_CACHE, target=2) == 0
+
+    assert [_stamp(p) for p in untouched] == before
+    assert _stamp(step2_cache) != rebuilt_before
 
 
 def test_execute_rerun_target_by_name(tmp_path: Path):
+    """``rerun screen`` redoes step 1 — outputs archived and rewritten — and leaves step 2 alone."""
     cfg = _two_step_config(tmp_path)
     execute(cfg, Action.RESUME)
-    # rerun by name should also be accepted.
+    outputs = cfg.output_dir.resolve()
+    step1_out = outputs / "step1_screen" / "0" / "step1_0.out"
+    step2_out = outputs / "step2_refine" / "0" / "step2_0.out"
+    before = (_stamp(step1_out), _stamp(step2_out))
+
     assert execute(cfg, Action.RERUN, target="screen") == 0
+
+    assert (outputs / "step1_screen" / "0" / "attempt1" / "step1_0.out").is_file()
+    assert _stamp(step1_out) != before[0]  # recomputed
+    assert _stamp(step2_out) == before[1]  # not the target, and its parents did not move
+    assert not (outputs / "step2_refine" / "0" / "attempt1").exists()
 
 
 def test_execute_rebuild_cache_no_target_uses_last_step(tmp_path: Path):
+    """With no target, ``rebuild-cache`` re-parses the last step and re-saves only its cache."""
     cfg = _two_step_config(tmp_path)
     execute(cfg, Action.RESUME)
+    outputs = cfg.output_dir.resolve()
+    step1_doc = outputs / "step1_screen" / "_cache" / "step.json"
+    step2_doc = outputs / "step2_refine" / "_cache" / "step.json"
+    step2_out = outputs / "step2_refine" / "0" / "step2_0.out"
+    before = (_stamp(step1_doc), _stamp(step2_doc), _stamp(step2_out))
+
     assert execute(cfg, Action.REBUILD_CACHE) == 0
+
+    assert _stamp(step1_doc) == before[0]
+    assert _stamp(step2_doc) != before[1]  # re-parsed and re-saved
+    assert _stamp(step2_out) == before[2]  # from the outputs on disk; nothing re-run
 
 
 def test_invalidate_step_removes_cache(tmp_path: Path):
@@ -177,7 +247,7 @@ def _register_flaky():
             seeds = {s.id: s for s in ctx.prev_state.structures}
             out = []
             for _inp, o, sid in inputs.files:
-                energy = float(o.read_text().split("FINAL ENERGY:")[1])
+                energy = float(o.read_text(encoding="utf-8").split("FINAL ENERGY:")[1])
                 seed = seeds[sid]
                 out.append(
                     Structure(
@@ -245,8 +315,16 @@ def test_rerun_redoes_whole_step(tmp_path: Path):
         ENGINES.pop("flaky", None)
 
 
-def test_rerun_errors_reattempts_only_the_target_step_failures(tmp_path: Path):
-    """`rerun-errors N` re-attempts only step N's pending (stop) failures."""
+def test_rerun_errors_reattempts_only_the_target_step_failures(tmp_path: Path, caplog):
+    """`rerun-errors N` re-attempts only step N's pending (stop) failures — and says so.
+
+    The announcement is asserted alongside the behaviour: of the three log arms this
+    command routes through, this one's text was checked nowhere (its sibling below pins
+    the skip arm), so an inverted branch could announce "re-attempting 0 failed job(s)"
+    with everything else green.
+    """
+    import logging
+
     from chemrefine import cache
     from chemrefine.engines.api import ENGINES
     from chemrefine.errors import ChemRefineError
@@ -262,9 +340,11 @@ def test_rerun_errors_reattempts_only_the_target_step_failures(tmp_path: Path):
         with pytest.raises(ChemRefineError):
             execute(cfg, Action.RESUME)  # stop halts, "1" pending
         eng.fail_ids, eng.submitted = set(), []
-        assert execute(cfg, Action.RERUN_ERRORS, target=1) == 0
+        with caplog.at_level(logging.INFO, logger="chemrefine.recovery"):
+            assert execute(cfg, Action.RERUN_ERRORS, target=1) == 0
         assert eng.submitted == ["1"]  # only the failed structure
         assert cache.load_failure_records(step_dir) == []
+        assert "re-attempting 1 failed job(s) in step1_s" in caplog.text
     finally:
         eng.fail_ids, eng.submitted = set(), []
         ENGINES.pop("flaky", None)
@@ -331,8 +411,9 @@ def _register_fake_nms():
     """A two-round NMS fake driven through the engine hook (``nms_input_info``) + the
     frequency values its ``parse`` attaches to each structure; the generic coordinator does
     the displacement. ``resolved`` controls which parents' displaced children resolve;
-    ``fail_round1`` produce no round-1 output; ``submitted`` logs round-1 (parent) submissions
-    and ``nms_seen`` the parents that reached the NMS stage."""
+    ``fail_round1`` produce no round-1 output; ``crash_round1`` produce one that says the
+    program died; ``submitted`` logs round-1 (parent) submissions and ``nms_seen`` the
+    parents that reached the NMS stage."""
     from typing import ClassVar
 
     import numpy as np
@@ -346,8 +427,11 @@ def _register_fake_nms():
     class _FakeNms2:
         name = "fake-nms2"
         resolved: ClassVar[set[str]] = set()
+        clean: ClassVar[set[str]] = set()
         fail_round1: ClassVar[set[str]] = set()
+        crash_round1: ClassVar[set[str]] = set()
         submitted: ClassVar[list[str]] = []
+        children_submitted: ClassVar[list[str]] = []
         nms_seen: ClassVar[list[str]] = []
 
         def prepare(self, ctx):
@@ -363,12 +447,22 @@ def _register_fake_nms():
             return StepInputs(files=tuple(files))
 
         def submit(self, inputs, ctx):
+            # Outputs are content-faithful: markers say what a parse will find, so
+            # promotion (which copies a child's file to the parent's canonical path)
+            # is visible to `parse` exactly as a real engine's outputs make it.
             for _inp, out, sid in inputs.files:
                 if "_m" not in sid:  # a round-1 (parent) submission, not a displaced child
                     _FakeNms2.submitted.append(sid)
+                    marker = "CLEAN\n" if sid in _FakeNms2.clean else ""
+                    if sid in _FakeNms2.crash_round1:
+                        marker += "CRASHED\n"
+                else:
+                    _FakeNms2.children_submitted.append(sid)
+                    parent = sid.split("_m")[0]
+                    marker = "RESOLVED\n" if parent in _FakeNms2.resolved else ""
                 if sid not in _FakeNms2.fail_round1:
                     out.parent.mkdir(parents=True, exist_ok=True)
-                    out.write_text("E -1.0\n", encoding="utf-8")
+                    out.write_text(f"E -1.0\n{marker}", encoding="utf-8")
             return JobBatch(jobs={})
 
         def parse(self, inputs, ctx):
@@ -376,22 +470,29 @@ def _register_fake_nms():
             out = []
             for _inp, _o, sid in inputs.files:
                 seed = seeds.get(sid)
-                # Frequency values ride on the parsed structure (one pass); NMS reads them.
-                if "_m" in sid:  # a displaced child: resolved iff its parent is
-                    parent = sid.split("_m")[0]
-                    imaginary = {} if parent in _FakeNms2.resolved else {3: -9.0}
+                text = _o.read_text(encoding="utf-8") if _o.is_file() else ""
+                # Frequency values ride on the parsed structure (one pass); NMS reads
+                # them — off the file's *content*, so a promoted winner at the canonical
+                # path reads as the resolved structure it is.
+                if "_m" in sid:  # a displaced child
+                    imaginary = {} if "RESOLVED" in text else {3: -9.0}
                     modes = None
                 else:  # a round-1 parent reaching NMS
                     _FakeNms2.nms_seen.append(sid)
-                    modes = np.zeros((1, 3, 6))
+                    # A real parse always carries the full tensor — trivial modes, the
+                    # (possibly) imaginary one, and real vibrations `random` can draw —
+                    # and only the imaginary set depends on what the output says.
+                    modes = np.zeros((1, 3, 8))
                     modes[0, 0, 5] = 0.1
-                    imaginary = {5: -42.0}
+                    modes[0, 0, 6] = 0.2
+                    modes[0, 0, 7] = 0.3
+                    imaginary = {} if ("CLEAN" in text or "RESOLVED" in text) else {5: -42.0}
                 out.append(
                     Structure(
                         id=sid,
                         atoms=seed.atoms if seed else Atoms("H"),
                         energy_hartree=-1.0,
-                        terminated_normally=True,
+                        terminated_normally="CRASHED" not in text,
                         converged=True,
                         imaginary_freqs=imaginary,
                         normal_modes=modes,
@@ -410,6 +511,182 @@ def _register_fake_nms():
             )
 
     return _FakeNms2
+
+
+def _plain_freq_step() -> StepConfig:
+    """The same step as :func:`_nms_step` before anyone turns ``nms: true`` on."""
+    return StepConfig(step=1, name="s", engine="fake-nms2", operation="freq")
+
+
+def test_turning_nms_on_computes_only_the_displacement_children(tmp_path: Path):
+    """The flip story: a finished non-NMS run + `nms: true` + resume = children, nothing else.
+
+    The nms flag and its options live in the resolution key, so every round-1 row still
+    matches — the outputs on disk are provably this configuration's round 1 — and
+    resolution runs on top: the clean parent passes through byte-identical, the
+    imaginary parent fans out displacement children, and a stale `attemptK/` planted
+    from some other history is ignored in favour of a fresh attempt.
+    """
+    import json
+
+    from chemrefine import cache
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_fake_nms()
+    try:
+        eng.clean = {"0"}
+        eng.resolved = {"1"}
+        step_dir = (tmp_path / "outputs" / "step1_s").resolve()
+        execute(_seeded_config(tmp_path, [_plain_freq_step()]), Action.RESUME)
+        clean_out = step_dir / "0" / "step1_0.out"
+        before = clean_out.read_bytes()
+
+        # Mixed history: a stale resolution label that must not be worn.
+        planted = step_dir / "1" / "attempt1"
+        planted.mkdir(parents=True)
+        (planted / "resolution.json").write_text(
+            json.dumps({"resolved_from": "bogus"}), encoding="utf-8"
+        )
+
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        execute(_seeded_config(tmp_path, [_nms_step(1.0)]), Action.RESUME)
+
+        assert eng.submitted == [], "round 1 must not be resubmitted"
+        assert {c.split("_m")[0] for c in eng.children_submitted} == {"1"}
+        assert clean_out.read_bytes() == before, "the clean parent's output is untouched"
+        cached = cache.load(step_dir)
+        by_id = {s.id: s for s in cached.results.structures}
+        assert set(by_id) == {"0", "1"}
+        assert by_id["0"].resolved_from is None, "no borrowed provenance on a passthrough"
+        assert by_id["1"].resolved_from is not None and by_id["1"].resolved_from != "bogus"
+        assert cache.load_failure_records(step_dir) == []
+    finally:
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        ENGINES.pop("fake-nms2", None)
+
+
+def test_the_flip_serves_downstream_rows_whose_parent_did_not_change(tmp_path: Path):
+    """After the flip, a follow-up step recomputes only the resolved parent's row.
+
+    The clean parent comes out of resolution bit-identical, so its downstream row key
+    still matches and its finished output is adopted; the resolved parent carries the
+    promoted child's geometry, so exactly its row recomputes.
+    """
+    from chemrefine import cache
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_fake_nms()
+    try:
+        eng.clean = {"0"}
+        eng.resolved = {"1"}
+        follow = StepConfig(step=2, name="refine", engine="fake", operation="opt_sp")
+        steps = [_plain_freq_step(), follow]
+        execute(_seeded_config(tmp_path, steps), Action.RESUME)
+        step2_dir = (tmp_path / "outputs" / "step2_refine").resolve()
+
+        execute(_seeded_config(tmp_path, [_nms_step(1.0), follow]), Action.RESUME)
+
+        assert (step2_dir / "1" / "attempt1").is_dir(), "the changed row was archived and re-run"
+        assert not (step2_dir / "0" / "attempt1").exists(), "the unchanged row was adopted"
+        assert {s.id for s in cache.load(step2_dir).results.structures} == {"0", "1"}
+    finally:
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        ENGINES.pop("fake-nms2", None)
+
+
+def test_an_interrupted_nms_step_resumes_by_adopting_round_1(tmp_path: Path):
+    """A driver killed after resolution but before the cache write costs a re-read, not a re-run.
+
+    This deliberately replaces the old doctrine ("an interrupted NMS step falls back to
+    the full re-run"): the rows prove round 1, the criterion matches, so the promoted
+    winners pass through with their provenance intact and nothing submits at all.
+    """
+    from chemrefine import cache
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_fake_nms()
+    try:
+        eng.clean = {"0"}
+        eng.resolved = {"1"}
+        step_dir = (tmp_path / "outputs" / "step1_s").resolve()
+        execute(_seeded_config(tmp_path, [_nms_step(1.0)]), Action.RESUME)
+        resolved_from = {s.id: s.resolved_from for s in cache.load(step_dir).results.structures}
+        cache.invalidate(step_dir)  # step.json is written last — this is the interruption
+
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        execute(_seeded_config(tmp_path, [_nms_step(1.0)]), Action.RESUME)
+
+        assert eng.submitted == [] and eng.children_submitted == []
+        survivors = {s.id: s for s in cache.load(step_dir).results.structures}
+        assert set(survivors) == {"0", "1"}
+        assert survivors["1"].resolved_from == resolved_from["1"], "trusted provenance survives"
+    finally:
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        ENGINES.pop("fake-nms2", None)
+
+
+def test_a_criterion_change_re_resolves_without_resubmitting_round_1(tmp_path: Path):
+    """target: minimum → ts re-runs the *resolution*, and only that.
+
+    The rows are untouched by the criterion, so round 1 adopts; the stale resolutions
+    are not trusted (their labels were written for the old criterion); and what cannot
+    reach the new target honestly ledgers as unresolved — here both parents, whose
+    adopted outputs carry no imaginary mode to displace along.
+    """
+    from chemrefine import cache
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_fake_nms()
+    try:
+        eng.clean = {"0"}
+        eng.resolved = {"1"}
+        step_dir = (tmp_path / "outputs" / "step1_s").resolve()
+        execute(_seeded_config(tmp_path, [_nms_step(1.0)]), Action.RESUME)
+
+        eng.resolved = set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        ts_step = _nms_step(1.0)
+        ts_step = ts_step.model_copy(
+            update={"options": {"target": "ts", "displacement_value": 1.0}}
+        )
+        execute(_seeded_config(tmp_path, [ts_step]), Action.RESUME)
+
+        assert eng.submitted == [], "round 1 must not be resubmitted"
+        records = cache.load_failure_records(step_dir)
+        assert {(r.structure_id, r.kind) for r in records} == {
+            ("0", FailureKind.UNRESOLVED_NMS),
+            ("1", FailureKind.UNRESOLVED_NMS),
+        }
+    finally:
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        ENGINES.pop("fake-nms2", None)
+
+
+def test_a_random_target_flip_fans_out_every_parent(tmp_path: Path):
+    """`random` is exploration, not cleanup — the flip fans children for clean parents too."""
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_fake_nms()
+    try:
+        eng.clean = {"0"}
+        execute(_seeded_config(tmp_path, [_plain_freq_step()]), Action.RESUME)
+
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        random_step = _nms_step(1.0).model_copy(
+            update={"options": {"target": "random", "displacement_value": 1.0}}
+        )
+        execute(_seeded_config(tmp_path, [random_step]), Action.RESUME)
+
+        assert eng.submitted == []
+        assert {c.split("_m")[0] for c in eng.children_submitted} == {"0", "1"}
+    finally:
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        ENGINES.pop("fake-nms2", None)
 
 
 def _nms_step(displacement: float, on_failure: str = "skip") -> StepConfig:
@@ -443,20 +720,30 @@ def test_resume_after_tuning_reattempts_only_unresolved(tmp_path: Path):
         assert {s.id for s in cache.load(step_dir).results.structures} == {"0"}
 
         eng.resolved = {"0", "1"}  # new distance resolves "1"
-        eng.submitted, eng.nms_seen = [], []
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
         execute(_seeded_config(tmp_path, [_nms_step(2.0)]), Action.RESUME)
         assert eng.submitted == []  # round-1 freq reused, not resubmitted
-        assert eng.nms_seen == ["1"]  # only the unresolved parent re-attempted
+        # The incremental route re-parses every adopted row (a read, not a job) — the
+        # promoted winner at "0"'s canonical path passes straight through — and fans
+        # out children for exactly the parent the previous run left unresolved.
+        assert eng.nms_seen == ["0", "1"]
+        assert {c.split("_m")[0] for c in eng.children_submitted} == {"1"}
         assert cache.load_failure_records(step_dir) == []
         assert {s.id for s in cache.load(step_dir).results.structures} == {"0", "1"}
     finally:
-        eng.resolved, eng.fail_round1, eng.submitted, eng.nms_seen = set(), set(), [], []
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
         ENGINES.pop("fake-nms2", None)
 
 
 def test_reattempt_resubmits_missing_round1(tmp_path: Path):
     """A parent whose round-1 output is missing gets its round-1 resubmitted on
-    the next resume (NMS-unresolved parents do not)."""
+    the next resume (NMS-unresolved parents do not).
+
+    Resubmitted the way every re-run is: the dead attempt's files are sealed into
+    ``attempt1/`` and the input is regenerated, so the re-run's own output is the only
+    one at the canonical path.
+    """
     from chemrefine import cache
     from chemrefine.engines.api import ENGINES
     from chemrefine.errors import ChemRefineError
@@ -477,10 +764,94 @@ def test_reattempt_resubmits_missing_round1(tmp_path: Path):
         eng.submitted = []
         execute(cfg, Action.RESUME)  # same config → full-valid + ledger → reattempt_nms
         assert eng.submitted == ["1"]  # round-1 resubmitted only for the missing one
+        assert (step_dir / "1" / "attempt1" / "step1_1.inp").is_file(), "dead attempt sealed"
         assert cache.load_failure_records(step_dir) == []
         assert {s.id for s in cache.load(step_dir).results.structures} == {"0", "1"}
     finally:
-        eng.resolved, eng.fail_round1, eng.submitted, eng.nms_seen = set(), set(), [], []
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        ENGINES.pop("fake-nms2", None)
+
+
+def test_reattempt_resubmits_a_crashed_round1_from_a_fresh_input(tmp_path: Path):
+    """A parent whose round-1 output says the program died is archived and re-run.
+
+    The rule is :func:`chemrefine.lifecycle.resubmit_unusable`'s — the one the non-NMS
+    resume already applies: no output, an unreadable one and one the engine marks as not
+    terminated are all re-run from a regenerated input, and only a *convergence* failure
+    is retried from its best geometry instead. The re-attempt used to resubmit the
+    ``MISSING_OUTPUT`` ids alone and re-parse the crashed parent's own file, so
+    ``rerun-errors`` on an NMS step failed the same structure the same way on every call
+    — while the docs' exit-6 row named that command as the repair.
+
+    The previous output is sealed into ``attempt1/`` before the re-run, so a re-run that
+    dies before writing cannot re-read it as its own.
+    """
+    from chemrefine import cache
+    from chemrefine.engines.api import ENGINES
+    from chemrefine.errors import ChemRefineError
+
+    eng = _register_fake_nms()
+    try:
+        eng.resolved = {"0", "1"}
+        eng.crash_round1 = {"1"}  # "1"'s round-1 output says the program died
+        cfg = _seeded_config(tmp_path, [_nms_step(1.0, on_failure="stop")])
+        step_dir = (cfg.output_dir / "step1_s").resolve()
+        with pytest.raises(ChemRefineError):  # stop halts on the crashed round-1
+            execute(cfg, Action.RESUME)
+        assert [(r.structure_id, r.kind) for r in cache.load_failure_records(step_dir)] == [
+            ("1", FailureKind.NOT_TERMINATED_NORMALLY)
+        ]
+
+        eng.crash_round1 = set()  # the node is back
+        eng.submitted = []
+        execute(cfg, Action.RESUME)  # same config → full-valid + ledger → reattempt_nms
+        assert eng.submitted == ["1"]  # the crashed parent ran again, and only it
+        assert "CRASHED" in (step_dir / "1" / "attempt1" / "step1_1.out").read_text(
+            encoding="utf-8"
+        )
+        assert cache.load_failure_records(step_dir) == []
+        assert {s.id for s in cache.load(step_dir).results.structures} == {"0", "1"}
+    finally:
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.crash_round1 = set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        ENGINES.pop("fake-nms2", None)
+
+
+def test_reattempt_with_nothing_missing_submits_no_round1(tmp_path: Path):
+    """An unresolved-only ledger re-attempts NMS without resubmitting any round-1 job.
+
+    The mirror of the two tests above: ``reattempt_nms`` resubmits exactly the parents
+    whose round 1 left no usable result, and a ledger holding only ``UNRESOLVED_NMS``
+    parents has none — their round-1 frequency outputs parsed, and they are the expensive
+    artifact the reuse exists to keep.
+    """
+    from chemrefine import cache
+    from chemrefine.engines.api import ENGINES
+    from chemrefine.errors import ChemRefineError
+
+    eng = _register_fake_nms()
+    try:
+        eng.resolved = {"0"}  # "1" stays unresolved on the first run
+        cfg = _seeded_config(tmp_path, [_nms_step(1.0, on_failure="stop")])
+        step_dir = (cfg.output_dir / "step1_s").resolve()
+        with pytest.raises(ChemRefineError):  # stop halts on the unresolved parent
+            execute(cfg, Action.RESUME)
+        assert [(r.structure_id, r.kind) for r in cache.load_failure_records(step_dir)] == [
+            ("1", FailureKind.UNRESOLVED_NMS)
+        ]
+
+        eng.resolved = {"0", "1"}  # a second exploration would now resolve "1"
+        eng.submitted, eng.children_submitted = [], []
+        execute(cfg, Action.RESUME)  # same config → full-valid + ledger → reattempt_nms
+        assert eng.submitted == []  # nothing was missing, so no round-1 goes out
+        assert {c.split("_m")[0] for c in eng.children_submitted} == {"1"}
+        assert cache.load_failure_records(step_dir) == []
+        assert {s.id for s in cache.load(step_dir).results.structures} == {"0", "1"}
+    finally:
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
         ENGINES.pop("fake-nms2", None)
 
 
@@ -568,27 +939,35 @@ def _recording_engine():
     return _Recorder
 
 
+#: The recovery routing matrix — a module constant rather than an inline parametrize,
+#: because the coverage meta-gate below derives its answer from these rows. Hand-copied
+#: into that gate as a literal, deleting a row (say both RERUN ones) left the gate
+#: asserting RERUN was covered by a matrix that no longer ran it — the transcription
+#: blind spot 8bce099 closed in four sibling gates, in the one gate it missed.
+_RECOVERY_MATRIX: list[tuple[Action, int | None, list[int]]] = [
+    # run: every cache is invalidated, so both steps execute again.
+    (Action.RUN, None, [1, 2]),
+    # resume: both caches are valid and clean, so nothing re-executes.
+    (Action.RESUME, None, []),
+    # rerun N: only that step's cache is dropped; the other cache-hits. Step 2
+    # follows because step 1's survivors are unchanged, so its fingerprint holds.
+    (Action.RERUN, 1, [1]),
+    (Action.RERUN, 2, [2]),
+    # rerun-errors N: nothing is pending, so it degrades to a plain resume.
+    (Action.RERUN_ERRORS, 2, []),
+    # rebuild-cache N: re-parses from disk. No submission, by definition.
+    (Action.REBUILD_CACHE, 2, []),
+    # Both scoped actions aimed at a step that is *not* the last one. Every row above
+    # targets the final step, which is the one arrangement where "what happens after the
+    # target" cannot be observed.
+    (Action.RERUN_ERRORS, 1, []),
+    (Action.REBUILD_CACHE, 1, []),
+]
+
+
 @pytest.mark.parametrize(
     ("action", "target", "expected_submits"),
-    [
-        # run: every cache is invalidated, so both steps execute again.
-        (Action.RUN, None, [1, 2]),
-        # resume: both caches are valid and clean, so nothing re-executes.
-        (Action.RESUME, None, []),
-        # rerun N: only that step's cache is dropped; the other cache-hits. Step 2
-        # follows because step 1's survivors are unchanged, so its fingerprint holds.
-        (Action.RERUN, 1, [1]),
-        (Action.RERUN, 2, [2]),
-        # rerun-errors N: nothing is pending, so it degrades to a plain resume.
-        (Action.RERUN_ERRORS, 2, []),
-        # rebuild-cache N: re-parses from disk. No submission, by definition.
-        (Action.REBUILD_CACHE, 2, []),
-        # Both scoped actions aimed at a step that is *not* the last one. Every row above
-        # targets the final step, which is the one arrangement where "what happens after the
-        # target" cannot be observed.
-        (Action.RERUN_ERRORS, 1, []),
-        (Action.REBUILD_CACHE, 1, []),
-    ],
+    _RECOVERY_MATRIX,
     ids=[
         "run-reexecutes-everything",
         "resume-hits-every-cache",
@@ -700,14 +1079,20 @@ def test_rerun_errors_archives_what_it_replaces_and_leaves_the_rest(tmp_path: Pa
         ENGINES.pop("flaky", None)
 
 
-def test_rebuild_cache_stops_at_its_target(tmp_path: Path):
-    """``rebuild-cache N`` is about steps 1..N, so it must not reach past N.
+def test_rebuild_cache_stops_the_tail_where_it_cannot_serve_and_names_the_repair(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    """Past its target, ``rebuild-cache N`` re-reports from caches — submitting nothing —
+    and stops quietly at the first cache it cannot serve, naming the cheapest repair.
 
-    Neither mode available to a later step is right: ``CACHE_ONLY`` raises for a cache a step
-    that never ran cannot have, and resuming would submit — the one thing this command
-    promises not to do, and what would put the backend requirement back on a command whose
-    purpose is to run where the backend is not installed.
+    Step 2's cache document is deleted while its manifest (whose stamped fingerprint still
+    matches this configuration) survives: exactly the state ``rebuild-cache 2`` exists to
+    repair, so that is the command the stop must name. A plain ``resume`` would also work
+    here, but for an NMS or artifact step it would *recompute* — the hint exists to steer
+    away from that.
     """
+    import logging
+
     from chemrefine.engines.api import ENGINES
 
     eng = _recording_engine()
@@ -723,10 +1108,15 @@ def test_rebuild_cache_stops_at_its_target(tmp_path: Path):
         eng.submitted.clear()
         (cfg.output_dir / "step2_two" / "_cache" / "step.json").unlink()
 
-        assert execute(cfg, Action.REBUILD_CACHE, target=1) == 0
-        assert eng.submitted == [], "a rebuild submits nothing"
+        with caplog.at_level(logging.INFO):
+            assert execute(cfg, Action.REBUILD_CACHE, target=1) == 0
+        assert eng.submitted == [], "a rebuild submits nothing, target and tail alike"
         assert not (cfg.output_dir / "step2_two" / "_cache" / "step.json").exists(), (
-            "step 2 is past the target, so the run never reached it"
+            "the tail walk reads caches; it must not rebuild one for a step it is not targeting"
+        )
+        assert "rebuild-cache 2" in caplog.text, (
+            "outputs on disk still match this configuration, so the stop names the "
+            "command that re-adopts them without recomputing"
         )
     finally:
         eng.submitted.clear()
@@ -739,19 +1129,33 @@ def test_rebuild_cache_stops_at_its_target(tmp_path: Path):
 _COVERED_ELSEWHERE = {Action.REBUILD_NMS: "test_rebuild_nms_*"}
 
 
+def test_every_action_is_described_and_handled():
+    """The enum is the roster; its two companion tables cannot fall behind it.
+
+    A member without a handler was "unknown action" at dispatch; one without a label and
+    blurb would reach a page as ``undefined``. Both tables are held to the enum here, and
+    the served record carries the four fields the page renders and confirms from.
+    """
+    from chemrefine import recovery
+
+    assert set(recovery._HANDLERS) == set(Action)
+    assert set(recovery._DESCRIPTIONS) == set(Action)
+    served = recovery.describe_actions()
+    assert [record["name"] for record in served] == [action.value for action in Action]
+    assert all(set(record) == {"name", "label", "blurb", "takes_target"} for record in served)
+    assert len({record["blurb"] for record in served}) == len(served)
+
+
 def test_recovery_matrix_covers_every_action():
-    """A new Action must be given a row above, or named here with the test that covers it.
+    """A new Action must be given a row in the matrix, or named here with its own test.
 
     Either way it is covered deliberately rather than left to inherit another action's
-    routing by accident.
+    routing by accident. ``covered`` is *derived* from the matrix rather than restated:
+    the hand-written literal it replaces stayed true after deleting an action's rows, so
+    the gate certified coverage the matrix no longer provided — the transcription blind
+    spot 8bce099 closed in its four siblings.
     """
-    covered = {
-        Action.RUN,
-        Action.RESUME,
-        Action.RERUN,
-        Action.RERUN_ERRORS,
-        Action.REBUILD_CACHE,
-    }
+    covered = {row[0] for row in _RECOVERY_MATRIX}
     assert covered | set(_COVERED_ELSEWHERE) == set(Action)
     assert not covered & set(_COVERED_ELSEWHERE), "an action is covered in two places"
 
@@ -802,11 +1206,14 @@ def test_rebuild_nms_rebuilds_the_nms_step_without_submitting(tmp_path: Path, ta
         execute(cfg, Action.RESUME)
         document = (cfg.output_dir / "step1_s" / "_cache" / "step.json").resolve()
         before = document.stat().st_mtime_ns
-        eng.submitted, eng.nms_seen = [], []
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
 
         assert execute(cfg, Action.REBUILD_NMS, target=target) == 0
 
-        assert eng.submitted == [], "a rebuild submits nothing"
+        # Both spies, as the resume test asserts them: `submitted` records only round-1
+        # parents, so on its own it would stay empty while a mutated rebuild fanned out
+        # and submitted fresh round-2 displacement children.
+        assert eng.submitted == [] and eng.children_submitted == [], "a rebuild submits nothing"
         assert document.stat().st_mtime_ns != before, "the NMS step's cache was rewritten"
         assert eng.nms_seen, "round 1 was re-parsed, which is where the frequencies come from"
     finally:
@@ -879,9 +1286,317 @@ def _coverage_cfg(tmp_path: Path, **step_over) -> Config:
 # --- recovery: rerun-errors with nothing pending ----------------------------
 
 
-def test_rerun_errors_logs_when_no_failures(tmp_path: Path, monkeypatch):
+def test_rerun_errors_logs_when_no_failures(tmp_path: Path, monkeypatch, caplog):
+    """A clean target says "no recorded failures" — the third of the command's three arms.
+
+    Asserted, not merely reached: without the ``caplog`` this was the suite's clearest
+    coverage-only test, green under a deleted message or an inverted branch alike.
+    """
+    import logging
+
     from chemrefine import recovery
 
     cfg = _coverage_cfg(tmp_path)
     monkeypatch.setattr(recovery.pipeline, "run", lambda *a, **k: [])
-    recovery._action_rerun_errors(cfg, None)  # last step, no ledger → "no failures" branch
+    with caplog.at_level(logging.INFO, logger="chemrefine.recovery"):
+        recovery._action_rerun_errors(cfg, None)  # last step, no ledger → "no failures" branch
+    assert "has no recorded failures to rerun" in caplog.text
+    assert "re-attempting" not in caplog.text
+
+
+# --- recovery: the job-lease fence fires before any handler mutates ----------
+
+
+def test_execute_fences_live_jobs_before_the_handler_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """`execute` probes recorded job leases before its handler touches the tree.
+
+    The ordering is the point: `run`'s handler discards caches and manifests ahead of
+    `pipeline.run`, so a fence that only ran inside it would refuse a command that had
+    already destroyed state on the way to being refused — and would do so while a dead
+    driver's jobs were still writing into the tree. A spy in the handler table proves
+    the refusal lands first, with the tree exactly as found.
+    """
+    import json
+    from unittest.mock import patch
+
+    from chemrefine import recovery, slurm
+    from chemrefine.errors import RunLockError
+
+    cfg = _seeded_config(tmp_path, [StepConfig(step=1, engine="fake", operation="opt_sp")])
+    ledger = slurm.lease_path(cfg.step_dir(cfg.steps[0]))
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_text(json.dumps([{"id": "424242", "host": "cluster", "pid": None}]))
+
+    reached: list[str] = []
+    monkeypatch.setitem(
+        recovery._HANDLERS, Action.RUN, lambda config, target: reached.append("handler")
+    )
+    with (
+        patch.object(slurm, "scheduler_reachable", return_value=True),
+        patch.object(slurm, "finished_jobs", return_value=set()),
+        pytest.raises(RunLockError, match="424242"),
+    ):
+        execute(cfg, Action.RUN)
+
+    assert reached == [], "the handler must not run while recorded jobs are live"
+    assert ledger.exists()
+
+
+# ---------------------------------------------------------------------------
+# The survivor order is a function of the parent order alone
+# ---------------------------------------------------------------------------
+#
+# `StepKey.of` composes the next step's fingerprint from the row keys *in order*, so the
+# order a step caches its survivors in is part of every downstream cache key. The fresh path
+# emits manifest order through `_ResultLedger`; the recovery paths appended what they
+# retried, so the same content cached under a different history keyed the tail differently
+# — and a `rebuild-cache` (manifest order) then recomputed a tail nothing had changed.
+
+
+def _register_flaky_convergence(*, streaming: bool = False):
+    """A fake engine whose ``unconverged`` ids report ``converged=False`` for their first
+    ``strikes`` submissions and converge after. Energies and geometries never depend on
+    the history, so any difference between two runs is the order alone. ``submitted``
+    counts submissions per id, which is what proves a history retried what it claims."""
+    from collections import deque
+    from typing import ClassVar
+
+    import numpy as np
+
+    from chemrefine.engines.api import register
+    from chemrefine.ids import structure_artifact_path
+    from chemrefine.state import JobBatch, StepInputs, StepResults, Structure
+
+    engine_name = "flaky-conv-stream" if streaming else "flaky-conv"
+
+    class _FlakyConvergence:
+        name = engine_name
+        unconverged: ClassVar[set[str]] = set()
+        strikes: ClassVar[int] = 1
+        submitted: ClassVar[dict[str, int]] = {}
+
+        def prepare(self, ctx):
+            ctx.step_dir.mkdir(parents=True, exist_ok=True)
+            files = []
+            for s in ctx.prev_state.structures:
+                step = ctx.step_cfg.step
+                inp = structure_artifact_path(ctx.step_dir, step, s.id, "inp")
+                out = structure_artifact_path(ctx.step_dir, step, s.id, "out")
+                inp.parent.mkdir(parents=True, exist_ok=True)
+                inp.write_text("in\n", encoding="utf-8")
+                files.append((inp, out, s.id))
+            return StepInputs(files=tuple(files))
+
+        def submit(self, inputs, ctx):
+            cls = type(self)  # the registered class's own knobs, subclass included
+            for _inp, out, sid in inputs.files:
+                cls.submitted[sid] = cls.submitted.get(sid, 0) + 1
+                flaky = sid in cls.unconverged and cls.submitted[sid] <= cls.strikes
+                out.parent.mkdir(parents=True, exist_ok=True)
+                verdict = "no" if flaky else "yes"
+                out.write_text(
+                    f"FINAL ENERGY: {-1.0 - int(sid) * 1e-3}\nCONVERGED: {verdict}\n",
+                    encoding="utf-8",
+                )
+            return JobBatch(jobs={})
+
+        def parse(self, inputs, ctx):
+            seeds = ctx.prev_state.by_id
+            out = []
+            for _inp, o, sid in inputs.files:
+                energy_line, verdict_line = o.read_text(encoding="utf-8").splitlines()
+                seed = seeds[sid]
+                out.append(
+                    Structure(
+                        id=sid,
+                        atoms=seed.atoms,
+                        parent_id=seed.parent_id,
+                        energy_hartree=float(energy_line.split(":")[1]),
+                        converged=verdict_line.endswith("yes"),
+                        terminated_normally=True,
+                        forces_ev_per_a=np.zeros((len(seed.atoms), 3)),
+                    )
+                )
+            return StepResults(structures=tuple(out))
+
+    class _Streaming(_FlakyConvergence):
+        """The same engine reporting each job as it finishes, so the queue retries it."""
+
+        def submit_streaming(self, inputs, ctx, sink):
+            pending = deque(inputs.files)
+            while pending:
+                job = pending.popleft()
+                self.submit(StepInputs(files=(job,)), ctx)
+                pending.extend(sink.on_complete(job))
+            return JobBatch(jobs={})
+
+    engine: type[_FlakyConvergence] = _Streaming if streaming else _FlakyConvergence
+    register(engine_name)(engine)  # the gate returns the class it registered
+    return engine
+
+
+def _three_seed_config(tmp_path: Path, steps: list[StepConfig]) -> Config:
+    """Three seeds, so a retried middle structure is visible as an order change."""
+    seed_dir = tmp_path / "seeds"
+    io.write_xyz([Atoms("H")] * 3, ["a", "b", "c"], step_number=0, output_dir=seed_dir)
+    return Config(
+        template_dir=tmp_path / "templates",
+        output_dir=tmp_path / "outputs",
+        input=seed_dir,
+        steps=steps,
+    )
+
+
+def _cached(cfg: Config, step_number: int) -> tuple[list[str], str]:
+    """A step's cached survivor ids, in cache order, and its fingerprint."""
+    from chemrefine import cache
+
+    cached = cache.load(cfg.step_dir(cfg.steps[step_number - 1]).resolve())
+    assert cached is not None, f"step {step_number} left no cache"
+    return [s.id for s in cached.results.structures], cached.fingerprint
+
+
+#: Every way structure "1" can come to converge, and how many times each submits it.
+_HISTORIES: dict[str, int] = {
+    "converged-first-time": 1,
+    "retried-in-stream": 2,
+    "retried-in-stream-streaming": 2,
+    "retried-on-resume": 3,
+    "retried-on-rerun-errors": 3,
+    "rebuild-cache-after-a-resume-retry": 3,
+}
+
+
+def _run_history(root: Path, history: str) -> tuple[list[str], str]:
+    """Drive a two-step pipeline through ``history``; return step 1's cached survivor ids
+    and step 2's fingerprint — the key composed from those survivors, in that order.
+
+    Step 1's own fingerprint is not returned: it is a function of step 1's config and
+    parents, never of its output, and the streaming history runs a differently named
+    engine, so it would only compare the two registrations."""
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_flaky_convergence(streaming=history == "retried-in-stream-streaming")
+    try:
+        cfg = _three_seed_config(
+            root,
+            [
+                StepConfig(step=1, name="one", engine=eng.name, on_failure="stop"),
+                StepConfig(step=2, name="two", engine="fake", operation="opt_sp"),
+            ],
+        )
+        if history == "converged-first-time":
+            execute(cfg, Action.RUN)
+        elif history.startswith("retried-in-stream"):
+            eng.unconverged = {"1"}  # the queue's own retry converges it
+            execute(cfg, Action.RUN)
+        else:
+            eng.unconverged, eng.strikes = {"1"}, 2  # the in-stream retry fails too
+            with pytest.raises(ChemRefineError):  # stop halts with "1" pending
+                execute(cfg, Action.RUN)
+            if history == "retried-on-rerun-errors":
+                execute(cfg, Action.RERUN_ERRORS, target=1)
+            else:
+                execute(cfg, Action.RESUME)
+            if history == "rebuild-cache-after-a-resume-retry":
+                execute(cfg, Action.REBUILD_CACHE, target=1)
+        assert eng.submitted["1"] == _HISTORIES[history], "the history did not happen"
+        ids, _own = _cached(cfg, 1)
+        _tail_ids, tail = _cached(cfg, 2)
+        return ids, tail
+    finally:
+        eng.unconverged, eng.strikes, eng.submitted = set(), 1, {}
+        ENGINES.pop(eng.name, None)
+
+
+@pytest.mark.parametrize("history", sorted(_HISTORIES))
+def test_the_survivor_order_does_not_depend_on_how_a_structure_converged(
+    tmp_path: Path, history: str
+):
+    """The same content, cached under any history, keys the next step the same.
+
+    The fresh path always answered in manifest order; a ``resume`` or ``rerun-errors``
+    that retried a convergence failure cached the retried structure *last*, so the
+    tail's fingerprint depended on whether "1" had converged first time — and
+    ``rebuild-cache 1``, which re-parses in manifest order, then flipped it back and
+    recomputed a tail nothing had changed. Every history must match the first-time run
+    by list, not by set, and step 2's fingerprint is the assertion that matters.
+    """
+    ids, tail = _run_history(tmp_path / "baseline", "converged-first-time")
+    assert ids == ["0", "1", "2"]
+
+    assert _run_history(tmp_path / history, history) == (ids, tail)
+
+
+def test_an_nms_reattempt_keeps_the_survivor_order_of_a_clean_run(tmp_path: Path):
+    """``reattempt_nms`` kept the still-valid survivors first and the re-run parents after.
+
+    A parent whose round 1 left no output is resubmitted on the next ``resume``; the
+    merged result must land in parent order, as the clean run's does, or the step after
+    an NMS step is re-keyed by which parent happened to fail.
+    """
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_fake_nms()
+    try:
+        eng.resolved = {"0", "1"}
+        follow = StepConfig(step=2, name="two", engine="fake", operation="opt_sp")
+
+        clean = _seeded_config(tmp_path / "clean", [_nms_step(1.0, on_failure="stop"), follow])
+        execute(clean, Action.RESUME)
+        expected = (_cached(clean, 1), _cached(clean, 2)[1])
+        assert expected[0][0] == ["0", "1"]
+
+        eng.fail_round1 = {"0"}  # "0" leaves no round-1 output; "1" resolves
+        cfg = _seeded_config(tmp_path / "reattempt", [_nms_step(1.0, on_failure="stop"), follow])
+        with pytest.raises(ChemRefineError):
+            execute(cfg, Action.RESUME)
+        eng.fail_round1 = set()
+        execute(cfg, Action.RESUME)  # re-attempts "0" only, keeps "1"
+
+        assert (_cached(cfg, 1), _cached(cfg, 2)[1]) == expected
+    finally:
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        ENGINES.pop("fake-nms2", None)
+
+
+def test_a_resume_re_runs_an_unconverged_structure_once_from_where_it_left_off(tmp_path: Path):
+    """``resubmit_unusable`` leaves a convergence failure to ``retry_unconverged``, alone.
+
+    The rule is the docstring's — "resubmitting the identical input would only fail the
+    same way" — and nothing pinned it: with the exclusion dropped, every resume resubmitted
+    an unconverged structure from the seed *and then* retried it from best, two jobs where
+    one was owed, and the first of them threw the geometry away. The counts tell the two
+    apart. ``strikes=3``: the run submits twice (round 1 and the in-stream retry) and halts;
+    one resume owes exactly one more submission — three, still unconverged, still pending —
+    where the double route reaches four and converges a resume early.
+    """
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_flaky_convergence()
+    try:
+        cfg = _three_seed_config(
+            tmp_path, [StepConfig(step=1, name="one", engine=eng.name, on_failure="stop")]
+        )
+        eng.unconverged, eng.strikes = {"1"}, 3
+        with pytest.raises(ChemRefineError):  # round 1 and the in-stream retry: two strikes
+            execute(cfg, Action.RUN)
+        assert eng.submitted["1"] == 2
+
+        with pytest.raises(ChemRefineError):  # one more, from where it left off; still pending
+            execute(cfg, Action.RESUME)
+        assert eng.submitted["1"] == 3
+        assert [r.structure_id for r in cache.load_failure_records(cfg.step_dir(cfg.steps[0]))] == [
+            "1"
+        ]
+
+        execute(cfg, Action.RESUME)  # the fourth converges
+        assert eng.submitted["1"] == 4
+        ids, _fingerprint = _cached(cfg, 1)
+        assert "1" in ids
+    finally:
+        eng.unconverged, eng.strikes, eng.submitted = set(), 1, {}
+        ENGINES.pop(eng.name, None)

@@ -4,8 +4,8 @@ Both `engines.pyscf.engine.PyscfEngine` and `engines.mlip.engine.MlipEngine`
 take a user-supplied ``step{N}.py`` template, substitute geometry
 placeholders, and append a footer that harvests well-known variable
 names from the template's locals and writes a canonical JSON output.
-This module owns that renderer so adding a third template-driven
-backend is "import the renderer + call build_input".
+This module owns that renderer so adding a template-driven backend
+is "import the renderer + call build_input".
 
 Placeholders the renderer substitutes (``string.Template`` ``$VAR``
 syntax — collision-free with Python's ``{`` / ``}`` brackets):
@@ -13,20 +13,19 @@ syntax — collision-free with Python's ``{`` / ``}`` brackets):
 * ``$XYZ_PATH`` — absolute path to the per-structure ``.xyz`` file.
 * ``$CHARGE`` — integer total charge (from ``ctx.charge``).
 * ``$MULTIPLICITY`` — integer spin multiplicity (``= 2S + 1``).
-* engine ``extra_vars`` — per-engine option placeholders so the YAML can drive
-  the template. The MLIP engine passes ``$MODEL_NAME`` / ``$TASK_NAME`` /
-  ``$DEVICE`` from ``step.options`` (see :meth:`ScriptEngine._vars_from`).
+* one ``$UPPERCASE`` placeholder per knob the engine's options model declares, and
+  ``$OPTIONS_JSON`` carrying the whole validated model — :func:`model_placeholders`, which
+  :meth:`ScriptEngine._template_vars` passes as ``extra_vars``; an engine adds a *derived*
+  name through :meth:`ScriptEngine._vars_from`. Nothing else reaches a template: a key the
+  model does not declare is not a placeholder, so a typo cannot render as one.
 
-Output contract (the appended footer harvests these names if present):
-
-==============================  ========================================
-Name (assign in template)        Footer behaviour
-==============================  ========================================
-``energy_hartree``               REQUIRED. ``NameError`` if missing.
-``gradient_hartree_per_bohr``    Optional list / numpy array.
-``positions_angstrom``           Optional list / numpy array.
-``engine_metadata``              Optional engine-specific JSON-compatible diagnostics.
-==============================  ========================================
+Output contract: **not stated here.** The names the appended footer harvests are
+:data:`chemrefine.engines._script.contract.SCRIPT_OUTPUT`, which the engine may extend
+through :attr:`~chemrefine.engines._script.engine.ScriptEngine.output_fields` — a required
+field is emitted into the result dict directly (so an omission is a ``NameError`` where it
+happened), and an optional one goes through the harvest loop, which skips what the template
+never defined. Restating the roster here as a table would be one more copy to keep in step
+with the declaration, and the copy that disagrees is the one nothing checks.
 
 The footer writes to a *basename* (relative path) so the file lands
 in ``cwd = $WORK_DIR`` (scratch). The surrounding SLURM machinery
@@ -35,20 +34,76 @@ copies it back to step_dir at exit.
 
 from __future__ import annotations
 
+import json
+from collections.abc import Sequence
 from pathlib import Path
 from string import Template
 
+from chemrefine import io
+from chemrefine.engines._options import EngineOptions
+from chemrefine.engines._script.contract import SCRIPT_OUTPUT, OutputField
 from chemrefine.errors import ConfigError
 
 
-def _build_output_footer(output_basename: str) -> str:
+def json_placeholder(payload: object) -> str:
+    """``payload`` as JSON, escaped to sit inside a double-quoted Python string literal.
+
+    The JSON text is encoded as a JSON string and its outer quotes removed, which leaves a
+    body whose escapes (``\\"``, ``\\\\``, ``\\n``, ``\\uXXXX``) are also Python's — so
+    a template writes ``json.loads("$OPTIONS_JSON")`` and gets the payload back whatever the
+    values held: quotes, backslashes, newlines and ``$`` included. ``safe_substitute`` runs
+    once over the template and never rescans what it substituted, so a ``$NAME`` inside a
+    value stays literal.
+    """
+    text = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+    return json.dumps(text)[1:-1]
+
+
+def model_placeholders(opts: EngineOptions) -> dict[str, object]:
+    """Every declared knob as ``$UPPERCASE``, plus ``$OPTIONS_JSON`` — the whole model.
+
+    Declaring a knob on the options model is declaring a placeholder: the names come from
+    the model's fields, so an engine lists nothing by hand and a knob added to the model
+    reaches the template the same day. An unset knob (``None``) renders as the empty string,
+    so a template that never uses it renders unchanged and one that does can test it —
+    ``$MODEL_PATH`` for a step that selected no checkpoint, ``$XC`` under ``method: hf``.
+    Everything else renders through ``str``: ``$DF`` is ``True``/``False``, a mapping is a
+    Python dict literal. ``$OPTIONS_JSON`` is the validated model dumped ``mode="json"`` and
+    escaped by :func:`json_placeholder`, for a template that would rather take the options
+    whole: ``options = json.loads("$OPTIONS_JSON")``.
+    """
+    fields = type(opts).model_fields
+    placeholders: dict[str, object] = {
+        name.upper(): ("" if (value := getattr(opts, name)) is None else value) for name in fields
+    }
+    placeholders["OPTIONS_JSON"] = json_placeholder(opts.model_dump(mode="json"))
+    return placeholders
+
+
+def _build_output_footer(output_basename: str, fields: Sequence[OutputField]) -> str:
     """Return the appended footer that harvests result vars and writes the JSON.
+
+    Both name lists are derived from ``fields``, so the script writes exactly what the
+    contract declares and the reader sweeps exactly what the script may write.
 
     The output filename is a basename — the script runs with
     ``cwd = $WORK_DIR`` (scratch), so a relative write goes into
     scratch and the SLURM script's ``*.json`` glob copies it back
     to step_dir.
+
+    The write names ``utf-8`` because its reader does
+    (:func:`chemrefine.engines._script.output._load_output_json`), and the two run in
+    different places: this footer executes on the compute node, while the parse happens back
+    in the driver — so a bare ``open()`` would have left the encoding to whichever locale each
+    end happened to have. Nothing miscodes today, since ``json.dump`` defaults to
+    ``ensure_ascii=True`` and every plausible locale agrees about ASCII; naming it is what
+    keeps that a property of the format rather than of the hosts.
     """
+    required = ", ".join(f'"{f.name}": float({f.name})' for f in fields if f.required)
+    # A one-element tuple needs its trailing comma, and only a one-element tuple: `("x")` is
+    # a string, and the harvest loop would then iterate its characters.
+    names = [f'"{f.name}"' for f in fields if not f.required]
+    optional = ", ".join(names) + ("," if len(names) == 1 else "")
     return (
         "\n"
         "# --- ChemRefine output footer (generated; do not edit) ---\n"
@@ -64,14 +119,12 @@ def _build_output_footer(output_basename: str) -> str:
         "        return super().default(o)\n"
         "\n"
         "\n"
-        '_chemrefine_result = {"energy_hartree": float(energy_hartree)}\n'
-        "_chemrefine_optional = (\n"
-        '    "gradient_hartree_per_bohr", "positions_angstrom", "engine_metadata"\n'
-        ")\n"
+        f"_chemrefine_result = {{{required}}}\n"
+        f"_chemrefine_optional = ({optional})\n"
         "for _chemrefine_name in _chemrefine_optional:\n"
         "    if _chemrefine_name in dir():\n"
         "        _chemrefine_result[_chemrefine_name] = locals()[_chemrefine_name]\n"
-        f'with open({output_basename!r}, "w") as _chemrefine_fh:\n'
+        f'with open({output_basename!r}, "w", encoding="utf-8") as _chemrefine_fh:\n'
         "    _chemrefine_json.dump(\n"
         "        _chemrefine_result, _chemrefine_fh, cls=_ChemRefineEncoder\n"
         "    )\n"
@@ -87,20 +140,22 @@ def build_input(
     charge: int,
     multiplicity: int,
     extra_vars: dict[str, object] | None = None,
+    fields: Sequence[OutputField] = SCRIPT_OUTPUT,
 ) -> Path:
     """Render ``template_path`` into ``output_path`` and return the rendered path.
 
-    ``$XYZ_PATH`` / ``$CHARGE`` / ``$MULTIPLICITY`` (plus any engine-supplied
-    ``extra_vars`` such as ``$MODEL_NAME`` / ``$TASK_NAME`` / ``$DEVICE``) are
+    ``$XYZ_PATH`` / ``$CHARGE`` / ``$MULTIPLICITY`` (plus the engine's ``extra_vars`` —
+    every declared knob as ``$UPPERCASE`` and ``$OPTIONS_JSON``, see
+    :func:`model_placeholders`) are
     substituted via :class:`string.Template.safe_substitute` so unknown
     ``$NAME`` references in the template are left alone — users can keep
     shell-style ``$VAR`` lookups inside their script without collision.
 
-    The appended footer reads the well-known variable names
-    ``energy_hartree`` (required), ``gradient_hartree_per_bohr``, and
-    ``positions_angstrom``, and ``engine_metadata`` out of the template's locals
-    and writes them to ``output_json_path.name`` (a *basename*, so the file lands
-    in ``$WORK_DIR`` / scratch).
+    The appended footer reads the names ``fields`` declares out of the template's locals and
+    writes them to ``output_json_path.name`` (a *basename*, so the file lands in ``$WORK_DIR``
+    / scratch). ``fields`` defaults to the shared contract; an engine passes its own to let a
+    template report more (see
+    :attr:`~chemrefine.engines._script.engine.ScriptEngine.output_fields`).
 
     Engines call this through
     :class:`chemrefine.engines._script.engine.ScriptEngine`,
@@ -110,7 +165,7 @@ def build_input(
     """
     if not template_path.is_file():
         raise ConfigError(f"template not found: {template_path}")
-    text = template_path.read_text(encoding="utf-8")
+    text = io.read_utf8(template_path, what="script template")
     substitutions: dict[str, object] = {
         "XYZ_PATH": str(xyz_path),
         "CHARGE": charge,
@@ -118,7 +173,7 @@ def build_input(
     }
     substitutions.update({k: str(v) for k, v in (extra_vars or {}).items()})
     rendered = Template(text).safe_substitute(substitutions)
-    rendered = rendered.rstrip() + _build_output_footer(output_json_path.name)
+    rendered = rendered.rstrip() + _build_output_footer(output_json_path.name, fields)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(rendered, encoding="utf-8")
     return output_path

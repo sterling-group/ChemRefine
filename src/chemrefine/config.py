@@ -35,19 +35,20 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Annotated, Any, Literal, Self, TypeAlias
+from typing import Annotated, Any, Literal, Self, TypeAlias, TypeGuard, assert_never, get_args
 
 import yaml
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    TypeAdapter,
     ValidationError,
     field_validator,
     model_validator,
 )
 
-from chemrefine import config_legacy
+from chemrefine import config_legacy, io
 from chemrefine.errors import ConfigError
 from chemrefine.quantities import DEFAULT_TEMPERATURE_K
 
@@ -78,8 +79,8 @@ class _SampleBase(BaseModel):
     by_parent: bool = False
     """Apply the filter within each parent-ID group instead of globally."""
 
-    temperature_k: float = Field(DEFAULT_TEMPERATURE_K, gt=0)
-    """Temperature used by Boltzmann-style filters (K)."""
+    temperature_k: float = Field(DEFAULT_TEMPERATURE_K, gt=0, allow_inf_nan=False)
+    """Temperature used by Boltzmann-style filters (K). Finite, like every float knob."""
 
     energy_type: Literal["electronic", "gibbs", "enthalpy", "electronic_zero_point"] = "electronic"
     """Which energy the filter sorts / selects on (default electronic).
@@ -116,7 +117,7 @@ class _WindowedSample(_SampleBase):
 
     method: str
     count: int | None = None
-    window_kcalmol: float | None = Field(None, gt=0)
+    window_kcalmol: float | None = Field(None, gt=0, allow_inf_nan=False)
 
     @model_validator(mode="after")
     def _exactly_one_selector(self) -> Self:
@@ -159,8 +160,100 @@ SampleConfig: TypeAlias = Annotated[
 
 
 # ---------------------------------------------------------------------------
+# Normal-mode-sampling knobs
+# ---------------------------------------------------------------------------
+
+
+class NmsKnobs(BaseModel):
+    """The normal-mode-sampling knobs a step's ``options`` may carry — the schema half.
+
+    Declared here rather than in :mod:`chemrefine.nms` because two readers share one
+    ``options`` mapping when ``nms: true``: the engine's own options model and the NMS
+    coordinator. The config is the one place that knows both, so it is where a step can be
+    asked for the engine's share (:meth:`StepConfig.engine_options`) — and it cannot import
+    the coordinator, which imports the engine subsystem. :class:`chemrefine.nms.NmsOptions`
+    extends this with the behaviour (how a reading splits into the cache key), so every
+    reader of the knobs still reads one model.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    target: Literal["minimum", "ts", "random"] = "minimum"
+    """``minimum`` removes all imaginary modes; ``ts`` keeps the reaction coordinate
+    and removes the rest; ``random`` displaces along random modes (exploration)."""
+
+    displacement_value: float = Field(1.0, gt=0, allow_inf_nan=False)
+    """Magnitude (Å) of the ± displacement along each selected mode.
+
+    Positive and finite, refused at config load like the other float knobs: ``0`` submits a
+    whole round-2 batch of children identical to their parents and then reports every
+    parent unresolved, and ``.nan`` / ``.inf`` put a non-number into every child geometry
+    the batch runs — the config boundary is the one place that can say so by name."""
+
+    num_random_displacements: int = Field(1, ge=1)
+    """``random`` only: how many modes to draw."""
+
+    ts_mode_index: int | None = None
+    """``ts`` only: explicit reaction-coordinate mode index. ``None`` ⇒ the
+    largest-magnitude imaginary mode."""
+
+    seed: int = Field(42, ge=0)
+    """Deterministic seed for ``random`` mode selection.
+
+    Non-negative because that is what the generator behind it takes: a negative reached
+    ``numpy.random.default_rng`` as a bare ``ValueError`` at the first fan-out — after round
+    1 had run and been paid for, and outside the exit-code contract."""
+
+    @classmethod
+    def from_raw(cls, raw: dict[str, Any] | None) -> Self:
+        """Validate the NMS subset of a ``step.options`` dict (ignoring other keys)."""
+        raw = raw or {}
+        known = {k: raw[k] for k in cls.model_fields if k in raw}
+        return cls(**known)
+
+
+# ---------------------------------------------------------------------------
 # Per-step configuration
 # ---------------------------------------------------------------------------
+
+FailurePolicy: TypeAlias = Literal["stop", "skip", "best"]
+"""What a step does with the structures that fail it — :attr:`StepConfig.on_failure`'s
+vocabulary. Its meaning is read as three questions, never as a string match:
+:meth:`StepConfig.halts_on_failure`, :meth:`StepConfig.leaves_failures_pending` and
+:func:`policy_stores_backfills`."""
+
+
+def policy_stores_backfills(policy: FailurePolicy) -> bool:
+    """Whether results finalized under ``policy`` carry backfilled failures.
+
+    The one question the cache asks of a policy. ``stop`` and ``skip`` persist the
+    successes alone, so a document written under either serves the other; ``best`` writes
+    the backfilled failures into the same document, so a change across that line would hand
+    the user the previous policy's survivor set with the fingerprint still matching. The
+    wildcard arm holds only :func:`typing.assert_never`, so a policy added to
+    :data:`FailurePolicy` fails type-checking here until it answers, where a literal
+    ``== "best"`` would have classed it with ``stop``/``skip`` and nothing would have said so.
+
+    A function rather than only a property because the cache asks it of the *stored*
+    policy too (:func:`chemrefine.step._policy_conflict`); :meth:`StepConfig.stores_backfills`
+    asks it for a config.
+    """
+    match policy:
+        case "best":
+            return True
+        case "stop" | "skip":
+            return False
+        case _:
+            assert_never(policy)
+
+
+def is_failure_policy(value: str) -> TypeGuard[FailurePolicy]:
+    """Whether ``value`` names a policy this version knows.
+
+    A cache document records the policy its results were finalized under as text, and a
+    document written by another version may name one this version cannot interpret.
+    """
+    return value in get_args(FailurePolicy)
 
 
 class StepConfig(BaseModel):
@@ -195,8 +288,13 @@ class StepConfig(BaseModel):
     charge: int | None = None
     """Per-step charge override; falls back to ``Config.charge`` when ``None``."""
 
-    multiplicity: int | None = None
-    """Per-step multiplicity override; falls back to ``Config.multiplicity`` when ``None``."""
+    multiplicity: int | None = Field(None, ge=1)
+    """Per-step multiplicity override; falls back to ``Config.multiplicity`` when ``None``.
+
+    Held to the same floor as the workflow value: a ``0`` here reached the ORCA and
+    Q-Chem input lines and PySCF's ``spin = multiplicity - 1`` while ``chemrefine
+    validate`` said OK, so every job of the step died at the program's own input parse —
+    after the steps before it had run."""
 
     options: dict[str, Any] = Field(default_factory=dict)
     """Engine-specific knobs (model name, basis, device, etc.). Engine decides what to read."""
@@ -205,9 +303,11 @@ class StepConfig(BaseModel):
     """How to filter survivors at the end of the step. ``None`` = keep all."""
 
     nms: bool = False
-    """Opt-in normal-mode sampling (only honored for an NMS-capable engine: ORCA / ExtOpt)."""
+    """Opt-in normal-mode sampling — honored only for an NMS-capable engine
+    (:class:`~chemrefine.engines.api.NmsCapableEngine`; the generated engine table's
+    ``NMS`` column says which)."""
 
-    on_failure: Literal["stop", "skip", "best"] = "stop"
+    on_failure: FailurePolicy = "stop"
     """What to do when some structures fail this step (job error / no valid output,
     or NMS-unresolved): ``stop`` (default) halts the pipeline after caching the
     step's successes, ``skip`` drops the failures and keeps the successes, ``best``
@@ -219,12 +319,12 @@ class StepConfig(BaseModel):
     def halts_on_failure(self) -> bool:
         """Whether this step's failures stop the run.
 
-        The two predicates below spell what ``on_failure`` *means* to a caller, so the modules
-        that act on it ask a question instead of matching a string. Only ``stop`` answers yes
-        to either, but the two are different questions — one is about the run ending, the
-        other about work still owed — and a policy added later could answer them differently.
-        Compared literally at each site, that difference has nowhere to live and every site
-        has to be found and re-read to know which meaning it wanted.
+        The three predicates here spell what ``on_failure`` *means* to a caller, so the
+        modules that act on it ask a question instead of matching a string. Only ``stop``
+        answers yes to the first two, but they are different questions — one is about the run
+        ending, the other about work still owed — and a policy added later could answer them
+        differently. Compared literally at each site, that difference has nowhere to live and
+        every site has to be found and re-read to know which meaning it wanted.
         """
         return self.on_failure == "stop"
 
@@ -239,13 +339,22 @@ class StepConfig(BaseModel):
         """
         return self.on_failure == "stop"
 
+    @property
+    def stores_backfills(self) -> bool:
+        """Whether this step's cached results carry backfilled failures.
+
+        :func:`policy_stores_backfills` for this step's policy — the question the cache asks
+        before serving a document to a config whose policy changed.
+        """
+        return policy_stores_backfills(self.on_failure)
+
     @field_validator("options")
     @classmethod
     def _reject_unrepresentable_options(cls, v: dict[str, Any]) -> dict[str, Any]:
         """Refuse an option value the step's cache key cannot be computed from.
 
-        Options are folded into the cache fingerprint by ``json.dumps``
-        (:func:`chemrefine.cache.fingerprint`); this probe mirrors that encoder —
+        Options are folded into the cache keys by ``json.dumps``
+        (:meth:`chemrefine.cache.StepKey.of`); this probe mirrors that encoder —
         ``sort_keys`` included, since a nested dict with mixed-type keys fails in the
         sort rather than in the encoding. Without it the first thing to meet such a
         value is the fingerprint itself, and what reaches the user is a bare
@@ -300,7 +409,12 @@ class StepConfig(BaseModel):
             raise ValueError(
                 "step name must contain only letters, digits, underscores, and hyphens"
             )
-        if v.isdigit():
+        if v.startswith("-"):
+            # Every step-targeted invocation puts the name on an argv — the CLI's and
+            # `start_run`'s — where a leading hyphen parses as an option: exit 2 into
+            # an unwatched log, after a pid was already returned.
+            raise ValueError("step name must not start with a hyphen (argv reads it as an option)")
+        if v.isdecimal():
             # `matches` resolves an all-digit CLI target as a step *number*,
             # so a digits-only name could never be addressed.
             raise ValueError("step name must not be all digits (ambiguous with a step number)")
@@ -310,11 +424,50 @@ class StepConfig(BaseModel):
         """Return the directory name for this step (``stepN`` or ``stepN_name``)."""
         return f"step{self.step}_{self.name}" if self.name else f"step{self.step}"
 
+    def effective_charge(self, default: int) -> int:
+        """This step's charge: its own override, else the config-wide ``default``.
+
+        The one spelling of the fallback, shared by the context builder
+        (:func:`chemrefine.step.build_context`), the preflight walk
+        (:func:`chemrefine.engines.api.preflight_steps`) and ``chemrefine validate`` —
+        three readers deciding "unset means the config's value" separately is how two
+        of them come to disagree about which species a step runs.
+        """
+        return self.charge if self.charge is not None else default
+
+    def effective_multiplicity(self, default: int) -> int:
+        """This step's multiplicity: its own override, else the config-wide ``default``."""
+        return self.multiplicity if self.multiplicity is not None else default
+
+    def engine_options(self) -> dict[str, Any]:
+        """``options`` minus the NMS knobs when ``nms`` is on — the engine's own share.
+
+        Two declared readers share the one mapping: the engine's options model and, with
+        ``nms: true``, :class:`NmsKnobs`. A strict engine model (``extra="forbid"``) handed
+        the whole dict refused every NMS knob as a stranger — ``target: ts`` on an ExtOpt
+        step was "Extra inputs are not permitted" — while a lenient model ignored them and
+        ORCA declares none, so only the strict engines could not sample with a knob set.
+        The partition is made here because the config is the one place that knows both
+        readers; :func:`chemrefine.validate.undeclared_options` draws the same line for its
+        warning. A key that is neither reader's stays in the engine's share, so a typo of an
+        NMS knob is still refused by a strict engine and still warned about by ``validate``.
+        """
+        if not self.nms:
+            return dict(self.options)
+        return {k: v for k, v in self.options.items() if k not in NmsKnobs.model_fields}
+
     def matches(self, key: str | int) -> bool:
-        """Return True if ``key`` (a CLI argument) targets this step."""
+        """Return True if ``key`` (a CLI argument) targets this step.
+
+        ``isdecimal``, not ``isdigit``: the two disagree on the Unicode ``No`` category —
+        ``"²".isdigit()`` is ``True`` and ``int("²")`` raises — and this predicate exists
+        only to guard that ``int``. A target of ``"²"`` from the CLI, an agent's
+        ``start_run`` or the GUI therefore left a raw ``ValueError``, past the module's
+        contract that every failure is a ``ChemRefineError`` carrying an exit code.
+        """
         if isinstance(key, int):
             return key == self.step
-        if key.isdigit():
+        if key.isdecimal():
             return int(key) == self.step
         return key == self.name
 
@@ -345,19 +498,32 @@ def reject_shell_unsafe(text: str, *, what: str, fix: str) -> None:
     ==========================  ===============================================================
     Value                       How it is protected
     ==========================  ===============================================================
-    ``template_dir`` /          this rule — interpolated into ``export WORK_DIR=…``
-    ``output_dir`` /
-    ``scratch_dir``
-    ``executables``             this rule — embedded raw in the runlog heredoc
+    ``template_dir`` /          this rule — interpolated into ``export WORK_DIR=…``; asked
+    ``output_dir`` /            at load as written and as anchored
+    ``scratch_dir``             (:func:`shell_unsafe_after_resolution`), and again at render
+                                on the *resolved* path bash receives
+                                (:mod:`chemrefine.slurm.script`)
+    ``executables``             this rule — embedded raw in the runlog heredoc; the
+                                engine-documented root paths (qchem's ``qc``/``qcaux``)
+                                are additionally shell-quoted where their run block
+                                exports them
     ``operation``               this rule — same heredoc
     ``tensor_folder``           this rule (via :class:`~chemrefine.engines.pyscf.options.\
-PyscfOptions`) — reaches ``cp -r "…"``, and bash substitutes *inside* double quotes
+PyscfExtOptOptions`, the subclass that declares the field) — reaches ``cp -r "…"``, and \
+bash substitutes *inside* double quotes
     ``engine``                  safe by construction — must be a registry key
     ``step.name``               safe by construction — matched against :data:`_NAME_RE`
     ``step`` / ``cores``        safe by construction — integers
     ``structure_id``            safe by construction — minted by :mod:`chemrefine.ids`
-    ``output_globs``            safe by construction — an engine ``ClassVar``
-    ``job_name`` (trainer)      safe by construction — its own field ``pattern``
+    ``output_globs``            safe by construction — engine-declared constants (a \
+``ClassVar``, or a property over trainer declarations); never config
+    ``job_name`` (script)       safe by construction — the input path's stem (minted by
+                                :mod:`chemrefine.ids` under the validated ``output_dir``),
+                                or the ``_NAME_RE``-checked step label plus a literal
+                                ``_array`` suffix
+    ``template_path`` /         safe by construction — the header resolves under the
+    ``script_path`` (script)    validated ``template_dir``; the script is minted beside
+                                the validated input path
     ==========================  ===============================================================
 
     Public, not underscored, because the engine option models import it: a knob that reaches
@@ -372,11 +538,62 @@ PyscfOptions`) — reaches ``cp -r "…"``, and bash substitutes *inside* double
     # after it, and each task silently reads the wrong input or writes the wrong place.
     if "\t" in text:
         bad.add("tab")
+    # No comma rule: the manifest path once rode `sbatch --export=ALL,CR_MANIFEST=<path>`,
+    # which sbatch splits on commas, and a comma was refused here for it. The path now
+    # travels as the array script's argument (:func:`chemrefine.slurm.dispatch.submit_array`),
+    # a channel that reserves no character, so the refusal — untrue of every other site
+    # these values reach — went with the channel.
     if bad:
         raise ValueError(
             f"{what} {text!r} contains {sorted(bad)}, which cannot be safely embedded "
             f"in the generated SLURM script; {fix}"
         )
+
+
+def shell_unsafe_after_resolution(config: Config) -> str | None:
+    """Why this config's *resolved* directories cannot be interpolated into bash, or ``None``.
+
+    :func:`reject_shell_unsafe` runs as a field validator, on the paths **as written**. That
+    is not where they end up: :func:`resolve_relative_paths` anchors a relative path to the
+    config file's own directory through ``model_copy``, which by design runs no validators —
+    so every character the rule refuses can be smuggled in through a *parent directory name*
+    instead of through the YAML.
+
+    It is a real bypass of the boundary ``docs/internals/security.md`` states, and it was
+    reproduced rather than reasoned about: a config containing nothing but
+    ``output_dir: ./outputs``, placed in a directory named ``$(touch /tmp/MARKER)``, yields
+    ``export OUTPUT_DIR="…/$(touch /tmp/MARKER)/outputs"`` in the generated script — and bash
+    performs command substitution inside double quotes, so running the job created the file.
+    The directory name is the whole payload; the user's YAML is innocent.
+
+    Asked of the resolved config, therefore, and by both loaders — :func:`load_config` raises,
+    :func:`chemrefine.validate.validate_config_text` reports — for the same reason the rule
+    exists at all: a value that reaches generated bash is refused before a script is written,
+    not after one runs.
+
+    Unlike the whitespace rule (which belongs to ORCA's input format and lives in the ORCA
+    input writer), this one is engine-independent: every engine's job script exports these
+    three paths, so there is nothing to scope it to.
+
+    This pass sees the anchored path with its symlinks intact, and the step directory the
+    script exports is the ``.resolve()``d one — so a symlink whose *target* carries a refused
+    character passes here. That route is closed where the path becomes bash: the script
+    builders ask the rule once more on the exact string they interpolate
+    (:func:`chemrefine.slurm.script._refuse_shell_unsafe`), which is what makes the rule a
+    property of reaching bash rather than of the two readings a loader can see. This pass
+    stays for what it is — the earliest point the user can be told, from both loaders.
+    """
+    for name in ("template_dir", "output_dir", "scratch_dir"):
+        value = getattr(config, name)
+        if value is None:
+            continue
+        try:
+            reject_shell_unsafe(
+                str(value), what=f"resolved {name}", fix="rename the directory it sits in"
+            )
+        except ValueError as e:
+            return str(e)
+    return None
 
 
 class Config(BaseModel):
@@ -430,11 +647,13 @@ class Config(BaseModel):
     ``max_cores`` once its siblings drain. Per-structure outputs, runlogs,
     and the failure ledger are identical to the per-job path. Ignored when
     running locally (no ``sbatch`` on PATH)."""
-    job_timeout_seconds: float | None = Field(None, gt=0)
+    job_timeout_seconds: float | None = Field(None, gt=0, allow_inf_nan=False)
     """How long a step may go with **nothing finishing**, in seconds.
 
     ``None`` (default) waits indefinitely, which is the right thing under SLURM: the
     scheduler already enforces the partition's own time limit and will kill the job itself.
+    ``null`` is the one spelling of that — ``.inf`` is refused, like every non-finite
+    value of every float knob.
     Set it when nothing else will — a local ``dispatch: local`` run, or a cluster where a
     job can sit in ``PD`` forever — so a stuck batch fails with
     :class:`~chemrefine.errors.ThrottleTimeoutError` (exit code 8) instead of blocking the
@@ -462,10 +681,17 @@ class Config(BaseModel):
     ``slurm`` requires ``sbatch`` and fails fast when it is missing instead of
     silently running locally."""
     executables: dict[str, str] = Field(default_factory=dict)
-    """Global tool-name → binary-path map for external-binary engines (e.g.
+    """Global tool-name → path map for external-binary engines (e.g.
     ``{"orca": "/opt/orca/orca"}``). Set once and shared by every step using
     that engine. Importable backends (mlip, pyscf, …) are installed as extras
-    and need no entry here; conda/module activation belongs in the SLURM header."""
+    and need no entry here; conda/module activation belongs in the SLURM header.
+
+    An engine may document keys of its own beyond its binary — the qchem engine reads
+    ``qc`` and ``qcaux`` as *install-root* paths and exports them as ``QC``/``QCAUX`` in
+    its run block. They live in this map rather than in ``step.options`` because they are
+    facts about the machine, not about a step: one install serves every qchem step, exactly
+    as one ``orca`` binary does. Every value here is held to the same shell-safety rule and
+    warned about when it names an absent path, whatever kind of path it is."""
     steps: list[StepConfig]
 
     @field_validator("template_dir", "output_dir", "scratch_dir")
@@ -538,34 +764,83 @@ class Config(BaseModel):
             raise ValueError("step names must be unique when provided")
         return self
 
+    def missing_executable_paths(self) -> list[tuple[str, str]]:
+        """``(tool, value)`` for every explicit ``executables`` path absent on this host.
+
+        The one home for the predicate, read by the load-time log below **and** by
+        :mod:`chemrefine.validate`'s warning row — the log-only version reached nobody
+        watching ``chemrefine validate``, the GUI, or an MCP client, which all read the
+        report and were told ``ok`` with no warning. A bare command name (no path
+        separator) is not on the list — it resolves on the executing host at submit
+        time.
+        """
+        return [
+            (tool, value)
+            for tool, value in self.executables.items()
+            if os.sep in value and not Path(value).exists()
+        ]
+
     @model_validator(mode="after")
     def _warn_missing_executable_paths(self) -> Config:
         """Warn (don't fail) when an ``executables`` entry is a path that's absent.
 
         Validation never hard-fails here: on HPC the binary is often provided by a
         ``module load`` *inside* the SLURM job, so the login node parsing the YAML
-        legitimately can't see it. A bare command name (no path separator) is left
-        alone — it is resolved on the executing host at submit time. Only an
-        explicit path that doesn't exist on this host earns a warning, since that
-        is almost always a typo.
+        legitimately can't see it. Only an explicit path that doesn't exist on this
+        host earns a warning (:meth:`missing_executable_paths`), since that is almost
+        always a typo.
         """
-        for tool, value in self.executables.items():
-            if os.sep in value and not Path(value).exists():
-                logger.warning(
-                    "executable %r for %r does not exist on this host (%s); "
-                    "ignore if a module load provides it inside the job",
-                    value,
-                    tool,
-                    value,
-                )
+        for tool, value in self.missing_executable_paths():
+            logger.warning(
+                "executable %r for %r does not exist on this host (%s); "
+                "ignore if a module load provides it inside the job",
+                value,
+                tool,
+                value,
+            )
         return self
 
     def step_dir(self, step_cfg: StepConfig) -> Path:
         """Return the absolute output directory for ``step_cfg``."""
         return self.output_dir / step_cfg.dir_name()
 
-    def find_step(self, key: str | int) -> StepConfig | None:
-        """Return the step matching ``key`` (a number or a name), or ``None``."""
+    def with_overrides(self, **updates: object) -> Config:
+        """A copy with the named fields replaced, each validated by its own declared rule.
+
+        ``model_copy`` runs no validators by design, which is how a budget's floor came to
+        be spelled at every entry point that applies an override — the CLI flag, the
+        agent's ``start_run`` — each beside this model's own ``ge=1``. Here a value is
+        validated by exactly the constraint its field declares (``max_cores: ge=1``,
+        ``max_gpus: ge=0``), read off the field rather than restated, so there is one
+        floor and one wording, and a bad override is the same :class:`ConfigError` a bad
+        YAML value is. A name that is not a field is refused as a programming error, not
+        silently copied in.
+        """
+        for name, value in updates.items():
+            field = self.__class__.model_fields.get(name)
+            if field is None:
+                raise ConfigError(f"{name!r} is not a config field")
+            rule: TypeAdapter[Any] = TypeAdapter(Annotated[field.annotation, *field.metadata])
+            try:
+                rule.validate_python(value)
+            except ValidationError as e:
+                detail = "; ".join(err["msg"] for err in e.errors())
+                raise ConfigError(f"{name} {value!r}: {detail}") from e
+        return self.model_copy(update=dict(updates))
+
+    def find_step(self, key: object) -> StepConfig | None:
+        """Return the step matching ``key`` (a number or a name), or ``None``.
+
+        ``None`` means no step matches. A ``key`` that is neither a number nor a name — a
+        JSON float, list or boolean off the GUI's or an agent's wire — is not a selector
+        at all and is refused as a :class:`~chemrefine.errors.ConfigError`: left to
+        :meth:`StepConfig.matches` it raised a bare ``AttributeError`` (``isdecimal`` on
+        a float), past the contract that every failure carries an exit code, and a JSON
+        ``true`` — an ``int`` to :func:`isinstance` — silently selected step 1. Typed
+        ``object`` because this is the one funnel every wire selector passes through.
+        """
+        if isinstance(key, bool) or not isinstance(key, (int, str)):
+            raise ConfigError(f"step selector {key!r} is neither a step number nor a name")
         for step_cfg in self.steps:
             if step_cfg.matches(key):
                 return step_cfg
@@ -577,7 +852,7 @@ class Config(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _resolve_relative_paths(cfg: Config, *, base: Path) -> Config:
+def resolve_relative_paths(cfg: Config, *, base: Path) -> Config:
     """Resolve a config's relative paths against ``base`` (the config file's dir).
 
     ChemRefine resolves ``template_dir`` / ``output_dir`` / ``scratch_dir`` /
@@ -587,12 +862,17 @@ def _resolve_relative_paths(cfg: Config, *, base: Path) -> Config:
     Absolute paths pass through unchanged.
 
     A step's ``options`` get the same treatment for the keys in
-    :data:`_STEP_OPTION_PATHS`, and they need it more than the rest: an option's value
+    :data:`STEP_OPTION_PATHS`, and they need it more than the rest: an option's value
     reaches a *job*, and a job runs neither where the config sits nor where the user stood —
     the generated script copies its input into a scratch ``$WORK_DIR`` and runs there. A
     relative ``model_path`` would resolve against that scratch directory and simply not be
     found. Naming the model a previous step produced (``./outputs/step2/train/train.model``)
     is the obvious thing to write, so it has to work from anywhere.
+
+    Public, not underscored, because :func:`chemrefine.validate.validate_config_text`
+    resolves the same way: it is the non-raising twin of :func:`load_config`, and a report
+    that judged paths against a different directory than the run would is a report about a
+    different config.
     """
     updates: dict[str, Path | list[StepConfig]] = {}
     if not cfg.template_dir.is_absolute():
@@ -609,13 +889,21 @@ def _resolve_relative_paths(cfg: Config, *, base: Path) -> Config:
     return cfg.model_copy(update=updates) if updates else cfg
 
 
-_STEP_OPTION_PATHS = ("model_path",)
+STEP_OPTION_PATHS = ("model_path",)
 """``step.options`` keys whose value is a filesystem path, resolved like the config's own.
 
 A deliberately short list rather than "anything that looks like a path": an option is
 free-form text and most values are not paths at all, so guessing would rewrite strings that
 merely resemble one. Adding a knob here is the cost of introducing a path-valued option, and
-it is one line."""
+it is one line.
+
+Public, not underscored, because the cache reads it too. :func:`chemrefine.step.derive_step_key`
+keys such an option by its basename — the resolved value is absolute, and an absolute
+string inside a cache row key would tie a finished tree to the directory it ran in — and
+:func:`chemrefine.cache.option_file_digests` pins the named file's bytes under the same
+name. One list decides what the loader resolves, what the key must not spell out, and
+which files it pins; a knob absent from it is text to all three, whatever it happens to
+name on disk."""
 
 
 def _resolve_step_option_paths(step: StepConfig, *, base: Path) -> StepConfig:
@@ -623,7 +911,7 @@ def _resolve_step_option_paths(step: StepConfig, *, base: Path) -> StepConfig:
     options = step.options or {}
     rewritten = {
         key: str((base / value).resolve())
-        for key in _STEP_OPTION_PATHS
+        for key in STEP_OPTION_PATHS
         if isinstance(value := options.get(key), str) and value and not Path(value).is_absolute()
     }
     if not rewritten:
@@ -636,7 +924,7 @@ def load_config(path: str | Path) -> Config:
 
     Relative ``template_dir`` / ``output_dir`` / ``scratch_dir`` / ``input``
     paths are resolved against the config file's own directory (see
-    :func:`_resolve_relative_paths`), so the file is portable regardless of the
+    :func:`resolve_relative_paths`), so the file is portable regardless of the
     process working directory.
 
     Raises :class:`ConfigError` for any malformed file, unknown top-level
@@ -645,7 +933,7 @@ def load_config(path: str | Path) -> Config:
     """
     p = Path(path)
     try:
-        text = p.read_text(encoding="utf-8")
+        text = io.read_utf8(p, what="config")
     except OSError as e:
         raise ConfigError(f"could not read {p}: {e}") from e
     try:
@@ -655,7 +943,15 @@ def load_config(path: str | Path) -> Config:
     if not isinstance(raw, dict):
         raise ConfigError(f"config at {p} is not a YAML mapping")
     try:
-        cfg = Config(**raw)
+        # `model_validate`, not `Config(**raw)`: a non-string key (YAML 1.1's unquoted
+        # `on:` parses to a boolean) made the splat raise a bare TypeError past this
+        # handler; pydantic itself turns it into the ValidationError caught here.
+        cfg = Config.model_validate(raw)
     except ValidationError as e:
         raise ConfigError(f"invalid config {p}:\n{e}") from e
-    return _resolve_relative_paths(cfg, base=p.parent.resolve())
+    resolved = resolve_relative_paths(cfg, base=p.parent.resolve())
+    # Re-asked after resolution: the field validator saw the paths as written, and a parent
+    # directory name can carry every character it refuses. See `shell_unsafe_after_resolution`.
+    if problem := shell_unsafe_after_resolution(resolved):
+        raise ConfigError(f"invalid config {p}:\n{problem}")
+    return resolved

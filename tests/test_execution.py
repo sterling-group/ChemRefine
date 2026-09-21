@@ -66,7 +66,9 @@ def _ctx(
     template_dir.mkdir(parents=True, exist_ok=True)
     (template_dir / "step1.inp").write_text("template\n", encoding="utf-8")
     (template_dir / "cpu.slurm.header").write_text("#!/bin/bash\n", encoding="utf-8")
-    (template_dir / "cuda.slurm.header").write_text("#!/bin/bash\n#SBATCH --gres=gpu:1\n")
+    (template_dir / "cuda.slurm.header").write_text(
+        "#!/bin/bash\n#SBATCH --gres=gpu:1\n", encoding="utf-8"
+    )
     seeds = tuple(Structure(id=i, atoms=Atoms("H", positions=[[0, 0, 0]])) for i in ids)
     return StepContext(
         step_cfg=StepConfig(step=1, engine="fake-job", operation="opt_sp"),
@@ -98,7 +100,101 @@ def test_run_batch_submits_one_job_per_structure(submit_mock, _finished_jobs, tm
     assert isinstance(batch, JobBatch)
     assert set(batch.jobs.values()) == {"1001", "1002"}
     for inp, _out, _sid in inputs.files:
-        assert inp.with_suffix(".slurm").read_text().splitlines()[-1].startswith("echo run")
+        assert (
+            inp.with_suffix(".slurm")
+            .read_text(encoding="utf-8")
+            .splitlines()[-1]
+            .startswith("echo run")
+        )
+
+
+class _ThreadedJobEngine(_FakeJobEngine):
+    """A job engine that spells its cores as one threaded task, Q-Chem-style."""
+
+    name: ClassVar[str] = "fake-threaded"
+    label: ClassVar[str] = "FakeThreaded"
+
+    def pal(self, ctx) -> int:
+        return 4
+
+    def slurm_layout(self, ctx) -> tuple[int, int]:
+        return (1, min(self.pal(ctx), ctx.max_cores))
+
+
+class _OneNodeJobEngine(_FakeJobEngine):
+    """Ranks that must share a node — the ExtOpt shape."""
+
+    def single_node(self, ctx) -> bool:
+        return True
+
+
+@patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
+@patch.object(slurm, "submit", return_value="1001")
+def test_a_single_node_declaration_reaches_the_generated_script(_submit, _finished, tmp_path: Path):
+    """The engine's `single_node` decides whether the script pins `--nodes=1`."""
+    for engine, pinned in ((_OneNodeJobEngine(), True), (_FakeJobEngine(), False)):
+        ctx = _ctx(tmp_path)
+        inputs = engine.prepare(ctx)
+        _execution.run_batch(engine, inputs, ctx)
+        text = inputs.files[0][0].with_suffix(".slurm").read_text(encoding="utf-8")
+        assert ("#SBATCH --nodes=1" in text) is pinned
+
+
+@patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
+@patch.object(slurm, "submit", return_value="1001")
+def test_a_threads_layout_reaches_the_generated_script(_submit, _finished, tmp_path: Path):
+    """The engine's `slurm_layout` decides the SBATCH pair, not a hardcoded ranks spelling."""
+    engine = _ThreadedJobEngine()
+    ctx = _ctx(tmp_path)
+    inputs = engine.prepare(ctx)
+    _execution.run_batch(engine, inputs, ctx)
+    text = inputs.files[0][0].with_suffix(".slurm").read_text(encoding="utf-8")
+    assert "#SBATCH --ntasks=1" in text
+    assert "#SBATCH --cpus-per-task=4" in text
+    assert "cores=4" in text  # the runlog reports the product
+
+
+@patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
+@patch.object(slurm, "submit", return_value="1001")
+def test_a_layout_exceeding_the_budget_is_refused(_submit, _finished, tmp_path: Path):
+    """A named factorization cannot be silently clamped — over budget is a ConfigError.
+
+    The default layout clamps itself to `max_cores` (the historical behavior); a layout
+    that names both factors is the job's shape, and squeezing the product would quietly
+    hand an MPI x threads job a different shape than its input was built for.
+    """
+    engine = _ThreadedJobEngine()
+    ctx = _ctx(tmp_path)  # max_cores=4
+    inputs = engine.prepare(ctx)
+    with (
+        patch.object(_ThreadedJobEngine, "slurm_layout", return_value=(2, 4)),
+        pytest.raises(ConfigError, match=r"8 cores, more than max_cores=4"),
+    ):
+        _execution.run_batch(engine, inputs, ctx)
+
+
+def test_a_degenerate_layout_is_an_engine_bug(tmp_path: Path):
+    """A zero in either factor is a broken engine, reported as such — not a throttler crash."""
+    engine = _ThreadedJobEngine()
+    ctx = _ctx(tmp_path)
+    with (
+        patch.object(_ThreadedJobEngine, "slurm_layout", return_value=(0, 4)),
+        pytest.raises(ChemRefineError, match="both must be at least 1"),
+    ):
+        _execution._BatchPlan.of(engine, ctx, local=True)
+
+
+@patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
+@patch.object(slurm, "submit", return_value="1001")
+def test_declared_memory_reaches_the_generated_script(_submit, _finished, tmp_path: Path):
+    """An engine's `memory_mb` becomes the job's `--mem-per-cpu`; the default touches nothing."""
+    engine = _FakeJobEngine()
+    ctx = _ctx(tmp_path)
+    inputs = engine.prepare(ctx)
+    with patch.object(_FakeJobEngine, "memory_mb", return_value=2000):
+        _execution.run_batch(engine, inputs, ctx)
+    text = inputs.files[0][0].with_suffix(".slurm").read_text(encoding="utf-8")
+    assert "#SBATCH --mem-per-cpu=2000" in text
 
 
 def test_header_name_picks_cuda_for_a_gpu_step(tmp_path: Path):
@@ -234,14 +330,44 @@ def test_run_batch_terminates_local_jobs_when_a_submission_fails(tmp_path: Path)
 
     assert terminated, "the cleanup never ran — local jobs would be orphaned"
     assert "local-1" in terminated[0], "the already-submitted job must be swept up"
+    # The killed local job's lease goes with it; nothing else was submitted, so the
+    # ledger must be gone rather than left as an empty file.
+    assert not slurm.lease_path(ctx.step_dir).exists()
 
 
-def test_run_batch_cleanup_runs_on_the_happy_path_too(tmp_path: Path):
-    """The sweep is unconditional; with everything reaped it has nothing to do.
+def test_an_unwinding_batch_keeps_its_slurm_leases(tmp_path: Path):
+    """The unwind kills local jobs but not SLURM ones — and the ledger says exactly that.
 
-    It is asked to terminate exactly the jobs still active, which on a clean drain is none —
-    and `terminate_local_jobs` reads that empty collection as empty rather than as its
-    no-argument "sweep everything" form, so the ordinary end of a batch touches nothing.
+    A driver that dies mid-batch leaves its SLURM jobs running by design; their recorded
+    leases are the only evidence the resume fence has, so the exception path must keep
+    them while dropping the leases of the local jobs it just terminated.
+    """
+    engine = _FakeJobEngine()
+    ctx = _ctx(tmp_path, ids=("0", "1", "2"))
+    inputs = engine.prepare(ctx)
+
+    with (
+        patch.object(
+            slurm,
+            "submit",
+            side_effect=["12345", "local-1", JobSubmissionError("sbatch refused the job")],
+        ),
+        patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set()),
+        patch.object(slurm, "terminate_local_jobs"),
+        pytest.raises(JobSubmissionError),
+    ):
+        _execution.run_batch(engine, inputs, ctx)
+
+    assert [lease.id for lease in slurm.load_leases(ctx.step_dir)] == ["12345"]
+
+
+def test_run_batch_touches_nothing_on_the_happy_path(tmp_path: Path):
+    """A clean drain sweeps no jobs and leaves no leases behind.
+
+    The termination sweep lives on the unwind path only — it exists to reap local jobs
+    an exception would orphan, and after an ordinary drain the queue has already reaped
+    everything. What the clean path *does* do is release the batch's job leases: with
+    every job finished there is nothing left for the resume fence to check.
     """
     engine = _FakeJobEngine()
     ctx = _ctx(tmp_path, ids=("0",))
@@ -257,7 +383,8 @@ def test_run_batch_cleanup_runs_on_the_happy_path_too(tmp_path: Path):
     ):
         _execution.run_batch(engine, inputs, ctx)
 
-    assert seen == [()]  # the queue reaped everything; nothing left to terminate
+    assert seen == []  # the queue reaped everything; the sweep is for unwinds only
+    assert not slurm.lease_path(ctx.step_dir).exists()
 
 
 # ---------------------------------------------------------------------------
@@ -410,8 +537,54 @@ def test_multi_chunk_arrays_share_one_core_budget(_submit, _finished, tmp_path: 
 
     limits = [call.kwargs["max_concurrent"] for call in submit_array.call_args_list]
     assert len(limits) == 3, "the chunking this test depends on did not happen"
-    # _FakeJobEngine.pal is 1, clamped to max_cores; 12 // (1 * 3) = 4 per chunk.
-    assert sum(limits) * engine.pal(ctx) <= ctx.max_cores
+    # _FakeJobEngine.pal is 1, clamped to max_cores; 12 // (1 * 3) = 4 per chunk. The
+    # exact shares, not a `sum(...) <= budget` bound: any under-allocating mutant of the
+    # arithmetic — an extra chunk factor, a wrong divisor — still satisfies the
+    # inequality while a 2500-structure step silently runs at a fraction of max_cores.
+    assert limits == [4, 4, 4]
+    assert sum(limits) * engine.pal(ctx) <= ctx.max_cores  # and the shares fit the budget
+
+
+def test_an_array_batch_is_leased_before_the_wait_and_released_after(tmp_path: Path):
+    """The parent id is on record while the wait runs, and gone once it drains.
+
+    Recording after the wait would be recording nothing: the wait is where a driver
+    dies, and the lease exists precisely so that death leaves evidence behind.
+    """
+    engine = _FakeJobEngine()
+    ctx = _ctx(tmp_path, ids=("0", "1"), slurm_array=True, dispatch="slurm")
+    inputs = engine.prepare(ctx)
+    at_wait_time: list[str] = []
+
+    def observing_wait(ids, **_):
+        at_wait_time.extend(lease.id for lease in slurm.load_leases(ctx.step_dir))
+
+    with (
+        patch.object(dispatch, "sbatch_available", return_value=True),
+        patch.object(slurm, "submit_array", return_value="900"),
+        patch.object(slurm, "wait_for_jobs", side_effect=observing_wait),
+    ):
+        _execution.run_batch(engine, inputs, ctx)
+
+    assert at_wait_time == ["900"]
+    assert not slurm.lease_path(ctx.step_dir).exists()
+
+
+def test_an_interrupted_array_wait_keeps_the_lease(tmp_path: Path):
+    """A wait that dies leaves the parent id on record — array jobs are all SLURM's."""
+    engine = _FakeJobEngine()
+    ctx = _ctx(tmp_path, ids=("0",), slurm_array=True, dispatch="slurm")
+    inputs = engine.prepare(ctx)
+
+    with (
+        patch.object(dispatch, "sbatch_available", return_value=True),
+        patch.object(slurm, "submit_array", return_value="901"),
+        patch.object(slurm, "wait_for_jobs", side_effect=ThrottleTimeoutError("stalled")),
+        pytest.raises(ThrottleTimeoutError),
+    ):
+        _execution.run_batch(engine, inputs, ctx)
+
+    assert [lease.id for lease in slurm.load_leases(ctx.step_dir)] == ["901"]
 
 
 @patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))

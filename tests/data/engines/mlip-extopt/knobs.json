@@ -1,0 +1,16 @@
+{
+  "model": "MlipExtOptOptions",
+  "note": "The same knobs as the direct engine's model, read without a template: extra is refused rather than rendered. cores is demonstrated only on direct mlip steps in the shipped examples.",
+  "examples": [
+    "model_name",
+    "task_name",
+    "model_path",
+    "device"
+  ],
+  "tests_only": [
+    "cores",
+    "backend_python",
+    "extra",
+    "gradient_timeout_seconds"
+  ]
+}

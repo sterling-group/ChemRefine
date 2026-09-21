@@ -29,7 +29,9 @@ def test_allocate_child_ids_mixed():
 
 
 def test_allocate_child_ids_length_mismatch_raises():
-    with pytest.raises(ValueError):
+    # The explicit refusal's wording; `zip(strict=True)` below it raises the same type,
+    # so an unmatched raise let the documented message be deleted unnoticed.
+    with pytest.raises(ValueError, match="same length"):
         allocate_child_ids(["0"], [1, 2])
 
 
@@ -74,3 +76,32 @@ def test_require_template_returns_the_path_when_it_is_there(tmp_path):
     present = tmp_path / "step1.inp"
     present.write_text("! Opt\n", encoding="utf-8")
     assert require_template(present, label="ORCA") == present
+
+
+def test_attempt_dirs_are_ordered_by_number_not_by_name_or_clock(tmp_path):
+    """``attempt10`` is newer than ``attempt9``, and the clock has no say.
+
+    The one ordering every reader of ``attemptK/`` shares — ``rebuild-cache`` through
+    ``latest_attempt_dir``, the mode viewer through its walk. A lexical sort puts
+    ``attempt10`` before ``attempt2``; an mtime sort answers with copy order on a tree
+    copied without timestamps. Both wrong pickers are set up here to lose.
+    """
+    import os
+    import time
+
+    from chemrefine.ids import attempt_dirs_newest_first, latest_attempt_dir
+
+    now = time.time()
+    for name, age in (("attempt2", 0), ("attempt10", 7200), ("attempt9", 3600)):
+        (tmp_path / name).mkdir()
+        os.utime(tmp_path / name, (now - age, now - age))  # attempt2 is the newest by clock
+    (tmp_path / "attemptX").mkdir()  # not an attempt — ignored, as `is_attempt_dir` says
+    (tmp_path / "attempt3.bak").write_text("", encoding="utf-8")
+
+    assert [p.name for p in attempt_dirs_newest_first(tmp_path)] == [
+        "attempt10",
+        "attempt9",
+        "attempt2",
+    ]
+    assert latest_attempt_dir(tmp_path) == tmp_path / "attempt10"
+    assert attempt_dirs_newest_first(tmp_path / "nothing-here") == []

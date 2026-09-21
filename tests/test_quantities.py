@@ -7,6 +7,7 @@ import pytest
 
 from chemrefine.quantities import (
     DEFAULT_TEMPERATURE_K,
+    HARTREE_TO_EV,
     HARTREE_TO_KCALMOL,
     R_KCALMOL_K,
     boltzmann_weights,
@@ -19,6 +20,17 @@ def test_constants_use_codata_values():
     assert abs(HARTREE_TO_KCALMOL - 627.5094740631) < 1e-3
     # R ~= 1.9872041e-3 kcal/(mol*K)
     assert abs(R_KCALMOL_K - 1.98720425e-3) < 1e-7
+    # 1 Ha in eV, against an independently typed CODATA literal. This was the one
+    # constant every assertion computed *from itself* (through the derived gradient
+    # factor), and it labels every MLIP training energy — a wrong digit would mislabel
+    # every fine-tuning dataset with the suite green.
+    assert abs(HARTREE_TO_EV - 27.211386245988) < 1e-9
+    # IUPAC standard ambient temperature, as its own literal. Every other reference to
+    # it reads the constant back (the boltzmann_weights default, the sample model's
+    # field, the report's default column), so this line is the only place a fat-fingered
+    # edit — 273.15, 300.0 — can fail instead of silently retuning every
+    # default-temperature Boltzmann filter in the pipeline.
+    assert DEFAULT_TEMPERATURE_K == 298.15
 
 
 def test_convert_scalar_hartree_to_kcalmol():
@@ -54,6 +66,22 @@ def test_convert_length_pair():
     from chemrefine.quantities import BOHR_TO_ANGSTROM
 
     assert abs(convert(1.0, "bohr", "angstrom") - BOHR_TO_ANGSTROM) < 1e-12
+
+
+def test_convert_energy_pairs_by_value():
+    """Each direction of the kJ/mol and eV pairs, against a literal rather than the table.
+
+    The table stores each direction as its own constant, and the round-trip property
+    cannot tell a pair from its swap — `x · (1/H) · H` is `x` either way. Only a value
+    can: 1 Hartree is 2625.4996 kJ/mol and 27.211386 eV, and the inverse directions must
+    land back on 1.
+    """
+    assert abs(convert(1.0, "hartree", "kj/mol") - 2625.4996) < 1e-3
+    assert abs(convert(2625.4996, "kj/mol", "hartree") - 1.0) < 1e-6
+    assert abs(convert(1.0, "hartree", "ev") - 27.211386) < 1e-6
+    assert abs(convert(27.211386, "ev", "hartree") - 1.0) < 1e-6
+    assert abs(convert(4.184, "kj/mol", "kcal/mol") - 1.0) < 1e-12
+    assert abs(convert(1.0, "kcal/mol", "kj/mol") - 4.184) < 1e-12
 
 
 def test_convert_gradient_pair():

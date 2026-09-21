@@ -17,11 +17,13 @@ import contextlib
 import functools
 import getpass
 import itertools
+import json
 import logging
 import os
 import re
 import shutil
 import signal
+import socket
 import subprocess
 import time
 from collections.abc import Callable, Collection
@@ -29,7 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
-from chemrefine.errors import ConfigError, JobSubmissionError
+from chemrefine.errors import CacheError, ConfigError, JobSubmissionError
 from chemrefine.throttle import GpuBudget, StallDeadline
 
 logger = logging.getLogger(__name__)
@@ -155,6 +157,24 @@ def header_name_for_device(device: str) -> str:
     call this so the cuda/cpu choice lives in one place.
     """
     return "cuda.slurm.header" if str(device).lower() == "cuda" else "cpu.slurm.header"
+
+
+def header_name_for_step(override: str | None, *, gpus: int, default: str) -> str:
+    """The SLURM header one step's job uses — the one rule, for the run and the validator.
+
+    A per-step ``slurm_template`` wins; otherwise a step that asks for a GPU takes the
+    cuda header (:func:`header_name_for_device`) so the job lands on a GPU node, and
+    everything else takes the workflow's ``default``. Values rather than a context: the
+    scheduler holds a :class:`~chemrefine.state.StepContext` and asks the engine for
+    ``gpus``, the validator holds a config and reads the demand leniently, and each used
+    to keep an implementation of this rule that agreed with the other's only by prose —
+    the scaffold planned a header with one while the run dispatched with the other.
+    """
+    if override:
+        return override
+    if gpus > 0:
+        return header_name_for_device("cuda")
+    return default
 
 
 def _index_tokens(count: int) -> tuple[str, ...]:
@@ -286,9 +306,17 @@ def _submit_local(script_path: str | Path, *, env: dict[str, str] | None = None)
     See there for what that cost.
     """
     script_path = Path(script_path)
-    out_handle = script_path.with_suffix(".runlog").open("w", encoding="utf-8")
-    err_handle = script_path.with_suffix(".err").open("w", encoding="utf-8")
-    try:
+    # Both handles enter a stack that closes them if *anything* below fails — the second
+    # open as much as the submission. Opened bare, a failure on the second one left the
+    # first with no owner at all: CPython's refcount closed it on the way out, but only
+    # after a ``ResourceWarning``, and the ordering that made it work was never stated.
+    # ``pop_all`` hands them over on success, where ``_LOCAL_PROCS`` owns them until
+    # :func:`_local_is_finished` or :func:`terminate_local_jobs` closes them.
+    runlog = script_path.with_suffix(".runlog")
+    errlog = script_path.with_suffix(".err")
+    with contextlib.ExitStack() as stack:
+        out_handle = stack.enter_context(runlog.open("w", encoding="utf-8"))
+        err_handle = stack.enter_context(errlog.open("w", encoding="utf-8"))
         # `bash` from PATH is the point — this is the no-SLURM fallback — and
         # script_path is a script this process generated moments ago.
         proc = subprocess.Popen(  # noqa: S603
@@ -298,10 +326,7 @@ def _submit_local(script_path: str | Path, *, env: dict[str, str] | None = None)
             env={**os.environ, **env} if env else None,
             start_new_session=True,
         )
-    except Exception:
-        out_handle.close()
-        err_handle.close()
-        raise
+        stack.pop_all()
     job_id = f"{_LOCAL_JOB_PREFIX}{next(_LOCAL_JOB_COUNTER)}"
     _LOCAL_PROCS[job_id] = (proc, out_handle, err_handle)
     logger.info("launched %s locally as job %s (pid %s)", script_path, job_id, proc.pid)
@@ -387,6 +412,149 @@ def _signal_group(pgid: int, sig: signal.Signals) -> None:
 atexit.register(terminate_local_jobs)
 
 
+# ---------------------------------------------------------------------------
+# Job leases — what a driver has in flight, persisted for the resume fence
+# ---------------------------------------------------------------------------
+
+ACTIVE_JOBS_NAME = "active_jobs.json"
+"""Filename of the per-directory lease ledger, under a step's ``_cache/``.
+
+The run lock proves at most one *driver* per tree, but a driver's release does not
+outlive its jobs: a SIGTERM unwind deliberately leaves SLURM jobs running, and a SIGKILL
+leaves the local ones too (they run in sessions of their own). A prompt ``resume`` then
+passes the lock, sees a matching manifest, and archives directories the old jobs' exit
+traps are still copying into — the very overlap the lock exists to prevent, reopened
+through its own release. The lease is the record that closes it: every submission writes
+one, a cleanly drained batch releases its own, and
+:func:`chemrefine.pipeline.require_no_live_jobs` refuses a new driver while any recorded
+job is still alive.
+
+Written beside the manifest under ``_cache/`` but owned *here*, not by
+:mod:`chemrefine.cache`: the engines' scheduler records leases at submission time, and
+the engine subsystem must not import the cache (the boundary
+:meth:`chemrefine.cache.StepKey.of` documents) — submission mechanics are this module's
+domain, exactly as the local-process registry above is."""
+
+
+@dataclass(frozen=True)
+class JobLease:
+    """One submitted job a driver had in flight when the lease was last written.
+
+    ``pid`` is the local job's session leader (probe-able with ``os.kill(pid, 0)`` on
+    ``host``); ``None`` for a SLURM job, whose liveness is the queue's to answer.
+    """
+
+    id: str
+    host: str
+    pid: int | None = None
+
+    @property
+    def local(self) -> bool:
+        """Whether this is a background local job rather than a SLURM one."""
+        return self.id.startswith(_LOCAL_JOB_PREFIX)
+
+
+def lease_path(step_dir: Path) -> Path:
+    """Where ``step_dir``'s lease ledger lives."""
+    return step_dir / "_cache" / ACTIVE_JOBS_NAME
+
+
+def load_leases(step_dir: Path) -> list[JobLease]:
+    """The leases recorded under ``step_dir`` (``[]`` when none were).
+
+    A present-but-unreadable ledger is a :class:`~chemrefine.errors.CacheError` like
+    every other corrupt ``_cache/`` file — the fence cannot prove such jobs dead, and
+    silently reading "no leases" would wave a new driver into the overlap the record
+    exists to prevent. The message names the deletion escape, like the lock's.
+    """
+    path = lease_path(step_dir)
+    if not path.is_file():
+        return []
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        return [JobLease(str(r["id"]), str(r["host"]), r.get("pid")) for r in raw]
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+        # ``OSError`` is the unreadable half of "present-but-unreadable": a ledger another
+        # user's driver wrote, or one that vanished between the check above and the read.
+        raise CacheError(
+            f"corrupt job lease at {path}: {e!r} — delete it if the run that wrote it is known dead"
+        ) from e
+
+
+def _write_leases(path: Path, leases: list[JobLease]) -> None:
+    """Atomic tempfile + rename, spelled locally on purpose.
+
+    Not :func:`chemrefine.cache.atomic_write`: this bottom-layer module must not import
+    upward (the architecture's spine), so the dance is re-spelled here the way
+    :func:`chemrefine.engines.mlip.train.base._fingerprint_sha1` re-spells its concept
+    across the same kind of boundary. Two things are deliberately different. The temp
+    file is created by an exclusive plain ``open`` rather than ``mkstemp``, so it lands
+    with the mode a plain write would give (``0666`` under the umask) and the rename
+    keeps it — ``mkstemp``'s ``0600`` made every ledger owner-only, and the resume fence
+    reads this file from whichever account next drives the tree, which the docs direct
+    to inspect it; the cache writer reaches the same mode with a ``fchmod`` this module
+    would have to re-spell. And there is no ``fsync``: a ledger truncated by a machine
+    crash is a :class:`~chemrefine.errors.CacheError` at the next read, which fails
+    closed, so durability buys nothing here. The driver is the tree's sole writer under
+    the run lock, so a pid-suffixed name is unique.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".tmp_lease_{os.getpid()}")
+    tmp.unlink(missing_ok=True)
+    try:
+        with tmp.open("x", encoding="utf-8") as fh:
+            json.dump([{"id": j.id, "host": j.host, "pid": j.pid} for j in leases], fh)
+        tmp.replace(path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def record_lease(step_dir: Path, job_id: str) -> None:
+    """Append one submitted job to ``step_dir``'s ledger, before anyone waits on it.
+
+    Recorded at submission so the lease survives the one thing it exists for — a driver
+    that dies without unwinding. A local job carries its session leader's pid (the
+    process :func:`terminate_local_jobs` signals); a SLURM id carries none.
+    """
+    entry = _LOCAL_PROCS.get(job_id)
+    lease = JobLease(
+        id=job_id,
+        host=socket.gethostname(),
+        pid=entry[0].pid if entry is not None else None,
+    )
+    _write_leases(lease_path(step_dir), [*load_leases(step_dir), lease])
+
+
+def release_leases(step_dir: Path, *, keep_slurm: bool = False) -> None:
+    """Drop ``step_dir``'s leases — all of them, or everything but the SLURM ids.
+
+    A cleanly drained batch releases everything. Two callers keep the SLURM entries: an
+    unwinding batch — :func:`terminate_local_jobs` has just killed the local jobs, but
+    the scheduler's jobs run on by design, and their leases are what the resume fence
+    reads once the lock is gone — and that fence itself on a host with no ``squeue``,
+    where the local leases are proven dead and the SLURM ids cannot be asked.
+    """
+    path = lease_path(step_dir)
+    if not keep_slurm:
+        path.unlink(missing_ok=True)
+        return
+    kept = [j for j in load_leases(step_dir) if not j.local]
+    if kept:
+        _write_leases(path, kept)
+    else:
+        path.unlink(missing_ok=True)
+
+
+def scheduler_reachable() -> bool:
+    """Whether this host can ask the queue about a SLURM id at all (``squeue`` on PATH).
+
+    The fence's discriminator between "verify" and "cannot verify here": a laptop
+    holding a copied tree has no scheduler, and refusing forever over ids only the
+    cluster could answer would fence the copy harder than the original.
+    """
+    return shutil.which("squeue") is not None
+
+
 def submit(
     script_path: str | Path,
     *,
@@ -400,9 +568,9 @@ def submit(
     when :func:`dispatch_locally` says so (``dispatch: local``, or
     ``auto`` with no ``sbatch_cmd`` on ``PATH``), so a user can run
     ChemRefine on a laptop without SLURM the same way it runs on an
-    HPC node. The local fallback executes synchronously and returns a
-    synthetic ``"local-N"`` job ID; :func:`is_finished` treats that
-    prefix as already-complete.
+    HPC node. The local fallback launches the script in the background
+    and returns a synthetic ``"local-N"`` job ID; :func:`is_finished`
+    polls (and reaps) the process.
 
     Raises :class:`~chemrefine.errors.JobSubmissionError` if ``sbatch``
     exits non-zero or its output lacks a numeric job ID. The local
@@ -415,6 +583,9 @@ def submit(
     if dispatch_locally(dispatch, sbatch_cmd=sbatch_cmd):
         return _submit_local(script_path, env=env)
     try:
+        # No shell. `sbatch_cmd` is the scheduler binary the caller named (a config value
+        # held to `reject_shell_unsafe`, defaulting to the literal below), and the script is
+        # one this process generated moments ago — passed as argv, never interpolated.
         result = subprocess.run(  # noqa: S603
             [sbatch_cmd, "--parsable", str(script_path)],
             capture_output=True,
@@ -508,6 +679,8 @@ def poll_jobs(job_ids: Collection[str], *, squeue_cmd: str = "squeue") -> QueueS
     if not scheduled:
         return QueueState(frozenset(done), frozenset(rows))
     try:
+        # No shell. Every element is either a literal or resolved here: `squeue_cmd` is the
+        # scheduler binary the caller named, and the user comes from `getpass.getuser()`.
         result = subprocess.run(  # noqa: S603
             [squeue_cmd, "--noheader", "-u", _current_user(), "-o", "%i"],
             capture_output=True,
@@ -604,8 +777,12 @@ def submit_array(
 ) -> str:
     """Submit one array chunk; return the parent job ID.
 
-    ``--export=ALL,CR_MANIFEST=...`` points the shared script at this chunk's
-    manifest; ``%max_concurrent`` is the scheduler-enforced concurrency cap
+    The chunk's manifest rides as the script's first argument — sbatch forwards
+    everything after the script path to it — which the generated script captures
+    into ``$CR_MANIFEST`` before anything else runs. Not through ``--export``:
+    sbatch splits that on commas, so a comma in the output path truncated the
+    variable and every task read a manifest that did not exist; the argument
+    channel reserves no character. ``%max_concurrent`` is the scheduler-enforced concurrency cap
     (the caller computes this chunk's *share* of ``max_cores // PAL``, so all
     of a step's arrays together respect the same core budget the per-job
     throttler enforces — a per-array limit alone would grant it once per
@@ -619,9 +796,10 @@ def submit_array(
             [
                 sbatch_cmd,
                 "--parsable",
-                f"--export=ALL,CR_MANIFEST={manifest}",
+                "--export=ALL",
                 f"--array=0-{n_tasks - 1}%{max_concurrent}",
                 str(script_path),
+                str(manifest),
             ],
             capture_output=True,
             text=True,

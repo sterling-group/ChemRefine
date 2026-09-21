@@ -16,6 +16,8 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
+from http.client import HTTPException
 from pathlib import Path
 from typing import Any, cast
 from urllib.error import HTTPError, URLError
@@ -28,11 +30,17 @@ from chemrefine.engines._backend_server.base import (
     CalculationData,
 )
 from chemrefine.engines._backend_server.registry import known_backends, load_calculator
+from chemrefine.engines._options import ExtOptOptions
 from chemrefine.engines.orca.extopt import protocol
 from chemrefine.errors import JobFailureError
 
-DEFAULT_TIMEOUT: float = 600.0
-"""Seconds before a single ``/calculate`` request times out."""
+DEFAULT_TIMEOUT: float = float(ExtOptOptions.model_fields["gradient_timeout_seconds"].default)
+"""Seconds before a single ``/calculate`` request times out.
+
+The options model's default, read off the field that declares ``gradient_timeout_seconds``
+so the flag and the knob cannot name two numbers — the engine renders the flag from the
+model on every job, and a hand-run bridge without it answers with the same value.
+"""
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +75,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help=f"sidecar auth-token file (default: $WORK_DIR/{SERVER_TOKEN_FILENAME})",
     )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=DEFAULT_TIMEOUT,
+        help="seconds to wait on one /calculate call before giving the geometry up",
+    )
     parser.add_argument("--tag", default=None, help="optional correlation tag for server log")
     for backend_name in known_backends():
         load_calculator(backend_name).add_cli_args(parser)
@@ -79,6 +93,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def settings_from_args(args: argparse.Namespace) -> dict[str, Any]:
     """Dispatch to the selected backend's ``settings_from_args``."""
     return load_calculator(args.backend).settings_from_args(args)
+
+
+def _timed_out(server_url: str, timeout: float) -> str:
+    """The one sentence for a gradient that did not come back in time."""
+    return (
+        f"ExtOpt server at {server_url} gave no reply within {timeout:g}s — a gradient "
+        "slower than the step's gradient_timeout_seconds, or a hung server"
+    )
 
 
 def submit_calculation(
@@ -95,6 +117,13 @@ def submit_calculation(
     a bearer ``Authorization`` header; the server rejects requests without
     it. Raises :class:`JobFailureError` on any HTTP / connection / JSON
     error so the calling step records a clean failure.
+
+    ``timeout`` bounds the one call. Its expiry arrives two ways — a ``TimeoutError``
+    straight from the socket while the server is still computing, or wrapped in a
+    ``URLError`` when the connection itself timed out — and both are named as what they
+    are: a gradient slower than the step's ``gradient_timeout_seconds``, or a hung
+    server. The bare form escaped every handler here and crashed the wrapper with a
+    traceback; the wrapped one read as an unreachable server.
     """
     payload = {
         "atom_types": list(data.symbols),
@@ -122,7 +151,17 @@ def submit_calculation(
     except HTTPError as e:
         raise JobFailureError(f"ExtOpt server returned HTTP {e.code}: {e.reason}") from e
     except URLError as e:
+        if isinstance(e.reason, TimeoutError):
+            raise JobFailureError(_timed_out(server_url, timeout)) from e
         raise JobFailureError(f"ExtOpt server unreachable at {server_url}: {e.reason}") from e
+    except TimeoutError as e:
+        raise JobFailureError(_timed_out(server_url, timeout)) from e
+    except HTTPException as e:
+        # A server that answers and then breaks the protocol mid-body (IncompleteRead on a
+        # dying worker) — neither an HTTPError nor a URLError, so it crashed the wrapper
+        # with a traceback in the runlog instead of the classified failure ORCA's step
+        # records like every other server fault.
+        raise JobFailureError(f"ExtOpt server sent a broken response: {e!r}") from e
     try:
         parsed = json.loads(body)
     except json.JSONDecodeError as e:
@@ -130,9 +169,22 @@ def submit_calculation(
     if "error" in parsed:
         raise JobFailureError(f"ExtOpt server error: {parsed['error']}")
     try:
-        return float(parsed["energy"]), list(parsed["gradient"])
+        energy = float(parsed["energy"])
+        gradient = [[float(component) for component in row] for row in parsed["gradient"]]
     except (KeyError, TypeError, ValueError) as e:
         raise JobFailureError(f"ExtOpt server response missing fields: {parsed!r}") from e
+    # `json.loads` accepts the bare `NaN` / `Infinity` Python's encoder emits, and
+    # `f"{x:.12e}"` writes them into the .engrad as text ORCA then reads. The server
+    # refuses them on its side too; this is the classified failure for a server that
+    # does not — the same JobFailureError every other unusable answer becomes.
+    if not math.isfinite(energy) or any(
+        not math.isfinite(component) for row in gradient for component in row
+    ):
+        raise JobFailureError(
+            "ExtOpt server returned a non-finite energy or gradient (nan/inf): the backend "
+            "could not evaluate this geometry"
+        )
+    return energy, gradient
 
 
 def _engrad_path_for(inputfile: str) -> Path:
@@ -198,6 +250,7 @@ def main() -> int:
         data=data,
         tag=args.tag or _tag_for(args.inputfile),
         token=resolve_server_token(args),
+        timeout=args.timeout,
     )
     engrad_path = _engrad_path_for(args.inputfile)
     protocol.write_engrad(

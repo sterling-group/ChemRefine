@@ -13,7 +13,8 @@ This is the **only** module that calls :func:`sys.exit` or reads
 * ``chemrefine rerun CONFIG [STEP]`` — redo one whole step from scratch; every
   other step resumes, so one whose fingerprint no longer holds runs again.
 * ``chemrefine rebuild-cache CONFIG [STEP]`` — rebuild one step's cache from
-  outputs already on disk (parse only, no submission); the run ends there.
+  outputs already on disk (parse only, no submission); later steps re-report
+  from their caches for as long as those still match.
 * ``chemrefine rebuild-nms CONFIG [STEP]`` — the same rebuild aimed at the NMS
   step: with no STEP it finds the one setting ``nms: true`` rather than taking
   the last. Round 1 is re-parsed and its displaced children re-read from disk,
@@ -22,6 +23,10 @@ This is the **only** module that calls :func:`sys.exit` or reads
 ``chemrefine backends {install,list,path}`` manages the per-backend environments
 (conflicting MLIP stacks live in one managed env each, resolved by name — see
 :mod:`chemrefine.engines._provision`).
+
+``chemrefine schema`` / ``chemrefine engines [--json]`` print the machine-readable
+config schema document and the engine registry (see :mod:`chemrefine.introspect`) —
+what a GUI form or an agent reads instead of the prose docs.
 
 Per-step ``on_failure: stop | skip | best`` (in the YAML) decides in-run
 behaviour: ``stop`` (default) halts the run after caching the step's successes,
@@ -47,6 +52,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
 import typer
+from typer.main import get_group
 
 from chemrefine import __version__, cli_legacy
 from chemrefine.errors import ChemRefineError
@@ -124,8 +130,8 @@ def _load(config_path: Path, *, maxcores: int | None, maxgpus: int | None) -> Co
 
     The return annotation resolves under ``TYPE_CHECKING`` only — the
     pydantic/config import stays lazy (it loads only when a command actually
-    runs). Both flags beat the YAML; ``model_copy`` skips re-validation, so the
-    flags enforce their own bounds (see :data:`MaxCoresOpt` / :data:`MaxGpusOpt`).
+    runs). Both flags beat the YAML, through :meth:`Config.with_overrides`, so
+    each is held to its field's own floor rather than to a copy of it here.
     """
     from chemrefine.config import load_config
 
@@ -136,7 +142,7 @@ def _load(config_path: Path, *, maxcores: int | None, maxgpus: int | None) -> Co
     if maxgpus is not None:
         updates["max_gpus"] = maxgpus
     if updates:
-        cfg = cfg.model_copy(update=updates)
+        cfg = cfg.with_overrides(**updates)
     return cfg
 
 
@@ -152,7 +158,8 @@ def _dispatch(
     """Load the config, then either describe the would-be execution (``--dry-run``) or run it.
 
     ``action_name`` is the subcommand string (== the :class:`Action` value); the
-    enum is resolved lazily so a plain ``--dry-run`` never imports ``recovery``.
+    enum is resolved lazily so a plain ``--dry-run`` never imports ``recovery``
+    (a ``--dry-run`` *with* a target does, to refuse a target no step matches).
     Loading happens inside the same handler as execution so **every**
     :class:`ChemRefineError` — a malformed config included — exits with its
     documented ``exit_code`` (see :mod:`chemrefine.errors`) instead of escaping
@@ -160,6 +167,14 @@ def _dispatch(
     """
     try:
         config = _load(config_path, maxcores=maxcores, maxgpus=maxgpus)
+        if target is not None:
+            # Resolved here, once, before the dry-run branch: `--dry-run` promises to
+            # validate, and it echoed a target no step matched as though it would run —
+            # exit 0 on the one mistake a dry run exists to catch. The real run refused
+            # the same target a moment later, with the lock already taken.
+            from chemrefine.recovery import resolve_target
+
+            resolve_target(config, target)
         if dry_run:
             typer.echo(f"[dry-run] action={action_name}")
             typer.echo(f"[dry-run] output_dir={config.output_dir}")
@@ -189,18 +204,18 @@ def _dispatch(
 
 
 ConfigArg = Annotated[Path, typer.Argument(..., exists=True, dir_okay=False, readable=True)]
+# No ``min=`` on either budget: the floor is the config model's (``max_cores: ge=1``,
+# ``max_gpus: ge=0``) and ``Config.with_overrides`` applies it to an override, so a ``0``
+# here is the same exit-2 ``ConfigError`` a ``0`` in the YAML is — one rule, one wording.
 MaxCoresOpt = Annotated[
     int | None,
-    # min=1 mirrors Config's ``max_cores: ge=1`` — the override is applied via
-    # ``model_copy`` (no re-validation), so the flag must reject 0/negative itself.
-    typer.Option("--maxcores", min=1, help="Override max_cores from the YAML."),
+    typer.Option("--maxcores", help="Override max_cores from the YAML."),
 ]
 MaxGpusOpt = Annotated[
     int | None,
-    # min=0 mirrors Config's ``max_gpus: ge=0``; applied via ``model_copy`` (no
-    # re-validation), so the flag enforces its own bound. Beats the YAML, like
-    # --maxcores; omit to keep the YAML's value (``None`` ⇒ auto-resolve).
-    typer.Option("--maxgpus", min=0, help="Override max_gpus from the YAML."),
+    # Beats the YAML, like --maxcores; omit to keep the YAML's value (``None`` ⇒
+    # auto-resolve).
+    typer.Option("--maxgpus", help="Override max_gpus from the YAML."),
 ]
 DryRunOpt = Annotated[
     bool,
@@ -255,7 +270,8 @@ def rebuild_cache(
 ) -> None:
     """Rebuild one step's cache from existing outputs (default: latest); no submission.
 
-    The run ends at that step.
+    The steps after it re-report from their caches for as long as those still match the
+    configuration; the run stops quietly at the first one that does not.
     """
     raise typer.Exit(
         _dispatch(
@@ -281,7 +297,8 @@ def rebuild_nms(
 
     Defaults to the step setting `nms: true` rather than the last step. Round 1 is re-parsed
     and its displaced children re-read from the `attemptK/` they ran in, so re-resolving
-    costs a read, not a re-run of the frequencies. The run ends at that step.
+    costs a read, not a re-run of the frequencies. The steps after it re-report from their
+    caches, like rebuild-cache.
     """
     raise typer.Exit(
         _dispatch(
@@ -333,6 +350,247 @@ def rerun_errors(
 
 
 # ---------------------------------------------------------------------------
+# Introspection — the machine-readable schema and registry views
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def agent(
+    config_path: Annotated[
+        Path | None,
+        typer.Argument(
+            exists=True,
+            dir_okay=False,
+            readable=True,
+            help="Config file this session works on (optional).",
+        ),
+    ] = None,
+    provider: Annotated[
+        str,
+        typer.Option("--provider", help="Endpoint preset: openai, ollama, vllm, or custom."),
+    ] = "custom",
+    model: Annotated[
+        str | None,
+        typer.Option("--model", help="Model name, or a provider:model string."),
+    ] = None,
+    base_url: Annotated[
+        str | None,
+        typer.Option("--base-url", help="OpenAI-compatible endpoint URL override."),
+    ] = None,
+    check_only: Annotated[
+        bool,
+        typer.Option("--check", help="Verify the configured provider/model and exit."),
+    ] = False,
+) -> None:
+    r"""Chat with an embedded agent that authors and triages workflows (terminal REPL).
+
+    The same tools as the MCP server, no client required: multi-provider via
+    OpenAI-compatible endpoints (local Ollama/vLLM included) or PydanticAI's native
+    provider strings. Mutating tools always ask for confirmation first. Needs the
+    ``chemrefine\[agent]`` extra; configuration also via CHEMREFINE_LLM_MODEL /
+    _BASE_URL / _API_KEY. ``--check`` probes the endpoint and names the fix
+    (start the daemon, pull the model, set the key) without starting a chat — and
+    works before the extra is even installed.
+    """
+    try:
+        if check_only:
+            from chemrefine.agent import providers
+
+            report = providers.check(
+                providers.ProviderConfig.resolve(provider, model=model, base_url=base_url)
+            )
+            for finding in report.findings:
+                typer.echo(finding)
+            raise typer.Exit(code=0 if report.ok else 1)
+        try:
+            from chemrefine.agent import chat
+        except ImportError as e:
+            logger.error(
+                "the embedded agent needs PydanticAI: pip install 'chemrefine[agent]' (%s)", e
+            )
+            raise typer.Exit(code=1) from e
+        chat.main(
+            provider=provider,
+            model=model,
+            base_url=base_url,
+            config_path=str(config_path) if config_path is not None else None,
+        )
+    except ChemRefineError as e:
+        logger.error("%s: %s", type(e).__name__, e)
+        raise typer.Exit(code=e.exit_code) from e
+
+
+@app.command()
+def gui(
+    config_path: Annotated[
+        Path | None,
+        typer.Argument(
+            exists=True,
+            dir_okay=False,
+            readable=True,
+            help="Existing config to load into the builder.",
+        ),
+    ] = None,
+    port: Annotated[
+        int | None,
+        typer.Option(
+            "--port",
+            min=0,
+            help="Port to bind on 127.0.0.1 (default: a stable per-user port; 0 = pick free).",
+        ),
+    ] = None,
+    no_browser: Annotated[
+        bool, typer.Option("--no-browser", help="Print the URL instead of opening a browser.")
+    ] = False,
+) -> None:
+    r"""Open the click-through YAML builder in a browser (local web app).
+
+    Left pane: steps, engines and options as forms driven by the live schema; right
+    pane: the YAML being built. Binds 127.0.0.1 behind a per-session token, on a stable
+    per-user port by default — so an SSH forwarding setup for a cluster, written once,
+    keeps working. Needs the ``chemrefine\[gui]`` extra.
+    """
+    try:
+        from chemrefine.gui.serve import launch
+    except ImportError as e:
+        logger.error("the GUI needs flask/waitress: pip install 'chemrefine[gui]' (%s)", e)
+        raise typer.Exit(code=1) from e
+    try:
+        launch(config_path, port=port, open_browser=not no_browser)
+    except OSError as e:
+        # The one OSError a local bind realistically raises: --port names a taken port.
+        # (The default path falls back to a kernel-assigned port on its own, so an
+        # OSError with no --port is something rarer — surface it without a number.)
+        if port is not None:
+            logger.error(
+                "could not serve on 127.0.0.1:%d (%s) — try --port 0 for a free one", port, e
+            )
+        else:
+            logger.error("could not serve the GUI on 127.0.0.1 (%s)", e)
+        raise typer.Exit(code=1) from e
+
+
+@app.command()
+def mcp() -> None:
+    r"""Serve ChemRefine's agent tools over the Model Context Protocol (stdio).
+
+    Register it with an MCP client, e.g. ``claude mcp add chemrefine -- chemrefine mcp``
+    (or over SSH for a cluster: ``-- ssh login-node chemrefine mcp``). Needs the
+    ``chemrefine\[mcp]`` extra; see :mod:`chemrefine.mcp_server`.
+    """
+    try:
+        from chemrefine import mcp_server
+    except ImportError as e:
+        logger.error(
+            "the MCP server needs the Model Context Protocol SDK: "
+            "pip install 'chemrefine[mcp]' (%s)",
+            e,
+        )
+        raise typer.Exit(code=1) from e
+    mcp_server.main()
+
+
+@app.command()
+def schema() -> None:
+    """Print the machine-readable config schema document as JSON.
+
+    The document assembled by :func:`chemrefine.introspect.schema_document`: the config
+    schema, the NMS knob schema, and a descriptor per registered engine. Consumers that
+    cannot import chemrefine (the GUI's forms, an agent writing a config) read this
+    instead of the docs, so it is generated from the validating models and cannot drift.
+    """
+    import json
+
+    from chemrefine.introspect import schema_document
+
+    typer.echo(json.dumps(schema_document(), indent=2))
+
+
+@app.command()
+def validate(
+    config_path: ConfigArg,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Emit the structured validation report as JSON.")
+    ] = False,
+) -> None:
+    """Validate a config and report every finding at once; exit 2 if it cannot run.
+
+    The non-raising twin of loading: pydantic errors keep their field locations,
+    registry-aware checks (unknown engine, bad option values, missing templates) are
+    included, and warnings do not affect the exit code. See :mod:`chemrefine.validate`.
+    """
+    import json
+
+    from chemrefine.validate import validate_config_file
+
+    report = validate_config_file(config_path)
+    if as_json:
+        typer.echo(json.dumps(report.to_json(), indent=2))
+    else:
+        for issue in report.issues:
+            where = ".".join(str(part) for part in issue.loc) or "config"
+            typer.echo(f"error [{issue.kind}] at {where}: {issue.message}")
+        for warning in report.warnings:
+            where = ".".join(str(part) for part in warning.loc) or "config"
+            typer.echo(f"warning [{warning.kind}] at {where}: {warning.message}")
+        if report.ok:
+            steps = report.config.steps if report.config is not None else ()
+            typer.echo(f"OK: {len(steps)} step(s) validated")
+    if not report.ok:
+        raise typer.Exit(code=2)
+
+
+@app.command()
+def scaffold(
+    config_path: ConfigArg,
+    overwrite: Annotated[
+        bool,
+        typer.Option("--overwrite", help="Rewrite existing template files with starters."),
+    ] = False,
+) -> None:
+    """Write starter templates for every file the config expects but lacks.
+
+    Step templates for each template-driven step and the SLURM header(s) dispatch would
+    pick. Existing files are kept unless --overwrite. See :mod:`chemrefine.scaffold`.
+    """
+    try:
+        from chemrefine.config import load_config
+        from chemrefine.scaffold import plan_templates, scaffold_templates
+
+        config = load_config(config_path)
+        written = set(scaffold_templates(config, overwrite=overwrite))
+        for plan in plan_templates(config):
+            state = "wrote" if plan.path in written else "kept"
+            typer.echo(f"{state} {plan.path}")
+    except ChemRefineError as e:
+        logger.error("%s: %s", type(e).__name__, e)
+        raise typer.Exit(code=e.exit_code) from e
+
+
+@app.command()
+def engines(
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Emit the full engine descriptors as JSON.")
+    ] = False,
+) -> None:
+    """List registered engines: template kind, options model, capabilities."""
+    import dataclasses
+    import json
+
+    from chemrefine.introspect import describe_engines
+
+    descriptors = describe_engines()
+    if as_json:
+        typer.echo(json.dumps([dataclasses.asdict(d) for d in descriptors], indent=2))
+        return
+    for d in descriptors:
+        template = f"template .{d.template_suffix}" if d.template_driven else "no template"
+        options = "options model" if d.options_schema is not None else "template-configured"
+        caps = ", ".join(d.capabilities) if d.capabilities else "-"
+        typer.echo(f"{d.name:14} {template:14} {options:20} {caps}")
+
+
+# ---------------------------------------------------------------------------
 # backends — manage per-backend environments (provision once, reuse every run)
 # ---------------------------------------------------------------------------
 
@@ -348,27 +606,52 @@ def backends_install(
     extras: Annotated[
         list[str], typer.Argument(help="Backend extra(s), e.g. mlip-mace mlip-fairchem pyscf.")
     ],
+    python: Annotated[
+        str | None,
+        typer.Option(
+            "--python",
+            help="Build the env(s) with this Python: a version (3.12), a command name, or a "
+            "path. Default: the newest one each backend's extra supports.",
+        ),
+    ] = None,
 ) -> None:
     """Provision managed env(s) so steps can run these backends side by side.
 
     Each env is built with the same tool that created the current environment
     (conda / uv / venv) under ``$CHEMREFINE_HOME`` and reused by every later run;
     run this once (on HPC: on a login node with internet) per backend you use.
+
+    The Python each env is built on is the newest one that backend's extra installs on —
+    which is this interpreter unless the backend's stack has no wheels for it.
     """
-    from chemrefine.engines import build_backend_env, known_backend_extras
+    from chemrefine.engines import (
+        backend_env_python,
+        build_backend_env,
+        known_backend_extras,
+        resolve_base_python,
+    )
 
     known = known_backend_extras()
     unknown = [e for e in extras if e not in known]
     if unknown:
         raise typer.BadParameter(f"unknown backend(s) {unknown}; known: {sorted(known)}")
     for extra in extras:
-        typer.echo(f"provisioning {extra} …")
         try:
-            python = build_backend_env(extra)
+            # Only a fresh env chooses an interpreter; an existing one is extended on the
+            # Python it already has, and asking for a choice there could refuse a build that
+            # is going to succeed.
+            if backend_env_python(extra).is_file():
+                typer.echo(f"provisioning {extra} …")
+            else:
+                typer.echo(
+                    f"provisioning {extra} on Python "
+                    f"{resolve_base_python(extra, override=python).version} …"
+                )
+            built = build_backend_env(extra, python=python)
         except ChemRefineError as e:
             typer.echo(str(e), err=True)
             raise typer.Exit(code=e.exit_code) from e
-        typer.echo(f"{extra}: {python}")
+        typer.echo(f"{extra}: {built}")
 
 
 @backends_app.command("list")
@@ -399,10 +682,20 @@ def backends_path(
 # Legacy (v1.3.1) flag-style CLI → subcommand translation
 # ---------------------------------------------------------------------------
 
+SUBCOMMANDS: frozenset[str] = frozenset(get_group(app).commands)
+"""Every subcommand and command group, spelled as Typer spells them.
+
+The vocabulary :func:`chemrefine.cli_legacy.translate_argv` passes through untouched:
+a first positional outside it is read as a v1.3.1 ``CONFIG`` and rewritten to
+``chemrefine run <name>``. Read off the built Click group once every command above is
+registered, so a new command joins the translator by existing — a hand-kept copy once
+lacked ``mcp``, and ``chemrefine mcp`` became ``run mcp`` ("File 'mcp' does not exist").
+"""
+
 
 def main() -> None:
     """Entry point: translate any legacy flag-style argv, then run the Typer app."""
     import sys
 
-    sys.argv[1:] = cli_legacy.translate_argv(sys.argv[1:])
+    sys.argv[1:] = cli_legacy.translate_argv(sys.argv[1:], SUBCOMMANDS)
     app()

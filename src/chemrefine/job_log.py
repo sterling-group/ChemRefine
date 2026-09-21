@@ -1,10 +1,26 @@
 """Per-job operational logs (one file per structure per step).
 
-A *runlog* is one file per structure per step at
-``<step_dir>/step{N}_structure_{ID}.runlog``. The bash header/footer
-snippets here are embedded in every generated SLURM script (which also
-runs via the local bash fallback), so every engine emits the same
-skeleton:
+A *runlog* is one file per job, written beside the calculation it
+describes. A structure's own runs sit at its canonical path,
+``<step_dir>/<structure_id>/step{N}_{structure_id}.runlog``; the
+attempt directories hold the rest, in two shapes because two things
+put them there:
+
+* ``<structure_id>/attempt{K}/step{N}_{structure_id}.runlog`` — a
+  *superseded* run, moved there wholesale when the next attempt began
+  (:func:`chemrefine.attempts.archive_previous`). A convergence retry
+  re-runs at the canonical path, so this is where its first try went.
+* ``<structure_id>/attempt{K}/<child_id>/step{N}_{child_id}.runlog`` —
+  a job that *ran* inside the attempt: an NMS round-2 child, or that
+  child's own retry one level deeper.
+
+(The ``step{N}_structure_{ID}`` basename this module once documented is
+the **v1.3.1** spelling; ``structure_`` was dropped from every artifact
+name in 2.0 — see the v1→v2 migration guide.)
+
+The bash header/footer snippets here are embedded in every generated
+SLURM script (which also runs via the local bash fallback), so every
+engine emits the same skeleton:
 
 * A start header with host, job_id, mode, engine, operation, step,
   structure_id, scratch path, output path, and cores. Engines append
@@ -15,15 +31,20 @@ skeleton:
   scratch_kept.
 
 The fixed fields (``_HEADER_KEYS`` / ``_FOOTER_KEYS``) drive the field
-order, so a maintainer grepping ``outputs/step*/step*_structure_*.runlog``
-sees a uniform corpus; engine-specific rows extend the header without
-disturbing that shape.
+order, so a maintainer grepping ``outputs/step*/**/step*.runlog`` sees a
+uniform corpus — every attempt included; engine-specific rows extend the
+header without disturbing that shape. (In bash that pattern needs
+``shopt -s globstar``; without it ``**`` collapses to one level and finds
+only the canonical runlogs. zsh, ``Path.glob`` and ripgrep need nothing.)
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
+
+from chemrefine.config import reject_shell_unsafe
+from chemrefine.errors import ConfigError
 
 _HEADER_KEYS = (
     "host",
@@ -74,7 +95,29 @@ def bash_header(
     can compute the elapsed seconds. Engines can append their own
     ``(key, value)`` rows via ``extra_fields`` — they render after the
     fixed runlog skeleton.
+
+    **Every ``extra_fields`` value is held to** :func:`~chemrefine.config.
+    reject_shell_unsafe` **here, at emission.** The header is an unquoted heredoc, so a
+    value is interpolated as bash — a ``$(...)`` in one executes when the job runs, and a
+    bare ``$NAME`` is a nounset abort under the script's ``set -u`` when nothing has
+    exported it yet (the header runs *before* the engine's run block). Checked at the
+    point the value becomes bash rather than per engine, so a row added by any engine is
+    covered by existing — the same property-keyed placement as the rule itself. The
+    *fixed* skeleton values above are exempt on purpose: ``$(hostname)`` and
+    ``${SLURM_JOB_ID:-$$}`` are this module's own deliberate expansions.
+
+    A refused value is a :class:`~chemrefine.errors.ConfigError` naming the field: the
+    text originates in the user's YAML (an engine's option, an ``executables`` entry),
+    and a bare ``ValueError`` from inside script assembly would leave the exit-code
+    contract as a traceback.
     """
+    for key, value in extra_fields:
+        try:
+            reject_shell_unsafe(
+                str(value), what=f"runlog field {key!r}", fix="remove the character"
+            )
+        except ValueError as e:
+            raise ConfigError(str(e)) from e
     values = {
         "host": "$(hostname)",
         "job_id": "${SLURM_JOB_ID:-$$}",

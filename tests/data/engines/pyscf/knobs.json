@@ -1,0 +1,16 @@
+{
+  "model": "PyscfOptions",
+  "examples": [
+    "method",
+    "xc",
+    "basis",
+    "device",
+    "cores"
+  ],
+  "tests_only": [
+    "df",
+    "gpu",
+    "backend_python",
+    "extra"
+  ]
+}

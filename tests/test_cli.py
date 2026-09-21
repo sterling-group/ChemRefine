@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import contextlib
+import json
+import os
+import re
 import subprocess
 import sys
 import textwrap
@@ -13,11 +16,16 @@ import yaml
 from typer.testing import CliRunner
 
 from chemrefine import __version__
-from chemrefine.cli import app
-from chemrefine.cli_legacy import translate_argv as _translate_legacy_argv
-from chemrefine.errors import ConfigError
+from chemrefine.cli import SUBCOMMANDS, app
+from chemrefine.cli_legacy import translate_argv
+from chemrefine.errors import CacheError, ChemRefineError, ConfigError
 
 runner = CliRunner()
+
+
+def _translate_legacy_argv(argv: list[str]) -> list[str]:
+    """`translate_argv` against the live CLI vocabulary, as `cli.main` calls it."""
+    return translate_argv(argv, SUBCOMMANDS)
 
 
 def _write_xyz(path: Path) -> None:
@@ -54,8 +62,174 @@ def _write_config(tmp_path: Path, **overrides) -> Path:
 def test_help_lists_every_subcommand():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    for cmd in ("run", "resume", "rebuild-cache", "rebuild-nms", "rerun", "rerun-errors"):
+    for cmd in (
+        "run",
+        "resume",
+        "rebuild-cache",
+        "rebuild-nms",
+        "rerun",
+        "rerun-errors",
+        "schema",
+        "engines",
+    ):
         assert cmd in result.stdout
+
+
+@pytest.mark.parametrize("command", ["agent", "gui", "mcp"])
+def test_the_help_names_the_extra_the_command_needs(command: str):
+    """The one actionable word in the sentence has to survive rendering.
+
+    Typer renders docstrings as Rich markup, where ``[gui]`` is a style tag — so all
+    three of these printed "Needs the ``chemrefine`` extra", naming an extra that does
+    not exist, to the users least able to guess the right one.
+    """
+    result = runner.invoke(app, [command, "--help"])
+    assert result.exit_code == 0
+    assert f"chemrefine[{command}]" in result.stdout
+
+
+def test_no_command_docstring_hides_a_bracketed_name_behind_rich_markup():
+    """The rule, checked on the source, so a fourth command is covered by existing.
+
+    Asserting on three rendered outputs pins the three we know about; asserting that no
+    command docstring contains an unescaped bracket is the rule those three broke. A
+    literal ``[...]`` in help text must be written ``\\[...]`` in a raw docstring — ruff
+    flags the non-raw spelling as W605, so the two checks bracket each other.
+    """
+    import ast
+
+    from chemrefine import cli
+
+    tree = ast.parse(Path(cli.__file__).read_text(encoding="utf-8"))
+    commands = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and any(
+            isinstance(d, ast.Call) and getattr(d.func, "attr", "") == "command"
+            for d in node.decorator_list
+        )
+    }
+    assert commands, "no @app.command() functions found — the scanner is broken, not the code"
+    offenders = sorted(
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and node.name in commands
+        and re.search(r"(?<!\\)\[[^\]]+\]", ast.get_docstring(node, clean=False) or "")
+    )
+    assert not offenders, f"escape the bracket as \\[...] in the docstring of: {offenders}"
+
+
+def test_the_legacy_translator_knows_every_subcommand():
+    """A subcommand the translator doesn't know is rewritten to `chemrefine run <cmd>`.
+
+    That is exactly how `chemrefine mcp` once became `run mcp` ("File 'mcp' does not
+    exist") while the pass-through set was a hand-kept copy. `cli.SUBCOMMANDS` is now
+    read off the built app, and CliRunner-based tests bypass main() and its argv
+    translation, so this pins the derivation against the registrations themselves and
+    then sends every member through the translator.
+    """
+    registered = {
+        info.name or info.callback.__name__.replace("_", "-")
+        for info in app.registered_commands
+        if info.callback is not None
+    } | {info.name for info in app.registered_groups if info.name is not None}
+    assert registered == SUBCOMMANDS
+    assert {"rebuild-cache", "backends"} <= SUBCOMMANDS  # a hyphenated command, a group
+
+    for command in sorted(SUBCOMMANDS):
+        argv = [command, "whatever.yaml"]
+        assert _translate_legacy_argv(argv) == argv
+
+
+def test_schema_prints_the_introspection_document():
+    """`chemrefine schema` emits the whole document as parseable JSON on stdout."""
+    result = runner.invoke(app, ["schema"])
+    assert result.exit_code == 0
+    document = json.loads(result.stdout)
+    assert document["chemrefine_version"] == __version__
+    assert "StepConfig" in document["config"]["$defs"]
+    assert "fake" in document["engines"]
+
+
+def test_validate_reports_ok_and_exits_zero(tmp_path: Path):
+    config = _write_config(tmp_path)
+    result = runner.invoke(app, ["validate", str(config)])
+    assert result.exit_code == 0
+    assert "OK: 2 step(s) validated" in result.stdout
+
+
+def test_validate_prints_warnings_without_failing(tmp_path: Path):
+    """Warnings reach the human output but leave the exit code at 0."""
+    config = _write_config(
+        tmp_path,
+        steps=[{"step": 1, "engine": "fake", "operation": "opt_sp", "options": {"typoed": 1}}],
+    )
+    result = runner.invoke(app, ["validate", str(config)])
+    assert result.exit_code == 0
+    assert "warning [options] at steps.0.options" in result.stdout
+    assert "OK: 1 step(s) validated" in result.stdout
+
+
+def test_a_config_that_is_not_utf8_exits_two(tmp_path: Path):
+    """The decode failure carries ConfigError's code, like every other malformed file."""
+    config = tmp_path / "input.yaml"
+    config.write_bytes("# Ångström\nsteps:\n  - step: 1\n    engine: fake\n".encode("latin-1"))
+    result = runner.invoke(app, ["run", str(config), "--dry-run"])
+    assert result.exit_code == 2
+
+
+def test_validate_exits_two_on_an_unrunnable_config(tmp_path: Path):
+    """Exit 2 mirrors ConfigError's documented code; findings print one per line."""
+    config = _write_config(tmp_path, steps=[{"step": 1, "engine": "no-such-engine"}])
+    human = runner.invoke(app, ["validate", str(config)])
+    assert human.exit_code == 2
+    assert "error [engine] at steps.0.engine" in human.stdout
+
+    as_json = runner.invoke(app, ["validate", str(config), "--json"])
+    assert as_json.exit_code == 2
+    assert json.loads(as_json.stdout)["ok"] is False
+
+
+def test_scaffold_writes_then_keeps(tmp_path: Path):
+    """First run fills the gaps; the second finds nothing to write and says so."""
+    config = _write_config(tmp_path, steps=[{"step": 1, "engine": "orca", "operation": "opt_sp"}])
+    first = runner.invoke(app, ["scaffold", str(config)])
+    assert first.exit_code == 0
+    assert "wrote" in first.stdout
+    assert "step1.inp" in first.stdout
+    assert (tmp_path / "templates" / "step1.inp").is_file()
+
+    second = runner.invoke(app, ["scaffold", str(config)])
+    assert second.exit_code == 0
+    assert "wrote" not in second.stdout
+    assert "kept" in second.stdout
+
+
+def test_scaffold_surfaces_config_errors_with_their_exit_code(tmp_path: Path):
+    config = tmp_path / "broken.yaml"
+    config.write_text("steps: [unclosed", encoding="utf-8")
+    result = runner.invoke(app, ["scaffold", str(config)])
+    assert result.exit_code == 2
+
+
+def test_engines_lists_the_registry_in_both_shapes():
+    """Human table and `--json` must both cover the registry, sorted.
+
+    The human line spells out ORCA's options story ("template-configured") — the fact a
+    reader needs before hunting for an options block that doesn't exist.
+    """
+    human = runner.invoke(app, ["engines"])
+    assert human.exit_code == 0
+    assert "orca" in human.stdout
+    assert "template-configured" in human.stdout
+
+    as_json = runner.invoke(app, ["engines", "--json"])
+    assert as_json.exit_code == 0
+    names = [d["name"] for d in json.loads(as_json.stdout)]
+    assert names == sorted(names)
+    assert "orca" in names
 
 
 def test_version_prints_package_version():
@@ -77,13 +251,16 @@ def test_importing_cli_does_not_pull_the_heavy_stack():
         "heavy = ('chemrefine.pipeline', 'chemrefine.engines', 'chemrefine.recovery', 'ase'); "
         "print(','.join(m for m in heavy if m in sys.modules))"
     )
-    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True, timeout=120
+    )
     assert out.stdout.strip() == "", f"cli import leaked heavy modules: {out.stdout.strip()}"
 
 
 def test_missing_config_path_errors(tmp_path: Path):
     result = runner.invoke(app, ["run", str(tmp_path / "nope.yaml")])
-    assert result.exit_code != 0
+    # Typer's own `exists=True` check on the argument: usage error 2, before any code of ours
+    assert result.exit_code == 2
 
 
 # ---------------------------------------------------------------------------
@@ -101,10 +278,46 @@ def test_run_executes_full_pipeline(tmp_path: Path):
 
 
 def test_resume_after_run_is_cache_hit(tmp_path: Path):
+    """A resume over a finished run serves both steps from cache: nothing is rewritten.
+
+    Exit 0 alone was true of a resume that recomputed everything; the cache documents'
+    identity (inode + mtime — the cache writes atomically, replacing the inode) is what a
+    hit leaves untouched.
+    """
     config_path = _write_config(tmp_path)
     assert runner.invoke(app, ["run", str(config_path)]).exit_code == 0
-    # Second invocation should succeed and not blow up on the cache.
+    documents = [
+        tmp_path / "outputs" / "step1_screen" / "_cache" / "step.json",
+        tmp_path / "outputs" / "step2_refine" / "_cache" / "step.json",
+    ]
+    before = [(p.stat().st_ino, p.stat().st_mtime_ns) for p in documents]
+
     assert runner.invoke(app, ["resume", str(config_path)]).exit_code == 0
+
+    assert [(p.stat().st_ino, p.stat().st_mtime_ns) for p in documents] == before
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
+def test_an_unreadable_cache_document_exits_with_the_cache_error_code(tmp_path: Path):
+    """The "cache corrupt or unwritable" row promises exit 7 — for unreadable too.
+
+    A rebuild has to read the manifest to know what to re-parse. ``is_file`` is true of
+    a mode-000 one, so the read was reached and ``PermissionError`` escaped the handler
+    that maps a ``ChemRefineError`` to its code: a traceback and exit 1 where the docs
+    promise 7. (An unreadable step document is a different case: ``load_if_valid`` treats
+    it as it treats a corrupt one, a miss, and a resume recomputes the step.)
+    """
+    config_path = _write_config(tmp_path)
+    assert runner.invoke(app, ["run", str(config_path)]).exit_code == 0
+    manifest = tmp_path / "outputs" / "step1_screen" / "_cache" / "manifest.json"
+    manifest.chmod(0)
+    try:
+        result = runner.invoke(app, ["rebuild-cache", str(config_path), "screen"])
+    finally:
+        manifest.chmod(0o644)
+
+    assert result.exit_code == CacheError.exit_code
+    assert not isinstance(result.exception, PermissionError)
 
 
 def test_dry_run_does_not_create_outputs(tmp_path: Path):
@@ -153,7 +366,22 @@ def test_rerun_with_missing_target_errors(tmp_path: Path):
     config_path = _write_config(tmp_path)
     runner.invoke(app, ["run", str(config_path)])
     result = runner.invoke(app, ["rerun", str(config_path), "ghost"])
-    assert result.exit_code != 0
+    assert result.exit_code == ConfigError.exit_code
+
+
+def test_dry_run_refuses_a_target_no_step_matches(tmp_path: Path, caplog):
+    """A dry run is where a mistyped target should be caught, not echoed.
+
+    It printed ``target step: ghost`` and exited 0 while the real run refused the same
+    target with the lock already taken; the refusal is the same ``ConfigError`` (exit 2)
+    every other entry point gives it, and nothing on disk is touched.
+    """
+    config_path = _write_config(tmp_path)
+    result = runner.invoke(app, ["rerun", str(config_path), "ghost", "--dry-run"])
+    assert result.exit_code == ConfigError.exit_code
+    assert "no step matches 'ghost'" in caplog.text
+    assert "[dry-run]" not in result.stdout
+    assert not (tmp_path / "outputs").exists()
 
 
 def test_rebuild_nms_on_a_config_with_no_nms_step_says_so(tmp_path: Path):
@@ -169,7 +397,7 @@ def test_rebuild_nms_on_a_config_with_no_nms_step_says_so(tmp_path: Path):
 
     result = runner.invoke(app, ["rebuild-nms", str(config_path)])
 
-    assert result.exit_code != 0
+    assert result.exit_code == ChemRefineError.exit_code, "the typed code, not a traceback's 1"
     assert not list((tmp_path / "outputs").glob("*/*/attempt*")), (
         "and it refused before touching anything — no step was redone"
     )
@@ -181,8 +409,17 @@ def test_rebuild_nms_on_a_config_with_no_nms_step_says_so(tmp_path: Path):
 
 
 def test_maxcores_overrides_yaml_value(tmp_path: Path):
+    """--maxcores beats the YAML; dry-run echoes the resolved value.
+
+    The echo is the observable: a bare exit code passes even when the flag is dropped
+    on the floor, which is exactly what deleting the one-line override in `cli._load`
+    does — the maxgpus sibling below already pins its half this way.
+    """
     config_path = _write_config(tmp_path, max_cores=8)
-    # Override to 1 via flag; pipeline still completes with the fake engine.
+    result = runner.invoke(app, ["run", str(config_path), "--maxcores", "1", "--dry-run"])
+    assert result.exit_code == 0
+    assert "max_cores=1" in result.stdout
+    # And the override actually runs: the pipeline completes with the fake engine.
     result = runner.invoke(app, ["run", str(config_path), "--maxcores", "1"])
     assert result.exit_code == 0
 
@@ -203,13 +440,36 @@ def test_maxgpus_omitted_shows_auto(tmp_path: Path):
     assert "max_gpus=auto" in result.stdout
 
 
-def test_maxcores_zero_is_rejected_before_anything_runs(tmp_path: Path):
-    """The override is applied via ``model_copy`` (no re-validation), so the
-    flag itself must enforce the ``>= 1`` floor — otherwise an invalid budget
-    surfaces only mid-run as a raw Throttler ValueError, after inputs exist."""
+def test_takes_target_matches_the_subcommand_signatures():
+    """``Action.takes_target`` says which subcommands declare a ``target`` argument.
+
+    The enum's answer drives the agent's refusal and the page's buttons; the CLI's answer
+    is its signatures. Read off the built Click group, like ``SUBCOMMANDS``, so the two
+    cannot drift without this saying so.
+    """
+    from typer.main import get_group
+
+    from chemrefine.recovery import Action
+
+    commands = get_group(app).commands
+    for action in Action:
+        params = {param.name for param in commands[action.value].params}
+        assert ("target" in params) is action.takes_target, action
+
+
+def test_maxcores_zero_is_rejected_before_anything_runs(tmp_path: Path, caplog):
+    """An override is held to the config model's own floor, as exit 2, before any input exists.
+
+    ``Config.with_overrides`` validates the value by the field's declared ``ge=1`` — the
+    flag carries no floor of its own to drift from it — so a ``0`` here is refused with
+    the same code and wording a ``0`` in the YAML gets, never a raw Throttler
+    ``ValueError`` mid-run.
+    """
     config_path = _write_config(tmp_path)
-    result = runner.invoke(app, ["run", str(config_path), "--maxcores", "0"])
-    assert result.exit_code != 0
+    with caplog.at_level("ERROR", logger="chemrefine.cli"):
+        result = runner.invoke(app, ["run", str(config_path), "--maxcores", "0"])
+    assert result.exit_code == 2
+    assert "max_cores 0: Input should be greater than or equal to 1" in caplog.text
     assert not (tmp_path / "outputs").exists()
 
 
@@ -291,6 +551,38 @@ def test_translate_legacy_argv_passes_new_style_through(argv):
     assert _translate_legacy_argv(argv) == argv
 
 
+@pytest.mark.parametrize(
+    "legacy, expected",
+    [
+        # The one flag that promises "do not execute" must survive the translation:
+        # dropped, `c.yaml --dry-run` became the cache-invalidating `run c.yaml`.
+        (["c.yaml", "--dry-run"], ["run", "c.yaml", "--dry-run"]),
+        (["c.yaml", "--maxgpus", "2"], ["run", "c.yaml", "--maxgpus", "2"]),
+        (["c.yaml", "--skip", "--dry-run"], ["resume", "c.yaml", "--dry-run"]),
+    ],
+)
+def test_translate_legacy_argv_keeps_flags_it_does_not_recognise(legacy, expected):
+    """A current (or unknown) flag rides through for Typer to honour or refuse.
+
+    The translator rebuilds argv from the legacy fields it parsed, and anything it
+    dropped on the floor was silently gone — Typer never saw it, so `--dry-run` could
+    not refuse to execute and `--maxgpus` could not cap anything. Passed through, a
+    real flag keeps its meaning and an invented one gets the real grammar's refusal.
+    """
+    assert _translate_legacy_argv(legacy) == expected
+
+
+def test_legacy_dry_run_does_not_execute(tmp_path: Path, monkeypatch):
+    """End to end: `chemrefine CONFIG --dry-run` describes the run and dispatches nothing."""
+    from chemrefine import cli
+
+    config_path = _write_config(tmp_path)
+    monkeypatch.setattr(cli, "execute", lambda *a, **k: pytest.fail("--dry-run must not execute"))
+    monkeypatch.setattr("sys.argv", ["chemrefine", str(config_path), "--dry-run"])
+    with contextlib.suppress(SystemExit):  # typer.Exit at the end of app()
+        cli.main()
+
+
 def test_legacy_rerun_errors_flag_dispatches_via_main(tmp_path: Path, monkeypatch):
     """`chemrefine CONFIG --rerun_errors 1` (v1.3.1) reaches the rerun-errors action."""
     from chemrefine import cli
@@ -366,11 +658,33 @@ def test_malformed_config_exits_with_the_config_error_code(tmp_path: Path):
     assert result.exit_code == ConfigError.exit_code
 
 
+@pytest.mark.parametrize("seed_text", [None, ""])
+def test_an_unusable_seed_exits_with_the_config_error_code(tmp_path: Path, seed_text: str | None):
+    """A missing or empty seed is a config error — not a traceback, and not exit 0.
+
+    The likeliest first-run mistake after the template: ASE's ``FileNotFoundError`` escaped
+    the handler that maps a ``ChemRefineError`` to its exit code, so the user saw a
+    traceback and exit 1 where the docs promise 2 — and a zero-byte seed read as zero
+    frames, ran step 1 over nothing and exited 0.
+    """
+    if seed_text is not None:
+        (tmp_path / "seed.xyz").write_text(seed_text, encoding="utf-8")
+    config = tmp_path / "input.yaml"
+    config.write_text(
+        "input: ./seed.xyz\noutput_dir: ./out\ndispatch: local\n"
+        "steps:\n  - step: 1\n    engine: fake\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(app, ["run", str(config)])
+
+    assert result.exit_code == ConfigError.exit_code
+    assert not isinstance(result.exception, FileNotFoundError)
+
+
 # --- cli: malformed legacy argv passes through ------------------------------
 
 
 def test_translate_legacy_argv_passes_through_on_argparse_error():
-    from chemrefine.cli_legacy import translate_argv as _translate_legacy_argv
-
     argv = ["c.yaml", "--maxcores", "not-an-int"]  # argparse SystemExit
     assert _translate_legacy_argv(argv) == argv

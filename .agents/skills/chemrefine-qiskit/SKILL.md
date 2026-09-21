@@ -15,7 +15,7 @@ YAML and keep the shipped Python template thin.
 
 ## Start with the source of truth
 
-1. Read `docs/user-guide/qiskit.md` for the public configuration and architecture.
+1. Read `docs/engines/qiskit.md` for the public configuration and architecture.
 2. Inspect `src/chemrefine/engines/qiskit/options.py` and `registry.py` before changing
    option or extension contracts.
 3. Inspect the relevant factory in `src/chemrefine/engines/qiskit/components/` before
@@ -105,7 +105,7 @@ For every new component:
    In-tree built-ins are imported from `components/__init__.py`; third-party automatic
    entry-point discovery does not yet exist.
 6. Add strict option, compatibility, lifecycle, lazy-import, and failure-path tests.
-7. Update `docs/user-guide/qiskit.md` and a runnable example when the public surface changes.
+7. Update `docs/engines/qiskit.md` and a runnable example when the public surface changes.
 
 Fail early with `ConfigError` for incompatible artifacts, empty adaptive pools,
 zero-parameter VQE circuits, or invalid runtime results.

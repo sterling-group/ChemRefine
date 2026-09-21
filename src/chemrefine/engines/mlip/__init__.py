@@ -26,7 +26,7 @@ from chemrefine.engines.mlip import backends
 from chemrefine.engines.mlip.engine import MlipEngine
 from chemrefine.engines.mlip.extopt_calc import MlipExtOptCalculator
 from chemrefine.engines.mlip.extopt_engine import MlipExtOptEngine
-from chemrefine.engines.mlip.train_engine import MlipTrainEngine
+from chemrefine.engines.mlip.train.engine import MlipTrainEngine
 
 __all__ = [
     "MlipEngine",

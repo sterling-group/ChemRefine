@@ -51,7 +51,7 @@ def _build_kwargs(tmp_path: Path, **overrides):
     """Default kwargs for ``slurm.build_script`` tests."""
     base = {
         "job_name": "step1_structure_0",
-        "pal": 1,
+        "ntasks": 1,
         "template_path": _write_header(tmp_path),
         "script_path": tmp_path / "out" / "step1_structure_0.slurm",
         "input_path": tmp_path / "in" / "step1_structure_0.inp",
@@ -73,21 +73,287 @@ def test_build_script_overrides_ntasks_and_writes_script(tmp_path: Path):
     script = slurm.build_script(
         **_build_kwargs(
             tmp_path,
-            pal=12,
+            ntasks=12,
             run_block=RunBlock(
                 body="$ORCA step1_structure_0.inp > $OUTPUT_DIR/step1_structure_0.out"
             ),
         )
     )
     assert script.exists()
-    text = script.read_text()
+    text = script.read_text(encoding="utf-8")
     assert "#SBATCH --partition=normal" in text
     assert "#SBATCH --time=24:00:00" in text
     assert "#SBATCH --ntasks=12" in text
     assert "#SBATCH --cpus-per-task=1" in text
-    # the user's --ntasks=1 must not survive
-    assert "--ntasks=1" not in text or "--ntasks=12" in text
+    # The header's own --ntasks=1 must not survive. Probed with its trailing newline:
+    # "--ntasks=1" bare is a substring of the re-added "--ntasks=12", so the old
+    # disjunction here was implied by the assertion above it and could never fail.
+    assert "#SBATCH --ntasks=1\n" not in text
     assert "module load orca/6.0" in text
+
+
+@pytest.mark.parametrize("field", ["output_dir", "scratch_dir"])
+def test_a_builder_refuses_a_resolved_path_it_would_interpolate(tmp_path: Path, field: str):
+    """The rule is asked on the string bash receives, by both builders.
+
+    Load-time passes see a path as written and as anchored; the builders see the resolved
+    one, which is what the script exports. A refused character here is a `ConfigError`
+    naming the path — the exit-code contract, not a `ValueError` out of script assembly.
+    """
+    hostile = tmp_path / "run$1" / field
+    with pytest.raises(ConfigError, match=rf"resolved {field}.*\$"):
+        slurm.build_script(**_build_kwargs(tmp_path, **{field: hostile}))
+    with pytest.raises(ConfigError, match=rf"resolved {field}.*\$"):
+        slurm.build_array_script(
+            step_label="step1_refine",
+            ntasks=1,
+            template_path=_write_header(tmp_path),
+            script_path=tmp_path / "out" / "step1_array.slurm",
+            output_dir=tmp_path / "out" if field != "output_dir" else hostile,
+            scratch_dir=tmp_path / "scratch" if field != "scratch_dir" else hostile,
+            run_block=RunBlock(body="echo hi"),
+            engine="orca",
+            operation="opt_sp",
+            step=1,
+            output_globs=("*.out",),
+        )
+
+
+def test_a_symlink_target_passes_both_loaders_and_is_refused_at_render(tmp_path: Path):
+    """The route the load-time passes cannot see, closed where the path becomes bash.
+
+    `output_dir: ./outputs` is clean as written and clean once anchored to the config's
+    directory — `shell_unsafe_after_resolution` answers nothing — but `outputs` is a symlink
+    whose target carries `$`, and the step directory the script exports is the resolved one.
+    The builder refuses that string; before it did, the script exported
+    `…/run$1/outputs/step1/…` and `$1` expanded to nothing on the node.
+    """
+    import yaml
+
+    from chemrefine.config import load_config, shell_unsafe_after_resolution
+    from chemrefine.step import step_dir_for
+
+    target = tmp_path / "run$1" / "outputs"
+    target.mkdir(parents=True)
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "outputs").symlink_to(target)
+    config_path = project / "input.yaml"
+    config_path.write_text(
+        yaml.safe_dump({"output_dir": "./outputs", "steps": [{"step": 1, "engine": "orca"}]}),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)  # as written and as anchored: nothing to refuse
+    assert shell_unsafe_after_resolution(config) is None
+    step_dir = step_dir_for(config, config.steps[0])
+    assert "$1" in str(step_dir)  # what the script would export
+
+    with pytest.raises(ConfigError, match=r"resolved output_dir.*\$"):
+        slurm.build_script(**_build_kwargs(tmp_path, output_dir=step_dir))
+
+
+def test_a_shared_sbatch_line_keeps_its_unowned_directives(tmp_path: Path):
+    """Stripping an owned option must not take its line-mates with it.
+
+    sbatch accepts several options per ``#SBATCH`` line, and dropping the whole line
+    whenever one of ours appeared on it silently discarded the co-resident directives —
+    a header's ``--time`` vanished because ``--output`` shared its line. The owned
+    option goes; whatever else the line declares stays; a line that held only owned
+    options disappears entirely, as it always did.
+    """
+    header = tmp_path / "multi.slurm.header"  # not the name _build_kwargs re-writes
+    header.write_text(
+        "#!/bin/bash\n"
+        "#SBATCH --time=24:00:00 --output=old.log\n"
+        "#SBATCH --qos=high --ntasks 4 --partition=normal\n"
+        "#SBATCH --ntasks=1 --cpus-per-task=4\n",  # only owned options — the line goes
+        encoding="utf-8",
+    )
+    script = slurm.build_script(**_build_kwargs(tmp_path, template_path=header, ntasks=2))
+    text = script.read_text(encoding="utf-8")
+    assert "--time=24:00:00" in text
+    assert "--output=old.log" not in text
+    assert "--qos=high" in text and "--partition=normal" in text
+    assert "--ntasks 4" not in text
+    # `--ntasks-per-node` and friends must still pass whole — the prefix guard holds
+    # in the stripping regex exactly as it did in the old whole-line test below.
+    assert "#SBATCH --ntasks=1 --cpus-per-task=4" not in text
+    assert "#SBATCH --ntasks=2" in text
+
+
+def test_a_shared_mem_line_keeps_its_unowned_directives(tmp_path: Path):
+    """The memory replacement obeys the same rule as the header strip.
+
+    `_apply_memory` replaces a too-small grant; a `--mem` sharing a line with another
+    directive must lose only the memory half.
+    """
+    header = tmp_path / "shared-mem.slurm.header"  # not the name _build_kwargs re-writes
+    header.write_text(
+        "#!/bin/bash\n#SBATCH --mem=1 --qos=high\n",
+        encoding="utf-8",
+    )
+    script = slurm.build_script(**_build_kwargs(tmp_path, template_path=header, memory_mb=4000))
+    text = script.read_text(encoding="utf-8")
+    assert "--qos=high" in text
+    assert "--mem=1" not in text
+    assert "#SBATCH --mem-per-cpu=4000" in text
+
+
+def test_build_script_spells_a_threads_layout(tmp_path: Path):
+    """``cpus_per_task`` reaches the SBATCH pair, and the runlog reports the product.
+
+    The pair is an engine's ``slurm_layout``: MPI ranks are ``(pal, 1)``, one threaded
+    process is ``(1, threads)`` — N single-cpu tasks can be granted across nodes, where a
+    threaded program can only use the first node's share.
+    """
+    script = slurm.build_script(**_build_kwargs(tmp_path, ntasks=1, cpus_per_task=8))
+    text = script.read_text(encoding="utf-8")
+    assert "#SBATCH --ntasks=1" in text
+    assert "#SBATCH --cpus-per-task=8" in text
+    assert "cores=8" in text
+
+
+def _write_header_with(tmp_path: Path, *directives: str) -> Path:
+    """A header template carrying extra ``#SBATCH`` lines (for the memory tests)."""
+    header = tmp_path / "mem.slurm.header"
+    header.write_text(
+        "#!/bin/bash\n#SBATCH --partition=normal\n"
+        + "".join(f"#SBATCH {d}\n" for d in directives)
+        + "module load orca/6.0\n",
+        encoding="utf-8",
+    )
+    return header
+
+
+def test_no_memory_declaration_leaves_the_header_alone(tmp_path: Path):
+    """Engines that declare nothing get exactly the header's memory policy, untouched."""
+    header = _write_header_with(tmp_path, "--mem-per-cpu=1000")
+    script = slurm.build_script(**_build_kwargs(tmp_path, template_path=header))
+    text = script.read_text(encoding="utf-8")
+    assert "#SBATCH --mem-per-cpu=1000" in text
+    assert text.count("--mem-per-cpu") == 1
+
+
+@pytest.mark.parametrize(
+    ("override", "gpus", "expected"),
+    [
+        ("special.header", 3, "special.header"),  # a per-step header wins over everything
+        ("special.header", 0, "special.header"),
+        (None, 1, "cuda.slurm.header"),  # GPU demand picks the cuda header
+        ("", 1, "cuda.slurm.header"),  # an empty override is no override
+        (None, 0, "cpu.slurm.header"),  # else the workflow's own
+    ],
+)
+def test_header_name_for_step_is_the_one_rule(override: str | None, gpus: int, expected: str):
+    """Override, then GPU demand, then the default — spelled once, asked by run and validator."""
+    assert slurm.header_name_for_step(override, gpus=gpus, default="cpu.slurm.header") == expected
+
+
+def test_a_single_node_job_pins_the_node_and_a_headers_own_count_yields(tmp_path: Path):
+    """``single_node`` writes ``--nodes=1`` and strips the header's own; ``False`` touches nothing.
+
+    The directive is the script's rather than every header's because a header that forgot
+    it produced a job wrong only on the partitions that split it. Stripped in place, not by
+    line: a ``--nodes=4`` sharing a line with ``--time`` must lose only the node count.
+    """
+    header = _write_header_with(tmp_path, "--nodes=4 --time=01:00:00", "-N 2")
+    pinned = slurm.build_script(
+        **_build_kwargs(tmp_path, template_path=header, single_node=True)
+    ).read_text(encoding="utf-8")
+    assert "#SBATCH --nodes=1" in pinned
+    assert "--nodes=4" not in pinned and "-N 2" not in pinned
+    assert "#SBATCH --time=01:00:00" in pinned
+    assert pinned.count("--nodes") == 1
+
+    left_alone = slurm.build_script(**_build_kwargs(tmp_path, template_path=header)).read_text(
+        encoding="utf-8"
+    )
+    assert "#SBATCH --nodes=4 --time=01:00:00" in left_alone
+    assert "--nodes=1" not in left_alone
+
+
+def test_a_sufficient_header_memory_allocation_stands(tmp_path: Path):
+    """The cluster's own policy wins whenever it covers the input's requirement."""
+    header = _write_header_with(tmp_path, "--mem-per-cpu=4000")
+    script = slurm.build_script(
+        **_build_kwargs(tmp_path, template_path=header, ntasks=1, cpus_per_task=8, memory_mb=16000)
+    )
+    text = script.read_text(encoding="utf-8")
+    assert "#SBATCH --mem-per-cpu=4000" in text  # 8 cpus x 4000 = 32000 >= 16000
+    assert text.count("--mem-per-cpu") == 1
+
+
+def test_a_sufficient_total_memory_header_counts_its_units(tmp_path: Path):
+    """A ``--mem=64G`` grant is read as 65536 MB, not compared as the bare number 64."""
+    header = _write_header_with(tmp_path, "--mem=64G")
+    script = slurm.build_script(
+        **_build_kwargs(tmp_path, template_path=header, ntasks=1, cpus_per_task=8, memory_mb=60000)
+    )
+    text = script.read_text(encoding="utf-8")
+    assert "#SBATCH --mem=64G" in text
+    assert "--mem-per-cpu" not in text
+
+
+def test_a_short_header_memory_allocation_is_extended(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    """A header grant below the input's requirement is replaced, loudly; GPU memory is not.
+
+    ``--mem-per-gpu`` only shares a prefix with the directives this owns — stripping it
+    would starve a GPU job of the memory its header deliberately granted.
+    """
+    header = _write_header_with(tmp_path, "--mem-per-cpu=1000", "--mem-per-gpu=8G")
+    with caplog.at_level("INFO"):
+        script = slurm.build_script(
+            **_build_kwargs(
+                tmp_path, template_path=header, ntasks=1, cpus_per_task=8, memory_mb=32000
+            )
+        )
+    text = script.read_text(encoding="utf-8")
+    assert "#SBATCH --mem-per-cpu=4000" in text  # ceil(32000 / 8)
+    assert "--mem-per-cpu=1000" not in text
+    assert "#SBATCH --mem-per-gpu=8G" in text
+    assert "32000" in caplog.text and "8000 MB" in caplog.text
+
+
+def test_an_absent_header_memory_grant_is_requested(tmp_path: Path):
+    """With no header memory at all, the input's requirement becomes the request."""
+    script = slurm.build_script(**_build_kwargs(tmp_path, memory_mb=1000))
+    assert "#SBATCH --mem-per-cpu=1000" in script.read_text(encoding="utf-8")
+
+
+def test_a_kilobyte_header_grant_is_floored_to_mb(tmp_path: Path):
+    """``2048K`` reads as 2 MB — flooring understates the grant, which only ever extends."""
+    header = _write_header_with(tmp_path, "--mem-per-cpu=2048K")
+    script = slurm.build_script(**_build_kwargs(tmp_path, template_path=header, memory_mb=2))
+    text = script.read_text(encoding="utf-8")
+    assert "#SBATCH --mem-per-cpu=2048K" in text  # 2 MB covers the 2 MB requirement
+    assert text.count("--mem-per-cpu") == 1
+
+
+def test_a_kilobyte_header_grant_is_not_read_as_megabytes(tmp_path: Path):
+    """The same ``2048K`` grant must be *extended* against a 3 MB requirement.
+
+    The stands-untouched case above pins the unit only from below: a mutant reading
+    ``2048K`` as 2048 MB still satisfies ``granted >= 2`` and passes it identically —
+    while a real header granting kilobytes would wrongly stand against any requirement
+    and the job would OOM. This side can only pass when K genuinely reads as 2 MB.
+    """
+    header = _write_header_with(tmp_path, "--mem-per-cpu=2048K")
+    script = slurm.build_script(**_build_kwargs(tmp_path, template_path=header, memory_mb=3))
+    text = script.read_text(encoding="utf-8")
+    assert "2048K" not in text, "a 2 MB grant cannot cover 3 MB and must be replaced"
+    assert "#SBATCH --mem-per-cpu=3" in text  # ceil(3 / (1 task x 1 cpu))
+
+
+def test_a_whole_node_grant_satisfies_any_requirement(tmp_path: Path):
+    """``--mem=0`` is SLURM's "all the node's memory" — never extended, whatever is asked."""
+    header = _write_header_with(tmp_path, "--mem=0")
+    script = slurm.build_script(**_build_kwargs(tmp_path, template_path=header, memory_mb=999999))
+    text = script.read_text(encoding="utf-8")
+    assert "#SBATCH --mem=0" in text
+    assert "--mem-per-cpu" not in text
 
 
 def test_build_script_keeps_ntasks_per_node_directive(tmp_path: Path):
@@ -105,8 +371,8 @@ def test_build_script_keeps_ntasks_per_node_directive(tmp_path: Path):
         "#SBATCH --output=old.log\n",
         encoding="utf-8",
     )
-    script = slurm.build_script(**_build_kwargs(tmp_path, template_path=header, pal=8))
-    text = script.read_text()
+    script = slurm.build_script(**_build_kwargs(tmp_path, template_path=header, ntasks=8))
+    text = script.read_text(encoding="utf-8")
     assert "#SBATCH --ntasks-per-node=16" in text
     assert "#SBATCH --ntasks-per-core=1" in text
     assert "#SBATCH --ntasks 1" not in text
@@ -118,7 +384,7 @@ def test_build_script_emits_absolute_runlog_output_directives(tmp_path: Path):
     """``#SBATCH --output`` / ``--error`` must point at absolute paths in the step dir."""
     out = (tmp_path / "out").resolve()
     script = slurm.build_script(**_build_kwargs(tmp_path, output_dir=out))
-    text = script.read_text()
+    text = script.read_text(encoding="utf-8")
     assert f'#SBATCH --output="{out}/step1_structure_0.runlog"' in text
     assert f'#SBATCH --error="{out}/step1_structure_0.err"' in text
 
@@ -135,7 +401,7 @@ def test_build_script_includes_runlog_header_and_footer_fields(tmp_path: Path):
             step_label="step2_refine",
         )
     )
-    text = script.read_text()
+    text = script.read_text(encoding="utf-8")
     assert "engine=mlff" in text
     assert "operation=opt_sp" in text
     assert "step=2" in text
@@ -148,41 +414,46 @@ def test_build_script_includes_run_block(tmp_path: Path):
     script = slurm.build_script(
         **_build_kwargs(tmp_path, run_block=RunBlock(body="echo CUSTOM_RUN_BLOCK_HERE"))
     )
-    assert "echo CUSTOM_RUN_BLOCK_HERE" in script.read_text()
+    assert "echo CUSTOM_RUN_BLOCK_HERE" in script.read_text(encoding="utf-8")
 
 
 def test_build_script_auto_scratch_under_output_dir_when_none(tmp_path: Path):
     """Omitting scratch_dir makes WORK_DIR a sibling of step output."""
     out = (tmp_path / "out").resolve()
     script = slurm.build_script(**_build_kwargs(tmp_path, scratch_dir=None, output_dir=out))
-    text = script.read_text()
+    text = script.read_text(encoding="utf-8")
     assert f'export WORK_DIR="{out}/_work_' in text
 
 
 def test_build_script_explicit_scratch_uses_chemrefine_subdir(tmp_path: Path):
     scratch = (tmp_path / "scratch").resolve()
     script = slurm.build_script(**_build_kwargs(tmp_path, scratch_dir=scratch))
-    assert f'export WORK_DIR="{scratch}/ChemRefine_' in script.read_text()
+    assert f'export WORK_DIR="{scratch}/ChemRefine_' in script.read_text(encoding="utf-8")
 
 
-def test_build_script_save_scratch_keeps_dir(tmp_path: Path):
-    script = slurm.build_script(**_build_kwargs(tmp_path, save_scratch=True))
-    text = script.read_text()
-    assert "rm -rf $WORK_DIR" not in text
-    assert "scratch_kept=true" in text
+def test_build_script_always_removes_the_scratch_directory(tmp_path: Path):
+    """Scratch removal is unconditional — there is no keep-it knob to reach.
+
+    `build_script` used to take a `save_scratch` flag, a v1 concept carried into the
+    rewrite's signature that no caller ever passed. Keeping artifacts is engine-owned
+    instead (`RunBlock.cleanup`, `output_dirs`), which the array path honours too.
+    """
+    text = slurm.build_script(**_build_kwargs(tmp_path)).read_text(encoding="utf-8")
+    assert 'rm -rf "$WORK_DIR"' in text
+    assert "scratch_kept=true" not in text
 
 
 def test_build_script_emits_exit_trap(tmp_path: Path):
     """The footer must be wired through a trap so it fires on failure too."""
     script = slurm.build_script(**_build_kwargs(tmp_path))
-    text = script.read_text()
+    text = script.read_text(encoding="utf-8")
     assert "trap _on_exit EXIT" in text
 
 
 def test_build_script_copies_output_dirs_back(tmp_path: Path):
     """``output_dirs`` (e.g. pyscf ``tensors/``) are copied back wholesale on exit."""
     script = slurm.build_script(**_build_kwargs(tmp_path, output_dirs=("tensors",)))
-    text = script.read_text()
+    text = script.read_text(encoding="utf-8")
     assert 'cp -r "tensors" "$OUTPUT_DIR/" 2>/dev/null || true' in text
 
 
@@ -194,7 +465,7 @@ def test_build_script_missing_template_raises(tmp_path: Path):
 def test_build_script_uses_caller_supplied_output_globs(tmp_path: Path):
     """The back-copy line must reflect the engine's declared file extensions."""
     script = slurm.build_script(**_build_kwargs(tmp_path, output_globs=("*.json", "*.npz")))
-    text = script.read_text()
+    text = script.read_text(encoding="utf-8")
     assert 'cp *.json *.npz "$OUTPUT_DIR/"' in text
     assert "files_copied=$(ls *.json *.npz 2>/dev/null | wc -l)" in text
     # Engine-specific ORCA globs must not leak in.
@@ -209,14 +480,14 @@ def test_build_script_appends_extra_header_fields(tmp_path: Path):
             extra_header_fields=(("orca_executable", "/opt/orca/orca"),),
         )
     )
-    text = script.read_text()
+    text = script.read_text(encoding="utf-8")
     assert "orca_executable=/opt/orca/orca" in text
 
 
 def test_build_script_without_extra_header_fields_is_engine_neutral(tmp_path: Path):
     """Default (no extra fields) emits no engine-specific rows."""
     script = slurm.build_script(**_build_kwargs(tmp_path))
-    assert "orca_executable=" not in script.read_text()
+    assert "orca_executable=" not in script.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -356,6 +627,37 @@ def test_submit_local_closes_handles_and_reraises_when_spawn_fails(tmp_path: Pat
         dispatch._submit_local(script)
     assert len(opened) == 2 and all(handle.closed for handle in opened)
     assert set(dispatch._LOCAL_PROCS) == before  # no half-registered job
+
+
+def test_submit_local_closes_the_first_log_when_the_second_cannot_be_opened(tmp_path: Path):
+    """The `.err` open failing must not strand the `.runlog` opened one line earlier.
+
+    Both handles were acquired before the guard that closed them, so only the *third*
+    failure point — the spawn — was covered. A full disk or a revoked directory takes the
+    second `open` instead, and there the first handle had no owner: CPython's refcount
+    closed it on the way out, but only after a `ResourceWarning`, which the suite treats as
+    an error wherever it is raised.
+    """
+    script = tmp_path / "half.slurm"
+    script.write_text("#!/bin/bash\ntrue\n", encoding="utf-8")
+    opened: list = []
+    real_open = Path.open
+
+    def open_runlog_only(self, *args, **kwargs):
+        if self.suffix == ".err":
+            raise OSError("ENOSPC: no space left on device")
+        handle = real_open(self, *args, **kwargs)
+        opened.append(handle)
+        return handle
+
+    before = set(dispatch._LOCAL_PROCS)
+    with (
+        patch.object(Path, "open", open_runlog_only),
+        pytest.raises(OSError, match="ENOSPC"),
+    ):
+        dispatch._submit_local(script)
+    assert len(opened) == 1 and opened[0].closed, "the .runlog handle outlived its function"
+    assert set(dispatch._LOCAL_PROCS) == before
 
 
 # ---------------------------------------------------------------------------
@@ -652,7 +954,7 @@ def test_build_array_script_resolves_task_from_manifest(tmp_path: Path):
     resolved basenames — the per-job script's values, computed in bash."""
     script = slurm.build_array_script(
         step_label="step2_refine",
-        pal=8,
+        ntasks=8,
         template_path=_write_header(tmp_path),
         script_path=tmp_path / "out" / "step2_refine_array.slurm",
         output_dir=tmp_path / "out",
@@ -663,7 +965,11 @@ def test_build_array_script_resolves_task_from_manifest(tmp_path: Path):
         step=2,
         output_globs=("*.out", "*.xyz"),
     )
-    text = script.read_text()
+    text = script.read_text(encoding="utf-8")
+    # The manifest is the script's first argument, captured before the template body
+    # (`module load …`) can touch the positional parameters, and loud when missing.
+    capture = 'CR_MANIFEST="${1:?array manifest path missing}"'
+    assert text.index("#SBATCH") < text.index(capture) < text.index("module load orca/6.0")
     assert 'line=$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "$CR_MANIFEST")' in text
     assert "IFS=$'\\t' read -r INP OUT SID <<< \"$line\"" in text
     assert 'INP_NAME=$(basename "$INP")' in text
@@ -698,20 +1004,25 @@ def test_write_array_manifests_chunks_at_max_array_size(tmp_path: Path):
     assert line0_chunk1.endswith("\t1000")
 
 
-def test_submit_array_passes_array_and_export_flags(tmp_path: Path):
+def test_submit_array_passes_the_manifest_as_the_script_argument(tmp_path: Path):
+    """The manifest follows the script in argv — sbatch forwards it as ``$1``.
+
+    Not ``--export=ALL,CR_MANIFEST=…``: sbatch splits ``--export`` on commas, so a comma
+    in the output path truncated the variable and every task read a manifest that did not
+    exist. The argument channel reserves no character, commas in the path included.
+    """
     fake = MagicMock(returncode=0, stdout="Submitted batch job 777\n", stderr="")
+    manifest = tmp_path / "out,puts" / "m.0"
     with patch.object(subprocess, "run", return_value=fake) as run:
         job_id = slurm.submit_array(
-            tmp_path / "a.slurm",
-            n_tasks=10,
-            max_concurrent=4,
-            manifest=tmp_path / "m.0",
+            tmp_path / "a.slurm", n_tasks=10, max_concurrent=4, manifest=manifest
         )
     assert job_id == "777"
     argv = run.call_args[0][0]
     assert "--parsable" in argv
-    assert f"--export=ALL,CR_MANIFEST={tmp_path / 'm.0'}" in argv
+    assert "--export=ALL" in argv
     assert "--array=0-9%4" in argv
+    assert argv[-2:] == [str(tmp_path / "a.slurm"), str(manifest)]
 
 
 def test_submit_array_raises_on_sbatch_failure(tmp_path: Path):
@@ -1121,15 +1432,24 @@ def test_wait_for_jobs_deadline_bounds_the_stall_not_the_whole_drain():
     and the two paths would disagree about what the same knob means.
     """
     remaining = ["1", "2", "3", "4"]
+    # An injected clock, not real sleeps: 0.03 s stretches against a 0.05 s bound left
+    # 20 ms for a GC pause or a loaded runner to turn green into ThrottleTimeoutError —
+    # the technique test_throttle._clock_that_expires documents, applied here.
+    now = [0.0]
 
     def one_at_a_time(ids: Collection[str]) -> slurm.QueueState:
-        time.sleep(0.03)  # each stretch is under the bound; four of them exceed it
+        now[0] += 0.03  # each stretch is under the bound; four of them exceed it
         done = {remaining.pop()} if remaining else set(ids)
         return slurm.QueueState(frozenset(done), frozenset(set(ids) - done))
 
-    slurm.wait_for_jobs(
-        ["1", "2", "3", "4"], poll_interval=0, poll=one_at_a_time, max_wait_seconds=0.05
-    )
+    with patch("time.monotonic", side_effect=lambda: now[0]):
+        slurm.wait_for_jobs(
+            ["1", "2", "3", "4"], poll_interval=0, poll=one_at_a_time, max_wait_seconds=0.05
+        )
+    # The drain actually drained: an early return that declares victory while jobs
+    # still run leaves entries here — a mutant doing exactly that survived the whole
+    # suite while this test held no assertion at all.
+    assert remaining == []
 
 
 def test_wait_for_jobs_re_anchors_on_array_tasks_not_on_the_array():
@@ -1142,15 +1462,24 @@ def test_wait_for_jobs_re_anchors_on_array_tasks_not_on_the_array():
     rows underneath the parent are what move.
     """
     tasks = [f"12345_{i}" for i in range(8)]
+    # Injected clock for the reason the sibling above gives — the stretches are data here,
+    # not wall time to race a runner against.
+    now = [0.0]
 
     def one_task_at_a_time(ids: Collection[str]) -> slurm.QueueState:
-        time.sleep(0.03)  # each stretch is under the bound; eight of them are far over it
+        now[0] += 0.03  # each stretch is under the bound; eight of them are far over it
         tasks.pop()
         # The parent leaves the queue only once its last task has exited — the whole reason
         # this path cannot judge progress by ids.
         return slurm.QueueState(frozenset() if tasks else frozenset(ids), frozenset(tasks))
 
-    slurm.wait_for_jobs(["12345"], poll_interval=0, poll=one_task_at_a_time, max_wait_seconds=0.05)
+    with patch("time.monotonic", side_effect=lambda: now[0]):
+        slurm.wait_for_jobs(
+            ["12345"], poll_interval=0, poll=one_task_at_a_time, max_wait_seconds=0.05
+        )
+    # Every task was seen to exit before the wait returned — the sibling test's
+    # full-drain assertion, on the path where only the task rows move.
+    assert tasks == []
 
 
 def test_wait_for_jobs_times_out_on_an_array_whose_tasks_are_all_stuck():
@@ -1224,3 +1553,116 @@ def _stuck_at(*ids: str) -> Callable[[Collection[str]], slurm.QueueState]:
 def _never_called(_ids: object) -> slurm.QueueState:
     """A `poll` callable that fails the test if the loop polls when it should not."""
     raise AssertionError("wait_for_jobs polled with an empty job set")
+
+
+# ---------------------------------------------------------------------------
+# job leases — the record the resume fence reads
+# ---------------------------------------------------------------------------
+
+
+def test_leases_round_trip_and_an_absent_ledger_reads_empty(tmp_path: Path):
+    """Recorded leases come back whole: a SLURM id bare, a local id with its pid.
+
+    The pid is what makes a local lease *probe-able* after the driver that owned the
+    process object is gone — it must be captured at recording time, from the live
+    registry, because there is nowhere to get it later.
+    """
+    assert slurm.load_leases(tmp_path) == []
+
+    proc = subprocess.Popen(["sleep", "5"])
+    try:
+        with patch.dict(dispatch._LOCAL_PROCS, {"local-7": (proc, None, None)}):
+            slurm.record_lease(tmp_path, "12345")
+            slurm.record_lease(tmp_path, "local-7")
+    finally:
+        proc.kill()
+        proc.wait()
+
+    by_id = {lease.id: lease for lease in slurm.load_leases(tmp_path)}
+    assert by_id["12345"].pid is None and not by_id["12345"].local
+    assert by_id["local-7"].pid == proc.pid and by_id["local-7"].local
+    assert all(lease.host for lease in by_id.values())
+
+
+def test_an_unwinding_release_keeps_the_slurm_leases_only(tmp_path: Path):
+    """`keep_slurm` is the unwind's shape: local jobs were just killed, SLURM jobs run on."""
+    slurm.record_lease(tmp_path, "12345")
+    slurm.record_lease(tmp_path, "local-3")  # no registry entry: pid stays None
+
+    slurm.release_leases(tmp_path, keep_slurm=True)
+    assert [lease.id for lease in slurm.load_leases(tmp_path)] == ["12345"]
+
+    # A second unwind with nothing but local leases must not leave an empty ledger
+    # behind — an existing-but-empty file and no file must mean the same thing.
+    slurm.release_leases(tmp_path)
+    slurm.record_lease(tmp_path, "local-4")
+    slurm.release_leases(tmp_path, keep_slurm=True)
+    assert not slurm.lease_path(tmp_path).exists()
+
+
+def test_a_corrupt_lease_ledger_is_refused_not_read_as_empty(tmp_path: Path):
+    """Unreadable leases cannot prove their jobs dead; silence would wave a driver in."""
+    from chemrefine.errors import CacheError
+
+    path = slurm.lease_path(tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text("not json", encoding="utf-8")
+    with pytest.raises(CacheError, match="delete it"):
+        slurm.load_leases(tmp_path)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
+def test_an_unreadable_lease_ledger_is_the_same_worded_refusal(tmp_path: Path):
+    """Present but unreadable is what the docstring promises to refuse — not a traceback.
+
+    Another account's driver, or a ledger the user is told to inspect from another host:
+    the fence cannot prove those jobs dead either, and the message that names the escape
+    is the same one a corrupt file gets.
+    """
+    from chemrefine.errors import CacheError
+
+    slurm.record_lease(tmp_path, "local-1")
+    path = slurm.lease_path(tmp_path)
+    path.chmod(0)
+    try:
+        with pytest.raises(CacheError, match="delete it"):
+            slurm.load_leases(tmp_path)
+    finally:
+        path.chmod(0o644)
+
+
+def test_the_lease_ledger_is_written_readable_for_the_next_driver(tmp_path: Path):
+    """The ledger lands with the mode a plain write gives, not the temp file's 0600.
+
+    The resume fence reads it from whichever account next drives the tree, and the
+    docs direct a user on another host to inspect it; an owner-only ledger would
+    manufacture the very refusal above for everyone but its author.
+    """
+    import stat
+
+    previous = os.umask(0o027)
+    try:
+        slurm.record_lease(tmp_path, "local-1")
+        mode = stat.S_IMODE(slurm.lease_path(tmp_path).stat().st_mode)
+    finally:
+        os.umask(previous)
+    assert mode == 0o640
+
+
+def test_a_failed_lease_write_leaves_no_temp_file_behind(tmp_path: Path):
+    """The temp file is the writer's, and it is gone whether or not the rename happened."""
+    with (
+        patch.object(dispatch.json, "dump", side_effect=OSError("disk full")),
+        pytest.raises(OSError, match="disk full"),
+    ):
+        slurm.record_lease(tmp_path, "local-1")
+    assert not list(slurm.lease_path(tmp_path).parent.glob(".tmp_lease_*"))
+    assert not slurm.lease_path(tmp_path).exists()
+
+
+def test_scheduler_reachable_answers_for_squeue_on_path():
+    """The fence's verify-vs-warn discriminator is squeue's presence, nothing subtler."""
+    with patch.object(dispatch.shutil, "which", return_value="/usr/bin/squeue"):
+        assert slurm.scheduler_reachable()
+    with patch.object(dispatch.shutil, "which", return_value=None):
+        assert not slurm.scheduler_reachable()

@@ -1,0 +1,326 @@
+# Engines & backends
+
+An **engine** is what a step computes with. Every step names one in `engine:`, and the
+engine decides what its template looks like, which `operation:` words it understands, and
+whether it can do [normal-mode sampling](../workflow/nms.md).
+
+<!-- chemrefine:engines -->
+
+That table is generated from the registry when these docs are built, so it cannot fall
+behind the code. Reading it:
+
+- **Step template** — the file the engine reads for each step, `templates/stepN.<suffix>`,
+  and the format it is written in. This is where a QM engine's real settings live.
+- **`operation:`** — the vocabulary that engine interprets. An engine listing *any* treats
+  the field as a free label; an engine whose template inspection can decide the run type
+  infers it when `operation:` is omitted, and an explicit value always wins — each
+  engine's section below says what it reads.
+- **NMS** — whether `nms: true` is honoured. Detected by `isinstance`, never a flag.
+- **Backend env** — the Python stack the engine needs, if any, and the name
+  [`chemrefine backends install`](installing.md) takes. ORCA and Q-Chem need none: they
+  are programs you install yourself and name in `executables:`.
+
+An engine that documents itself on a page of its own is linked from its row in the table.
+
+`options:` is a free per-engine dict and each engine validates its own keys — an
+undeclared key is reported by `chemrefine validate`, and logged when a run starts, as a
+silent no-op rather than ignored. The sections below are those keys, one engine family at
+a time, for the engines documented on this page.
+
+## ORCA (`orca`)
+
+ORCA is configured **through its template**, not through `options:` — it declares no
+option model at all, which is why the table above shows none. The `!` keyword lines,
+`%pal` core count, `%maxcore` memory, `%geom` scan and constraint blocks all live in
+`templates/stepN.inp`, which is an ORCA input with the geometry block generated per
+structure.
+
+That is also why ORCA can infer `operation:`: when the key is omitted, the template's
+keyword lines decide, case-insensitively, with `#` comments ignored:
+
+| Template | infers `operation:` |
+| --- | --- |
+| `! GOAT`, `! DOCKER`, `! SOLVATOR` | `goat`, `docker`, `solvator` — an ensemble |
+| a `%geom … Scan … end` block | `pes` — one structure per scan point |
+| `! IRC` | `irc` — the intrinsic reaction coordinate |
+| `! NEB`, `! NEB-TS`, `! NEB-CI`, `! ZOOM-NEB…`, `! FAST-NEB-TS` | `neb` — a band of images |
+| a `%md … end` block | `md` — a trajectory |
+| `! Opt` (any convergence level), `! OptTS` | `opt_sp` |
+| anything else — a bare single point, a frequency-only job | `sp` |
+
+A many-geometry kind wins over an optimisation keyword beside it (`! OptTS Freq IRC` is an
+`irc` run: the path is the product). An explicit `operation:` always wins — set it when
+inspection cannot decide. A word whose output has no reader of its own yet (`irc`, `neb`,
+`md`) still runs: the output is read as its final structure and the run log says so, and the
+step fans out into its geometries the day a reader for it joins the dispatch.
+
+`executables: { orca: /path/to/orca }` names the binary; an absolute path is required for
+ORCA's own MPI launcher to work.
+
+Every centre in the output's coordinate table becomes an atom of the structure carried to
+the next step, so a template cannot use centres that are not atoms. A dummy atom (`DA`, a
+constraint anchor) is refused when its output is parsed — ORCA prints it as `XX`, which
+names no element, so that structure is ledgered as unparseable rather than silently losing
+or gaining a nucleus. A ghost atom (`H:`, a basis-only centre for a counterpoise
+correction) is printed as a plain `H` and cannot be told from one: it would be carried
+into every later step as a real hydrogen. Keep both out of pipeline steps.
+
+Forces are read only from a gradient block printed *after* the last geometry — an
+`EnGrad` single point, a `Freq` — because an `Opt` prints its gradient inside each cycle
+and the converged geometry once more afterwards, so its last gradient describes the
+point before the result. An `Opt` step therefore carries no forces; a step that labels a
+training set computes them with a single point on the optimised geometries, which is
+what the [MLIP training tutorial](../tutorials/mlip_training.md) does.
+
+## Q-Chem (`qchem`)
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `cores` | `1` | OpenMP threads, rendered as `-nt N` (with `OMP_NUM_THREADS` and `QC_THREADS` exported beside it) and allocated as `--ntasks=1 --cpus-per-task=N`. Q-Chem takes its parallelism **on the command line**, never in the input file — so the number lives here, where ORCA's lives in the template's `%pal` (the rule is: the number lives where the program natively reads it). |
+| `nprocs` | `None` | **Opt-in MPI**: `-mpi -np P` (plus `-nt N` when `cores` > 1), allocated as `--ntasks=P --cpus-per-task=N` and charged as `P×N` cores (over `max_cores` is refused, not clamped). `-mpi` selects Q-Chem's MPI build and its own `mpirun`; without it `-np` is ignored and the job runs threaded. Q-Chem's MPI covers only some methods — leave this unset unless you know your method and build support it. The MPI install facts (`QCRSH`/`QCMPI` exports, MPI module loads) belong in the SLURM header. |
+| `save` | `False` | Copy the key scratch files (MO coefficients — the `.gbw`-analogue) back to the structure's dir (`outputs/stepN/<id>/<stem>/`). The job always runs with a savename so Q-Chem keeps them in scratch; this decides whether they come home. |
+| `device` | `cpu` | Inherited from the shared options and **refused at preflight when set to `cuda`**: the Q-Chem engine launches the same command whatever the device, so the knob would only charge a GPU against `max_gpus` and pick `cuda.slurm.header` for a job that uses neither. (Q-Chem's own GPU path — the wrapper's `-gpu` flag — is not wired.) |
+| `backend_python` | `None` | Inherited and **refused when set**: Q-Chem is a program named in `executables`, not a Python backend, so nothing here reads it. |
+
+**Install environment** (`executables`, config-level — machine facts, like the `orca`
+binary): `qchem` names the wrapper explicitly; `qc` names the install root and makes the
+run block export `QC`, extend `PATH` with `$QC/bin:$QC/bin/perl`, and invoke
+`$QC/bin/qchem`; `qcaux` overrides the auxiliary-file root for installs that keep it
+*beside* the QC root. With `qc` set and `qcaux` unset, `QCAUX=$QC/qcaux` is exported —
+Q-Chem's own documented default, just spelled visibly. A cluster whose header carries
+`module load qchem` needs none of the three.
+
+**Memory**: declare `mem_total` in the template's `$rem` block (Q-Chem's counterpart of
+ORCA's `%maxcore`) and the SLURM request follows it — a header whose own
+`--mem`/`--mem-per-cpu` already covers the declaration stands untouched; a short or
+absent one is extended to fit. No declaration → the header's memory policy stands — and
+Q-Chem then runs at its own built-in default of 2000 MB however large the allocation, so
+declare `mem_total` for any job meant to use its share (the scaffolded starter does).
+
+**Header rule**: a threaded Q-Chem job cannot span nodes — carry `#SBATCH --nodes=1` in
+the header your qchem steps use. `QCSCRATCH` needs no line anywhere: ChemRefine points
+it at the per-job work dir, and `scratch_dir` relocates that to fast local disk.
+
+**Job types and `operation:`**: the key is optional here too — `JOBTYPE` infers it, in
+the same engine-neutral words every engine uses, so a config means the same thing
+whichever engine runs it:
+
+| `JOBTYPE` | infers `operation:` |
+|-----------|---------------------|
+| `sp`, `force`, `freq`, `nmr`, … (one geometry) | `sp` |
+| `opt` | `opt_sp` |
+| `ts` | `opt_sp`, and NMS targets `ts` |
+| `pes_scan` | `pes` — one structure per scan point, so `sample: {method: max, count: 1}` keeps the barrier top |
+| `rpath` | `irc` — the intrinsic reaction coordinate |
+| `aimd` | `md` — a trajectory |
+| `fsm`, `gsm` | `fsm`, `gsm` — a string of nodes whose highest is the TS guess |
+
+An explicit `operation:` always wins, and a job type not listed runs as `sp`.
+
+Migrating a qcsetup-style environment file: `module load …`, compiler
+`LD_LIBRARY_PATH` exports and hostname conditionals go into the SLURM header body
+verbatim (the header's non-`#SBATCH` lines run in every job — locally too, so guard
+cluster-only commands with `command -v module >/dev/null && module load …`, or keep a
+separate local header and point `slurm_template` at it); `export QC=…`/`QCAUX=…` become
+the `executables` keys above; the `QCSCRATCH` line becomes `scratch_dir`;
+`QCRSH`/`QCMPI` stay in the header and only matter for MPI.
+
+```yaml
+template_dir: ./templates
+output_dir: ./outputs
+input: ./input.xyz
+max_cores: 16
+executables:
+  qc: /groups/sterling/software-tools/qchem/qchem700
+  qcaux: /groups/sterling/software-tools/qchem/qcaux
+steps:
+  - step: 1
+    engine: qchem            # templates/step1.in with $rem … $end; the $molecule
+    options: { cores: 8 }    # block is generated per structure into job 1
+```
+
+## Machine-learned potentials (`mlip`, `mlip-extopt`)
+
+A direct `stepN.py` reads every knob below as a `$UPPERCASE` placeholder (`$MODEL_NAME`,
+`$TASK_NAME`, `$DEVICE`, `$MODEL_PATH`, `$CORES`; an unset knob renders empty) and the whole
+validated model as `$OPTIONS_JSON`, for `options = json.loads("$OPTIONS_JSON")`.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `model_name` (aliases `model`, `size`) | `""` (the library's own default) | Model weights, in whatever spelling the library `task_name` selected uses — a size for MACE, a checkpoint name for FAIRChem (its default is `uma-s-1p2`), a loader name for ORB (its default is `orb_v3_conservative_inf_omat`), an id for the others. Unset means the chosen library picks its own default — one spelling could not be right for every library at once. |
+| `task_name` (alias `task`) | `omol` | Method/head — **the only thing that selects the backend builder**. |
+| `model_path` | `None` | A local checkpoint to load *instead of* `model_name`, with the library `task_name` named. Selects nothing itself: to run a model an `mlip-train` step produced, name the same `task_name` it trained with. Relative paths resolve against the config file's directory. |
+| `device` | `cpu` | `cuda` or `cpu`. CPU is the floor that always runs; asking for a GPU is one line, whereas a wrong `cuda` default schedules a CPU job whose script then asks for a device it wasn't given. |
+| `cores` | `1` | Per-structure core budget. |
+| `backend_python` | `None` | Explicit interpreter for the backend (escape hatch). Normally unset: the step's managed env is resolved by name — see [Installing engines & backends](installing.md#available-backends). |
+| `extra` *(direct only)* | `{}` | Free knobs for your own `stepN.py`, as a mapping: validated only as a mapping, rendered as `$EXTRA` (a Python dict literal) and inside `$OPTIONS_JSON`. Declared, so a key you invent is deliberate while a typo of a real knob still warns; `mlip-extopt` and `mlip-train` render no template and refuse it. |
+| `gradient_timeout_seconds` *(ExtOpt only)* | `600` | How long the bridge ORCA invokes per geometry waits on one gradient before giving it up — a bound on a single server call, not on the optimisation. Raise it when a healthy server takes longer per geometry; on expiry the step records a timeout that names this knob, not an unreachable server. |
+
+## Training a potential (`mlip-train`)
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `task_name` (alias `task`) | — (**required**) | Which library trains — the same word that selects a backend for inference. No default: the inference default names a foundation model to *run*, which is a different choice. Which libraries can train is the `Engines` column of the [backend table](installing.md#available-backends) — a backend without a trainer is refused by name. See also the FAIRChem note below. |
+| `model_name` (aliases `model`, `size`) | `""` (train from scratch) | The foundation model a run **starts from** — MACE's `foundation_model`. Unset trains from scratch (`started_from: scratch` in the runlog), which on a few-dozen-structure dataset is rarely what you want — name the foundation model to fine-tune. |
+| `model_path` | `None` | A local checkpoint to continue from, loaded by the library `task_name` names. Relative paths resolve against the config file's directory. |
+| `device` | — (**required**) | `cuda` or `cpu`. No default either way: `cpu` would silently hand you a job that grinds for days, `cuda` would silently charge the GPU budget and swap the SLURM header for a step that never asked. |
+| `gpus` | `1` | Data-parallel width (MACE's `--nproc_per_node`). ChemRefine never writes `--gres` — this is what it charges to the GPU budget and passes to the trainer; the *allocation* is the `--gres` line in your own `cuda.slurm.header`, so raise both together. |
+| `cores` | the step's whole budget | Unset means all of `max_cores`: the single training job *is* the step, unlike a per-structure step that shares the budget. |
+| `valid_fraction` | `0.1` | Share held out to validate on (steers training). A non-zero fraction always yields at least one structure. |
+| `test_fraction` | `0.0` | Share held out for a final evaluation the training never sees. Distinct from `valid_fraction`, and off by default — on a small dataset a test set is a luxury the training set cannot afford. |
+| `seed` | `42` | Seed for the split, so a re-run partitions identically. |
+| `backend_python` | `None` | Explicit interpreter for the trainer (escape hatch). Normally unset: the managed env is resolved by name. |
+| `extra` | — (refused) | Inherited from the direct engine's model and refused by name here: a training step renders no `stepN.py` for free knobs to reach. |
+
+The step's template is the **trainer's own config** (`stepN.yaml`), rendered rather than
+patched: ChemRefine substitutes `$TRAIN_SET`, `$VALID_SET`, `$TEST_SET`, `$RUN_DIR`,
+`$RUN_NAME`, `$DEVICE`, `$SEED`, `$NGPUS`, `$CORES`, `$FOUNDATION_MODEL`, `$CHARGE` and
+`$MULTIPLICITY`, and leaves everything else — including a config's own `${...}`
+interpolations — untouched. A template that never references the dataset placeholder its
+backend needs is rejected before anything is submitted.
+
+The device, the seed and the foundation weights are **plan facts**: the step's options
+are their source of truth — the scheduler charges by them and the cache fingerprint
+records them — and how they reach the training program depends only on what kind of
+program it is. A library trained through ChemRefine's shared driver (one with no
+training CLI of its own) receives them on the driver's **own command line**, so they
+hold whether or not the template references their placeholders, and a template value
+that *contradicts* the step's options is refused by name. A library run through its own
+CLI reads only the config the template becomes, so there each plan fact the library
+reads from its config is a **required placeholder** — a template that never references
+it is rejected before anything is submitted, instead of the library's own fallback
+quietly overriding the step.
+
+The trained model lands under `<step dir>/train/` at a name fixed per library — MACE's
+`train[_stagetwo].model`, FAIRChem's `train/checkpoints/final/inference_ckpt.pt`,
+SevenNet's `checkpoint_best.pth`, CHGNet's `train.pth.tar`, ORB's `train.ckpt` — beside a
+`trained_model.json` recording which run produced it. That path is predictable *before*
+the training runs, so a later step can name it in `model_path`; retraining changes that
+step's cache key, so it re-runs rather than serving a result computed with the old weights.
+
+!!! note "FAIRChem templates must follow fairchem's own fine-tuning recipe"
+
+    The template for a FAIRChem head is FAIRChem's hydra config, and its moving parts
+    are not optional: the dataset stanza needs
+    `transforms: {common_transform: {dataset_name: …}}` (the collater dispatches on the
+    name that transform stamps), `tasks_list` defines fresh `energy`/`forces` tasks
+    bound to that dataset name, and the model node is
+    `initialize_finetuning_model` with replacement heads. This is the shape of
+    fairchem's own `configs/uma/finetune/uma_sm_finetune_template.yaml`, and the
+    shipped example follows it. A config that instead tags data via
+    `a2g_args: {task_name: …}` or reuses the checkpoint's task list fails inside
+    FAIRChem's collater with `TypeError: unhashable type: 'list'`.
+
+    Fine-tuning a UMA checkpoint is a **GPU-scale job**: on CPU the optimizer states and
+    conservative-force graph need roughly 8 GB for `uma-s`. Size `cores`/`device`
+    accordingly.
+
+### MLIP training templates, per backend
+
+The template is always the *trainer's* config; what that means differs per library, and
+each trainer refuses a template missing its own required placeholders before anything
+submits:
+
+- **MACE** — MACE's own training YAML with `$TRAIN_SET`, `$RUN_NAME`, `$RUN_DIR`,
+  `device: $DEVICE` and `seed: $SEED` where those values go; the dataset is written with
+  MACE's own `REF_*` label keys, so no `energy_key`/`forces_key` line is needed. The
+  [MLIP training tutorial](../tutorials/mlip_training.md) walks a complete one.
+- **FAIRChem** — fairchem's hydra config per the note above; requires `$TRAIN_SET`,
+  `$VAL_SET`, `$RUN_DIR`, `$RUN_NAME`, `device_type: $DEVICE` and the `seed: $SEED`
+  keys the shipped example threads through `job` and the dataset stanzas.
+- **SevenNet** — SevenNet's own `input.yaml` (start from `sevenn preset fine_tune >
+  step{N}.yaml`), with `$TRAIN_SET` in `data.load_trainset_path` and `device: $DEVICE`
+  (absent, SevenNet takes cuda whenever torch sees one — the step's own device must win);
+  `$VALID_SET` / `$FOUNDATION_MODEL` → `train.continue.checkpoint` as wanted. A
+  validation split is required: `checkpoint_best.pth`, the model the step adopts, is
+  written when the validation metric improves.
+- **CHGNet** — chemrefine's own small schema (CHGNet has no config format): `train_set:
+  $TRAIN_SET`, `valid_set: $VALID_SET`, `run_name: $RUN_NAME`, plus the `Trainer` knobs
+  (`epochs`, `learning_rate`, `batch_size`, `targets`). The step runs chemrefine's shared
+  train driver inside the backend env; the device, the seed and a `model_path`/
+  `model_name` to start from arrive on the driver's command line from the step's options
+  — never through the template. CHGNet is a periodic model: every structure it is fitted
+  to must carry a cell, and a step handed molecules (every seed read from `.xyz` or built
+  from SMILES) is refused before anything is written, naming the fact.
+- **ORB** — the same driver route: `train_set: $TRAIN_SET`, `run_name: $RUN_NAME`, and a
+  `base_model:` naming the pretrained loader (the architecture — the step's `model_name`
+  serves when the template names none); a local checkpoint arrives as the step's
+  `model_path`, on the driver's command line. No validation file — orb's fine-tune loop
+  is train-only.
+
+Whatever trained, running the result is the same one line: `model_path:` pointing at the
+artifact, with the same `task_name`.
+
+On the ExtOpt path the job starts the gradient server before ORCA, and the server builds
+its calculator — loads the model, and on a cold cache downloads it — before it answers.
+The job waits through that load (for up to an hour, then gives the server up as stuck)
+and separately gives up a server that sits idle for two minutes without answering. A
+first run on a compute node with a slow link is best preceded by one calculation on the
+login node, which fills the model cache the job then reads. The server answers one
+gradient at a time: the calculator behind the route keeps per-call state, so a second
+worker would answer one geometry with another's numbers.
+
+## PySCF (`pyscf`, `pyscf-extopt`)
+
+Both engines read the SCF selection — `pyscf` renders every knob below into your `stepN.py`
+as a `$UPPERCASE` placeholder (`$METHOD` / `$XC` / `$BASIS` / `$DF` / `$GPU` / `$CORES`; an
+unset knob renders empty) and the whole validated model as `$OPTIONS_JSON`, for
+`options = json.loads("$OPTIONS_JSON")`; `pyscf-extopt` builds a gradient server from the
+same values. Only declared knobs are placeholders — any other `$WORD` in a template is left
+as it is, and a key the model does not declare never reaches the script. The
+**ExtOpt only** rows are the ones a server has to do *for* you: on the ExtOpt path ORCA drives
+and there is no `stepN.py`, so anything after the SCF has nowhere else to live. In a direct
+step that work is yours to call — `chemrefine.engines.pyscf._runtime` exports
+`get_active_space_tensors` and `save_tensors` — so those knobs are rejected there by name
+rather than accepted and ignored.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `method` | `dft` | `dft` or `hf`. |
+| `xc` | — (**required** for `dft`) | Exchange-correlation functional. Both engines refuse a `dft` step that omits it (the direct engine at preflight, before anything runs) — every engine makes you name the level of theory: ORCA's lives in the template's `!` line, Q-Chem's in `$rem`. |
+| `basis` | — (**required**) | Orbital basis set. Both engines refuse a step that omits it (the direct engine at preflight, before anything runs) — no silent level of theory. |
+| `df` | `True` | Density fitting / RI (defaults on — large speed-up, negligible cost). |
+| `strict_scf` *(ExtOpt only)* | `True` | Refuse to serve a gradient from an SCF that did not converge. PySCF returns the last iterate rather than raising, and ORCA's `.out` reports only *its own* geometry convergence — so a loose result would rank against converged siblings unmarked. Set `false` for a knowingly loose SCF. |
+| `device` | `cpu` | Compute device; drives `gpu` when `gpu` is unset (`cuda` ⇒ attempt GPU). |
+| `gpu` | derived from `device` | Attempt `gpu4pyscf` if installed (falls back to CPU). Set explicitly to override the `device`-derived default. |
+| `save_tensors` *(ExtOpt only)* | `False` | Dump 1e/2e MO tensors after the SCF. |
+| `localized` *(ExtOpt only)* | `False` | Boys-localize before tensor extraction. |
+| `tensor_folder` *(ExtOpt only)* | `tensors` | Output dir for `save_tensors` `.npz`. A relative path (the default) is copied back into the structure's own dir (`outputs/stepN/<id>/tensors/`); an absolute path writes there directly. |
+| `gradient_timeout_seconds` *(ExtOpt only)* | `600` | How long the bridge ORCA invokes per geometry waits on one gradient before giving it up — a bound on a single server call, not on the optimisation. A DFT gradient on a large system can need more than the default; on expiry the step records a timeout that names this knob, not an unreachable server. |
+| `cores` | `1` | Per-structure core budget. |
+| `backend_python` | `None` | Explicit interpreter for the backend (escape hatch). Normally unset: the `pyscf` managed env is resolved by name. |
+| `extra` *(direct only)* | `{}` | Free knobs for your own `stepN.py`, as a mapping: validated only as a mapping, rendered as `$EXTRA` (a Python dict literal) and inside `$OPTIONS_JSON`. Declared, so a key you invent is deliberate while a typo of a real knob still warns; `pyscf-extopt` renders no template and refuses it. |
+
+## The ExtOpt engines (`mlip-extopt`, `pyscf-extopt`)
+
+Two of the engines end in `-extopt`, and the table shows why they look like ORCA: their
+step template is an ORCA `.inp`, they answer to ORCA's `operation:` vocabulary, and they
+can do NMS. They *are* ORCA runs — ORCA drives the optimiser, the geometry steps and the
+frequency analysis — with one substitution: where ORCA would call its own SCF for energies
+and gradients, it calls the backend instead.
+
+```
+ORCA (%method ProgExt)  →  extopt bridge  →  local HTTP server  →  MACE / UMA / PySCF
+        ↑                                                                   │
+        └──────────────────── .engrad: energy + gradient ←──────────────────┘
+```
+
+The trade is worth making in both directions:
+
+- **The backend gets ORCA's machinery.** Its optimiser, its coordinate system, its
+  numerical Hessian — so an MLIP can locate a transition state and produce a real
+  frequency table, which is what makes `nms: true` meaningful for a potential at all.
+  The NMS knobs share the step's `options:` with the server knobs: with `nms: true` set,
+  the strict server-knob read leaves them to the sampler, and a key neither reads is
+  still refused.
+- **ORCA gets the backend's speed.** The expensive part of each geometry step is the
+  energy and gradient, and that is exactly the part the potential replaces.
+
+The direct engines (`mlip`, `pyscf`) skip ORCA entirely: they render a `stepN.py` that
+calls the library, which is faster and simpler when a single point or a plain optimisation
+is all that is wanted. Pick `-extopt` when you need ORCA to be in charge of the geometry.
+
+The server is started per job, and it is a real trust boundary — loopback only, a
+kernel-assigned port, a per-run bearer token, and a `0600` sidecar for it. The details are
+in [Security & trust boundaries](../internals/security.md#the-extopt-compute-server); the
+place it sits in the run is in [Architecture](../internals/architecture.md#submit-compute-flow).

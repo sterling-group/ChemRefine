@@ -1,0 +1,756 @@
+# ChemRefine test fixture — trimmed excerpt of an ORCA 6.1.1 relaxed surface scan: the second point reaches MaxIter, no RUN DONE banner for it, error termination.
+
+                                 *****************
+                                 * O   R   C   A *
+                                 *****************
+
+                                            #,                                       
+                                            ###                                      
+                                            ####                                     
+                                            #####                                    
+                                            ######                                   
+                                           ########,                                 
+                                     ,,################,,,,,                         
+                               ,,#################################,,                 
+                          ,,##########################################,,             
+                       ,#########################################, ''#####,          
+                    ,#############################################,,   '####,        
+                  ,##################################################,,,,####,       
+                ,###########''''           ''''###############################       
+              ,#####''   ,,,,##########,,,,          '''####'''          '####       
+            ,##' ,,,,###########################,,,                        '##       
+           ' ,,###''''                  '''############,,,                           
+         ,,##''                                '''############,,,,        ,,,,,,###''
+      ,#''                                            '''#######################'''  
+     '                                                          ''''####''''         
+             ,#######,   #######,   ,#######,      ##                                
+            ,#'     '#,  ##    ##  ,#'     '#,    #''#        ,####,    ,#,          
+            ##       ##  ##   ,#'  ##            #'  '#       #'       ,# #          
+            ##       ##  #######   ##           ,######,      #####,      #          
+            '#,     ,#'  ##    ##  '#,     ,#' ,#      #,     #,   #      #          
+             '#######'   ##     ##  '#######'  #'      '#     '####' #    #          
+
+
+
+                #########################################################
+                #                        -***-                          #
+                #          Department of theory and spectroscopy        #
+                #                                                       #
+                #                      Frank Neese                      #
+                #                                                       #
+                #     Directorship, Architecture, Infrastructure        #
+                #                    SHARK, DRIVERS                     #
+                #        Core code/Algorithms in most modules           #
+                #                                                       #
+                #        Max Planck Institute fuer Kohlenforschung      #
+                #                Kaiser Wilhelm Platz 1                 #
+                #                 D-45470 Muelheim/Ruhr                 #
+                #                      Germany                          #
+                #                                                       #
+                #                  All rights reserved                  #
+                #                        -***-                          #
+                #########################################################
+
+
+                         Program Version 6.1.1  -  RELEASE   -
+                                (GIT: $487d211c$)
+                          ($2025-11-21 10:33:24 +0100$)
+
+
+ With contributions from (in alphabetic order):
+[Max-Planck-Institut fuer Kohlenforschung]                               
+  Daniel Aravena         : Magnetic Suceptibility                        
+  Michael Atanasov       : Ab Initio Ligand Field Theory (pilot matlab implementation)
+  Alexander A. Auer      : GIAO ZORA, VPT2 properties, NMR spectrum      
+  Ute Becker             : All parallelization in ORCA, NUMFREQ, NUMCALC 
+  Giovanni Bistoni       : ED, misc. LED, open-shell LED, HFLD           
+  Dmytro Bykov           : pre 5.0 version of the SCF Hessian            
+  Marcos Casanova-Páez   : Triplet and SCS-CIS(D). UHF-(DLPNO)-IP/EA/STEOM-CCSD. UHF-CVS-IP/STEOM-CCSD   
+  Vijay G. Chilkuri      : MRCI spin determinant printing, contributions to CSF-ICE 
+  Pauline Colinet        : FMM embedding                                 
+  Dipayan Datta          : RHF DLPNO-CCSD density                        
+  Achintya Kumar Dutta   : EOM-CC, STEOM-CC                              
+  Nicolas Foglia         : Exact transition moments, OPA infrastructure, MCD improvements    
+  Dmitry Ganyushin       : Spin-Orbit,Spin-Spin,Magnetic field MRCI      
+  Miquel Garcia-Rates    : C-PCM and meta-GGA Hessian, CCSD/C-PCM, Gaussian charge scheme 
+  Tiago L. C. Gouveia    : GS-ROHF, GS-ROCIS                             
+  Yang Guo               : DLPNO-NEVPT2, F12-NEVPT2, CIM, IAO-localization        
+  Andreas Hansen         : Spin unrestricted coupled pair/coupled cluster methods 
+  Ingolf Harden          : AUTO-CI MPn and infrastructure                
+  Benjamin Helmich-Paris : MC-RPA, TRAH-(SCF,CASSCF), AVAS, COSX integrals, SCF dyn. polar., MC-PDFT, srDFT 
+  Lee Huntington         : MR-EOM, pCC                                   
+  Robert Izsak           : Overlap fitted RIJCOSX, COSX-SCS-MP3, EOM     
+  Riya Kayal             : Wick's Theorem for AUTO-CI, AUTO-CI UHF-CCSDT 
+  Emily Kempfer          : AUTO-CI RHF CISDT and CCSDT, approximate NEVPT4
+  Christian Kollmar      : KDIIS, OOCD, Brueckner-CCSD(T), CCSD density, CASPT2, CASPT2-K, improved NEVPT2 
+  Axel Koslowski         : Symmetry handling                             
+  Simone Kossmann        : meta-GGA functionals, TD-DFT gradient, OOMP2, (MP2 Hessian; deprecated post 5.0) 
+  Lucas Lang             : DCDCAS, Hyperfine gauge corrections, ICE-SOC+SSC
+  Marvin Lechner         : AUTO-CI (C++ implementation), FIC-MRCC        
+  Spencer Leger          : CASSCF response                               
+  Dagmar Lenk            : GEPOL surface, SMD, ORCA-2-JSON               
+  Dimitrios Liakos       : Extrapolation schemes; Compound Job, Property file
+  Dimitrios Manganas     : Further ROCIS development; embedding schemes. LFT, Crystal Embedding 
+  Dimitrios Pantazis     : SARC Basis sets                               
+  Anastasios Papadopoulos: AUTO-CI, single reference methods and gradients 
+  Taras Petrenko         : pre 6.0 DFT Hessian and TD-DFT gradient,  ECA, NRVS 
+  Petra Pikulova         : Analytic Raman intensities                    
+  Peter Pinski           : DLPNO-MP2, DLPNO-MP2 Gradient                 
+  Shashank Vittal Rao    : ES-AILFT, MagRelax                            
+  Christoph Reimann      : Effective Core Potentials                     
+  Marius Retegan         : Local ZFS, SOC                                
+  Christoph Riplinger    : Optimizer, TS searches, QM/MM, DLPNO-CCSD(T), (RO)-DLPNO pert. Triples 
+  Michael Roemelt        : Original ROCIS implementation, recursive CI coupling coefficients
+  Masaaki Saitow         : Open-shell DLPNO-CCSD energy and density      
+  Barbara Sandhoefer     : DKH picture change effects                    
+  Yorick L. A. Schmerwitz: GMF and freeze-and-release deltaSCF, NEB S-IDPP initial path                    
+  Kantharuban Sivalingam : CASSCF convergence/infrastructure, NEVPT2, NEVPT3, NEVPT4(SD), FIC-MRCI and CEPA variants
+  Bernardo de Souza      : ESD, SOC TD-DFT                               
+  Georgi L. Stoychev     : AutoAux, RI-MP2 NMR, DLPNO-MP2 response, X2C  
+  Van Anh Tran           : RI-MP2 g-tensors                              
+  Willem Van den Heuvel  : Paramagnetic NMR                              
+  Zikuan Wang            : NOTCH, Electric field optimization            
+  Frank Wennmohs         : Technical directorship and infrastructure     
+  Hang Xu                : AUTO-CI-Response properties                   
+                                                                         
+[FACCTs GmbH]                                                            
+  Markus Bursch, Nicolas Foglia, Miquel Garcia-Rates, Ingolf Harden, Hagen Neugebauer, Anastasios Papadopoulos, 
+  Christoph Riplinger, Bernardo de Souza, Georgi L. Stoychev                                                    
+                                                                 
+  APM, various basis sets, CI-OPT, improved COSX, DLPNO-Multilevel,           
+  DOCKER, DRACO, updates on ESD, Fragmentator, GOAT, IRC, LR-CPCM, L-BFGS, MBIS, meta-GGA TD-DFT gradient, ML-optimized integration grids, 
+  MM, NACMEs, nearIR, NEB, NEB-TS, NL-DFT gradient (VV10), 2- and 3-layer-ONIOM, interface openCOSMO-RS, QMMM,   
+  Crystal-QMMM, RESP, rigid body optimization, SF, symmetry and pop. for TD-DFT, various functionals, SOLVATOR                                   
+                                                                         
+[Other institutions]                                                     
+  V. Asgeirsson          : NEB                                           
+  Christoph Bannwarth    : sTDA-DFT, sTD-DFT, PBEh-3c, B97-3c, D3        
+  Giovanni Bistoni       : ETS/NOCV, ADLD/ADEX, COVALED                  
+  Martin Brehm           : Molecular dynamics                            
+  Ronald Cardenas        : ETS/NOCV                                      
+  Martina Colucci        : COVALED                                       
+  Sebastian Ehlert       : rSCAN, r2SCAN, r2SCAN-3c, D4, dhf basis sets  
+  Marvin Friede          : D4 for Fr, Ra, Ac-Lr                          
+  Lars Goerigk           : TD-DFT with DH, B97 family of functionals     
+  Stefan Grimme          : VdW corrections, initial TS optimization, DFT functionals, gCP, sTDA/sTD-DF 
+  Waldemar Hujo          : DFT-NL                                        
+  H. Jonsson             : NEB                                           
+  Holger Kruse           : gCP                                           
+  Marcel Mueller         : wB97X-3c, vDZP basis set                      
+  Hagen Neugebauer       : wr2SCAN, Native XTB                           
+  Gianluca Regni         : ADLD/ADEX                                     
+  Tobias Risthaus        : pre 6.0 range-separated hybrid DFT and stability analysis
+  Lukas Wittmann         : regularized MP2, r2SCAN double-hybrids, wr2SCAN        
+                                                                         
+We gratefully acknowledge several colleagues who have allowed us to      
+interface, adapt or use parts of their codes:                            
+  Ed Valeev, F. Pavosevic, A. Kumar             : LibInt (2-el integral package), F12 methods 
+  Garnet Chan, S. Sharma, J. Yang, R. Olivares  : DMRG                   
+  Ulf Ekstrom                                   : XCFun DFT Library      
+  Mihaly Kallay                                 : mrcc  (arbitrary order and MRCC methods)
+  Frank Weinhold                                : gennbo (NPA and NBO analysis)           
+  Simon Mueller                                 : openCOSMO-RS                            
+  Christopher J. Cramer and Donald G. Truhlar   : smd solvation model                     
+  S Lehtola, MJT Oliveira, MAL Marques          : LibXC Library                           
+  Liviu Ungur et al                             : ANISO software                          
+
+
+ Your calculation uses the libint2 library for the computation of 2-el integrals
+ For citations please refer to: http://libint.valeyev.net
+
+ Your ORCA version has been built with support for libXC version: 7.0.0
+ For citations please refer to: https://libxc.gitlab.io
+
+ This ORCA versions uses:
+   CBLAS   interface :  Fast vector & matrix operations
+   LAPACKE interface :  Fast linear algebra routines
+   SCALAPACK package :  Parallel linear algebra routines
+   Shared memory     :  Shared parallel matrices
+   BLAS/LAPACK       :  OpenBLAS 0.3.29  USE64BITINT DYNAMIC_ARCH NO_AFFINITY SkylakeX SINGLE_THREADED
+        Core in use  :  SkylakeX
+   Copyright (c) 2011-2014, The OpenBLAS Project
+
+
+  ***********************************
+  * Starting time: Sat Sep 19 06:49:50 2026
+  * Host name:     mweiss
+  * Process ID:    1331195
+  * Working dir.:  /tmp/claude-1000/-home-markus-bin-github-upstream-ChemRefine/b5942f8d-9b22-41aa-bada-dcd607695697/scratchpad/f5_scan/mid2
+  ***********************************
+
+================================================================================
+
+----- Orbital basis set information -----
+Your calculation utilizes the basis: STO-3G
+   H-Ne       : W. J. Hehre, R. F. Stewart and J. A. Pople, J. Chem. Phys. 2657 (1969).
+   Na-Ar      : W. J. Hehre, R. Ditchfield, R. F. Stewart and J. A. Pople, J. Chem. Phys. 2769 (1970).
+   K,Ca,Ga-Kr : W. J. Pietro, B. A. Levy, W. J. Hehre and R. F. Stewart, J. Am. Chem. Soc. 19, 2225 (1980).
+   Sc-Zn,Y-Cd : W. J. Pietro and W. J. Hehre, J. Comp. Chem. 4, 241 (1983).
+
+================================================================================
+                                        WARNINGS
+                       Please study these warnings very carefully!
+================================================================================
+
+
+WARNING: Geometry Optimization
+  ===> : Switching off AutoStart
+         For restart on a previous wavefunction, please use MOREAD
+
+================================================================================
+                                       INPUT FILE
+================================================================================
+NAME = scan3.inp
+|  1> ! HF STO-3G Opt
+|  2> %geom
+|  3>   Scan B 0 1 = 0.99, 1.80, 2 end
+|  4>   MaxIter 2
+|  5> end
+|  6> * xyz 0 1
+|  7> O   0.000000   0.000000   0.000000
+|  8> H   0.000000   0.000000   0.990000
+|  9> H   0.000000   0.975000  -0.172000
+| 10> *
+| 11> 
+| 12>                          ****END OF INPUT****
+================================================================================
+
+                       ******************************
+                       *    Relaxed Surface Scan    *
+                       ******************************
+
+                      Bond (  1,   0):   range=   0.99000000 ..   1.80000000  steps =    2
+
+There is 1 parameter to be scanned.
+There will be    2 constrained geometry optimizations.
+
+
+         *************************************************************
+         *               RELAXED SURFACE SCAN STEP   1               *
+         *                                                           *
+         *                 Bond (  1,   0)  :   0.99000000           *
+         *************************************************************
+
+Geometry optimization settings:
+Update method            Update   .... BFGS
+Choice of coordinates    CoordSys .... (2022) Redundant Internals
+Initial Hessian          InHess   .... Almloef's Model
+Max. no of cycles        MaxIter  .... 2
+
+Convergence Tolerances:
+Energy Change            TolE     ....  5.0000e-06 Eh
+Max. Gradient            TolMAXG  ....  3.0000e-04 Eh/bohr
+RMS Gradient             TolRMSG  ....  1.0000e-04 Eh/bohr
+Max. Displacement        TolMAXD  ....  4.0000e-03 bohr
+RMS Displacement         TolRMSD  ....  2.0000e-03 bohr
+Strict Convergence                .... False
+
+------------------------------------------------------------------------------
+                        ORCA OPTIMIZATION COORDINATE SETUP
+------------------------------------------------------------------------------
+
+The optimization will be done in redundant internal coordinates (2022)
+Making redundant internal coordinates   ...  (2022 redundants) done
+Evaluating the initial hessian          ...  (Almloef) done
+Evaluating the coordinates              ...  done
+Calculating the B-matrix                .... done
+Calculating the G-matrix                .... done
+Will constrain atom 0 coordinate 1 
+Will constrain atom 1 coordinate 1 
+Will constrain atom 2 coordinate 1 
+The number of degrees of freedom        ....    3
+Storing new coordinates                 .... done
+
+    -----------------------------------------------------------------
+... [trimmed: Redundant Internal Coordinates] ...
+         *                GEOMETRY OPTIMIZATION CYCLE   1            *
+         *************************************************************
+---------------------------------
+CARTESIAN COORDINATES (ANGSTROEM)
+---------------------------------
+  O      0.000000   -0.000000    0.000000
+  H      0.000000    0.000000    0.990000
+  H      0.000000    0.975000   -0.172000
+
+----------------------------
+CARTESIAN COORDINATES (A.U.)
+----------------------------
+  NO LB      ZA    FRAG     MASS         X           Y           Z
+   0 O     8.0000    0    15.999    0.000000   -0.000000    0.000000
+   1 H     1.0000    0     1.008    0.000000    0.000000    1.870829
+   2 H     1.0000    0     1.008    0.000000    1.842483   -0.325033
+
+--------------------------------
+... [trimmed: INTERNAL COORDINATES (ANGSTROEM)] ...
+... [trimmed: INTERNAL COORDINATES (A.U.)] ...
+... [trimmed: BASIS SET INFORMATION] ...
+... [trimmed: SHARK INTEGRAL PACKAGE] ...
+... [trimmed: DFT GRID GENERATION] ...
+... [trimmed: SCF SETTINGS] ...
+... [trimmed: SCF CONVERGENCE] ...
+... [trimmed: ORBITAL ENERGIES] ...
+... [trimmed: TIMINGS] ...
+FINAL SINGLE POINT ENERGY       -74.965900352223
+-------------------------   --------------------
+
+------------------------------------------------------------------------------
+                         ORCA SCF GRADIENT CALCULATION
+------------------------------------------------------------------------------
+
+Nuc. rep. gradient        (SHARK) ... done (  0.0 sec)
+HCore & Overlap gradient  (SHARK) ... done (  0.0 sec)
+Two-electron gradient     (SHARK) ... done (  0.0 sec)
+
+------------------
+CARTESIAN GRADIENT
+------------------
+
+   1   O   :    0.000000000   -0.000753660   -0.000561349
+   2   H   :    0.000000000    0.000014567    0.000676941
+   3   H   :   -0.000000000    0.000739093   -0.000115592
+
+Difference to translation invariance:
+           :    0.0000000000    0.0000000000   -0.0000000000
+
+Difference to rotation invariance:
+           :    0.0000000004    0.0000000000    0.0000000000
+
+Norm of the Cartesian gradient     ...    0.0013788391
+RMS gradient                       ...    0.0004596130
+MAX gradient                       ...    0.0007536602
+
+-------
+... [trimmed: TIMINGS] ...
+          ----------------------|Geometry convergence|-------------------------
+          Item                value                   Tolerance       Converged
+          ---------------------------------------------------------------------
+          RMS gradient        0.0004321075            0.0001000000      NO
+          MAX gradient        0.0007479359            0.0003000000      NO
+          RMS step            0.0009288254            0.0020000000      YES
+          MAX step            0.0016063767            0.0040000000      YES
+          -------------------------------------------------------------------------
+          ........................................................
+          Max(Bonds)      0.0009      Max(Angles)    0.01
+          Max(Dihed)        0.00      Max(Improp)    0.00
+          ---------------------------------------------------------------------
+
+The optimization has not yet converged - more geometry cycles are needed
+
+
+    ---------------------------------------------------------------------------
+... [trimmed: Redundant Internal Coordinates] ...
+         *                GEOMETRY OPTIMIZATION CYCLE   2            *
+         *************************************************************
+---------------------------------
+CARTESIAN COORDINATES (ANGSTROEM)
+---------------------------------
+  O      0.000000    0.000349   -0.000098
+  H      0.000000    0.000113    0.989902
+  H      0.000000    0.974538   -0.171804
+
+----------------------------
+CARTESIAN COORDINATES (A.U.)
+----------------------------
+  NO LB      ZA    FRAG     MASS         X           Y           Z
+   0 O     8.0000    0    15.999    0.000000    0.000660   -0.000185
+   1 H     1.0000    0     1.008    0.000000    0.000214    1.870643
+   2 H     1.0000    0     1.008    0.000000    1.841610   -0.324662
+
+--------------------------------
+... [trimmed: INTERNAL COORDINATES (ANGSTROEM)] ...
+... [trimmed: INTERNAL COORDINATES (A.U.)] ...
+... [trimmed: SHARK INTEGRAL PACKAGE] ...
+... [trimmed: DFT GRID GENERATION] ...
+... [trimmed: SCF CONVERGENCE] ...
+FINAL SINGLE POINT ENERGY       -74.965900718014
+-------------------------   --------------------
+
+------------------------------------------------------------------------------
+                         ORCA SCF GRADIENT CALCULATION
+------------------------------------------------------------------------------
+
+Nuc. rep. gradient        (SHARK) ... done (  0.0 sec)
+HCore & Overlap gradient  (SHARK) ... done (  0.0 sec)
+Two-electron gradient     (SHARK) ... done (  0.0 sec)
+
+------------------
+CARTESIAN GRADIENT
+------------------
+
+   1   O   :    0.000000000    0.000255469   -0.000812199
+   2   H   :    0.000000000    0.000032729    0.000728570
+   3   H   :   -0.000000000   -0.000288197    0.000083629
+
+Difference to translation invariance:
+           :    0.0000000000    0.0000000000    0.0000000000
+
+Difference to rotation invariance:
+           :   -0.0000011120    0.0000000000    0.0000000000
+
+Norm of the Cartesian gradient     ...    0.0011605461
+RMS gradient                       ...    0.0003868487
+MAX gradient                       ...    0.0008121985
+
+-------
+... [trimmed: TIMINGS] ...
+          ----------------------|Geometry convergence|-------------------------
+          Item                value                   Tolerance       Converged
+          ---------------------------------------------------------------------
+          Energy change      -0.0000003658            0.0000050000      YES
+          RMS gradient        0.0001757332            0.0001000000      NO
+          MAX gradient        0.0002982041            0.0003000000      YES
+          RMS step            0.0002713850            0.0020000000      YES
+          MAX step            0.0004482147            0.0040000000      YES
+          -------------------------------------------------------------------------
+          ........................................................
+          Max(Bonds)      0.0002      Max(Angles)    0.01
+          Max(Dihed)        0.00      Max(Improp)    0.00
+          ---------------------------------------------------------------------
+
+       The step convergence is overachieved with 
+       reasonable convergence on the gradient
+       Convergence will therefore be signaled now
+
+
+                    ***********************HURRAY********************
+                    ***        THE OPTIMIZATION HAS CONVERGED     ***
+                    *************************************************
+
+
+    ---------------------------------------------------------------------------
+... [trimmed: Redundant Internal Coordinates] ...
+CARTESIAN COORDINATES (ANGSTROEM)
+---------------------------------
+  O      0.000000    0.000284   -0.000044
+  H      0.000000    0.000031    0.989956
+  H      0.000000    0.974685   -0.171912
+
+----------------------------
+CARTESIAN COORDINATES (A.U.)
+----------------------------
+  NO LB      ZA    FRAG     MASS         X           Y           Z
+   0 O     8.0000    0    15.999    0.000000    0.000536   -0.000083
+   1 H     1.0000    0     1.008    0.000000    0.000060    1.870746
+   2 H     1.0000    0     1.008    0.000000    1.841887   -0.324867
+
+--------------------------------
+... [trimmed: INTERNAL COORDINATES (ANGSTROEM)] ...
+... [trimmed: INTERNAL COORDINATES (A.U.)] ...
+... [trimmed: BASIS SET INFORMATION] ...
+... [trimmed: SHARK INTEGRAL PACKAGE] ...
+... [trimmed: DFT GRID GENERATION] ...
+... [trimmed: SCF SETTINGS] ...
+... [trimmed: SCF CONVERGENCE] ...
+... [trimmed: ORBITAL ENERGIES] ...
+... [trimmed: TIMINGS] ...
+FINAL SINGLE POINT ENERGY       -74.965900789318
+-------------------------   --------------------
+
+                                *** OPTIMIZATION RUN DONE ***
+
+
+Storing optimized geometry in scan3.001.xyz ... done
+Storing optimized geometry and energy in scan3.xyzall ... done
+Storing actual gbw-file in scan3.001.gbw ... done
+
+------------------------------------------------------------------------------
+                              ORCA PROPERTY CALCULATIONS
+------------------------------------------------------------------------------
+
+GBWName                                 ... scan3.gbw
+Number of atoms                         ...      3
+Number of basis functions               ...      7
+Max core memory                         ...   4096 MB
+
+Electric properties:
+Dipole moment                           ... YES
+Quadrupole moment                       ...  NO
+Static polarizability (Dipole/Dipole)   ...  NO
+Static polarizability (Dipole/Quad.)    ...  NO
+Static polarizability (Quad./Quad.)     ...  NO
+Static polarizability (Velocity)        ...  NO
+Static hyperpolarizability              ...  NO
+
+Atomic electric properties:
+Dipole moment                           ...  NO
+Quadrupole moment                       ...  NO
+Static polarizability                   ...  NO
+
+Choice of electric origin               ... Center of mass
+Position of electric origin             ...     0.000000     0.103539     0.086424
+
+General magnetic properties:
+Magnetizability                         ...  NO
+
+EPR properties:
+g-Tensor (aka g-matrix)                 ...  NO
+Zero-Field splitting spin-orbit         ...  NO
+Zero-field splitting spin-spin          ...  NO
+Hyperfine couplings                     ...  NO (   0 nuclei)
+Quadrupole couplings                    ...  NO (   0 nuclei)
+Contact density                         ...  NO (   0 nuclei)
+
+NMR properties:
+Chemical shifts                         ...  NO (   0 nuclei)
+Spin-rotation constants                 ...  NO (   0 nuclei)
+Spin-spin couplings                     ...  NO (   0 nuclei,    0 pairs)
+
+Choice of magnetic origin               ... GIAO
+Position of magnetic origin             ...     0.000000     0.000000     0.000000
+
+Properties with geometric perturbations:
+SCF Hessian                             ...  NO
+IR spectrum                             ...  NO
+VCD spectrum                            ...  NO
+X-ray spectroscopy properties:
+SCF XES/XAS/RIXS spectra                ...  NO
+
+SCF SOC stabilization energy            ...  NO
+Diagonal Born-Oppenheimer correction    ...  NO
+
+-------------
+DIPOLE MOMENT
+-------------
+
+Method             : SCF
+Type of density    : Electron Density
+Multiplicity       :   1
+Irrep              :   0
+Energy             :   -74.9659007893180842 Eh
+Basis              : AO
+                                X                 Y                 Z
+Electronic contribution:      0.000000000      -0.295785447      -0.248886241
+Nuclear contribution   :      0.000000000       0.810842853       0.680980293
+                        -----------------------------------------
+Total Dipole Moment    :      0.000000000       0.515057406       0.432094052
+                        -----------------------------------------
+Magnitude (a.u.)       :      0.672301570
+Magnitude (Debye)      :      1.708854786
+
+
+
+--------------------
+Rotational spectrum 
+--------------------
+ 
+Rotational constants in cm-1:            23.272748            14.543172             8.950188 
+Rotational constants in MHz :        697699.421776        435993.337769        268319.875115 
+
+Dipole components along the rotational axes: 
+x,y,z [a.u.] :    -0.000664    -0.672301     0.000000 
+x,y,z [Debye]:    -0.001687    -1.708854     0.000000 
+
+ 
+
+Dipole moment calculation done in   0.0 sec 
+
+Maximum memory used throughout the entire PROP-calculation: 0.9 MB
+
+         *************************************************************
+         *               RELAXED SURFACE SCAN STEP   2               *
+         *                                                           *
+         *                 Bond (  1,   0)  :   1.80000000           *
+         *************************************************************
+
+Geometry optimization settings:
+Update method            Update   .... BFGS
+Choice of coordinates    CoordSys .... (2022) Redundant Internals
+Initial Hessian          InHess   .... Almloef's Model
+Max. no of cycles        MaxIter  .... 2
+
+Convergence Tolerances:
+Energy Change            TolE     ....  5.0000e-06 Eh
+Max. Gradient            TolMAXG  ....  3.0000e-04 Eh/bohr
+RMS Gradient             TolRMSG  ....  1.0000e-04 Eh/bohr
+Max. Displacement        TolMAXD  ....  4.0000e-03 bohr
+RMS Displacement         TolRMSD  ....  2.0000e-03 bohr
+Strict Convergence                .... False
+
+------------------------------------------------------------------------------
+                        ORCA OPTIMIZATION COORDINATE SETUP
+------------------------------------------------------------------------------
+
+The optimization will be done in redundant internal coordinates (2022)
+Making redundant internal coordinates   ...  (2022 redundants) done
+Evaluating the initial hessian          ...  (Almloef) done
+Evaluating the coordinates              ...  done
+Calculating the B-matrix                .... done
+Calculating the G-matrix                .... done
+Will constrain atom 0 coordinate 1 
+Will constrain atom 1 coordinate 1 
+Will constrain atom 2 coordinate 1 
+The number of degrees of freedom        ....    3
+Storing new coordinates                 .... done
+
+    -----------------------------------------------------------------
+... [trimmed: Redundant Internal Coordinates] ...
+         *                GEOMETRY OPTIMIZATION CYCLE   1            *
+         *************************************************************
+---------------------------------
+CARTESIAN COORDINATES (ANGSTROEM)
+---------------------------------
+  O      0.000000    0.050316   -0.326482
+  H      0.000000   -0.131522    1.464310
+  H      0.000000    1.056205   -0.319828
+
+----------------------------
+CARTESIAN COORDINATES (A.U.)
+----------------------------
+  NO LB      ZA    FRAG     MASS         X           Y           Z
+   0 O     8.0000    0    15.999    0.000000    0.095084   -0.616962
+   1 H     1.0000    0     1.008    0.000000   -0.248540    2.767144
+   2 H     1.0000    0     1.008    0.000000    1.995939   -0.604387
+
+--------------------------------
+... [trimmed: INTERNAL COORDINATES (ANGSTROEM)] ...
+... [trimmed: INTERNAL COORDINATES (A.U.)] ...
+... [trimmed: BASIS SET INFORMATION] ...
+... [trimmed: SHARK INTEGRAL PACKAGE] ...
+... [trimmed: DFT GRID GENERATION] ...
+... [trimmed: SCF SETTINGS] ...
+... [trimmed: SCF CONVERGENCE] ...
+... [trimmed: ORBITAL ENERGIES] ...
+... [trimmed: TIMINGS] ...
+FINAL SINGLE POINT ENERGY       -74.732079941109
+-------------------------   --------------------
+
+------------------------------------------------------------------------------
+                         ORCA SCF GRADIENT CALCULATION
+------------------------------------------------------------------------------
+
+Nuc. rep. gradient        (SHARK) ... done (  0.0 sec)
+HCore & Overlap gradient  (SHARK) ... done (  0.0 sec)
+Two-electron gradient     (SHARK) ... done (  0.0 sec)
+
+------------------
+CARTESIAN GRADIENT
+------------------
+
+   1   O   :   -0.000000000    0.023222984   -0.156390788
+   2   H   :   -0.000000000   -0.018673895    0.160626494
+   3   H   :    0.000000000   -0.004549089   -0.004235706
+
+Difference to translation invariance:
+           :    0.0000000000    0.0000000000   -0.0000000000
+
+Difference to rotation invariance:
+           :    0.0000051850   -0.0000000000   -0.0000000000
+
+Norm of the Cartesian gradient     ...    0.2262423612
+RMS gradient                       ...    0.0754141204
+MAX gradient                       ...    0.1606264940
+
+-------
+... [trimmed: TIMINGS] ...
+          ----------------------|Geometry convergence|-------------------------
+          Item                value                   Tolerance       Converged
+          ---------------------------------------------------------------------
+          RMS gradient        0.0053192375            0.0001000000      NO
+          MAX gradient        0.0079955457            0.0003000000      NO
+          RMS step            0.0237588254            0.0020000000      NO
+          MAX step            0.0398123751            0.0040000000      NO
+          -------------------------------------------------------------------------
+          ........................................................
+          Max(Bonds)      0.0055      Max(Angles)    2.28
+          Max(Dihed)        0.00      Max(Improp)    0.00
+          ---------------------------------------------------------------------
+
+The optimization has not yet converged - more geometry cycles are needed
+
+
+    ---------------------------------------------------------------------------
+... [trimmed: Redundant Internal Coordinates] ...
+         *                GEOMETRY OPTIMIZATION CYCLE   2            *
+         *************************************************************
+---------------------------------
+CARTESIAN COORDINATES (ANGSTROEM)
+---------------------------------
+  O      0.000000    0.042139   -0.336848
+  H      0.000000   -0.120062    1.455829
+  H      0.000000    1.052924   -0.300982
+
+----------------------------
+CARTESIAN COORDINATES (A.U.)
+----------------------------
+  NO LB      ZA    FRAG     MASS         X           Y           Z
+   0 O     8.0000    0    15.999    0.000000    0.079630   -0.636550
+   1 H     1.0000    0     1.008    0.000000   -0.226885    2.751119
+   2 H     1.0000    0     1.008    0.000000    1.989738   -0.568773
+
+--------------------------------
+... [trimmed: INTERNAL COORDINATES (ANGSTROEM)] ...
+... [trimmed: INTERNAL COORDINATES (A.U.)] ...
+... [trimmed: SHARK INTEGRAL PACKAGE] ...
+... [trimmed: DFT GRID GENERATION] ...
+... [trimmed: SCF CONVERGENCE] ...
+FINAL SINGLE POINT ENERGY       -74.732294699222
+-------------------------   --------------------
+
+------------------------------------------------------------------------------
+                         ORCA SCF GRADIENT CALCULATION
+------------------------------------------------------------------------------
+
+Nuc. rep. gradient        (SHARK) ... done (  0.0 sec)
+HCore & Overlap gradient  (SHARK) ... done (  0.0 sec)
+Two-electron gradient     (SHARK) ... done (  0.0 sec)
+
+------------------
+CARTESIAN GRADIENT
+------------------
+
+   1   O   :    0.000000000    0.013362969   -0.159632253
+   2   H   :   -0.000000000   -0.015146806    0.160652090
+   3   H   :   -0.000000000    0.001783837   -0.001019837
+
+Difference to translation invariance:
+           :   -0.0000000000    0.0000000000   -0.0000000000
+
+Difference to rotation invariance:
+           :    0.0000010978   -0.0000000000    0.0000000000
+
+Norm of the Cartesian gradient     ...    0.2273846241
+RMS gradient                       ...    0.0757948747
+MAX gradient                       ...    0.1606520904
+
+-------
+... [trimmed: TIMINGS] ...
+          ----------------------|Geometry convergence|-------------------------
+          Item                value                   Tolerance       Converged
+          ---------------------------------------------------------------------
+          Energy change      -0.0002147581            0.0000050000      NO
+          RMS gradient        0.0015632756            0.0001000000      NO
+          MAX gradient        0.0020691716            0.0003000000      NO
+          RMS step            0.0091001448            0.0020000000      NO
+          MAX step            0.0152160957            0.0040000000      NO
+          -------------------------------------------------------------------------
+          ........................................................
+          Max(Bonds)      0.0022      Max(Angles)    0.87
+          Max(Dihed)        0.00      Max(Improp)    0.00
+          ---------------------------------------------------------------------
+
+The optimization has not yet converged - more geometry cycles are needed
+
+
+    ---------------------------------------------------------------------------
+... [trimmed: Redundant Internal Coordinates] ...
+                                  WARNING !!!
+       The optimization did not converge but reached the maximum number of
+       optimization cycles.
+       Please check your results very carefully.
+    ----------------------------------------------------------------------------
+
+
+
+Storing optimized geometry in scan3.002.xyz ... failed!
+Storing optimized geometry and energy in scan3.xyzall ... failed!
+Storing actual gbw-file in scan3.002.gbw ... failed!
+ERROR (SHARK): Failed to read input file (scan3.SHARKINP.tmp)
+
+ORCA finished by error termination in PROPERTIES
+Calling Command: /home/markus/opt/orca/6.1.1/orca_prop scan3.propinp.tmp scan3 1 
+[file orca_tools/qcmsg.cpp, line 394]: 
+  .... aborting the run
+
+[file orca_tools/qcmsg.cpp, line 394]: 
+  .... aborting the run
+

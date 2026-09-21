@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import json
+import runpy
 import sys
 import warnings
 from pathlib import Path
@@ -22,7 +23,7 @@ import pytest
 from ase import Atoms
 from pydantic import BaseModel, ConfigDict, Field
 
-from chemrefine.config import StepConfig, load_config
+from chemrefine.config import Config, StepConfig, load_config
 from chemrefine.engines import known_backend_extras, preflight_backends
 from chemrefine.engines.api import BackendRequirement, ProvisionableEngine, get_engine
 from chemrefine.engines.qiskit import workflow
@@ -434,6 +435,52 @@ def test_qiskit_options_are_strict_at_the_engine_boundary() -> None:
         QiskitOptions.model_validate("not-a-mapping")
 
 
+@pytest.mark.parametrize("reader", ["from_raw", "from_raw_lenient"])
+def test_legacy_active_space_is_resolved_by_the_engine(
+    reader: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Both orchestrator readers preserve the flat spelling without changing core config."""
+    from chemrefine.validate import undeclared_options
+
+    raw = {"basis": "sto-3g", "active_electrons": 2, "active_orbitals": 2}
+    config = Config(steps=[StepConfig(step=1, engine="qiskit", options=raw)])
+    step = config.steps[0]
+    resolved = getattr(QiskitOptions, reader)(step.options)
+
+    assert step.options == raw
+    assert resolved.active_space == ActiveSpaceOptions(electrons=2, orbitals=2)
+    assert resolved.as_job_spec()["active_space"] == {"electrons": 2, "orbitals": 2}
+    assert "active_electrons" not in resolved.as_job_spec()
+    assert undeclared_options(step) is None
+    assert "active_electrons" in caplog.text
+    assert QiskitOptions.from_raw(resolved.as_job_spec()) == resolved
+
+
+@pytest.mark.parametrize(
+    "raw, message",
+    [
+        ({"active_electrons": 2}, "provided together"),
+        ({"active_orbitals": 2}, "provided together"),
+        ({"active_electrons": None, "active_orbitals": 2}, "provided together"),
+        (
+            {
+                "active_electrons": 2,
+                "active_orbitals": 2,
+                "active_space": {"electrons": 2, "orbitals": 2},
+            },
+            "either active_space",
+        ),
+    ],
+)
+def test_legacy_active_space_rejects_incomplete_or_ambiguous_pairs(
+    raw: dict[str, Any], message: str
+) -> None:
+    """The strict and template readers refuse the same malformed legacy inputs."""
+    for reader in (QiskitOptions.from_raw, QiskitOptions.from_raw_lenient):
+        with pytest.raises(ConfigError, match=message):
+            reader(raw)
+
+
 def test_registry_validates_builds_and_lists_components() -> None:
     registry = ComponentRegistry("demo")
 
@@ -581,7 +628,7 @@ def test_shipped_qiskit_template_is_valid_python() -> None:
     )
     source = template.read_text(encoding="utf-8")
 
-    assert "$QISKIT_OPTIONS_JSON" in source
+    assert "$OPTIONS_JSON" in source
     ast.parse(source)
 
 
@@ -642,6 +689,103 @@ def test_prepare_fails_before_submission_for_an_unknown_component(tmp_path: Path
     ctx = _ctx(tmp_path, options={"algorithm": "not_registered"})
     with pytest.raises(ConfigError, match="unsupported qiskit algorithm"):
         get_engine("qiskit").prepare(ctx)
+
+
+def test_preflight_render_and_validation_agree_on_an_invalid_provider_graph(
+    tmp_path: Path,
+) -> None:
+    """The rewrite validator sees the same component errors as submission and rendering."""
+    from chemrefine.validate import validate_config_text
+
+    raw = {
+        "algorithm": "vqe",
+        "estimator": {"name": "aer_shots", "options": {"default_precision": 0.0}},
+    }
+    engine = get_engine("qiskit")
+    ctx = _ctx(tmp_path, options=raw)
+    with pytest.raises(ConfigError, match="greater than 0"):
+        engine.backend_requirement(raw)
+    with pytest.raises(ConfigError, match="greater than 0"):
+        engine._template_vars(ctx)
+    with pytest.raises(ConfigError, match="greater than 0"):
+        engine.check_step(ctx.step_cfg, charge=0, multiplicity=1)
+    with pytest.raises(ConfigError, match="greater than 0"):
+        engine.prepare(ctx)
+    report = validate_config_text(
+        json.dumps({"steps": [{"step": 1, "engine": "qiskit", "options": raw}]}),
+        base_dir=tmp_path,
+    )
+    assert not report.ok
+    assert any(
+        issue.kind == "preflight" and "greater than 0" in issue.message for issue in report.issues
+    )
+
+
+def test_only_qiskit_harvests_its_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An engine-local declaration preserves diagnostics without changing other engines."""
+    ctx = _ctx(tmp_path)
+    assert ctx.template is not None
+    ctx.template.write_text(
+        'energy_hartree = -1.25\nengine_metadata = {"provider": "demo", "evaluations": 3}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    for name in ("qiskit", "pyscf", "mlip"):
+        engine = get_engine(name)
+        # Build a simple script without importing any optional calculation backend.
+        script = tmp_path / f"{name}.py"
+        output = tmp_path / f"{name}.json"
+        engine.build_input(
+            xyz_path=tmp_path / "seed.xyz",
+            template_path=ctx.template,
+            input_path=script,
+            output_path=output,
+            ctx=ctx,
+        )
+        runpy.run_path(str(script))
+        payload = json.loads(output.read_text(encoding="utf-8"))
+        assert payload["energy_hartree"] == -1.25
+        if name == "qiskit":
+            assert payload["engine_metadata"] == {"provider": "demo", "evaluations": 3}
+        else:
+            assert "engine_metadata" not in payload
+        [parsed] = engine.parse_one(output, "0", ctx)
+        assert parsed.energy_hartree == -1.25
+        assert not hasattr(parsed, "engine_metadata")
+
+
+def test_scaffolded_qiskit_template_executes_with_shared_options_placeholder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Scaffolding, rendering and parsing agree on the existing Qiskit job contract."""
+    from chemrefine.scaffold import scaffold_templates
+
+    ctx = _ctx(tmp_path, options={"active_electrons": 2, "active_orbitals": 2})
+    assert ctx.template is not None
+    config = Config(template_dir=ctx.template_dir, steps=[ctx.step_cfg])
+    scaffold_templates(config, overwrite=True)
+    captured: dict[str, Any] = {}
+
+    def fake_run_job(path: str, **kwargs: Any) -> workflow.QiskitRunResult:
+        captured.update(kwargs)
+        assert Path(path).is_file()
+        return workflow.QiskitRunResult(-1.25, {"solver": {"num_iterations": 2}})
+
+    monkeypatch.setattr(workflow, "run_job", fake_run_job)
+    engine = get_engine("qiskit")
+    ((script, output, sid),) = engine.prepare(ctx).files
+    monkeypatch.chdir(output.parent)
+    runpy.run_path(str(script))
+    assert captured["charge"] == 0
+    assert captured["multiplicity"] == 1
+    assert captured["options"]["active_space"] == {"electrons": 2, "orbitals": 2}
+    assert "active_electrons" not in captured["options"]
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["engine_metadata"] == {"solver": {"num_iterations": 2}}
+    [parsed] = engine.parse_one(output, sid, ctx)
+    assert parsed.energy_hartree == -1.25
+    assert parsed.symbols == ("H", "H")
+    np.testing.assert_allclose(parsed.positions, _seed().atoms.positions)
 
 
 def test_qiskit_run_block_uses_its_managed_environment(

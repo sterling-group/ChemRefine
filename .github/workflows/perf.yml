@@ -1,0 +1,39 @@
+name: Perf tier
+
+# The `perf` marker is deselected by the default addopts and belongs out of the edit
+# loop — a tier that builds 10⁴ structures to measure how the bookkeeping scales. But a
+# gate nothing runs is not a gate: its assertions were written precisely because
+# "measured-but-unasserted, a superlinear pandas regression was printed and never
+# failed" — and with no job passing `-m perf`, they still never failed anything
+# automatically. Weekly, because a scaling regression is introduced by a code change
+# and caught fine a few days later; per-PR would put a minutes-long, variance-prone
+# tier into the edit loop the marker exists to keep it out of.
+#
+# The assertions are growth *ratios*, not absolute times, so runner-speed variance is
+# tolerated by construction — the reason a shared runner can hold this gate at all.
+on:
+  schedule:
+    - cron: "41 4 * * 3" # weekly, Wednesday morning UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  perf:
+    name: Scaling assertions hold
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install package
+        run: pip install -e ".[test]"
+      # Override the addopts that deselect the tier; no coverage — the gate here is the
+      # scaling assertions, and coverage instrumentation would skew what they time.
+      - name: Run the perf tier
+        run: pytest -m perf -q --no-cov

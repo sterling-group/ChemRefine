@@ -1,13 +1,20 @@
 """Every role-marked docstring cross-reference must resolve to a real object.
 
-The prose in ``src/`` is load-bearing: rationale lives in docstrings, and they point at
-each other with Sphinx roles (``:func:`chemrefine.cache.fingerprint```). Nothing checks
-those targets — mkdocs never resolves Sphinx roles, so a rename leaves the pointer
-dangling silently and the reader chasing a name that no longer exists. Six had already
-rotted when this test landed: ``chemrefine.config._normalize_legacy`` three times (the
-function is ``config_legacy.normalize``), ``chemrefine.slurm._run_body_lines`` twice
-(stranded by the slurm split into a package), and a bare ``_normalize_legacy`` once —
-which is the evidence prose needs the same mechanical check the code gets.
+The prose is load-bearing: rationale lives in docstrings, and they point at each other
+with Sphinx roles (``:func:`chemrefine.cache.structure_digest```). Nothing checks those
+targets — mkdocs never resolves Sphinx roles, so a rename leaves the pointer dangling
+silently and the reader chasing a name that no longer exists. Six had already rotted when
+this test landed: ``chemrefine.config._normalize_legacy`` three times (the function is
+``config_legacy.normalize``), ``chemrefine.slurm._run_body_lines`` twice (stranded by the
+slurm split into a package), and a bare ``_normalize_legacy`` once — which is the evidence
+prose needs the same mechanical check the code gets.
+
+``tests/`` and ``scripts/`` are scanned on the same footing as ``src/``, because the
+rationale a maintainer actually reads is as often in a test docstring as in the module it
+covers. Scanning only ``src/`` let ``chemrefine.cache.parents_digest`` rot in a perf test
+— and in the sentence above, which named the same removed function — through the release
+that deleted it, because the one test that called it is deselected by default and nothing
+read its prose.
 
 Absolute references only (targets starting ``chemrefine.``): a bare local name has no
 single right module to resolve against, and the absolute form is what the codebase uses
@@ -24,6 +31,19 @@ import chemrefine
 
 _PACKAGE_ROOT = Path(chemrefine.__file__).parent
 
+#: The tree under test, located from this file rather than from the imported package —
+#: the idiom ``test_mutation_gate`` and ``test_docs_commit_types`` already use. Derived
+#: from the package it was two directories above an *installed* ``chemrefine``, which is
+#: a site-packages ancestor holding none of this, so every guard below stood down in the
+#: one run that most needed them: the suite executed from the unpacked sdist.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
+#: Directories scanned beside the package itself, when the checkout is there to hold them.
+#: Both are repository artifacts: an installed package has neither, and the package's own
+#: prose is the part that must be checked everywhere, so their absence narrows this test
+#: rather than breaking it.
+_EXTRA_ROOTS = ("tests", "scripts")
+
 _ROLE_RE = re.compile(
     # The dot is required so a bare local name that merely starts with "chemrefine"
     # (`:func:`chemrefine_home``) is not mistaken for an absolute path.
@@ -31,18 +51,32 @@ _ROLE_RE = re.compile(
 )
 
 
+def _scanned_paths() -> list[Path]:
+    """Every ``.py`` file whose prose this checks — the package, plus the checkout's own."""
+    paths = list(_PACKAGE_ROOT.rglob("*.py"))
+    for name in _EXTRA_ROOTS:
+        root = _REPO_ROOT / name
+        if root.is_dir():
+            paths.extend(root.rglob("*.py"))
+    return sorted(set(paths))
+
+
 def _iter_refs() -> list[tuple[str, str]]:
-    """Every ``(location, target)`` role reference in the package's source text.
+    """Every ``(location, target)`` role reference in the scanned source text.
 
     Scanned as text rather than via ``__doc__`` because the roles appear in comments and
     attribute docstrings too, and those never reach a runtime ``__doc__``.
     """
     refs: list[tuple[str, str]] = []
-    for path in sorted(_PACKAGE_ROOT.rglob("*.py")):
+    for path in _scanned_paths():
         text = path.read_text(encoding="utf-8")
         for m in _ROLE_RE.finditer(text):
             line = text.count("\n", 0, m.start()) + 1
-            refs.append((f"{path.relative_to(_PACKAGE_ROOT.parent)}:{line}", m.group(1)))
+            try:
+                where = path.relative_to(_REPO_ROOT)
+            except ValueError:  # an installed package, outside any checkout
+                where = path.relative_to(_PACKAGE_ROOT.parent)
+            refs.append((f"{where}:{line}", m.group(1)))
     return refs
 
 
@@ -86,4 +120,53 @@ def test_every_absolute_docstring_reference_resolves():
     assert dangling == [], (
         "these docstring cross-references point at nothing; rename the target in the "
         "prose or restore the object:\n" + "\n".join(dangling)
+    )
+
+
+_DOCS = _REPO_ROOT / "docs"
+
+#: A ``docs/…md`` path named in prose. Same claim as a role reference — "go and read
+#: this" — and the same failure when it rots, but pointing at a file rather than an object.
+_DOC_PATH_RE = re.compile(r"docs/[A-Za-z0-9_./-]+\.md")
+
+#: Where such a path can appear. `docs/` itself is excluded: mkdocs resolves *its* links,
+#: and `mkdocs build --strict` already fails on a broken one.
+_PROSE_FILES = ("src/chemrefine/**/*.py", "CONTRIBUTING.md", "README.md")
+
+
+def test_every_documentation_path_named_in_prose_exists():
+    """A docs page named from the code must be a page that exists.
+
+    Nothing watched this, and the re-organisation proved why: five references in ``src/``
+    and ``CONTRIBUTING.md`` pointed at pages that had moved — one of them
+    (``config_legacy``'s "see docs/migrating-v1-to-v2.md") inside an error message a user
+    reads when their v1 config is rejected. ``--strict`` cannot see them because they are
+    not in ``docs/``, so they rot silently in exactly the way a link inside ``docs/``
+    no longer can.
+
+    A missing ``docs/`` fails rather than skips. Every tree this suite runs in ships one —
+    the sdist by its include list, the mutation gate by ``_INPUTS`` — and the wheel ships
+    no tests at all, so there is no run where its absence is normal. Skipping there would
+    be silence in the exact shape of the regression: ``docs/`` and ``examples/`` have
+    already fallen out of the sdist once, with every gate green.
+    """
+    assert _DOCS.is_dir(), (
+        f"no docs/ beside {_REPO_ROOT} — the sdist and the mutation gate's scratch copy "
+        "both carry it, so its absence is a packaging regression, which is the thing this "
+        "guard is here to notice rather than stand down for"
+    )
+
+    found, missing = 0, []
+    for pattern in _PROSE_FILES:
+        for path in sorted(_REPO_ROOT.glob(pattern)):
+            text = path.read_text(encoding="utf-8")
+            for m in _DOC_PATH_RE.finditer(text):
+                found += 1
+                if not (_REPO_ROOT / m.group(0)).is_file():
+                    line = text.count("\n", 0, m.start()) + 1
+                    missing.append(f"{path.relative_to(_REPO_ROOT)}:{line} -> {m.group(0)}")
+    assert found, "no docs/ paths found in prose — the scanner itself has broken"
+    assert missing == [], (
+        "these prose references name a documentation page that does not exist:\n"
+        + "\n".join(missing)
     )

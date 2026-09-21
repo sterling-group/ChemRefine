@@ -20,7 +20,7 @@ import pytest
 
 from chemrefine.engines._backend_server.base import CalculationData
 from chemrefine.engines.pyscf import _runtime, extopt_calc
-from chemrefine.engines.pyscf.options import PyscfOptions
+from chemrefine.engines.pyscf.options import PyscfExtOptOptions
 from chemrefine.errors import ConfigError, JobFailureError
 
 
@@ -73,7 +73,23 @@ def _install_fake_pyscf(monkeypatch, *, mol_spin: int = 0) -> dict[str, MagicMoc
     rks.nuc_grad_method.return_value.kernel.return_value = np.zeros((2, 3))
     rks.mo_coeff = np.eye(2)
     rks.mo_occ = np.array([2.0, 0.0])
+    # ``density_fit()`` returns a *distinct* SCF object with its own sentinel energy, the
+    # way PySCF's returns a DF-decorated copy. The distinct value is load-bearing: it is
+    # what lets a test tell "DF applied" (-1.75) from "DF silently skipped" (-1.5) by the
+    # energy alone — a fake that returned ``rks`` itself would make the two
+    # indistinguishable, which is how the applied path went unasserted.
+    df_mf = MagicMock()
+    df_mf.kernel.return_value = -1.75
+    df_mf.converged = True
+    df_mf.nuc_grad_method.return_value.kernel.return_value = np.zeros((2, 3))
+    # The DF copy carries the same orbital surface as the bare object, the way PySCF's
+    # does after kernel() — with DF the shipped default, the tensor extraction reads
+    # *this* object's mo_coeff/mo_occ, not the bare one's.
+    df_mf.mo_coeff = np.eye(2)
+    df_mf.mo_occ = np.array([2.0, 0.0])
+    rks.density_fit.return_value = df_mf
     mocks["rks"] = rks
+    mocks["df_mf"] = df_mf
 
     dft_mod = types.ModuleType("pyscf.dft")
     dft_mod.RKS = MagicMock(return_value=rks)
@@ -118,15 +134,17 @@ def _install_fake_pyscf(monkeypatch, *, mol_spin: int = 0) -> dict[str, MagicMoc
 
 
 # ---------------------------------------------------------------------------
-# PyscfOptions
+# PyscfExtOptOptions
 # ---------------------------------------------------------------------------
 
 
 def test_pyscf_options_defaults():
-    opt = PyscfOptions()
+    opt = PyscfExtOptOptions()
     assert opt.method == "dft"
-    assert opt.xc == "pbe"
-    assert opt.basis == "def2-svp"
+    # No level-of-theory defaults: every engine makes the user name it, and a literal
+    # here was the silent def2-svp/pbe a bare pyscf step used to compute at.
+    assert opt.xc is None
+    assert opt.basis is None
     assert opt.df is True  # DF defaults on
     # CPU is the floor: this value is read by both the rendered script and the
     # scheduler, so an unrequested GPU would schedule a CPU job that then asks for
@@ -139,11 +157,11 @@ def test_pyscf_options_defaults():
 
 
 def test_pyscf_options_gpu_derived_from_device():
-    assert PyscfOptions(device="cpu").gpu is False
-    assert PyscfOptions(device="cuda").gpu is True
+    assert PyscfExtOptOptions(device="cpu").gpu is False
+    assert PyscfExtOptOptions(device="cuda").gpu is True
     # An explicit gpu always wins over the device-derived default.
-    assert PyscfOptions(device="cuda", gpu=False).gpu is False
-    assert PyscfOptions(device="cpu", gpu=True).gpu is True
+    assert PyscfExtOptOptions(device="cuda", gpu=False).gpu is False
+    assert PyscfExtOptOptions(device="cpu", gpu=True).gpu is True
 
 
 def test_pyscf_options_gpu_derivation_tracks_the_device_field_default():
@@ -152,22 +170,22 @@ def test_pyscf_options_gpu_derivation_tracks_the_device_field_default():
     Repeating the literal `"cuda"` in the derivation means moving the field default leaves
     it deriving `gpu: true` for a step the scheduler books on CPU.
     """
-    assert PyscfOptions().gpu is (PyscfOptions.model_fields["device"].default == "cuda")
+    assert PyscfExtOptOptions().gpu is (PyscfExtOptOptions.model_fields["device"].default == "cuda")
 
 
 def test_pyscf_options_rejects_empty_tensor_folder():
     with pytest.raises(ValueError):
-        PyscfOptions(tensor_folder="")
+        PyscfExtOptOptions(tensor_folder="")
 
 
 def test_pyscf_options_rejects_whitespace_tensor_folder():
     with pytest.raises(ValueError, match="non-empty"):
-        PyscfOptions(tensor_folder="   ")
+        PyscfExtOptOptions(tensor_folder="   ")
 
 
 def test_pyscf_options_rejects_unknown_field():
     with pytest.raises(ValueError):
-        PyscfOptions(unknown_field=True)  # type: ignore[call-arg]
+        PyscfExtOptOptions(unknown_field=True)  # type: ignore[call-arg]
 
 
 def test_pyscf_options_from_raw_requires_basis():
@@ -176,17 +194,17 @@ def test_pyscf_options_from_raw_requires_basis():
     ConfigError, like every other option failure, so it carries the documented exit code.
     """
     with pytest.raises(ConfigError, match="'basis' is required"):
-        PyscfOptions.from_raw(None)
+        PyscfExtOptOptions.from_raw(None)
     with pytest.raises(ConfigError, match="'basis' is required"):
-        PyscfOptions.from_raw({"method": "hf"})
+        PyscfExtOptOptions.from_raw({"method": "hf"})
 
 
 def test_pyscf_options_from_raw_requires_xc_for_dft():
     """A dft step must name xc; hf does not need it."""
     with pytest.raises(ConfigError, match="'xc' is required"):
-        PyscfOptions.from_raw({"method": "dft", "basis": "def2-svp"})
+        PyscfExtOptOptions.from_raw({"method": "dft", "basis": "def2-svp"})
     # hf needs no xc.
-    assert PyscfOptions.from_raw({"method": "hf", "basis": "def2-svp"}).method == "hf"
+    assert PyscfExtOptOptions.from_raw({"method": "hf", "basis": "def2-svp"}).method == "hf"
 
 
 def test_pyscf_options_from_raw_round_trip():
@@ -198,7 +216,7 @@ def test_pyscf_options_from_raw_round_trip():
         "localized": True,
         "tensor_folder": "/abs/mytensors",
     }
-    opt = PyscfOptions.from_raw(raw)
+    opt = PyscfExtOptOptions.from_raw(raw)
     assert opt.method == "hf"
     assert opt.basis == "def2-svp"
     assert opt.save_tensors is True
@@ -208,12 +226,12 @@ def test_pyscf_options_from_raw_round_trip():
 
 def test_pyscf_options_save_tensors_allows_relative_folder():
     """A relative tensor_folder is fine now — it's copied back into the structure dir."""
-    opt = PyscfOptions(save_tensors=True, tensor_folder="tensors")
+    opt = PyscfExtOptOptions(save_tensors=True, tensor_folder="tensors")
     assert opt.tensor_folder == "tensors"
 
 
 def test_pyscf_options_save_tensors_accepts_absolute_folder():
-    opt = PyscfOptions(save_tensors=True, tensor_folder="/scratch/keep/tensors")
+    opt = PyscfExtOptOptions(save_tensors=True, tensor_folder="/scratch/keep/tensors")
     assert opt.tensor_folder == "/scratch/keep/tensors"
 
 
@@ -223,7 +241,15 @@ def test_pyscf_options_save_tensors_accepts_absolute_folder():
 
 
 def test_build_mol_converts_angstrom_to_bohr(monkeypatch):
-    mocks = _install_fake_pyscf(monkeypatch)
+    """The unit line and the conversion factor, asserted against independent literals.
+
+    PySCF's default coordinate unit is **Angstrom**, so dropping ``mol.unit = "Bohr"``
+    reinterprets every Bohr coordinate as an Ångström one — geometries 1.889x too large,
+    silently, on every PySCF job. The factor is retyped here rather than imported: the
+    import would mirror the constant under test, and a wrong digit would agree with
+    itself. (These were the mutations the old spot-check — ``build`` was called — missed.)
+    """
+    _install_fake_pyscf(monkeypatch)
     mol = _runtime.build_mol(
         symbols=("H", "H"),
         positions_angstrom=np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]),
@@ -231,11 +257,35 @@ def test_build_mol_converts_angstrom_to_bohr(monkeypatch):
         multiplicity=1,
         basis="def2-svp",
     )
-    # Spot-check: the Mole instance should have been built. The factory in
-    # `gto_mod.Mole` mints fresh mocks per call, so we just verify ``build``
-    # was called on the returned object.
     mol.build.assert_called_once()
-    assert "gto" in mocks
+    assert mol.unit == "Bohr"
+    assert mol.charge == 0
+    assert mol.basis == "def2-svp"
+    symbols = [sym for sym, _coord in mol.atom]
+    assert symbols == ["H", "H"]
+    (_h1, first), (_h2, second) = mol.atom
+    assert first == (0.0, 0.0, 0.0)
+    assert second[0] == pytest.approx(1.0 / 0.529177210903, rel=1e-12)
+    assert second[1:] == (0.0, 0.0)
+
+
+def test_build_mol_maps_multiplicity_to_spin(monkeypatch):
+    """``mult = 2S + 1`` → ``mol.spin = 2S`` — pyscf's spin is unpaired electrons, not S.
+
+    Every other ``build_mol`` test overwrites ``mol.spin`` on the next line for its own
+    dispatch purposes, so this mapping was checked nowhere and an off-by-one here would
+    run every open-shell system at the wrong spin state.
+    """
+    _install_fake_pyscf(monkeypatch)
+    for multiplicity, spin in ((1, 0), (2, 1), (3, 2)):
+        mol = _runtime.build_mol(
+            symbols=("H",),
+            positions_angstrom=np.array([[0.0, 0.0, 0.0]]),
+            charge=0,
+            multiplicity=multiplicity,
+            basis="sto-3g",
+        )
+        assert mol.spin == spin
 
 
 # ---------------------------------------------------------------------------
@@ -253,7 +303,7 @@ def test_run_dft_uses_rks_for_closed_shell(monkeypatch):
         basis="def2-svp",
     )
     mol.spin = 0
-    energy, gradient, meta, _mf = _runtime.run_dft(mol, method="dft", xc="pbe")
+    energy, gradient, meta, _mf = _runtime.run_dft(mol, method="dft", xc="pbe", use_df=False)
     mocks["dft"].RKS.assert_called_once()
     mocks["dft"].UKS.assert_not_called()
     assert energy == -1.5
@@ -272,7 +322,7 @@ def test_run_dft_uses_uks_for_open_shell(monkeypatch):
         basis="def2-svp",
     )
     mol.spin = 2
-    _runtime.run_dft(mol, method="dft", xc="pbe")
+    _runtime.run_dft(mol, method="dft", xc="pbe", use_df=False)
     mocks["dft"].UKS.assert_called_once()
     mocks["dft"].RKS.assert_not_called()
 
@@ -287,7 +337,7 @@ def test_run_dft_uses_rhf_for_method_hf(monkeypatch):
         basis="sto-3g",
     )
     mol.spin = 0
-    _runtime.run_dft(mol, method="hf")
+    _runtime.run_dft(mol, method="hf", xc=None, use_df=False)
     mocks["scf"].RHF.assert_called_once()
 
 
@@ -301,7 +351,7 @@ def test_run_dft_uses_uhf_for_method_hf_open_shell(monkeypatch):
         basis="sto-3g",
     )
     mol.spin = 1
-    _runtime.run_dft(mol, method="hf")
+    _runtime.run_dft(mol, method="hf", xc=None, use_df=False)
     mocks["scf"].UHF.assert_called_once()
 
 
@@ -316,7 +366,7 @@ def test_run_dft_hf_warns_about_gpu(monkeypatch):
         basis="sto-3g",
     )
     mol.spin = 0
-    _, _, meta, _ = _runtime.run_dft(mol, method="hf", want_gpu=True)
+    _, _, meta, _ = _runtime.run_dft(mol, method="hf", xc=None, use_df=False, want_gpu=True)
     assert "HF GPU path not enabled" in meta["gpu_msg"]
     assert meta["gpu_used"] is False
 
@@ -333,13 +383,36 @@ def test_run_dft_falls_back_to_cpu_when_gpu_import_fails(monkeypatch):
         basis="sto-3g",
     )
     mol.spin = 0
-    _, _, meta, _ = _runtime.run_dft(mol, want_gpu=True)
+    _, _, meta, _ = _runtime.run_dft(mol, xc="pbe", use_df=False, want_gpu=True)
     assert meta["gpu_used"] is False
     assert "fell back to CPU" in meta["gpu_msg"]
 
 
-def test_run_dft_density_fitting_continues_on_failure(monkeypatch):
-    """A ``density_fit()`` exception logs a warning but doesn't abort."""
+def test_run_dft_applies_density_fitting_on_the_default_path(monkeypatch):
+    """``use_df=True`` — the shipped default — solves the *DF-decorated* SCF, not the bare one.
+
+    The fake's ``density_fit()`` returns a distinct object with its own sentinel energy,
+    so the assertion tells "applied" (-1.75) from "silently skipped" (-1.5) by the value
+    alone. Skipped is the failure mode worth the sentinel: the user is charged for an RI
+    approximation they configured and do not get, with nothing anywhere saying so.
+    """
+    mocks = _install_fake_pyscf(monkeypatch)
+    mol = _runtime.build_mol(
+        symbols=("H",),
+        positions_angstrom=np.array([[0.0, 0.0, 0.0]]),
+        charge=0,
+        multiplicity=1,
+        basis="sto-3g",
+    )
+    mol.spin = 0
+    energy, _, meta, mf = _runtime.run_dft(mol, xc="pbe", use_df=True)
+    assert energy == -1.75
+    assert meta["converged"] is True
+    assert mf is mocks["df_mf"]
+
+
+def test_run_dft_density_fitting_continues_on_failure(monkeypatch, caplog):
+    """A ``density_fit()`` exception logs the promised warning and solves the bare SCF."""
     mocks = _install_fake_pyscf(monkeypatch)
     mocks["rks"].density_fit.side_effect = RuntimeError("no DF for you")
     mol = _runtime.build_mol(
@@ -350,8 +423,11 @@ def test_run_dft_density_fitting_continues_on_failure(monkeypatch):
         basis="sto-3g",
     )
     mol.spin = 0
-    # use_df=True should attempt and silently fall back
-    _runtime.run_dft(mol, use_df=True)
+    with caplog.at_level("WARNING"):
+        energy, _, _meta, _ = _runtime.run_dft(mol, xc="pbe", use_df=True)
+    assert energy == -1.5  # the un-decorated SCF's sentinel: the run went on without DF
+    assert "density_fit() failed" in caplog.text
+    assert "no DF for you" in caplog.text
 
 
 def test_run_dft_no_gradient_when_dograd_false(monkeypatch):
@@ -364,7 +440,7 @@ def test_run_dft_no_gradient_when_dograd_false(monkeypatch):
         basis="sto-3g",
     )
     mol.spin = 0
-    _, gradient, meta, _ = _runtime.run_dft(mol, dograd=False)
+    _, gradient, meta, _ = _runtime.run_dft(mol, xc="pbe", use_df=False, dograd=False)
     assert gradient == []
     assert meta["grad_norm"] == 0.0
 
@@ -394,9 +470,54 @@ def test_run_dft_uses_gpu_classes_when_available(monkeypatch):
         basis="sto-3g",
     )
     mol.spin = 0
-    energy, _, meta, _ = _runtime.run_dft(mol, want_gpu=True)
+    energy, _, meta, _ = _runtime.run_dft(mol, xc="pbe", use_df=False, want_gpu=True)
     assert meta["gpu_used"] is True
     assert energy == -2.0
+
+
+class _OnDevice:
+    """A device array as the seam sees it: reachable through ``.get()`` and nothing else.
+
+    No ``__array__``, no ``.T``, no ``@`` — so any read that bypasses the host transfer
+    fails loudly instead of quietly working on the fake and failing on the hardware.
+    """
+
+    def __init__(self, host: np.ndarray) -> None:
+        self._host = host
+
+    def get(self) -> np.ndarray:
+        return self._host
+
+
+def test_run_dft_brings_a_device_gradient_to_the_host(monkeypatch):
+    """The gradient leaves the SCF through the host seam, whatever computed it."""
+    _install_fake_pyscf(monkeypatch)
+    gpu_dft = types.ModuleType("gpu4pyscf.dft")
+    gpu_rks = MagicMock()
+    gpu_rks.kernel.return_value = -2.0
+    gpu_rks.converged = True
+    gpu_rks.nuc_grad_method.return_value.kernel.return_value = _OnDevice(
+        np.array([[0.1, 0.2, 0.3]])
+    )
+    gpu_dft.RKS = MagicMock(return_value=gpu_rks)
+    gpu_dft.UKS = MagicMock(return_value=gpu_rks)
+    gpu_pkg = types.ModuleType("gpu4pyscf")
+    gpu_pkg.dft = gpu_dft
+    monkeypatch.setitem(sys.modules, "gpu4pyscf", gpu_pkg)
+    monkeypatch.setitem(sys.modules, "gpu4pyscf.dft", gpu_dft)
+
+    mol = _runtime.build_mol(
+        symbols=("H",),
+        positions_angstrom=np.array([[0.0, 0.0, 0.0]]),
+        charge=0,
+        multiplicity=1,
+        basis="sto-3g",
+    )
+    mol.spin = 0
+    _, gradient, meta, _ = _runtime.run_dft(mol, xc="pbe", use_df=False, want_gpu=True)
+    assert meta["gpu_used"] is True
+    assert gradient == [[0.1, 0.2, 0.3]]
+    assert meta["grad_norm"] == pytest.approx(float(np.linalg.norm([0.1, 0.2, 0.3])))
 
 
 # ---------------------------------------------------------------------------
@@ -404,44 +525,148 @@ def test_run_dft_uses_gpu_classes_when_available(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_get_active_space_tensors_returns_correct_shapes(monkeypatch):
+def test_get_active_space_tensors_refuses_an_open_shell_system(monkeypatch):
+    """The restricted-only rule is stated at the API boundary, not left to numpy.
+
+    UHF/UKS carry spin-paired ``[mo_a, mo_b]`` orbitals; the transform below reads one
+    ``(nao, nmo)`` matrix, so an open-shell system fails as a shape mismatch naming
+    neither the spin state nor the knob. The engine refuses a ``save_tensors`` step at
+    prepare; this is the same rule for a caller driving the server without the engine.
+    """
     _install_fake_pyscf(monkeypatch)
+    mol = MagicMock()
+    mol.spin = 2
+    with pytest.raises(ConfigError, match=r"closed-shell.*multiplicity 3"):
+        _runtime.get_active_space_tensors(mol, MagicMock())
+
+
+def test_get_active_space_tensors_assembles_h1_in_the_mo_basis(monkeypatch):
+    """The one-electron Hamiltonian is C.T (T + V) C — pinned by value, not by shape.
+
+    The previous fixture — identity mo_coeff over two identical symmetric all-ones
+    integrals — was degenerate: dropping the AO→MO transform, transposing it,
+    subtracting the nuclear attraction, or using one integral alone all left the
+    shape-only assertions true. Distinct asymmetric integrals and a non-identity C
+    give every one of those mutations a different matrix than the hand-computed
+    expectation below.
+    """
+    mocks = _install_fake_pyscf(monkeypatch)
+    kin = np.array([[1.0, 2.0], [3.0, 4.0]])
+    nuc_attr = np.array([[10.0, 20.0], [30.0, 40.0]])
+    eri = np.arange(16, dtype=float).reshape(2, 2, 2, 2)
     mol = MagicMock()
     mol.spin = 0
     mol.energy_nuc.return_value = 1.234
-    mol.intor.side_effect = lambda label: (
-        np.ones((2, 2)) if "int1e" in label else np.ones((2, 2, 2, 2))
-    )
+    mol.intor.side_effect = lambda label: {
+        "int1e_kin": kin,
+        "int1e_nuc": nuc_attr,
+        "int2e": eri,
+    }[label]
     mf = MagicMock()
-    mf.mo_coeff = np.eye(2)
+    mf.mo_coeff = np.array([[1.0, 1.0], [0.0, 1.0]])
     mf.mo_occ = np.array([2.0, 0.0])
 
     nuc, h1, h2 = _runtime.get_active_space_tensors(mol, mf)
+
     assert nuc == 1.234
-    assert h1.shape == (2, 2)
+    # By hand: O = kin + nuc = [[11, 22], [33, 44]];
+    # C.T @ O = [[11, 22], [44, 66]]; (C.T @ O) @ C = [[11, 33], [44, 110]].
+    np.testing.assert_array_equal(h1, np.array([[11.0, 33.0], [44.0, 110.0]]))
+    # The two-electron transform is PySCF's own; ours to pin is what it was handed —
+    # the raw ERI and the same mo_final the one-electron transform used.
+    (got_eri, got_mo), _kwargs = mocks["ao2mo"].incore.full.call_args
+    np.testing.assert_array_equal(got_eri, eri)
+    np.testing.assert_array_equal(got_mo, mf.mo_coeff)
     assert h2.shape == (2, 2, 2, 2)
 
 
-def test_get_active_space_tensors_localized_invokes_boys(monkeypatch):
-    """The localized branch should hit ``pyscf.lo.Boys`` for occ + vir blocks."""
+@pytest.mark.parametrize("localized", [False, True])
+def test_get_active_space_tensors_reads_device_arrays_off_the_scf_object(
+    monkeypatch, localized: bool
+):
+    """``gpu: true`` with ``save_tensors: true``: the orbitals come home before the maths.
+
+    gpu4pyscf keeps ``mo_coeff`` / ``mo_occ`` on the device, and the transform is numpy and
+    pyscf, which refuse a device operand — so every geometry failed *after* its SCF and
+    gradient had succeeded, as a generic server 500 naming neither knob. The fake carries
+    the arrays behind ``.get()`` and nothing else, so a read that skips the seam fails here
+    the way it would on the hardware. The result is the same hand-computed ``h1`` as the
+    host-array case above; ``localized`` routes the same arrays through Boys first.
+    """
     mocks = _install_fake_pyscf(monkeypatch)
+    kin = np.array([[1.0, 2.0], [3.0, 4.0]])
+    nuc_attr = np.array([[10.0, 20.0], [30.0, 40.0]])
+    eri = np.arange(16, dtype=float).reshape(2, 2, 2, 2)
     mol = MagicMock()
     mol.spin = 0
     mol.energy_nuc.return_value = 1.234
-    mol.intor.side_effect = lambda label: (
-        np.ones((2, 2)) if "int1e" in label else np.ones((2, 2, 2, 2))
-    )
+    mol.intor.side_effect = lambda label: {
+        "int1e_kin": kin,
+        "int1e_nuc": nuc_attr,
+        "int2e": eri,
+    }[label]
     mf = MagicMock()
-    mf.mo_coeff = np.eye(2)
+    mf.mo_coeff = _OnDevice(np.array([[1.0, 1.0], [0.0, 1.0]]))
+    mf.mo_occ = _OnDevice(np.array([2.0, 0.0]))
+    if localized:
+        # Boys is pyscf's own; the fake hands each block back unchanged, so the localized
+        # transform sees the same columns and lands on the same matrix.
+        mocks["lo"].Boys.side_effect = lambda _mol, block: MagicMock(
+            kernel=MagicMock(return_value=block)
+        )
+
+    _nuc, h1, _h2 = _runtime.get_active_space_tensors(mol, mf, localized=localized)
+
+    np.testing.assert_array_equal(h1, np.array([[11.0, 33.0], [44.0, 110.0]]))
+
+
+def test_localized_tensors_localize_each_block_and_transform_with_the_stack(monkeypatch):
+    """``localized`` Boys-localizes occ and vir separately, then transforms with the stack.
+
+    Pinned three ways a bare call-count could not: the *slices* each Boys call received
+    (``mo_occ = [2, 0]`` → occupied is column 0, virtual column 1 — inverting ``nocc``
+    or swapping the blocks moves these), the localized stack reaching the two-electron
+    transform, and the one-electron values computed through that stack.
+    """
+    mocks = _install_fake_pyscf(monkeypatch)
+    kin = np.array([[1.0, 2.0], [3.0, 4.0]])
+    nuc_attr = np.array([[10.0, 20.0], [30.0, 40.0]])
+    eri = np.arange(16, dtype=float).reshape(2, 2, 2, 2)
+    mol = MagicMock()
+    mol.spin = 0
+    mol.energy_nuc.return_value = 1.234
+    mol.intor.side_effect = lambda label: {
+        "int1e_kin": kin,
+        "int1e_nuc": nuc_attr,
+        "int2e": eri,
+    }[label]
+    mf = MagicMock()
+    mf.mo_coeff = np.array([[1.0, 1.0], [0.0, 1.0]])
     mf.mo_occ = np.array([2.0, 0.0])
 
-    _runtime.get_active_space_tensors(mol, mf, localized=True)
-    # Boys is called once for occupied and once for virtual.
-    assert mocks["lo"].Boys.call_count == 2
+    seen: list[np.ndarray] = []
+
+    def fake_boys(_mol, block):
+        seen.append(np.array(block))
+        localizer = MagicMock()
+        localizer.kernel.return_value = np.asarray(block) * 10.0
+        return localizer
+
+    mocks["lo"].Boys.side_effect = fake_boys
+
+    _nuc, h1, _h2 = _runtime.get_active_space_tensors(mol, mf, localized=True)
+
+    assert [block.shape for block in seen] == [(2, 1), (2, 1)]
+    np.testing.assert_array_equal(seen[0], mf.mo_coeff[:, :1])  # occupied block first
+    np.testing.assert_array_equal(seen[1], mf.mo_coeff[:, 1:])
+    # mo_final = 10 * mo_coeff, so h1 scales by 100 against the plain expectation.
+    np.testing.assert_array_equal(h1, 100.0 * np.array([[11.0, 33.0], [44.0, 110.0]]))
+    (_got_eri, got_mo), _kwargs = mocks["ao2mo"].incore.full.call_args
+    np.testing.assert_array_equal(got_mo, 10.0 * mf.mo_coeff)
 
 
 # ---------------------------------------------------------------------------
-# _runtime.save_tensors + print_tensors_file
+# _runtime.save_tensors
 # ---------------------------------------------------------------------------
 
 
@@ -457,31 +682,49 @@ def test_save_tensors_writes_npz_with_expected_keys(tmp_path: Path):
     np.testing.assert_array_equal(data["h1e"], h1)
 
 
-def test_print_tensors_file_runs(tmp_path: Path, capsys):
-    target = tmp_path / "t.npz"
-    _runtime.save_tensors(path=target, nuc=1.0, h1=np.eye(2), h2=np.zeros((2, 2, 2, 2)))
-    _runtime.print_tensors_file(target)
-    out = capsys.readouterr().out
-    assert "hc" in out and "h1e" in out and "h2e" in out
-
-
 # ---------------------------------------------------------------------------
 # PyscfExtOptCalculator.calc — end-to-end via mocks
 # ---------------------------------------------------------------------------
 
 
 def test_extopt_calc_returns_energy_and_gradient(monkeypatch):
+    """A calculator given only its level of theory solves the DF-decorated SCF.
+
+    -1.75 is the fake's DF sentinel, distinct from the bare -1.5 precisely so this
+    assertion can tell the shipped default really applied density fitting.
+    """
     _install_fake_pyscf(monkeypatch)
-    calc = extopt_calc.PyscfExtOptCalculator()
+    calc = extopt_calc.PyscfExtOptCalculator(basis="def2-svp", xc="pbe")
     energy, gradient = calc.calc(_data())
-    assert energy == -1.5
+    assert energy == -1.75
     assert len(gradient) == 2
+
+
+def test_a_gpu_that_could_not_be_set_up_is_a_warning_in_the_server_log(monkeypatch, caplog):
+    """The reason for a CPU fallback reaches the log a user can read, not only ``meta``.
+
+    ``_build_scf`` answers a gpu4pyscf that will not import or construct by falling back to
+    CPU and *returning* why. Returned and never logged, a ``device: cuda`` step whose
+    import passed preflight on the login node and failed on the compute node ran every
+    gradient on CPU with ``gpu=False`` in one INFO line as the only trace. A calculator
+    that never asked for a GPU has nothing to warn about.
+    """
+    _install_fake_pyscf(monkeypatch)
+    monkeypatch.setitem(sys.modules, "gpu4pyscf.dft", None)  # forces ImportError
+    with caplog.at_level("WARNING", logger="chemrefine.engines.pyscf.extopt_calc"):
+        extopt_calc.PyscfExtOptCalculator(basis="def2-svp", xc="pbe", gpu=True).calc(_data())
+    assert "fell back to CPU" in caplog.text
+
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="chemrefine.engines.pyscf.extopt_calc"):
+        extopt_calc.PyscfExtOptCalculator(basis="def2-svp", xc="pbe", gpu=False).calc(_data())
+    assert caplog.text == ""
 
 
 def test_extopt_calc_skips_tensor_extraction_by_default(monkeypatch):
     _install_fake_pyscf(monkeypatch)
     with patch.object(_runtime, "get_active_space_tensors") as mock_tensors:
-        extopt_calc.PyscfExtOptCalculator().calc(_data())
+        extopt_calc.PyscfExtOptCalculator(basis="def2-svp", xc="pbe").calc(_data())
     mock_tensors.assert_not_called()
 
 
@@ -491,7 +734,9 @@ def test_extopt_calc_extracts_tensors_when_constructed_with_save_tensors(
     """``save_tensors`` comes from server construction; only ``tag`` rides the call."""
     _install_fake_pyscf(monkeypatch)
     monkeypatch.chdir(tmp_path)
-    extopt_calc.PyscfExtOptCalculator(save_tensors=True).calc(_data(tag="step3_structure_0"))
+    extopt_calc.PyscfExtOptCalculator(basis="def2-svp", xc="pbe", save_tensors=True).calc(
+        _data(tag="step3_structure_0")
+    )
     assert (tmp_path / "tensors" / "step3_structure_0.npz").is_file()
 
 
@@ -500,15 +745,21 @@ def test_extopt_calc_sanitizes_tag_before_filename_use(tmp_path: Path, monkeypat
     must never let a tensor dump escape ``tensor_folder``."""
     _install_fake_pyscf(monkeypatch)
     monkeypatch.chdir(tmp_path)
-    extopt_calc.PyscfExtOptCalculator(save_tensors=True).calc(_data(tag="../../evil"))
-    assert not (tmp_path.parent.parent / "evil.npz").exists()
+    extopt_calc.PyscfExtOptCalculator(basis="def2-svp", xc="pbe", save_tensors=True).calc(
+        _data(tag="../../evil")
+    )
+    # Where the unsanitized path would actually land: tensors/../../evil.npz resolves
+    # one level above tmp_path ("tensors/.." cancels the first ".."). The old assertion
+    # probed tmp_path.parent.parent — a directory the traversal can never reach — so it
+    # was vacuously true with sanitization removed.
+    assert not (tmp_path.parent / "evil.npz").exists()
     assert (tmp_path / "tensors" / ".._.._evil.npz").is_file()
 
 
 def test_extopt_calc_uses_server_construction_not_per_call_settings(monkeypatch):
     """Single channel: SCF knobs come from construction, not the per-call POST."""
     mocks = _install_fake_pyscf(monkeypatch)
-    extopt_calc.PyscfExtOptCalculator(method="dft", xc="pbe").calc(
+    extopt_calc.PyscfExtOptCalculator(method="dft", xc="pbe", basis="def2-svp").calc(
         _data(method="hf", xc="b3lyp")  # stale settings must be ignored
     )
     # Construction said dft → dft.RKS is used; the POST's ``method=hf`` is ignored.
@@ -519,7 +770,9 @@ def test_extopt_calc_uses_server_construction_not_per_call_settings(monkeypatch)
 def test_extopt_calc_localized_tensors(tmp_path: Path, monkeypatch):
     mocks = _install_fake_pyscf(monkeypatch)
     monkeypatch.chdir(tmp_path)
-    extopt_calc.PyscfExtOptCalculator(save_tensors=True, localized=True).calc(_data(tag="s0"))
+    extopt_calc.PyscfExtOptCalculator(
+        basis="def2-svp", xc="pbe", save_tensors=True, localized=True
+    ).calc(_data(tag="s0"))
     assert mocks["lo"].Boys.call_count == 2
 
 
@@ -534,13 +787,16 @@ def test_add_cli_args_registers_pyscf_flags_with_pydantic_defaults():
     parser = argparse.ArgumentParser()
     extopt_calc.PyscfExtOptCalculator.add_cli_args(parser)
     args = parser.parse_args([])
-    defaults = PyscfOptions()
+    defaults = PyscfExtOptOptions()
     assert args.method == defaults.method
     assert args.xc == defaults.xc
     assert args.basis == defaults.basis
+    # The one deliberate deviation from the model (whose df defaults True): the engine
+    # emits every resolved value as a token, so an omitted --df must mean off for a
+    # `df: false` step to survive the trip — add_cli_args' docstring carries the rule.
     assert args.df is False
     assert args.gpu is False
-    # Tensor-extraction knobs default to PyscfOptions' values.
+    # Tensor-extraction knobs default to PyscfExtOptOptions' values.
     assert args.save_tensors is False
     assert args.localized is False
     assert args.tensor_folder == defaults.tensor_folder
@@ -620,34 +876,75 @@ def test_an_unconverged_scf_is_refused(monkeypatch):
     correctly-converged siblings with nothing marking it.
     """
     mocks = _install_fake_pyscf(monkeypatch)
-    mocks["rks"].converged = False
+    # The default path solves the DF-decorated object, so that is the verdict read.
+    mocks["df_mf"].converged = False
 
     with pytest.raises(JobFailureError, match="did not converge"):
-        extopt_calc.PyscfExtOptCalculator().calc(_data())
+        extopt_calc.PyscfExtOptCalculator(basis="def2-svp", xc="pbe").calc(_data())
 
 
 def test_an_unconverged_scf_is_served_when_the_step_opts_out(monkeypatch):
     """`strict_scf: false` is for a knowingly loose SCF — the energy is the last iterate."""
     mocks = _install_fake_pyscf(monkeypatch)
-    mocks["rks"].converged = False
+    mocks["df_mf"].converged = False
 
-    energy, gradient = extopt_calc.PyscfExtOptCalculator(strict_scf=False).calc(_data())
+    energy, gradient = extopt_calc.PyscfExtOptCalculator(
+        basis="def2-svp", xc="pbe", strict_scf=False
+    ).calc(_data())
 
-    assert energy == -1.5
+    assert energy == -1.75
     assert len(gradient) == 2
 
 
 def test_a_converged_scf_is_unaffected_by_the_guard(monkeypatch):
     """The ordinary case must not change."""
     _install_fake_pyscf(monkeypatch)
-    energy, _gradient = extopt_calc.PyscfExtOptCalculator().calc(_data())
-    assert energy == -1.5
+    energy, _gradient = extopt_calc.PyscfExtOptCalculator(basis="def2-svp", xc="pbe").calc(_data())
+    assert energy == -1.75
 
 
 def test_the_guard_defaults_on_for_a_directly_constructed_calculator():
-    """Unlike the other booleans here, its safe state is the default one."""
+    """The correctness guard's safe state is the default one, in both spellings."""
     assert extopt_calc.PyscfExtOptCalculator(basis="def2-svp").strict_scf is True
-    assert PyscfOptions(basis="def2-svp", xc="pbe").strict_scf is True
+    assert PyscfExtOptOptions(basis="def2-svp", xc="pbe").strict_scf is True
+
+
+def test_a_bare_calculator_carries_the_models_own_defaults():
+    """``PyscfExtOptCalculator()`` equals ``PyscfExtOptOptions()`` on every shared knob.
+
+    The model is the canonical default source and the constructor restates its values
+    so programmatic callers can build one bare. Restated is how they drift: ``df``
+    flipped to on in the model and sat off here for a release, so a bare construction
+    solved a different SCF shape than a YAML step's defaults. Held equal by iteration
+    over the model's own fields, so a knob added to both cannot drift unnoticed either.
+    """
+    defaults = PyscfExtOptOptions()
+    calc = extopt_calc.PyscfExtOptCalculator()
+    shared = [name for name in PyscfExtOptOptions.model_fields if hasattr(calc, name)]
+    assert shared, "no shared knobs — has the calculator been restructured?"
+    mismatched = {
+        name: (getattr(calc, name), getattr(defaults, name))
+        for name in shared
+        if getattr(calc, name) != getattr(defaults, name)
+    }
+    assert mismatched == {}
+
+
+def test_run_dft_declares_no_scf_defaults_of_its_own():
+    """``use_df`` and ``xc`` are required at ``run_dft`` — the model owns "unspecified".
+
+    ``use_df``'s signature was the *fourth* spelling of its default, sitting on the off
+    state after the model flipped on — the exact drift the lockstep test above recounts,
+    latent only because the one production caller passes explicitly. ``xc``'s literal
+    ``"pbe"`` became the same shape the day the model stopped defaulting the level of
+    theory. Knobs with no default here cannot drift, and this pin keeps one from
+    growing back.
+    """
+    import inspect
+
+    for name in ("use_df", "xc"):
+        parameter = inspect.signature(_runtime.run_dft).parameters[name]
+        assert parameter.default is inspect.Parameter.empty, name
 
 
 def test_strict_scf_reaches_the_server_as_its_opt_out():
@@ -670,3 +967,28 @@ def test_the_server_cli_round_trips_the_opt_out():
             extopt_calc.PyscfExtOptCalculator.from_args(parser.parse_args(tokens)).strict_scf
             is strict
         )
+
+
+def test_calc_refuses_a_calculator_with_no_level_of_theory(monkeypatch):
+    """The server-side half of the required level of theory.
+
+    The engine's strict read gates the generated command, but this class is
+    constructible bare (the lockstep test holds its defaults equal to the model's,
+    which are ``None``) and a hand-run server carries only what its argv said —
+    ``calc`` asks the options model's one rule, so the refusal and its wording
+    cannot fork from the YAML path's.
+    """
+    _install_fake_pyscf(monkeypatch)
+    with pytest.raises(ConfigError, match="'basis' is required"):
+        extopt_calc.PyscfExtOptCalculator().calc(_data())
+    with pytest.raises(ConfigError, match="'xc' is required"):
+        extopt_calc.PyscfExtOptCalculator(basis="def2-svp").calc(_data())
+
+
+def test_run_dft_refuses_dft_with_no_xc(monkeypatch):
+    """The API-boundary half: a direct ``run_dft`` call cannot reach a level nobody named."""
+    _install_fake_pyscf(monkeypatch)
+    mol = MagicMock()
+    mol.spin = 0
+    with pytest.raises(ConfigError, match="needs an xc functional"):
+        _runtime.run_dft(mol, method="dft", xc=None, use_df=False)

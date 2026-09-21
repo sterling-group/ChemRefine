@@ -10,6 +10,7 @@ lifecycle end-to-end.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import shlex
 import sys
@@ -23,6 +24,7 @@ from ase import Atoms
 from chemrefine.config import StepConfig
 from chemrefine.engines.api import get_engine
 from chemrefine.errors import ConfigError, OutputParseError
+from chemrefine.ids import step_template_path
 from chemrefine.state import JobBatch, PipelineState, StepContext, Structure
 
 # ---------------------------------------------------------------------------
@@ -56,21 +58,27 @@ def _write_templates(tmp_path: Path) -> Path:
 def _ctx(
     tmp_path: Path,
     structures: tuple[Structure, ...],
+    step_cfg: StepConfig | None = None,
     **overrides,
 ) -> StepContext:
+    """A context over ``tmp_path``; the template resolves as a run resolves it."""
     _write_templates(tmp_path)
-    step_cfg = StepConfig(
+    step_cfg = step_cfg or StepConfig(
         step=1,
         name="screen",
         engine="pyscf",
         operation="opt_sp",
-        options=overrides.pop("options", {}),
+        # The level of theory is required (check_step / prepare refuse without it), so
+        # the harness supplies a minimal one and each test's own knobs merge over it.
+        options={"method": "hf", "basis": "sto-3g", **overrides.pop("options", {})},
     )
     return StepContext(
         step_cfg=step_cfg,
-        step_dir=tmp_path / "outputs" / "step1_screen",
+        step_dir=tmp_path / "outputs" / step_cfg.dir_name(),
         template_dir=tmp_path,
-        template=tmp_path / "step1.py",
+        template=step_template_path(
+            tmp_path, step_cfg.step, template=step_cfg.template, suffix="py"
+        ),
         scratch_dir=None,
         prev_state=PipelineState(structures=structures),
         charge=overrides.pop("charge", 0),
@@ -113,14 +121,45 @@ def test_prepare_renders_one_py_and_xyz_per_structure(tmp_path: Path):
         assert script_path.name == f"step1_{sid}.py"
         assert output_json.name == f"step1_{sid}.json"
         assert (script_path.parent / f"{script_path.stem}_inp.xyz").is_file()
-        rendered = script_path.read_text()
+        rendered = script_path.read_text(encoding="utf-8")
         # Geometry placeholders should all be substituted.
         assert "$XYZ_PATH" not in rendered
         assert "$CHARGE" not in rendered
         assert "$MULTIPLICITY" not in rendered
         # The appended footer writes to the BASENAME (relative to cwd =
         # scratch); SLURM's *.json glob then copies it back to step_dir.
-        assert f"with open('{output_json.name}', \"w\")" in rendered
+        assert f'with open(\'{output_json.name}\', "w", encoding="utf-8")' in rendered
+
+
+def test_prepare_refuses_a_step_with_no_level_of_theory(tmp_path: Path):
+    """The direct engine requires ``basis`` — no silent level of theory.
+
+    ORCA's level of theory lives in the template's ``!`` line and Q-Chem's in
+    ``$rem``; a direct pyscf step omitting ``basis`` used to render the model
+    default into ``$BASIS``, computing at a level the user never chose.
+    ``prepare`` repeats the preflight refusal so the recovery paths that skip
+    the t=0 walk get it too.
+    """
+    engine = get_engine("pyscf")
+    ctx = _ctx(tmp_path, structures=(_seed(),))
+    bare = dataclasses.replace(ctx, step_cfg=ctx.step_cfg.model_copy(update={"options": {}}))
+    with pytest.raises(ConfigError, match="'basis' is required"):
+        engine.prepare(bare)
+
+
+def test_check_step_requires_xc_exactly_when_dft_reads_it():
+    """``xc`` is demanded for ``method: dft`` and not for ``hf`` — the shared rule.
+
+    The refusal is `PyscfOptions.require_level_of_theory`, the same classmethod the
+    ExtOpt engine's strict read enforces, so the engines cannot disagree about
+    what a runnable step names.
+    """
+    engine = get_engine("pyscf")
+    dft = StepConfig(step=1, engine="pyscf", options={"method": "dft", "basis": "sto-3g"})
+    with pytest.raises(ConfigError, match="'xc' is required"):
+        engine.check_step(dft, charge=0, multiplicity=1)
+    hf = StepConfig(step=1, engine="pyscf", options={"method": "hf", "basis": "sto-3g"})
+    engine.check_step(hf, charge=0, multiplicity=1)  # no raise
 
 
 def test_prepare_missing_template_raises(tmp_path: Path):
@@ -132,30 +171,22 @@ def test_prepare_missing_template_raises(tmp_path: Path):
 
 
 def test_prepare_uses_step_specific_template_when_given(tmp_path: Path):
+    """A step's ``template`` names the file rendered; the default ``stepN.py`` stays unread."""
     step_cfg = StepConfig(
         step=2,
         engine="pyscf",
         operation="opt_sp",
         template="custom.py",
+        options={"method": "hf", "basis": "sto-3g"},
     )
-    _write_templates(tmp_path)
-    (tmp_path / "custom.py").write_text(_FAKE_TEMPLATE, encoding="utf-8")
-    ctx = StepContext(
-        step_cfg=step_cfg,
-        step_dir=tmp_path / "outputs" / "step2",
-        template_dir=tmp_path,
-        template=tmp_path / "custom.py",
-        scratch_dir=None,
-        prev_state=PipelineState(structures=(_seed(),)),
-        charge=0,
-        multiplicity=1,
-        max_cores=1,
-        slurm_template="cpu.slurm.header",
-        executables={},
+    ctx = _ctx(tmp_path, structures=(_seed(),), step_cfg=step_cfg)
+    (tmp_path / "custom.py").write_text(
+        _FAKE_TEMPLATE.replace("-1.234", "-9.876"), encoding="utf-8"
     )
-    engine = get_engine("pyscf")
-    inputs = engine.prepare(ctx)
-    assert "$" not in inputs.files[0][0].read_text()  # placeholders gone
+    inputs = get_engine("pyscf").prepare(ctx)
+    text = inputs.files[0][0].read_text(encoding="utf-8")
+    assert "-9.876" in text and "-1.234" not in text
+    assert "$" not in text  # placeholders gone
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +207,7 @@ def test_submit_runs_template_locally_when_no_sbatch(tmp_path: Path):
     # The template ran and wrote the JSON output.
     output_json = inputs.files[0][1]
     assert output_json.is_file()
-    data = json.loads(output_json.read_text())
+    data = json.loads(output_json.read_text(encoding="utf-8"))
     assert "energy_hartree" in data
 
 
@@ -202,7 +233,7 @@ def test_submit_template_failure_is_deferred_to_parsing(tmp_path: Path):
 
 def test_template_run_block_caps_threads_to_cores(tmp_path: Path):
     """pyscf/mlip direct runs are OpenMP/MKL-threaded → the run block pins them to cores."""
-    ctx = _ctx(tmp_path, structures=(_seed(),), options={"cores": 4})
+    ctx = _ctx(tmp_path, structures=(_seed(),), options={"cores": 4}, max_cores=4)
     engine = get_engine("pyscf")
     run_block = engine.run_block(
         ctx,
@@ -215,6 +246,46 @@ def test_template_run_block_caps_threads_to_cores(tmp_path: Path):
     # Python was invoked (``bin/python`` directly vs ``bin/python3.13`` via a
     # console-script shebang) — assert the real path, not a "python" substring.
     assert f"{shlex.quote(sys.executable)} step1_structure_0.py" in run_block
+
+
+@pytest.mark.parametrize("engine_name", ["pyscf", "mlip"])
+def test_a_script_engine_is_one_task_of_many_cpus(tmp_path: Path, engine_name: str):
+    """The SBATCH pair for a threaded script is ``--ntasks=1 --cpus-per-task=N``.
+
+    The base layout spells cores as MPI ranks — N tasks of one CPU — which SLURM may grant
+    across nodes, and a single OpenMP/torch process can only use the first node's share
+    of them while the throttler is charged all N. One task with N CPUs cannot be split.
+    The clamp to ``max_cores`` is the same one the thread exports read.
+    """
+    step_cfg = StepConfig(step=1, engine=engine_name, options={"cores": 8})
+    ctx = _ctx(tmp_path, structures=(_seed(),), step_cfg=step_cfg, max_cores=4)
+    assert get_engine(engine_name).slurm_layout(ctx) == (1, 4)
+
+
+def test_thread_exports_say_the_grant_not_the_ask(tmp_path: Path):
+    """A ``cores:`` above ``max_cores`` exports the clamped budget, not the request.
+
+    The SLURM directives and the throttler charge come from the ``slurm_layout`` product —
+    ``min(cores, max_cores)`` — and the thread exports must say the same number. The raw
+    ``pal()`` here let a job charged 4 cores thread 8: invisible under SLURM's cgroups, an
+    oversubscription on every local run, and the exact inversion of the invariant this
+    export exists for. Q-Chem's run block always read the layout; this pins the script
+    engines to the same rule.
+    """
+    ctx = _ctx(tmp_path, structures=(_seed(),), options={"cores": 8}, max_cores=4)
+    run_block = (
+        get_engine("pyscf")
+        .run_block(
+            ctx,
+            inp_path=ctx.step_dir / "step1_structure_0.py",
+            out_path=ctx.step_dir / "step1_structure_0.out",
+        )
+        .body
+    )
+    assert "export OMP_NUM_THREADS=4" in run_block
+    assert "export MKL_NUM_THREADS=4" in run_block
+    assert "export OPENBLAS_NUM_THREADS=4" in run_block
+    assert "=8" not in run_block
 
 
 def test_submit_missing_slurm_header_raises(tmp_path: Path):
@@ -232,9 +303,12 @@ def test_submit_respects_cores_option(tmp_path: Path):
     inputs = engine.prepare(ctx)
     with patch("chemrefine.slurm.dispatch.shutil.which", return_value=None):
         engine.submit(inputs, ctx)
-    # The generated SLURM script should request the configured cores.
-    script_text = inputs.files[0][0].with_suffix(".slurm").read_text()
-    assert "#SBATCH --ntasks=2" in script_text
+    # The configured cores reach the script as one task's CPUs — a threaded process is
+    # never spelled as MPI ranks, which SLURM may place across nodes.
+    script_text = inputs.files[0][0].with_suffix(".slurm").read_text(encoding="utf-8")
+    assert "#SBATCH --ntasks=1" in script_text
+    assert "#SBATCH --cpus-per-task=2" in script_text
+    assert "--ntasks=2" not in script_text
 
 
 def test_submit_uses_template_engine_output_globs(tmp_path: Path):
@@ -244,7 +318,7 @@ def test_submit_uses_template_engine_output_globs(tmp_path: Path):
     inputs = engine.prepare(ctx)
     with patch("chemrefine.slurm.dispatch.shutil.which", return_value=None):
         engine.submit(inputs, ctx)
-    script_text = inputs.files[0][0].with_suffix(".slurm").read_text()
+    script_text = inputs.files[0][0].with_suffix(".slurm").read_text(encoding="utf-8")
     assert "*.json" in script_text
     # ORCA-only globs must not leak into a direct-engine script.
     assert "*.gbw" not in script_text
@@ -314,7 +388,7 @@ def test_parse_raises_when_output_not_json(tmp_path: Path):
     output_json = inputs.files[0][1]
     output_json.parent.mkdir(parents=True, exist_ok=True)
     output_json.write_text("not json", encoding="utf-8")
-    with pytest.raises(OutputParseError, match="not valid JSON"):
+    with pytest.raises(OutputParseError, match="not a UTF-8 JSON document"):
         engine.parse(inputs, ctx)
 
 
@@ -347,7 +421,7 @@ def test_pyscf_direct_is_not_nms_capable():
 
 
 def test_pyscf_engines_are_provisionable_with_the_pyscf_env():
-    """Both PySCF engines require the ``pyscf`` extra/env, whatever the options say."""
+    """A CPU step requires the plain ``pyscf`` stack."""
     from chemrefine.engines.api import BackendRequirement, ProvisionableEngine
 
     for name in ("pyscf", "pyscf-extopt"):
@@ -356,3 +430,83 @@ def test_pyscf_engines_are_provisionable_with_the_pyscf_env():
         assert engine.backend_requirement({"basis": "def2-svp"}) == BackendRequirement(
             extra="pyscf", import_name="pyscf"
         )
+
+
+@pytest.mark.parametrize("options", [{"gpu": True}, {"device": "cuda"}])
+def test_a_gpu_step_requires_the_gpu_stack_by_name(options: dict):
+    """A step that asks for a GPU must demand ``gpu4pyscf``, not merely ``pyscf``.
+
+    The requirement used to be a constant, so a GPU step passed preflight against a CPU-only
+    env, and `_build_scf` then caught the missing import and fell back to CPU — recording
+    why in the ExtOpt *server* log, which nobody reads. The run reported success on the
+    wrong hardware. Demanding the import by name is what turns that into a refusal before
+    any job is submitted.
+
+    ``device: cuda`` is included because `gpu` is *derived* from it when it is not given: a
+    reader that only looked for an explicit `gpu` key would let that spelling through.
+    """
+    from chemrefine.engines.api import BackendRequirement
+
+    requirement = get_engine("pyscf").backend_requirement({"basis": "def2-svp", **options})
+
+    assert requirement == BackendRequirement(extra="pyscf-gpu", import_name="gpu4pyscf")
+
+
+def test_both_pyscf_stacks_share_one_managed_env():
+    """`[pyscf-gpu]` is `[pyscf]` plus gpu4pyscf — a superset, so one env holds both.
+
+    Two envs would duplicate a large PySCF/libcint/libxc tree for no reason. The
+    one-env-per-extra rule elsewhere exists because the MLIP stacks genuinely conflict, and
+    that reason does not apply here.
+    """
+    from chemrefine.engines._provision import backend_env_path
+
+    assert backend_env_path("pyscf-gpu") == backend_env_path("pyscf")
+    assert backend_env_path("mlip-mace") != backend_env_path("mlip-fairchem")
+
+
+def test_the_direct_engine_declares_only_knobs_it_can_honour():
+    """An engine's options model is the set of knobs it reads, not its backend's.
+
+    ``pyscf`` reaches its options through template placeholders and ``pyscf-extopt`` builds a
+    gradient server from them, so the two share a backend and not a set of knobs. Sharing one
+    model lets the direct engine accept knobs it has no channel for — and because
+    ``accepted_names()`` reports them as declared, ``chemrefine validate`` cannot warn either,
+    so naming one is silence in both directions.
+
+    ``strict_scf`` is the one that matters: the ExtOpt path refuses a non-converged SCF *for*
+    the user, while the direct path reports one through the shared ``converged`` output field
+    — the starter assigns ``converged = bool(mf.converged)`` — so the verdict is the
+    template's to report and the knob has nothing to decide there.
+    """
+    from chemrefine.engines.api import get_engine
+    from chemrefine.engines.pyscf.options import PyscfExtOptOptions, PyscfOptions
+
+    server_only = set(PyscfExtOptOptions.model_fields) - set(PyscfOptions.model_fields)
+    assert server_only == {
+        "strict_scf",
+        "save_tensors",
+        "localized",
+        "tensor_folder",
+        "gradient_timeout_seconds",
+    }, (
+        "the split is work a server does *for* the user — and the ExtOpt family's own "
+        "knobs — not every knob the server reads: `df` shapes the SCF like method/xc/basis "
+        "and both engines honour it"
+    )
+
+    direct = get_engine("pyscf")
+    assert direct.options_cls is PyscfOptions
+    assert not server_only & direct.options_cls.accepted_names(), (
+        "the direct engine declares a knob only the gradient server reads"
+    )
+    assert get_engine("pyscf-extopt").options_cls is PyscfExtOptOptions
+
+
+def test_a_server_only_knob_is_refused_on_a_direct_step():
+    """Refused by name, rather than accepted and ignored."""
+    from chemrefine.engines.pyscf.options import PyscfOptions
+    from chemrefine.errors import ConfigError
+
+    with pytest.raises(ConfigError, match="strict_scf"):
+        PyscfOptions.from_raw({"basis": "def2-svp", "xc": "pbe", "strict_scf": False})

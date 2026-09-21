@@ -1,1 +1,3 @@
-!WB97X-D4 DEF2-SVP SMD(o-dichlorobenzene) 
+# EnGrad prints the Cartesian gradient - the forces half of the training labels;
+# without it every parsed structure has no forces and the mlip-train step refuses.
+!WB97X-D4 DEF2-SVP SMD(o-dichlorobenzene) EnGrad

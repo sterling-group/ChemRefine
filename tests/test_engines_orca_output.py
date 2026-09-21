@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from unittest.mock import patch
 
 import numpy as np
 import pytest
 from synthetic import THERMOCHEMISTRY_BLOCK, synthetic_dft_output
 
 from chemrefine.engines.api import ParsedResult
-from chemrefine.engines.orca.output import forces as forces_module
 from chemrefine.engines.orca.output import parse_dft, parse_dft_from_text, parse_output, status
 from chemrefine.engines.orca.output.ensembles import (
     parse_docker,
@@ -30,7 +28,7 @@ def test_parse_dft_attaches_thermochemistry_when_present():
     parsed = parse_dft_from_text(text)
     assert parsed[0].gibbs_hartree == -76.41
     assert parsed[0].enthalpy_hartree == -76.38
-    assert parsed[0].energy_zpe_hartree == pytest.approx(-76.38)
+    assert parsed[0].energy_zpe_hartree == pytest.approx(-76.37)  # -76.40 + 0.03, != enthalpy
 
 
 def test_parse_dft_without_thermochemistry_leaves_none():
@@ -143,8 +141,8 @@ def test_converged_false_when_the_optimisation_runs_out_of_cycles():
 
 
 def test_converged_true_when_the_optimisation_finishes_after_pending_cycles():
-    """The common case: 72 of the 108 recorded outputs contain the pending line, and in
-    every one of them the success banner follows it."""
+    """The common case: most recorded outputs contain the pending line, and in every one of
+    them the success banner follows it."""
     assert (
         status.parse_converged("\n".join([_GEOM_PENDING, _GEOM_PENDING, _GEOM_OK, _SCF_OK])) is True
     )
@@ -291,12 +289,69 @@ def test_parse_dft_symbols_are_strings():
     assert {"C", "N"} <= set(parsed[0].symbols)
 
 
-def test_parse_dft_forces_optional_for_opt_outputs():
-    """The fixture is a geometry-opt converged run; gradient may or may not be present."""
+def test_parse_dft_reads_no_forces_from_an_opt_whose_last_gradient_predates_its_geometry():
+    """An ``Opt`` output's last gradient describes the penultimate geometry, not the result.
+
+    ORCA prints the gradient inside each cycle and the geometry once more after
+    convergence; the fixture's last ``CARTESIAN GRADIENT`` precedes its last
+    ``CARTESIAN COORDINATES``. Reading it "beside the coordinates" stored a force the
+    structure was not computed at, and a dataset fitted to it learned the wrong point.
+    """
     parsed = parse_dft(FIXTURE)
-    # Force shape, if present, matches the coord block.
-    if parsed[0].forces_ev_per_a is not None:
-        assert parsed[0].forces_ev_per_a.shape == parsed[0].positions.shape
+    assert parsed[0].forces_ev_per_a is None
+    text = FIXTURE.read_text(encoding="utf-8")
+    assert text.rfind("CARTESIAN GRADIENT") < text.rfind("CARTESIAN COORDINATES (ANGSTROEM)")
+
+
+_GEOMETRY_THEN_GRADIENT = (
+    "FINAL SINGLE POINT ENERGY     -1.10\n"
+    "---------------------------------\n"
+    "CARTESIAN COORDINATES (ANGSTROEM)\n"
+    "---------------------------------\n"
+    "  H   0.0  0.0  0.0\n"
+    "  H   0.0  0.0  0.74\n"
+    "---------------------------------\n"
+    "CARTESIAN GRADIENT\n"
+    "------------------\n"
+    "   1   H   :   0.000000000    0.000000000    0.010000000\n"
+    "   2   H   :   0.000000000    0.000000000   -0.010000000\n"
+    "------------------\n"
+)
+
+
+_GRADIENT_THEN_GEOMETRY = (
+    "FINAL SINGLE POINT ENERGY     -1.10\n"
+    "CARTESIAN GRADIENT\n"
+    "------------------\n"
+    "   1   H   :   0.000000000    0.000000000    0.010000000\n"
+    "   2   H   :   0.000000000    0.000000000   -0.010000000\n"
+    "------------------\n"
+    "---------------------------------\n"
+    "CARTESIAN COORDINATES (ANGSTROEM)\n"
+    "---------------------------------\n"
+    "  H   0.0  0.0  0.0\n"
+    "  H   0.0  0.0  0.74\n"
+    "---------------------------------\n"
+)
+
+
+def test_parse_dft_pairs_a_gradient_with_the_geometry_it_follows():
+    """A gradient printed after the last geometry (``EnGrad``, ``Freq``) is that geometry's;
+    one printed before it belongs to a geometry the optimiser then moved on from."""
+    [frame] = parse_dft_from_text(_GEOMETRY_THEN_GRADIENT)
+    assert frame.forces_ev_per_a is not None
+    assert frame.forces_ev_per_a.shape == (2, 3)
+    assert frame.forces_ev_per_a[0, 2] < 0  # F = -dE/dx
+    [moved] = parse_dft_from_text(_GRADIENT_THEN_GEOMETRY)
+    assert moved.forces_ev_per_a is None
+    assert moved.positions[1, 2] == 0.74
+
+
+def test_parse_dft_treats_a_frequency_banner_with_no_modes_as_no_data():
+    """``{}`` is "counted, and none" — a verified minimum; a table that parsed nothing has
+    counted nothing, so every frequency field is ``None``, as for a run with no banner."""
+    [frame] = parse_dft_from_text(_GEOMETRY_THEN_GRADIENT + "VIBRATIONAL FREQUENCIES\n")
+    assert (frame.imaginary_freqs, frame.frequencies, frame.normal_modes) == (None, None, None)
 
 
 # ---------------------------------------------------------------------------
@@ -389,13 +444,33 @@ def test_parse_dft_corrupt_coordinate_token_raises_parse_error(tmp_path: Path):
         parse_dft(path)
 
 
+@pytest.mark.parametrize("literal", ["NaN", "inf", "-inf"])
+def test_parse_dft_non_finite_coordinate_raises_parse_error(tmp_path: Path, literal: str):
+    """A diverged geometry is the same unusable coordinate row, by a quieter route.
+
+    ``float()`` rejects the ``*****`` above but *accepts* these, so they reached a
+    ``Structure`` — and from there the cache sidecar, which stores them unexamined.
+    """
+    path = tmp_path / "diverged-coords.out"
+    path.write_text(
+        "CARTESIAN COORDINATES (ANGSTROEM)\n"
+        "---------------------------------\n"
+        f"  H   0.000000   {literal}   0.000000\n"
+        "---------------------------------\n"
+        "FINAL SINGLE POINT ENERGY     -1.0\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(OutputParseError, match="non-finite coordinate"):
+        parse_dft(path)
+
+
 # ---------------------------------------------------------------------------
 # parse_forces
 # ---------------------------------------------------------------------------
 
 
 def test_parse_forces_returns_none_when_absent():
-    assert parse_forces("no gradient here") is None
+    assert parse_forces("no gradient here", n_atoms=1) is None
 
 
 def test_parse_forces_handles_synthetic_block():
@@ -406,23 +481,79 @@ def test_parse_forces_handles_synthetic_block():
         "   1  H :   -0.004000    0.005000   -0.006000\n"
         "------------------\n"
     )
-    forces = parse_forces(text, to_ev_per_A=False)
+    forces = parse_forces(text, n_atoms=2, to_ev_per_A=False)
     assert forces is not None
     assert forces.shape == (2, 3)
     # F = -dE/dx, so first atom's fx should be -0.001
     assert abs(forces[0][0] - (-0.001)) < 1e-9
 
 
+def test_parse_forces_keeps_orcas_own_summary_lines_out_of_the_count():
+    """The block does not end at the last atom, and the count has to know that.
+
+    ORCA closes every gradient block with its own summary — translation/rotation invariance
+    and the gradient norms — which is why unreadable lines are skipped rather than refused.
+    Every recorded block carries it, so a count that included them would reject every real
+    output.
+    """
+    text = (
+        "CARTESIAN GRADIENT\n"
+        "------------------\n"
+        "   1  H :    0.001000   -0.002000    0.003000\n"
+        "   2  H :   -0.004000    0.005000   -0.006000\n"
+        "\n"
+        "Difference to translation invariance:\n"
+        "           :   -0.0000000000    0.0000000000    0.0000000000\n"
+        "\n"
+        "Norm of the Cartesian gradient     ...    0.0407487453\n"
+        "RMS gradient                       ...    0.0074396690\n"
+        "------------------\n"
+    )
+    forces = parse_forces(text, n_atoms=2, to_ev_per_A=False)
+    assert forces is not None and forces.shape == (2, 3)
+
+
+def test_parse_forces_refuses_a_non_finite_component():
+    """`float()` accepts an overflowing exponent and yields `inf`, exactly as it accepts nan.
+
+    Unrefused, it reaches the `arrays.npz` sidecar (which has no such check) and is what an
+    `mlip-train` step would fit; the cache backstop catches it only at `save`, where it
+    costs the whole step's results instead of this one structure.
+    """
+    text = "CARTESIAN GRADIENT\n----\n   0  H :   1.0e999999   0.000000   0.000000\n----\n"
+    with pytest.raises(ValueError, match="non-finite gradient component"):
+        parse_forces(text, n_atoms=1)
+
+
+def test_parse_forces_refuses_a_row_it_could_not_read():
+    """A `*****` field overflow is skipped by the pattern, so only the count can see it.
+
+    `Structure.forces_ev_per_a` declares no shape and the finiteness backstop passes a short
+    array of finite numbers, so an unnoticed lost row reaches a training set intact.
+    """
+    text = (
+        "CARTESIAN GRADIENT\n"
+        "----\n"
+        "   1  O :    0.000123   -0.000234    0.000345\n"
+        "   2  H :    *********  -0.000234    0.000345\n"
+        "   3  H :    0.000123   -0.000234    0.000345\n"
+        "----\n"
+    )
+    with pytest.raises(ValueError, match="read 2 gradient row\\(s\\) for a 3-atom structure"):
+        parse_forces(text, n_atoms=3)
+
+
 # ---------------------------------------------------------------------------
 # A run that died is reported as a run that died, not as an unreadable file
 # ---------------------------------------------------------------------------
 
-# A real ORCA 6.1.1 abort, kept outside `engines/` because the contract cases there are
-# outputs that *parse* into a golden record; this one is the opposite.
-ERROR_TERMINATION_FIXTURE = DATA / "orca_failures" / "startup" / "step2_5-54.out"
+# The captured abort comes from the `orca_error_termination` fixture: it is text with no
+# golden record — an output that exists to be refused rather than parsed — so it lives in
+# `synthetic` beside the other ORCA-shaped text, not under `data/engines/`, where every case
+# is an output that parses into `expected.json`.
 
 
-def test_an_error_terminated_run_raises_a_termination_error():
+def test_an_error_terminated_run_raises_a_termination_error(orca_error_termination: Path):
     """Both describe an unusable output; only one of them points at the job.
 
     A section can be missing because the parser cannot read it or because the program
@@ -430,17 +561,33 @@ def test_an_error_terminated_run_raises_a_termination_error():
     the parser for what is a cluster or input problem.
     """
     with pytest.raises(OutputTerminationError) as excinfo:
-        parse_dft(ERROR_TERMINATION_FIXTURE)
+        parse_dft(orca_error_termination)
 
     message = str(excinfo.value)
     assert "error termination in Startup" in message  # ORCA's own verdict
     assert "no FINAL SINGLE POINT ENERGY" in message  # and what it cost us
 
 
-def test_an_error_terminated_run_quotes_the_stderr_that_says_why():
+def test_an_error_terminated_run_quotes_the_stderr_that_says_why(orca_error_termination: Path):
     """ORCA names the module it died in; the cause is on stderr, in the job's `.err`."""
     with pytest.raises(OutputTerminationError, match=r"orca_startup: not found"):
-        parse_dft(ERROR_TERMINATION_FIXTURE)
+        parse_dft(orca_error_termination)
+
+
+def test_the_err_tail_is_read_as_utf8_with_replacement(tmp_path: Path):
+    """The `.err` tail is UTF-8 with replacement, whatever locale the driver runs under.
+
+    Pinned by the half no locale can hide: a byte that is not UTF-8 comes back as U+FFFD
+    beside the multi-byte character that is, so the tail still quotes what stderr said —
+    the one place ORCA names the cause. A locale-dependent read would either raise on the
+    byte or spell it as a latin-1 character; either fails here, under any locale and under
+    UTF-8 mode alike.
+    """
+    out = tmp_path / "step1_0.out"
+    out.write_text("ORCA finished by error termination in SCF\n", encoding="utf-8")
+    (tmp_path / "step1_0.err").write_bytes(b"caf\xc3\xa9 \xff: Datei nicht gefunden\n")
+    with pytest.raises(OutputTerminationError, match="café \N{REPLACEMENT CHARACTER}: Datei"):
+        parse_dft(out)
 
 
 def test_a_termination_error_is_still_a_parse_error(tmp_path: Path):
@@ -487,7 +634,7 @@ def test_parse_forces_reads_every_exponent_spelling_it_admits(exponent: str):
     handling of its own.
     """
     text = f"CARTESIAN GRADIENT\n----\n   0  H :   {exponent}   0.000000   0.000000\n----\n"
-    forces = parse_forces(text, to_ev_per_A=False)
+    forces = parse_forces(text, n_atoms=1, to_ev_per_A=False)
     assert forces is not None
     assert abs(forces[0][0] - (-1.0e-3)) < 1e-12
 
@@ -498,6 +645,11 @@ def test_a_malformed_gradient_row_is_a_parse_error_not_a_crash():
     A bare ValueError here would pass straight through `lifecycle._parse_job`, which
     contains only `OutputParseError` — one bad row would end the run in a traceback rather
     than becoming that structure's ledgered failure.
+
+    Driven through the **real** reader. Patching `parse_forces_from_text` to raise would prove
+    the handler and nothing about the parser: the row below overflows to `-inf`, and unrefused
+    it rides the structure into the cache sidecar, where only `cache.save`'s backstop stops it
+    — one step too late, and at the cost of every sibling's results.
     """
     text = (
         "FINAL SINGLE POINT ENERGY  -1.0\n"
@@ -510,10 +662,7 @@ def test_a_malformed_gradient_row_is_a_parse_error_not_a_crash():
         "   0  H :   1.0e999999   0.000000   0.000000\n"
         "----\n"
     )
-    with (
-        patch.object(forces_module, "parse_forces_from_text", side_effect=ValueError("bad row")),
-        pytest.raises(OutputParseError, match="malformed gradient row"),
-    ):
+    with pytest.raises(OutputParseError, match="malformed gradient row"):
         parse_dft_from_text(text, src="job.out")
 
 
@@ -597,6 +746,24 @@ def test_parse_goat_ensemble_skips_frame_with_corrupt_coordinate(tmp_path: Path)
         "1\n"
         "-3.0\n"
         "H 0.0 0.0 1.0\n",
+        encoding="utf-8",
+    )
+    parsed = parse_goat_ensemble(ensemble)
+    assert [p.energy_hartree for p in parsed] == [-1.0, -3.0]
+
+
+def test_parse_goat_ensemble_skips_frame_with_non_finite_coordinate(tmp_path: Path):
+    """A diverged frame is skipped exactly like the corrupt one above.
+
+    It is a *skip* and not a raise on purpose: one bad conformer out of an ensemble has
+    never failed the others, and the guard is here to make ``nan`` follow the rule
+    ``*****`` already follows — not to change what that rule is.
+    """
+    ensemble = tmp_path / "diverged.finalensemble.xyz"
+    ensemble.write_text(
+        "1\n-1.0\nH 0.0 0.0 0.0\n"
+        "1\n-2.0\nH 0.0 nan 0.0\n"  # diverged middle frame
+        "1\n-3.0\nH 0.0 0.0 1.0\n",
         encoding="utf-8",
     )
     parsed = parse_goat_ensemble(ensemble)
@@ -843,11 +1010,13 @@ def test_parse_pes_skips_segment_without_energy(tmp_path: Path):
 
 
 def test_parse_pes_skips_non_atom_lines_inside_coord_block(tmp_path: Path):
-    """A 4-token line that isn't ``sym x y z`` (e.g. has non-numeric tokens) is skipped."""
+    """A line that is not ``sym x y z`` — words for numbers, or a token count no atom row has —
+    is skipped."""
     body = (
         "CARTESIAN COORDINATES (ANGSTROEM)\n"
         "  H   0.0    0.0    0.0\n"
         "  C   not    a      number\n"  # 4 tokens but two are non-numeric
+        "  Total charge   0\n"  # 3 tokens: not shaped like an atom row at all
         "  H   0.74   0.0    0.0\n"
         "\n"
         "FINAL SINGLE POINT ENERGY     -1.10\n"
@@ -857,6 +1026,59 @@ def test_parse_pes_skips_non_atom_lines_inside_coord_block(tmp_path: Path):
     out.write_text(body, encoding="utf-8")
     parsed = parse_pes(out)
     assert parsed[0].symbols == ("H", "H")
+
+
+@pytest.mark.parametrize(
+    ("row", "reason"),
+    [
+        ("  C   ******   0.0    0.0\n", "overflowed coordinate"),
+        ("  C   nan      0.0    0.0\n", "non-finite coordinate"),
+        ("  C   1.0E+999 0.0    0.0\n", "non-finite coordinate"),
+    ],
+)
+def test_parse_pes_refuses_an_atom_row_whose_numbers_are_not_numbers(
+    tmp_path: Path, row: str, reason: str
+):
+    """A row shaped like an atom row with a corrupt coordinate is the frame's parse failure.
+
+    Skipped, as a word where a number would be still is, it left a two-atom frame carrying
+    the three-atom energy — a smaller molecule the next step would optimise as the real one.
+    An overflow (``*****``) is a number that did not fit; ``nan`` and ``1e999`` are what
+    ``float()`` accepts without complaint.
+    """
+    body = (
+        "CARTESIAN COORDINATES (ANGSTROEM)\n"
+        "  H   0.0    0.0    0.0\n" + row + "  H   0.74   0.0    0.0\n"
+        "\n"
+        "FINAL SINGLE POINT ENERGY     -1.10\n"
+        "*** OPTIMIZATION RUN DONE ***\n"
+    )
+    out = tmp_path / "pes.out"
+    out.write_text(body, encoding="utf-8")
+    with pytest.raises(OutputParseError, match=reason):
+        parse_pes(out)
+
+
+def test_parse_pes_refuses_a_scan_point_that_lost_an_atom(tmp_path: Path):
+    """Every scan point is the same molecule; a shorter one lost a row and is refused.
+
+    The prose skip above is bounded by this: a line the block reader cannot read as an
+    atom row is only ever a lost atom if the count says so, and then the whole scan is
+    refused rather than one point shipping short.
+    """
+    text = (
+        "CARTESIAN COORDINATES (ANGSTROEM)\n"
+        "  H   0.0  0.0  0.0\n  H   0.74 0.0 0.0\n\n"
+        "FINAL SINGLE POINT ENERGY     -1.10\n"
+        "*** OPTIMIZATION RUN DONE ***\n" + "CARTESIAN COORDINATES (ANGSTROEM)\n"
+        "  H   0.0  0.0  0.0\n  H   see  the  log\n\n"
+        "FINAL SINGLE POINT ENERGY     -1.05\n"
+        "*** OPTIMIZATION RUN DONE ***\n"
+    )
+    out = tmp_path / "pes.out"
+    out.write_text(text, encoding="utf-8")
+    with pytest.raises(OutputParseError, match=r"scan point 2 .* has 1 atom.* first point has 2"):
+        parse_pes(out)
 
 
 def test_parse_pes_skips_segment_without_coords(tmp_path: Path):
@@ -929,15 +1151,23 @@ def test_xyz_ensemble_skips_non_digit_lines(tmp_path: Path):
     assert len(parsed) == 1
 
 
-def test_parse_forces_returns_none_when_block_has_no_valid_rows(tmp_path: Path):
-    """Gradient block with no parseable rows must yield None."""
+def test_parse_forces_refuses_a_block_it_could_read_nothing_from(tmp_path: Path):
+    """A gradient block ORCA wrote and the reader cannot read is a parse failure, not "no forces".
+
+    ``None`` is the answer for an output with **no** gradient block — a plain single point.
+    Saying the same thing about a block that is present and unreadable loses the distinction,
+    and with it the only signal that the output is damaged: the structure would be cached as a
+    perfectly good result that happens to carry no forces, and the next ``mlip-train`` step
+    would refuse it with a message about the step that computed it.
+    """
     text = (
         "CARTESIAN GRADIENT\n"
         "------------------\n"
         "nothing parseable here at all\n"
         "------------------\n"
     )
-    assert parse_forces(text) is None
+    with pytest.raises(ValueError, match="read 0 gradient row\\(s\\) for a 2-atom structure"):
+        parse_forces(text, n_atoms=2)
 
 
 def test_xyz_ensemble_breaks_on_truncated_file(tmp_path: Path):
@@ -1050,3 +1280,27 @@ def test_every_parser_reads_the_same_hessian():
     assert whole.gibbs_hartree == converged.gibbs_hartree
     assert whole.energy_hartree == converged.energy_hartree
     np.testing.assert_array_equal(whole.normal_modes, converged.normal_modes)
+
+
+def test_the_captured_abort_is_still_what_orca_printed():
+    """The captured fixture is only worth having while it is byte-for-byte ORCA's own output.
+
+    Stored as a file it was inert; stored as a literal it sits where a formatter can reach it,
+    and ORCA prints trailing whitespace on two lines of this abort — which `W291` offers to
+    strip. The per-file ignore in ``pyproject.toml`` stops that happening silently, and this
+    pins the bytes so the ignore stays a statement about the data rather than a licence to
+    tidy it.
+
+    The three properties asserted are the ones the termination path actually reads: the abort
+    banner it quotes, the absent energy that makes the output unreadable, and the stderr line
+    that says why.
+    """
+    from synthetic import ORCA_ERROR_TERMINATION_ERR, ORCA_ERROR_TERMINATION_OUT
+
+    assert "ORCA finished by error termination in Startup" in ORCA_ERROR_TERMINATION_OUT
+    assert "FINAL SINGLE POINT ENERGY" not in ORCA_ERROR_TERMINATION_OUT
+    assert ORCA_ERROR_TERMINATION_ERR == "sh: 1: /opt/orca/orca_startup: not found\n"
+    assert [line for line in ORCA_ERROR_TERMINATION_OUT.splitlines() if line != line.rstrip()] == [
+        "Calling Command: /opt/orca/orca_startup step2_5-54.int.tmp ",
+        "[file orca_tools/qcmsg.cpp, line 394]: ",
+    ], "ORCA's trailing whitespace has been tidied out of a captured fixture"

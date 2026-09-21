@@ -8,11 +8,15 @@ component builders inside the backend interpreter.
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Mapping
 from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from chemrefine.engines._options import EngineOptions
+
+logger = logging.getLogger(__name__)
 
 
 class ComponentSelection(BaseModel):
@@ -95,6 +99,35 @@ class QiskitOptions(EngineOptions):
     initial_point: ComponentSelection = Field(
         default_factory=lambda: ComponentSelection.named("zeros")
     )
+
+    @classmethod
+    def accepted_names(cls) -> set[str]:
+        """Include the pre-release active-space spellings in every options reader."""
+        return super().accepted_names() | {"active_electrons", "active_orbitals"}
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_active_space(cls, data: Any) -> Any:
+        """Keep the pre-release flat active-space pair compatible inside this engine."""
+        if not isinstance(data, Mapping):
+            return data
+        if not {"active_electrons", "active_orbitals"}.intersection(data):
+            return data
+        options = dict(data)
+        electrons = options.pop("active_electrons", None)
+        orbitals = options.pop("active_orbitals", None)
+        if "active_space" in options:
+            raise ValueError(
+                "use either active_space or active_electrons/active_orbitals, not both"
+            )
+        if electrons is None or orbitals is None:
+            raise ValueError("active_electrons and active_orbitals must be provided together")
+        logger.warning(
+            "Qiskit `active_electrons`/`active_orbitals` are deprecated; "
+            "use `active_space: {electrons: ..., orbitals: ...}`"
+        )
+        options["active_space"] = {"electrons": electrons, "orbitals": orbitals}
+        return options
 
     @field_validator(
         "mapper",

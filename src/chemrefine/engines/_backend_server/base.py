@@ -1,4 +1,4 @@
-"""``ComputeBackend`` ABC + the dataclass it consumes.
+"""The ``ComputeBackend`` contract + the dataclass it consumes.
 
 Every ExtOpt-served backend implements one method — :meth:`calc` — and
 returns ``(energy_hartree, gradient_hartree_per_bohr)``. The shared
@@ -15,6 +15,7 @@ chemistry.
 from __future__ import annotations
 
 import argparse
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, ClassVar, Protocol, runtime_checkable
 
@@ -31,6 +32,15 @@ SERVER_URL_FILENAME: str = "server.url"
 """Filename of the sidecar that records ``host:port`` once the server is ready."""
 
 SERVER_TOKEN_FILENAME: str = "server.token"  # noqa: S105 — a filename, not a secret
+
+SERVER_LOADING_FILENAME: str = "server.loading"
+"""The marker the server holds in ``$WORK_DIR`` from launch until its URL is published.
+
+Building the calculator — loading the model, and on a cold cache downloading it — happens
+before the server binds, so nothing else the wrapper can observe distinguishes a server
+still loading from one that hung. The run block's readiness loop counts only the seconds
+this marker is absent against its budget, and holds a separate, longer ceiling over the
+load itself."""
 """Filename of the sidecar holding the per-run bearer token (written ``0600``).
 
 The server binds loopback, but on a multi-tenant HPC node any same-host
@@ -72,9 +82,28 @@ class CalculationData:
     settings: dict[str, Any]
 
 
-@runtime_checkable
-class ComputeBackend(Protocol):
-    """Contract every ExtOpt-served backend implements.
+class ComputeBackend(ABC):
+    """Contract every ExtOpt-served backend implements — the base it subclasses.
+
+    An ABC rather than a Protocol, by the subsystem's own rule
+    (:class:`~chemrefine.engines.mlip.train.base.TrainerBase` states it: an ABC where
+    an explicit declaration channel exists, Protocols across package boundaries). The
+    declaration channel is :class:`ExtOptServed` — an engine *names* its backend in
+    ``calculator_cls`` — and both shipped backends already subclassed this class for
+    its :meth:`settings_from_args` default, so the relationship was nominal in
+    practice. As a ``runtime_checkable`` Protocol it was structural only on paper:
+    no production ``isinstance`` ever tested it, while subclassing manufactured
+    conformance — every stub arrived as an ellipsis body returning ``None``, so a
+    class implementing nothing passed every check and failed as a 500 per geometry.
+    Abstract hooks close that: an incomplete backend cannot be instantiated, and
+    Python's own error names the missing methods.
+
+    What ``abstractmethod`` cannot watch, the engine gate still does
+    (:meth:`chemrefine.engines.orca.extopt.engine.ExtOptOrcaEngine.__init_subclass__`):
+    abstract *classmethods* stay callable on the class — nothing instantiates a
+    backend before ``from_args`` runs inside the job — and ``name`` is a bare ClassVar
+    no ``ABCMeta`` machinery sees, so it rides :attr:`required_declarations`, the
+    idiom :class:`~chemrefine.engines._job.JobEngine` set.
 
     Concrete backends own their CLI surface (no backend literals in the
     shared :mod:`server` / :mod:`client`):
@@ -93,12 +122,19 @@ class ComputeBackend(Protocol):
     * :meth:`calc` answers one ``/calculate`` request.
     """
 
-    name: str
+    required_declarations: ClassVar[tuple[str, ...]] = ("name",)
+    """The bare ClassVars the machinery reads that no ``ABCMeta`` watches.
+
+    ``abstractmethod`` covers the hooks; these are checked by the engine gate beside
+    ``__abstractmethods__``. ``settings_from_args`` appears in neither list because it
+    has a real default (``{}``) a single-channel backend is right to inherit."""
+
+    name: ClassVar[str]
 
     @classmethod
+    @abstractmethod
     def add_cli_args(cls, parser: argparse.ArgumentParser) -> None:
         """Register this backend's argparse flags on a shared parser."""
-        ...
 
     @classmethod
     def settings_from_args(cls, args: argparse.Namespace) -> dict[str, Any]:
@@ -111,15 +147,16 @@ class ComputeBackend(Protocol):
         return {}
 
     @classmethod
+    @abstractmethod
     def server_cli_from_options(cls, options: dict[str, Any]) -> list[str]:
         """Translate validated YAML options into ``--flag value`` tokens."""
-        ...
 
     @classmethod
+    @abstractmethod
     def from_args(cls, args: argparse.Namespace) -> ComputeBackend:
         """Build a calculator instance from the shared server CLI namespace."""
-        ...
 
+    @abstractmethod
     def calc(self, data: CalculationData) -> tuple[float, list[list[float]]]:
         """Return ``(energy_hartree, gradient_hartree_per_bohr)``.
 
@@ -127,7 +164,6 @@ class ComputeBackend(Protocol):
         ``data.dograd`` is ``False``. Otherwise it is a length-``n_atoms``
         list of three-component ``[gx, gy, gz]`` rows.
         """
-        ...
 
 
 @runtime_checkable

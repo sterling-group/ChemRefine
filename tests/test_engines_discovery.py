@@ -10,28 +10,42 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 import chemrefine.engines as engines_pkg
 from chemrefine.engines.api import ENGINES, get_engine
 from chemrefine.engines.mlip import backends as backends_pkg
-from chemrefine.engines.mlip.registry import _BACKENDS
+from chemrefine.engines.mlip.registry import _BACKENDS, CalculatorSpec
 
-_BUNDLED = {
-    "orca",
-    "mlip",
-    "mlip-extopt",
-    "mlip-train",
-    "pyscf",
-    "pyscf-extopt",
-    "qiskit",
-}
+
+def _bundled_packages() -> set[str]:
+    """Every bare-named subpackage under ``engines/`` — the rule ``_load_plugins`` applies."""
+    root = Path(engines_pkg.__file__).parent
+    return {
+        p.name
+        for p in root.iterdir()
+        if p.is_dir() and not p.name.startswith("_") and (p / "__init__.py").is_file()
+    }
 
 
 def test_every_bundled_plugin_is_discovered():
-    """Importing chemrefine.engines registers every bundled engine — no import list."""
-    assert set(ENGINES) >= _BUNDLED
+    """Importing chemrefine.engines registers every bundled engine — no import list.
+
+    Derived from the package tree rather than spelled as a roster: a hand-written set
+    here was one more list an engine had to be added to, and one that could not notice a
+    package that registered nothing. Each bare-named package must have registered at least
+    one engine implemented inside it.
+    """
+    packages = _bundled_packages()
+    assert {"orca", "mlip", "pyscf", "qchem"} <= packages, "the sweep must actually sweep"
+    for package in sorted(packages):
+        prefix = f"{engines_pkg.__name__}.{package}."
+        registered = [
+            name for name in ENGINES if type(get_engine(name)).__module__.startswith(prefix)
+        ]
+        assert registered, f"engines/{package}/ is a bare-named package that registered no engine"
 
 
 def test_every_bundled_backend_is_discovered():
@@ -42,12 +56,18 @@ def test_every_bundled_backend_is_discovered():
 def test_dropped_in_plugin_package_is_discovered(monkeypatch, tmp_path: Path):
     """A bare-named package dropped into engines/ registers itself; others are skipped."""
     (tmp_path / "goodplug").mkdir()
+    # A conforming class, because `@register` is a gate: it refuses one that does not satisfy
+    # CalculationEngine. This test is about *discovery*, so it drops in the smallest plugin
+    # that is actually registrable.
     (tmp_path / "goodplug" / "__init__.py").write_text(
         "from chemrefine.engines.api import register\n"
         "\n"
         '@register("goodplug-test")\n'
         "class GoodPlug:\n"
-        '    name = "goodplug-test"\n',
+        '    name = "goodplug-test"\n'
+        "    def prepare(self, ctx): ...\n"
+        "    def submit(self, inputs, ctx): ...\n"
+        "    def parse(self, inputs, ctx): ...\n",
         encoding="utf-8",
     )
     (tmp_path / "_hiddenplug").mkdir()
@@ -68,6 +88,26 @@ def test_dropped_in_plugin_package_is_discovered(monkeypatch, tmp_path: Path):
     finally:
         ENGINES.pop("goodplug-test", None)
         sys.modules.pop("chemrefine.engines.goodplug", None)
+        vars(engines_pkg).pop("goodplug", None)  # the import bound it as an attribute too
+
+
+def _dummy_plan(tmp_path: Path):
+    """A minimal TrainingPlan for exercising a dropped-in trainer's hooks."""
+    from chemrefine.engines.mlip.train.base import TrainingPlan
+
+    return TrainingPlan(
+        run_dir=tmp_path / "run",
+        run_name="r",
+        device="cpu",
+        gpus=0,
+        cores=1,
+        seed=1,
+        charge=0,
+        multiplicity=1,
+        weights=None,
+        foundation=None,
+        launcher=Path("/envs/mlip-dummy/bin/python"),
+    )
 
 
 def test_a_dropped_in_library_module_registers_both_its_capabilities(monkeypatch, tmp_path: Path):
@@ -76,30 +116,39 @@ def test_a_dropped_in_library_module_registers_both_its_capabilities(monkeypatch
     The promise `backends/` makes is that making an MLIP available — to run, to train, or
     both — is one new module and no edit to any existing one. Registering both capabilities
     from a single `MlipLibrary` is also what makes the environment they resolve identical by
-    construction rather than by two modules agreeing; this drops in a module that does it and
+    construction rather than by separate modules agreeing; this drops in one that does it and
     checks the entry carries both.
 
     Underscored modules stay helpers and are not discovered.
     """
     (tmp_path / "dummylib.py").write_text(
         "from chemrefine.engines.mlip.registry import MlipLibrary\n"
+        "from chemrefine.engines.mlip.train.base import ApiTrainerBase\n"
         "\n"
         "DUMMY = MlipLibrary(\n"
         '    extra="mlip-dummy", package="dummy-pkg", import_name="dummy_mod"\n'
         ")\n"
         "\n"
         '@DUMMY.calculator("dummy_head")\n'
-        "def _build_dummy(**_kw):\n"
-        '    """Test-only builder."""\n'
+        "def _build_dummy(spec):\n"
+        '    """Test-only builder — one CalculatorSpec in, per the registered contract."""\n'
         '    return "DUMMY"\n'
         "\n"
         '@DUMMY.trainer("dummy_head")\n'
-        "class DummyTrainer:\n"
-        '    """Test-only trainer."""\n'
+        "class DummyTrainer(ApiTrainerBase):\n"
+        '    """Test-only trainer: the declarations, and the two hooks a drop-in writes."""\n'
         "\n"
-        '    required_placeholders = frozenset({"TRAIN_SET"})\n'
-        "    output_globs = ()\n"
-        "    output_dirs = ()\n",
+        '    label = "Dummy"\n'
+        '    driver_task = "dummy_head"\n'
+        '    missing_config_hint = "reference $TRAIN_SET and $RUN_NAME"\n'
+        '    artifact_filename = "{run_name}.bin"\n'
+        '    output_globs = ("*.bin",)\n'
+        "\n"
+        "    def write_split(self, plan, name, structures):\n"
+        '        return plan.run_dir / f"{name}.xyz"\n'
+        "\n"
+        "    def train_with_library(self, config):\n"
+        "        return 0\n",
         encoding="utf-8",
     )
     (tmp_path / "_helper.py").write_text(
@@ -111,18 +160,146 @@ def test_a_dropped_in_library_module_registers_both_its_capabilities(monkeypatch
         backends_pkg._load_backends()
         spec = _BACKENDS["dummy_head"]
         assert spec.extra == "mlip-dummy"
-        assert spec.builder is not None and spec.builder() == "DUMMY"
+        calc_spec = CalculatorSpec(
+            task_name="dummy_head", model_name="", device="cpu", weights=None
+        )
+        assert spec.builder is not None and spec.builder(calc_spec) == "DUMMY"
         assert spec.trainer is not None and spec.trainer.__name__ == "DummyTrainer"
+        trainer = spec.trainer()
+        assert "train.driver dummy_head cfg.yaml --device cpu --seed 1" in trainer.command(
+            _dummy_plan(tmp_path), Path("cfg.yaml")
+        ), "an ApiTrainerBase drop-in derives its driver line — plan facts included"
+        assert trainer.write_split(_dummy_plan(tmp_path), "train", ()) == (
+            tmp_path / "run" / "train.xyz"
+        )
+        assert (
+            trainer.run_training(
+                {"train_set": "t.xyz", "run_name": "r", "device": "cpu", "seed": 1}
+            )
+            == 0
+        )
         assert "chemrefine.engines.mlip.backends._helper" not in sys.modules
     finally:
         _BACKENDS.pop("dummy_head", None)
         sys.modules.pop("chemrefine.engines.mlip.backends.dummylib", None)
+        vars(backends_pkg).pop("dummylib", None)  # the import bound it as an attribute too
+
+
+def test_a_builder_that_is_not_a_single_spec_callable_is_refused_at_its_own_line():
+    """The decorator is the gate: a malformed drop-in fails at import of its module.
+
+    The old keyword-plus-catch-all shape was checked by nothing, and three shipped
+    builders silently swallowed a knob the dispatch was passing. Arity is the property a
+    signature can prove, so registration proves it — and names the rule, so the author of
+    a new backend is told what a builder is rather than left to diff a sibling.
+    """
+    from chemrefine.engines.mlip.registry import CalculatorBuilder, MlipLibrary
+
+    def _kwargs_only(**_kw: object) -> None:
+        return None
+
+    def _two_params(_spec: CalculatorSpec, _extra: str) -> None:
+        return None
+
+    lib = MlipLibrary(extra="mlip-bad", package="bad", import_name="bad")
+    for malformed in ("not-a-function", _kwargs_only, _two_params):
+        with pytest.raises(TypeError, match=r"must decorate a callable|exactly one positional"):
+            lib.calculator("bad_head")(cast(CalculatorBuilder, malformed))
+    assert "bad_head" not in _BACKENDS
+
+
+def _conforming_trainer() -> type:
+    """A minimal concrete TrainerBase — what the gate lets through."""
+    from chemrefine.engines.mlip.train.base import TrainerBase
+
+    class _Trainer(TrainerBase):
+        label = "Conforming"
+        output_globs = ()
+
+        def write_split(self, plan, name, structures):
+            return plan.run_dir / f"{name}.xyz"
+
+        def command(self, plan, config):
+            return "true"
+
+        def artifact(self, run_dir, run_name):
+            return run_dir / "model.bin"
+
+    return _Trainer
+
+
+def test_a_trainer_that_breaks_the_contract_is_refused_at_its_own_line():
+    """The trainer decorator is the same gate the builder one is — refusal, named.
+
+    Four ways a drop-in can be malformed, each refused at its own decorator line during
+    discovery rather than at the first training step hours later: not a ``TrainerBase``
+    at all; abstract hooks left unimplemented; a declaration the machinery reads never
+    set; a validation requirement declared with no reason to put in the refusal.
+    """
+    from chemrefine.engines.mlip.registry import MlipLibrary
+    from chemrefine.engines.mlip.train.base import ApiTrainerBase, TrainerBase
+
+    lib = MlipLibrary(extra="mlip-bad", package="bad", import_name="bad")
+    base: type = _conforming_trainer()
+
+    with pytest.raises(TypeError, match="must decorate a TrainerBase subclass"):
+        lib.trainer("bad_head")(cast("type[TrainerBase]", type("T", (), {})))
+
+    class _NoHooks(TrainerBase):
+        label = "Bad"
+        output_globs = ()
+
+    with pytest.raises(TypeError, match=r"leaves .* abstract"):
+        lib.trainer("bad_head")(cast("type[TrainerBase]", _NoHooks))
+
+    class _NoLabel(TrainerBase):
+        output_globs = ()
+
+        def write_split(self, plan, name, structures):
+            return plan.run_dir / f"{name}.xyz"
+
+        def command(self, plan, config):
+            return "true"
+
+        def artifact(self, run_dir, run_name):
+            return run_dir / "model.bin"
+
+    with pytest.raises(TypeError, match=r"missing declaration\(s\) \['label'\]"):
+        lib.trainer("bad_head")(_NoLabel)
+
+    class _NoReason(base):  # type: ignore[misc]
+        needs_validation = True
+
+    with pytest.raises(TypeError, match=r"missing declaration\(s\) \['validation_reason'\]"):
+        lib.trainer("bad_head")(_NoReason)
+
+    class _NoCellReason(base):  # type: ignore[misc]
+        periodic_only = True
+
+    with pytest.raises(TypeError, match=r"missing declaration\(s\) \['periodic_reason'\]"):
+        lib.trainer("bad_head")(_NoCellReason)
+
+    class _BareApi(ApiTrainerBase):
+        label = "BadApi"
+        output_globs = ()
+
+        def write_split(self, plan, name, structures):
+            return plan.run_dir / f"{name}.xyz"
+
+        def train_with_library(self, config):
+            return 0
+
+    missing_api = r"\['driver_task', 'missing_config_hint', 'artifact_filename'\]"
+    with pytest.raises(TypeError, match=missing_api):
+        lib.trainer("bad_head")(_BareApi)
+
+    assert "bad_head" not in _BACKENDS
 
 
 def test_one_task_cannot_name_two_libraries(monkeypatch, tmp_path: Path):
     """The drift the single registry exists to make impossible, refused at registration.
 
-    Two modules claiming the same `task_name` for different environments is exactly what the
+    Separate modules claiming the same `task_name` for different environments is what the
     old split registries could not see: each was internally consistent, and the step was
     provisioned into one env and launched expecting the other.
     """
@@ -130,9 +307,9 @@ def test_one_task_cannot_name_two_libraries(monkeypatch, tmp_path: Path):
 
     first = MlipLibrary(extra="mlip-a", package="a", import_name="a")
     second = MlipLibrary(extra="mlip-b", package="b", import_name="b")
-    first.calculator("contested")(lambda **_kw: None)
+    first.calculator("contested")(lambda _spec: None)
     try:
         with pytest.raises(ValueError, match="one task names one library"):
-            second.trainer("contested")(type("T", (), {}))
+            second.trainer("contested")(_conforming_trainer())
     finally:
         _BACKENDS.pop("contested", None)

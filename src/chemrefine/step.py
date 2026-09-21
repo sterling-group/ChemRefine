@@ -20,22 +20,38 @@ other run of a structure set goes through :func:`chemrefine.lifecycle.submit_and
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import assert_never
 
-from chemrefine import __version__, attempts, cache, filtering, ids, io, lifecycle, nms
-from chemrefine.config import Config, StepConfig
+from pydantic import ValidationError
+
+from chemrefine import attempts, cache, filtering, ids, io, lifecycle, nms
+from chemrefine.config import (
+    STEP_OPTION_PATHS,
+    Config,
+    StepConfig,
+    is_failure_policy,
+    policy_stores_backfills,
+)
 from chemrefine.engines.api import (
     ArtifactEngine,
+    AuxFileConsuming,
     CalculationEngine,
     NmsCapableEngine,
+    OptionsDeclaring,
     TemplateDriven,
     get_engine,
 )
-from chemrefine.errors import CacheError, ChemRefineError, ConfigError, JobFailureError
+from chemrefine.errors import (
+    CacheError,
+    ChemRefineError,
+    ConfigError,
+    JobFailureError,
+    NoUsableCacheError,
+)
 from chemrefine.state import (
     PipelineState,
     StepContext,
@@ -95,10 +111,8 @@ def build_context(
         template=_template_for(config, step_cfg, engine),
         scratch_dir=config.scratch_dir.resolve() if config.scratch_dir is not None else None,
         prev_state=prev_state,
-        charge=step_cfg.charge if step_cfg.charge is not None else config.charge,
-        multiplicity=(
-            step_cfg.multiplicity if step_cfg.multiplicity is not None else config.multiplicity
-        ),
+        charge=step_cfg.effective_charge(config.charge),
+        multiplicity=step_cfg.effective_multiplicity(config.multiplicity),
         max_cores=config.max_cores,
         slurm_template=config.slurm_template,
         executables=config.executables,
@@ -159,12 +173,12 @@ class StepMode(StrEnum):
         chain.
 
         A predicate on the enum rather than a member test in the pipeline, for the same
-        reason :meth:`may_submit` is one: three separate questions are asked about
+        reason :meth:`may_submit` is one: separate questions are asked about
         :class:`StepMode` — may it submit, does it go through ``run_step``, can it halt —
-        and each answered in a different module means adding a fourth mode is a search
+        and each answered in a different module means adding a mode is a search
         rather than a compiler error. The exhaustive ``match`` — every member named, the
         wildcard arm holding only :func:`typing.assert_never` — is what makes it the
-        compiler error, in all three predicates: a fifth member stops narrowing to
+        compiler error, in every predicate: a new member stops narrowing to
         ``Never`` there and strict mypy rejects the call, where a negative membership test
         would hand the new mode the *permissive* answer silently.
         """
@@ -213,24 +227,34 @@ class RunPlan:
     overrides: Mapping[int, StepMode] = field(default_factory=dict)
 
     stop_after: int | None = None
-    """Last step this plan covers; ``None`` runs to the end of the pipeline.
+    """Last step this plan *targets*; ``None`` runs the whole pipeline normally.
 
-    ``rebuild-cache N`` is about steps 1..N and nothing else: it re-parses outputs already on
-    disk and promises to submit nothing, so the steps after its target have no part in it.
-    They cannot be left ``CACHE_ONLY`` either — a step the run never reached has no cache, and
-    asking for one raises. Resuming them is not the alternative it is for ``rerun-errors``:
-    that would submit, which is the one thing this command says it will not do, and would put
-    the backend requirement back on a command whose purpose is to run where the backend is
-    not installed (see :func:`chemrefine.pipeline.run`).
+    ``rebuild-cache N`` re-parses step N from outputs already on disk and promises to
+    submit nothing — the steps after N are not its business to *compute*. But the
+    cumulative report (``steps.csv``) is rewritten from step 1 on every run, so ending the
+    run at N would silently drop the later steps' rows even when their caches are still
+    valid. The steps past ``stop_after`` therefore run **best-effort**
+    (:meth:`best_effort`): still ``CACHE_ONLY``, still submitting nothing and needing no
+    backend, but a step whose cache the current configuration cannot serve ends the run
+    quietly (:class:`~chemrefine.errors.NoUsableCacheError`) instead of failing it. The
+    report then covers exactly what the current configuration can vouch for — complete
+    when the rebuild changed nothing, honestly cut where validity ends when it did.
     """
 
     def for_step(self, step: int) -> StepMode:
         """The mode this step runs in."""
         return self.overrides.get(step, self.default)
 
-    def covers(self, step: int) -> bool:
-        """Whether the pipeline should go on to the step *after* ``step``."""
-        return self.stop_after is None or step < self.stop_after
+    def best_effort(self, step: int) -> bool:
+        """Whether ``step`` is past the plan's target and runs as best-effort reporting.
+
+        Past the target, a cache the configuration cannot serve is an ordinary place for
+        the report to end — the pipeline stops there without error. At or before the
+        target, and everywhere on an unscoped plan, the same miss is a real failure and
+        must raise: ``rerun-errors`` over a broken earlier step has to say so, not
+        silently report a shorter pipeline.
+        """
+        return self.stop_after is not None and step > self.stop_after
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +276,7 @@ def _step_outcome(
     """Filter ``results``, write the step's two ensemble XYZ files, return the outcome.
 
     **The one way a step's results become a :class:`StepOutcome`.** Every route out of
-    :func:`run_step` — the fresh run, the cache hit, the policy re-attempt, the NMS reuse,
+    :func:`run_step` — the fresh run, the cache hit, the policy re-attempt, the incremental
     the partial-step resume, the artifact step and ``rebuild-cache`` — ends here, which is
     what guarantees the ensemble files exist on a resumed, relocated or rebuilt tree and
     not only on the run that computed the results. Their content is a pure function of the
@@ -289,6 +313,62 @@ def _step_outcome(
     return StepOutcome(state=state, cache_hit=cache_hit)
 
 
+def derive_step_key(
+    ctx: StepContext, step_cfg: StepConfig, engine: CalculationEngine
+) -> cache.StepKey:
+    """Assemble the readings :meth:`chemrefine.cache.StepKey.of` keys a step by.
+
+    The values are the run's own, not re-interpretations: charge and multiplicity are
+    the **effective** ones off the context (the values jobs render — hashing the
+    per-step override let a workflow-level edit change every job while every
+    fingerprint stood still); the engine options are the engine's declared model's
+    resolved reading (``{}`` for a non-declaring engine — an undeclared key can reach
+    no job); the aux files are the engine's own enumeration of what its template
+    references (empty for an engine whose templates name none); the resolution spec is
+    :class:`~chemrefine.nms.NmsOptions`' validated reading, split criterion/search,
+    present exactly when this step resolves. Living here rather than in
+    :mod:`chemrefine.cache` keeps that module free of engine and NMS knowledge — it
+    keys values it does not interpret.
+
+    A path-valued option (:data:`chemrefine.config.STEP_OPTION_PATHS`) is keyed by its
+    **basename**. The loader resolved it to an absolute path so the job can find the file,
+    and the same config over the same model bytes then derived a different row key at
+    every directory it ran from: a tree copied off a cluster missed its cache on
+    ``resume`` and was refused by ``rebuild-cache`` as a different configuration. The
+    file's *bytes* are pinned by :func:`chemrefine.cache.option_file_digests` under the
+    same option name, so the basename is all the key needs from the string — enough to
+    tell two same-byte files with different names apart, and nothing that names a machine.
+    """
+    engine_options: Mapping[str, object] = {}
+    if isinstance(engine, OptionsDeclaring):
+        dumped = engine.options_cls.from_raw_lenient(step_cfg.options).model_dump(mode="json")
+        engine_options = {
+            key: (
+                Path(value).name if key in STEP_OPTION_PATHS and isinstance(value, str) else value
+            )
+            for key, value in dumped.items()
+        }
+    aux_files: Mapping[str, Path] = {}
+    if isinstance(engine, AuxFileConsuming) and ctx.template is not None:
+        aux_files = engine.template_aux_files(ctx.template)
+    resolution = None
+    if step_cfg.nms and isinstance(engine, NmsCapableEngine):
+        try:
+            resolution = nms.NmsOptions.from_raw(step_cfg.options).resolution_spec()
+        except ValidationError as e:
+            raise ConfigError(f"step {step_cfg.step}: invalid NMS options:\n{e}") from e
+    return cache.StepKey.of(
+        step_cfg,
+        ctx.prev_state.structures,
+        ctx.template,
+        charge=ctx.charge,
+        multiplicity=ctx.multiplicity,
+        engine_options=engine_options,
+        resolution=resolution,
+        aux_files=aux_files,
+    )
+
+
 def run_step(
     config: Config,
     step_cfg: StepConfig,
@@ -321,10 +401,10 @@ def run_step(
     # Derived once, here, and passed down as a value. Every route below needs the same
     # answer to "would this configuration have written the cache on disk", and each used
     # to re-derive it from whatever context it held. See `cache.StepKey`.
-    key = cache.StepKey.of(step_cfg, prev_state.structures, ctx.template)
+    key = derive_step_key(ctx, step_cfg, engine)
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
     # Narrow once, here, instead of asserting the capability again with a cast at
-    # each of the four places that need it. `nms_engine is not None` then carries
+    # each place that needs it. `nms_engine is not None` then carries
     # both facts — the step asked for NMS, and this engine can do it — and mypy
     # checks the calls rather than being told to trust them.
     nms_engine: NmsCapableEngine | None = None
@@ -347,17 +427,10 @@ def run_step(
         )
         if cached is not None:
             return cached
-        # Full fingerprint invalid. For an NMS step whose *search* params changed
-        # but whose round-1 + criterion are unchanged (reuse fingerprint matches),
-        # reuse the round-1 freq + already-resolved children and re-attempt only
-        # the ledgered-unresolved parents — instead of re-running the whole step.
-        if nms_engine is not None:
-            reused = _nms_reuse_outcome(ctx, step_cfg, key, nms_engine, may_submit=may_submit)
-            if reused is not None:
-                return reused
-        # No cache at all, but possibly a step this configuration already half-ran and
-        # was interrupted before it could write one.
-        partial = _partial_step_outcome(
+        # No cache this key can serve — but possibly a tree whose rows can vouch for
+        # themselves: an interrupted run, parents that only partially changed, an NMS
+        # search retune, or the nms flag flipped over a finished non-NMS run.
+        incremental = _incremental_step_outcome(
             ctx,
             step_cfg,
             key,
@@ -366,11 +439,32 @@ def run_step(
             artifact_engine=artifact_engine,
             may_submit=may_submit,
         )
-        if partial is not None:
-            return partial
+        if incremental is not None:
+            return incremental
 
     if not may_submit:
-        raise ChemRefineError(
+        # The two ways out cost very different things, and which one applies is decidable
+        # here: the manifest's stamped fingerprint against the key in hand — the same
+        # provenance test `rebuild_cache_step` and `_incremental_step_outcome` use. A match
+        # means the outputs on disk were produced for exactly this configuration and only
+        # the cache document cannot serve it, so `rebuild-cache` re-adopts them without
+        # recomputing — which for an NMS or artifact step is what `resume` cannot promise.
+        # A mismatch means `rebuild-cache` would refuse by that same guard, so only the
+        # commands that recompute are honest advice. The attempts are asked the same way:
+        # a resume killed before its resolution pass leaves a current fingerprint over a
+        # carried-forward search stamp, and `rebuild-cache` would refuse those attempts.
+        provenance = cache.load_manifest_provenance(ctx.step_dir)
+        if provenance.fingerprint == key.fingerprint and not _attempts_foreign(
+            step_cfg, engine, provenance, key
+        ):
+            raise NoUsableCacheError(
+                f"step {step_cfg.step} has no cache this configuration can use, and "
+                f"`{mode.value}` does not submit work for a step it is not targeting. "
+                f"Its outputs on disk still match this configuration, so "
+                f"`chemrefine rebuild-cache {step_cfg.step}` re-adopts them without "
+                f"recomputing anything."
+            )
+        raise NoUsableCacheError(
             f"step {step_cfg.step} has no cache this configuration can use, and "
             f"`{mode.value}` does not submit work for a step it is not targeting. "
             f"Run `chemrefine resume` to bring it up to date, or "
@@ -381,24 +475,57 @@ def run_step(
     return _run_full_step(ctx, step_cfg, key, engine, nms_engine=nms_engine)
 
 
-def _policy_conflict(stored: str, current: str) -> bool:
-    """Whether results finalized under ``stored`` cannot be served as ``current``.
+def _policy_conflict(stored: str, current: StepConfig) -> bool:
+    """Whether results finalized under ``stored`` cannot be served to ``current``.
 
     The fingerprint deliberately excludes ``on_failure`` — like ``sample:``, it shapes the
     *output* rather than the calculations — but unlike the filter, the policy is applied
     **before** :func:`chemrefine.cache.save`, so what is on disk already wears one policy's
-    shape. ``stop`` and ``skip`` both persist the successes alone, so they serve each
-    other; ``best`` persists the backfilled failures too, so a change across that line
-    hands the user the previous policy's survivor set — silently, since the fingerprint
-    still matches. ``""`` is a cache written before the policy was recorded and is treated
-    as serving any policy, so older caches are not stranded.
+    shape. Which policies persist the backfilled failures is
+    :func:`chemrefine.config.policy_stores_backfills`'s answer, held exhaustive there; a
+    change across that line would hand the user the previous policy's survivor set —
+    silently, since the fingerprint still matches. ``""`` is a cache written before the
+    policy was recorded and is treated as serving any policy, so older caches are not
+    stranded; a stored policy this version does not know has a shape it cannot judge, so it
+    conflicts with every current policy.
 
     Only :func:`_cached_outcome` asks, and only when the failure ledger is non-empty: with
     no failures, every policy produces identical results and any edit is a free hit.
     """
     if not stored:
         return False
-    return (stored == "best") != (current == "best")
+    if not is_failure_policy(stored):
+        return True
+    return policy_stores_backfills(stored) != current.stores_backfills
+
+
+def _attempts_foreign(
+    step_cfg: StepConfig,
+    engine: CalculationEngine,
+    provenance: cache.ManifestProvenance,
+    key: cache.StepKey,
+) -> bool:
+    """Whether the ``attemptK/`` children on disk were displaced under another search.
+
+    The resolution's own stamp, held to the artifact rule: row keys exclude the NMS
+    resolution by design, so no row check can see a retune. The *search* half is the one
+    an attempt cannot survive — a changed displacement_value/seed/num_random_displacements
+    changes the displaced geometries while the child ids stay the same, so re-parsing
+    such an attempt would cache an exploration this configuration never ran. A
+    *criterion* retune stays adoptable on purpose — it never moves a child's geometry,
+    and re-reading the attempt under a new target is the very thing ``rebuild-nms``
+    offers. An empty stored key is unprovable, never proven wrong — the row doctrine.
+
+    One predicate for the two places that answer it: :func:`rebuild_cache_step`'s
+    refusal, and :func:`run_step`'s advice on which command to run next, which must
+    never name a rebuild that this refusal would then turn away.
+    """
+    return (
+        step_cfg.nms
+        and isinstance(engine, NmsCapableEngine)
+        and bool(provenance.search_key)
+        and provenance.search_key != key.search_key
+    )
 
 
 def _cached_outcome(
@@ -429,7 +556,7 @@ def _cached_outcome(
     if cached is None:
         return None
     failed = cache.load_failure_records(ctx.step_dir)
-    stale_policy = _policy_conflict(cached.on_failure, step_cfg.on_failure)
+    stale_policy = _policy_conflict(cached.on_failure, step_cfg)
     if failed and stale_policy and not may_submit:
         return None
     if failed and (step_cfg.leaves_failures_pending or stale_policy) and may_submit:
@@ -447,56 +574,66 @@ def _cached_outcome(
     return _step_outcome(ctx, step_cfg, cached.results, cache_hit=True)
 
 
-def _nms_reuse_outcome(
+def _prepare_stamped(
+    engine: CalculationEngine,
     ctx: StepContext,
     step_cfg: StepConfig,
     key: cache.StepKey,
-    engine: NmsCapableEngine,
     *,
-    may_submit: bool,
-) -> StepOutcome | None:
-    """Reuse a cached NMS round-1 when only the *search* params changed.
+    archive: Iterable[str],
+    stamp: cache.ManifestStamp | None = None,
+) -> StepInputs:
+    """Archive ``archive``, prepare, stamp the manifest — the head every submitting route shares.
 
-    Returns ``None`` (re-run the whole step) unless a cache exists whose reuse
-    fingerprint matches; then it re-attempts the ledgered-unresolved parents, or
-    re-stamps the cache when everything was already resolved.
+    In that order and no other. The previous artifacts in the named directories leave
+    *before* the manifest is stamped with the keys that condemn them: stamped first, a
+    driver killed during the submission pass left new row provenance vouching for old
+    outputs still at canonical, and the next resume adopted a stale output (parse-usable,
+    answering the previous parent's geometry) as the current parent's result — the
+    internally-consistent wrong state the provenance exists to prevent. Archived away, the
+    same crash re-reads as MISSING_OUTPUT and the row is resubmitted. The inputs are
+    prepared before the manifest is written, so the manifest describes files that exist;
+    the stamp is on disk before any job goes out, so an interrupted run leaves proof of
+    what its outputs were computed for — the per-row provenance is that proof at
+    structure grain, for the incremental resume.
 
-    Re-attempting runs round-2 jobs, so it needs ``may_submit``. This branch is reached
-    whenever the *reuse* fingerprint matches — the ordinary state after tuning a search
-    parameter, not an error condition — so it is the likeliest way for a step nobody
-    targeted to start computing.
+    Archiving happens here rather than inside ``prepare`` because the retry and NMS paths
+    call ``prepare`` too and manage their own attempt directories. ``stamp`` is the full
+    current stamp unless a route must carry a stored half forward: the incremental resume
+    keeps the stored resolution keys until the resolution they describe exists.
     """
-    try:
-        cached = cache.load(ctx.step_dir)
-    except CacheError:
-        cached = None
-    if cached is None or cached.reuse_fingerprint != key.reuse_fingerprint:
-        return None
-    if cache.load_failure_records(ctx.step_dir):
-        if not may_submit:
-            return None
-        results = nms.reattempt_nms(engine, ctx, step_cfg, cached, key)
-    else:
-        logger.info(
-            "step %d: NMS search params changed, all resolved — reusing cache", step_cfg.step
-        )
-        # The one place a step is persisted *without* `lifecycle.finalize`, and
-        # deliberately so: there is nothing to resolve. Every structure was already resolved
-        # under the previous search params, so re-applying `on_failure` to an empty failure
-        # list would only re-stamp a ledger that is already correct. This re-stamps the
-        # cache under the new fingerprint and nothing else.
-        cache.save(
-            step_cfg=step_cfg,
-            key=key,
-            results=cached.results,
-            step_dir=ctx.step_dir,
-            chemrefine_version=__version__,
-        )
-        results = cached.results
-    return _step_outcome(ctx, step_cfg, results, cache_hit=False)
+    attempts.archive_previous(ctx.step_dir, archive)
+    inputs = engine.prepare(ctx)
+    cache.save_manifest(
+        inputs,
+        ctx.step_dir,
+        operation=step_cfg.operation,
+        engine=step_cfg.engine,
+        **(stamp if stamp is not None else key.manifest_stamp()),
+    )
+    return inputs
 
 
-def _partial_step_outcome(
+def _restamp(
+    inputs: StepInputs, ctx: StepContext, step_cfg: StepConfig, key: cache.StepKey
+) -> None:
+    """Write the full current stamp over ``inputs``' manifest, after ``finalize``.
+
+    Cache first (``finalize``), then the manifest's provenance: a crash between them leaves
+    a current cache beside an unprovenanced manifest, which reads as "rebuild again" —
+    cheap; the other order would leave provenance vouching for a cache that was never
+    written.
+    """
+    cache.save_manifest(
+        inputs,
+        ctx.step_dir,
+        operation=step_cfg.operation,
+        engine=step_cfg.engine,
+        **key.manifest_stamp(),
+    )
+
+
+def _incremental_step_outcome(
     ctx: StepContext,
     step_cfg: StepConfig,
     key: cache.StepKey,
@@ -506,53 +643,105 @@ def _partial_step_outcome(
     artifact_engine: ArtifactEngine | None,
     may_submit: bool,
 ) -> StepOutcome | None:
-    """Continue a step the driver died in the middle of, instead of redoing it.
+    """Continue a step from its provenanced manifest, computing only the rows that need it.
 
-    ``step.json`` is written **once**, at the end of a step, so a driver killed partway
-    through — the batch job hits its walltime, a node fails, Ctrl-C — leaves no cache at all.
-    The alternative is :func:`_run_full_step`, whose first act is to archive every finished
-    ``.out`` into ``attemptK/`` and resubmit the lot: on HPC, days of completed compute left
-    on disk and never read back, because a structure is only ever parsed from the canonical
-    path, which archiving has just emptied.
+    The one rule: a row is **adopted** — its output re-parsed from disk — iff its stored
+    row key equals the key this configuration derives for the same parent; every other
+    current parent's row is computed. That serves the interrupted step (all rows match,
+    only the unusable resubmit), the partially changed parent set (exactly the changed
+    rows run), and any config edit that provably reaches no job (nothing runs at all) —
+    where the alternative, :func:`_run_full_step`, archives every finished ``.out`` and
+    resubmits the lot.
 
-    The manifest is what makes continuing *safe* rather than merely cheap. Written before
-    submission and carrying the step's fingerprint, a match proves these outputs were
-    produced for this step config and these parents — the distinction ``out.is_file()``
-    cannot make alone, and the reason archiving is otherwise unconditional. The tree is then
-    handed to :func:`_resubmit_failed`, the same archive-and-resubmit path ``rerun-errors``
-    uses: it re-runs whatever has no usable result and reads the rest back from disk.
+    The row provenance is what makes continuing *safe* rather than merely cheap: a
+    stored key that matches proves the output on disk is the one this configuration
+    would compute for this parent — the distinction ``out.is_file()`` cannot make, and
+    the reason archiving is otherwise unconditional. Stale rows (changed or new
+    parents) are handed to :func:`~chemrefine.lifecycle.resubmit_unusable` as condemned
+    sight-unseen: their outputs may parse perfectly and still answer a different
+    geometry.
 
-    Returns ``None`` — meaning "run the whole step" — unless every condition holds:
+    A manifest **without** row provenance is a tree from before the current rules —
+    unprovable, never wrong — and resume refuses it loudly, naming the adoption command,
+    rather than silently archiving finished work (or, worse, trusting it):
+    ``chemrefine rebuild-cache`` re-parses under the current rules, submits nothing, and
+    records the provenance this route needs.
 
-    * The step may submit. Continuing means resubmitting whatever is still missing, so a
-      mode that promises to run nothing has no use for this route.
-    * A manifest exists and its fingerprint matches the current one.
-    * The step is not NMS. An interrupted NMS step needs its round-2 children re-resolved,
-      not just its round-1 outputs re-parsed, so it falls back to the full re-run rather
-      than being silently half-recovered.
-    * The step is not an artifact step. There is nothing per-structure to continue —
-      :func:`_run_artifact_step` re-runs the one job, and adopting a *finished* product is
-      ``rebuild-cache``'s job, not a resume's.
-    * **The manifest names at least one job.** An empty manifest is a legitimate value, not a
-      missing one: a step that prepares no per-structure inputs writes ``"files": []`` and
-      ``load_manifest`` returns ``StepInputs(files=())``, which is not ``None``. Testing only
-      for ``None`` sent such a step down the resubmit path, where a zero-job re-parse produced
-      zero successes and zero failures — so an interrupted training cached an empty result and
-      was never re-run. Nothing can be continued from a manifest with no jobs in it.
+    Returns ``None`` — meaning "run the whole step" — when the route does not apply:
+
+    * The step may not submit: continuing means resubmitting whatever is missing.
+    * The step is an artifact step. There is nothing per-structure to continue —
+      :func:`_run_artifact_step` re-runs the one job, and adopting a *finished* product
+      is ``rebuild-cache``'s job, not a resume's.
+    * No manifest, or one naming no jobs — a step that never prepared anything has
+      nothing to continue (an empty manifest is a legitimate value, not a missing one).
     """
-    if not may_submit or nms_engine is not None or artifact_engine is not None:
+    if not may_submit or artifact_engine is not None:
         return None
     manifest = cache.load_manifest(ctx.step_dir)
     if manifest is None or not manifest.files:
         return None
-    if cache.load_manifest_fingerprint(ctx.step_dir) != key.fingerprint:
-        return None
-    logger.info(
-        "step %d: resuming an interrupted step — %d structure(s) on disk",
-        step_cfg.step,
-        len(manifest.files),
+    if nms_engine is not None:
+        # Before any adoption: a template that computes no frequencies must fail with
+        # the actionable error, not an all-unresolved ledger read off perfectly good
+        # outputs.
+        _check_nms_freq_gate(nms_engine, ctx, step_cfg)
+    provenance = cache.load_manifest_provenance(ctx.step_dir)
+    if not provenance.rows:
+        raise CacheError(
+            f"step {step_cfg.step}: outputs are on disk but carry no per-row provenance — "
+            f"a tree from before the current cache rules, which resume can neither prove "
+            f"right nor wrong. Run `chemrefine rebuild-cache {step_cfg.step}` to adopt it "
+            f"under the current rules (it re-parses and submits nothing), then resume."
+        )
+    current = key.manifest_rows()
+    changed = sorted(
+        sid
+        for sid in current
+        if sid not in provenance.rows or provenance.rows[sid][0] != current[sid][0]
     )
-    results = _resubmit_failed(engine, ctx, step_cfg, key)
+    logger.info(
+        "step %d: continuing from disk — %d row(s) adopted, %d to compute (changed or new)",
+        step_cfg.step,
+        len(current) - len(changed),
+        len(changed),
+    )
+    # The resolution half of the stamp is carried forward from the stored one: it
+    # describes the `attemptK/` children on disk, and those are still the previous
+    # submission's until the resolution pass below replaces them. Stamped current here, a
+    # driver killed anywhere in the hours between this write and that pass left old-search
+    # attempts under a current-search stamp — adoptable by `rebuild-cache`, whose search
+    # guard reads exactly this stamp, and trusted by the next resume's label check. The
+    # current halves are written only once the resolution they describe exists (after
+    # `finalize`, cache first, then provenance — `_restamp`). Rows and fingerprint stamp
+    # early as every route's do: they describe round-1 outputs, which the archive of the
+    # condemned rows makes honest.
+    stamp = key.manifest_stamp()
+    stamp["criterion_key"] = provenance.criterion_key
+    stamp["search_key"] = provenance.search_key
+    # Only the condemned rows are archived: an adopted row re-renders byte-identically, a
+    # condemned one renders into the directory its stale artifacts just left (the
+    # resubmission knows they arrive pre-archived).
+    inputs = _prepare_stamped(engine, ctx, step_cfg, key, archive=changed, stamp=stamp)
+    successes, failures = lifecycle.resubmit_unusable(engine, ctx, inputs, stale=changed)
+    successes, failures = lifecycle.retry_unconverged(engine, ctx, successes, failures)
+    if nms_engine is not None:
+        # Round 1 is assembled; resolution runs exactly as a full step's would, with one
+        # verdict from the provenance: `resolved_from` labels on disk are trusted only
+        # under the criterion they were written for. Parents not at the target fan out
+        # fresh children either way — which is what makes flipping `nms: true` over a
+        # finished run cost exactly the displacement children and nothing else.
+        trust = bool(key.criterion_key) and provenance.criterion_key == key.criterion_key
+        resolution = nms.resume_nms(
+            nms_engine,
+            StepResults(structures=tuple(successes)),
+            failures,
+            ctx,
+            trust_resolutions=trust,
+        )
+        successes, failures = list(resolution.survivors), list(resolution.failures)
+    results = lifecycle.finalize(engine, ctx, step_cfg, key, successes, failures)
+    _restamp(inputs, ctx, step_cfg, key)
     return _step_outcome(ctx, step_cfg, results, cache_hit=False)
 
 
@@ -568,21 +757,11 @@ def _run_full_step(
     if nms_engine is not None:
         _check_nms_freq_gate(nms_engine, ctx, step_cfg)
     logger.info("step %d (%s): preparing inputs", step_cfg.step, step_cfg.engine)
-    # Anything already in these structure dirs is a previous run's work. Move it aside
-    # before writing new inputs, so a job that dies without producing output is seen as
-    # a failure rather than re-reading the old result. Done here rather than inside
-    # ``prepare``, because the retry and NMS paths call ``prepare`` too and already
-    # manage their own attempt dirs.
-    attempts.archive_previous(ctx.step_dir, (s.id for s in ctx.prev_state.structures))
-    inputs = engine.prepare(ctx)
-    cache.save_manifest(
-        inputs,
-        ctx.step_dir,
-        operation=step_cfg.operation,
-        engine=step_cfg.engine,
-        # Stamped before submission, so an interrupted run leaves proof of *what* these
-        # outputs were computed for — see :func:`_partial_step_outcome`.
-        fingerprint=key.fingerprint,
+    # Anything already in these structure dirs is a previous run's work: every parent's
+    # directory is archived, so a job that dies without producing output is seen as a
+    # failure rather than re-reading the old result.
+    inputs = _prepare_stamped(
+        engine, ctx, step_cfg, key, archive=(s.id for s in ctx.prev_state.structures)
     )
 
     # Built before submission, so a `target` that cannot be resolved says so before the step
@@ -634,15 +813,7 @@ def _run_artifact_step(
     too, leaving a run that is internally consistent and describes a training that never
     happened. Moving the run directory aside first turns that into the failure it is.
     """
-    attempts.archive_previous(ctx.step_dir, (ids.TRAINING_ID,))
-    inputs = engine.prepare(ctx)
-    cache.save_manifest(
-        inputs,
-        ctx.step_dir,
-        operation=step_cfg.operation,
-        engine=step_cfg.engine,
-        fingerprint=key.fingerprint,
-    )
+    inputs = _prepare_stamped(engine, ctx, step_cfg, key, archive=(engine.run_dir(ctx).name,))
     engine.submit(inputs, ctx)
     return _finish_artifact_step(ctx, step_cfg, key, engine)
 
@@ -727,21 +898,26 @@ def rebuild_cache_step(
     Backs ``chemrefine rebuild-cache`` and ``chemrefine rebuild-nms``, which differ only in
     which step they aim at.
 
-    Refuses when the manifest's stamped fingerprint *disagrees* with the current one.
-    Re-parsing outputs produced for a different template, options or upstream survivors
-    would write a cache that is internally valid and describes a run that never happened,
-    and the next ``resume`` would serve it rather than compute what was asked for.
+    Refuses when the manifest's **row provenance** disagrees with the current key —
+    a row keyed to a different template, engine options, effective charge or parent
+    content, or a parent set the rows do not cover exactly. Re-parsing such outputs
+    would write a cache that is internally valid and describes a run that never
+    happened, and the next ``resume`` would serve it rather than compute what was
+    asked for.
 
-    A manifest carrying **no** fingerprint is not evidence of a mismatch, and this
-    proceeds: an output tree predating that stamp is precisely what the command exists to
-    re-parse, and the caller has named the step. The distinction is between *proving* the
-    outputs are wrong and merely being unable to prove they are right. It is drawn
-    differently in :func:`_partial_step_outcome`, which treats an unproven match as a
-    reason to re-run — it can afford to, being an optimisation over doing the work anyway.
+    A manifest carrying **no** row provenance is not evidence of a mismatch, and this
+    proceeds: it is a tree from before the current rules (or a hand-written v1
+    adoption manifest), *unprovable* rather than wrong, and the caller has named the
+    step. The distinction is between proving the outputs wrong and merely being unable
+    to prove them right. It is drawn differently in :func:`_incremental_step_outcome`,
+    which treats an unproven match as a reason to re-run — it can afford to, being an
+    optimisation over doing the work anyway. A successful rebuild then writes the
+    manifest back **with** row provenance, so the adoption is recorded and every later
+    question is answered per row.
     """
     engine = get_engine(step_cfg.engine)
     ctx = build_context(config, step_cfg, prev_state, engine)
-    key = cache.StepKey.of(step_cfg, prev_state.structures, ctx.template)
+    key = derive_step_key(ctx, step_cfg, engine)
     manifest = cache.load_manifest(ctx.step_dir)
     if manifest is None:
         # Named for what is missing rather than for the command that asked: `rebuild-cache`
@@ -750,18 +926,46 @@ def rebuild_cache_step(
             f"step {step_cfg.step}: nothing to rebuild from — no manifest on disk, so there "
             f"is no record of which output belongs to which structure"
         )
-    stamped = cache.load_manifest_fingerprint(ctx.step_dir)
-    if stamped and stamped != key.fingerprint:
+    provenance = cache.load_manifest_provenance(ctx.step_dir)
+    if provenance.rows:
+        current = key.manifest_rows()
+        foreign = sorted(
+            sid
+            for sid, (stored_row, _digest) in provenance.rows.items()
+            if sid not in current or current[sid][0] != stored_row
+        )
+        unproven = sorted(sid for sid in current if sid not in provenance.rows)
+        if foreign or unproven:
+            raise CacheError(
+                f"step {step_cfg.step}: the outputs on disk were produced for a different "
+                f"configuration — {len(foreign)} row(s) disagree with the current key and "
+                f"{len(unproven)} current parent(s) have no row — so re-parsing them would "
+                f"cache results this configuration never produced. "
+                f"Run `chemrefine rerun {step_cfg.step}` to recompute it."
+            )
+    if _attempts_foreign(step_cfg, engine, provenance, key):
+        # Resume already refuses to reuse such an attempt ("displaced from a round this
+        # run never produced"); the explicit command must not adopt what resume refuses.
         raise CacheError(
-            f"step {step_cfg.step}: the outputs on disk were produced for a different "
-            f"configuration — its template, options or upstream results have changed "
-            f"since — so re-parsing them would cache results this configuration never "
-            f"produced. Run `chemrefine rerun {step_cfg.step}` to recompute it."
+            f"step {step_cfg.step}: the NMS children on disk were displaced under "
+            f"different search settings (displacement_value / "
+            f"num_random_displacements / seed changed), so re-parsing them would cache "
+            f"an exploration this configuration never ran. `chemrefine resume` re-runs "
+            f"just the displaced children under the current settings; "
+            f"`chemrefine rerun {step_cfg.step}` redoes the whole step."
         )
     if isinstance(engine, ArtifactEngine):
-        # Past the same fingerprint guard as any other rebuild — the product on disk has to
-        # belong to *this* configuration — but there are no per-structure outputs to re-parse
-        # beyond it. This is the most valuable recovery the command offers for such a step: a
+        # An artifact step has one whole-set product and no per-structure rows, so the
+        # step stamp is the right grain for its provenance — the row doctrine above can
+        # never see it. A stamp that disagrees is proven wrong exactly as a foreign row
+        # is; an absent one is unprovable and proceeds under the explicit command.
+        if provenance.fingerprint and provenance.fingerprint != key.fingerprint:
+            raise CacheError(
+                f"step {step_cfg.step}: the product on disk was produced for a different "
+                f"configuration, so re-caching it would describe a training that never "
+                f"happened. Run `chemrefine rerun {step_cfg.step}` to recompute it."
+            )
+        # This is the most valuable recovery the command offers for such a step: a
         # training whose job finished before the driver died is re-cached rather than re-run.
         logger.info("step %d: rebuilding cache from the product on disk", step_cfg.step)
         return _finish_artifact_step(ctx, step_cfg, key, engine)
@@ -776,6 +980,7 @@ def rebuild_cache_step(
         )
         successes, failures = list(resolution.survivors), list(resolution.failures)
     results = lifecycle.finalize(engine, ctx, step_cfg, key, successes, failures)
+    _restamp(manifest, ctx, step_cfg, key)
     return _step_outcome(ctx, step_cfg, results, cache_hit=False)
 
 

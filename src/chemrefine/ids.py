@@ -184,6 +184,19 @@ def is_attempt_dir(path: Path) -> bool:
     return path.is_dir() and _ATTEMPT_DIR_RE.fullmatch(path.name) is not None
 
 
+def attempt_dirs_newest_first(structure_dir: Path) -> list[Path]:
+    """Every existing ``attemptK/`` under a structure's dir, highest number first.
+
+    **The one ordering of a structure's attempts.** Attempt order is the number in the
+    name — :func:`next_attempt_dir` mints them ascending — and nothing else: a modification
+    time is copy order on a tree that was ``cp -r``'d off a cluster, which is the very tree
+    the readers of this list exist for. :func:`latest_attempt_dir` is its first element;
+    :func:`chemrefine.agent_tools._locate_output` walks it when the canonical output is gone.
+    """
+    numbered = _attempt_numbers(structure_dir)
+    return [path for _n, path in sorted(numbered, reverse=True)]
+
+
 def latest_attempt_dir(structure_dir: Path) -> Path | None:
     """Return the highest-numbered existing ``attemptK/`` under a structure's dir.
 
@@ -191,8 +204,8 @@ def latest_attempt_dir(structure_dir: Path) -> Path | None:
     structure's most recent attempt (e.g. an NMS exploration) from here. ``None`` when
     no ``attempt<n>/`` exists.
     """
-    numbered = _attempt_numbers(structure_dir)
-    return max(numbered)[1] if numbered else None
+    attempts = attempt_dirs_newest_first(structure_dir)
+    return attempts[0] if attempts else None
 
 
 def default_template_name(step: int, suffix: str) -> str:

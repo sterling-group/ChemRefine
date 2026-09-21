@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -11,8 +12,10 @@ from pydantic import ValidationError
 from chemrefine.config import (
     BoltzmannSample,
     Config,
+    FailurePolicy,
     MaxSample,
     MinSample,
+    NmsKnobs,
     StepConfig,
     load_config,
 )
@@ -21,6 +24,16 @@ from chemrefine.errors import ConfigError
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _silent(loc: tuple[str | int, ...], message: str) -> None:
+    """A deprecation sink that swallows — for helpers called directly, off the report path."""
+
+
+def _collect() -> tuple[list[tuple[tuple[str | int, ...], str]], object]:
+    """A sink plus the list it fills, for asserting what a rewrite announced and where."""
+    seen: list[tuple[tuple[str | int, ...], str]] = []
+    return seen, lambda loc, message: seen.append((loc, message))
 
 
 def _minimal_config(**overrides) -> dict:
@@ -89,10 +102,31 @@ def test_non_mapping_yaml_rejected(tmp_path: Path):
         load_config(p)
 
 
+def test_non_string_keys_are_a_config_error(tmp_path: Path):
+    """An unquoted ``on:`` key (a YAML 1.1 boolean) gets the documented error, not a TypeError."""
+    p = tmp_path / "input.yaml"
+    p.write_text("on: true\nsteps: []\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="invalid config"):
+        load_config(p)
+
+
 def test_malformed_yaml_rejected(tmp_path: Path):
     p = tmp_path / "input.yaml"
     p.write_text("steps: [\n", encoding="utf-8")
     with pytest.raises(ConfigError):
+        load_config(p)
+
+
+def test_a_config_that_is_not_utf8_is_a_config_error(tmp_path: Path):
+    """A latin-1 file is a malformed config, not a traceback.
+
+    ``UnicodeDecodeError`` is a ``ValueError``, so the ``except OSError`` around the read
+    let it escape past the exit-code contract: ``chemrefine run`` exited 1 with a traceback
+    where every other bad file exits 2 naming itself.
+    """
+    p = tmp_path / "input.yaml"
+    p.write_bytes("# Ångström\nsteps:\n  - step: 1\n    engine: orca\n".encode("latin-1"))
+    with pytest.raises(ConfigError, match="not UTF-8"):
         load_config(p)
 
 
@@ -174,6 +208,77 @@ def test_step_options_accept_nested_json_values():
     assert sc.options["windows"] == [0.5, 1.0]
 
 
+def test_engine_options_is_the_engines_share_of_the_mapping():
+    """With ``nms: true`` the NMS knobs leave the engine's share; without it nothing does.
+
+    Two declared readers share one ``options`` mapping, and a strict engine model handed
+    the whole of it refused every NMS knob as a stranger. A key neither reader declares
+    stays in the engine's share, so a typo of an NMS knob is still the strict read's to
+    refuse — and the share is a copy, so a reader cannot edit the step's own mapping.
+    """
+    options = {"task_name": "omol", "target": "ts", "seed": 7, "targt": "ts"}
+    plain = StepConfig(step=1, engine="mlip-extopt", options=options)
+    sampled = StepConfig(step=1, engine="mlip-extopt", nms=True, options=options)
+
+    assert plain.engine_options() == options
+    assert plain.engine_options() is not plain.options
+    assert sampled.engine_options() == {"task_name": "omol", "targt": "ts"}
+
+
+def test_a_negative_nms_seed_is_refused_at_the_boundary():
+    """A seed is handed to ``numpy.random.default_rng``, which takes no negative.
+
+    ``NmsKnobs.seed: int`` accepted ``-1``; the refusal then came from numpy as a bare
+    ``ValueError`` at the first fan-out (``nms.rng_for``), after round 1 had run and been
+    paid for, and outside the exit-code contract. The field bound is the one place that
+    can say so by name, before anything is submitted.
+    """
+    with pytest.raises(ValidationError, match="seed"):
+        NmsKnobs.from_raw({"seed": -1})
+    assert NmsKnobs.from_raw({"seed": 0}).seed == 0  # the floor itself is a valid seed
+
+
+@pytest.mark.parametrize(
+    ("build", "value"),
+    [
+        (lambda v: NmsKnobs(displacement_value=v), float("inf")),
+        (lambda v: NmsKnobs(displacement_value=v), float("nan")),
+        (lambda v: NmsKnobs(displacement_value=v), 0.0),
+        (lambda v: NmsKnobs(displacement_value=v), -1.0),
+        (lambda v: MinSample(method="min", window_kcalmol=v), float("inf")),
+        (lambda v: BoltzmannSample(method="boltzmann", temperature_k=v), float("inf")),
+        (lambda v: Config(**_minimal_config(job_timeout_seconds=v)), float("inf")),
+    ],
+    ids=[
+        "displacement-inf",
+        "displacement-nan",
+        "displacement-zero",
+        "displacement-negative",
+        "window-inf",
+        "temperature-inf",
+        "job-timeout-inf",
+    ],
+)
+def test_a_float_knob_refuses_non_finite_and_degenerate_values(build, value):
+    """`gt=0` refuses NaN (the comparison is false) but admits `+inf`; YAML spells both.
+
+    Each of these once passed validation and failed somewhere a person cannot act on it:
+    a non-finite displacement inside every round-2 child geometry, a zero displacement as a
+    batch of children identical to their parents. The config boundary is the one place that
+    can refuse the value by the name of the field that carries it.
+    """
+    with pytest.raises(ValidationError):
+        build(value)
+
+
+def test_nms_knobs_read_their_subset_and_default_the_rest():
+    """``NmsKnobs.from_raw`` keeps its own keys, ignores the rest, and takes ``None`` as empty."""
+    knobs = NmsKnobs.from_raw({"target": "ts", "task_name": "omol"})
+    assert knobs.target == "ts"
+    assert knobs.seed == 42
+    assert NmsKnobs.from_raw(None) == NmsKnobs()
+
+
 def test_empty_steps_list_rejected(tmp_path: Path):
     data = _minimal_config(steps=[])
     with pytest.raises(ConfigError):
@@ -214,6 +319,34 @@ def test_find_step_by_number_and_name():
     assert cfg.find_step("2") is cfg.steps[1]
     assert cfg.find_step("refine") is cfg.steps[1]
     assert cfg.find_step("missing") is None
+    # `"²".isdigit()` is True and `int("²")` raises, so the old guard routed this into a
+    # bare ValueError — out through `start_run` and the GUI past the contract that every
+    # failure is a ChemRefineError with an exit code. It is simply not a step name.
+    assert cfg.find_step("²") is None
+    # Unicode decimals that `int` *does* accept still resolve, which is why the predicate
+    # is `isdecimal` rather than an ASCII test.
+    assert cfg.find_step("٢") is cfg.steps[1]
+
+
+@pytest.mark.parametrize("selector", [2.5, [2], {"step": 2}, None, True])
+def test_a_selector_that_is_neither_a_number_nor_a_name_is_refused(selector: object):
+    """The wire funnel refuses what it cannot look up, instead of crashing on it.
+
+    ``/api/results``, ``/api/failures`` and the agent's ``get_results`` hand their
+    ``step`` straight here; a JSON float, list or mapping reached ``matches`` and raised
+    ``AttributeError`` (``isdecimal`` on a float) — a 500 out of the GUI and the generic
+    crash line out of an MCP tool — while ``true``, an ``int`` to ``isinstance``, quietly
+    selected step 1. The refusal is the module's own ``ConfigError``, so every caller
+    gets the documented 400 / exit 2 for free.
+    """
+    cfg = Config(
+        steps=[
+            StepConfig(step=1, name="screen", engine="fake", operation="opt_sp"),
+            StepConfig(step=2, name="refine", engine="fake", operation="opt_sp"),
+        ]
+    )
+    with pytest.raises(ConfigError, match="neither a step number nor a name"):
+        cfg.find_step(selector)
 
 
 # ---------------------------------------------------------------------------
@@ -422,6 +555,22 @@ def test_step_charge_override(tmp_path: Path):
     assert cfg.steps[0].charge == -1
 
 
+def test_step_multiplicity_override_is_held_to_the_global_floor(tmp_path: Path):
+    """A per-step ``multiplicity`` obeys the same ``>= 1`` the workflow value does.
+
+    The override used to carry no bound at all: ``multiplicity: 0`` on a step loaded,
+    passed ``chemrefine validate``, and reached ORCA's ``* xyzfile 0 0`` line and PySCF's
+    ``spin = -1`` — every job of the step failing at the program's own input parse, after
+    the steps before it had already run.
+    """
+    steps = [{"step": 1, "engine": "fake", "operation": "opt_sp", "multiplicity": 0}]
+    with pytest.raises(ConfigError, match="multiplicity"):
+        load_config(_write_yaml(tmp_path, _minimal_config(steps=steps)))
+    steps[0]["multiplicity"] = 3
+    cfg = load_config(_write_yaml(tmp_path, _minimal_config(steps=steps)))
+    assert cfg.steps[0].effective_multiplicity(cfg.multiplicity) == 3
+
+
 def test_step_unknown_field_rejected(tmp_path: Path):
     data = _minimal_config(
         steps=[
@@ -466,7 +615,10 @@ def test_directory_paths_with_shell_metacharacters_rejected(tmp_path: Path, fiel
     broken — or dangerous — job script at submit time.
     """
     data = _minimal_config(**{field: bad})
-    with pytest.raises(ConfigError):
+    # `match="path"`: the field validator's own wording. The post-resolution re-check
+    # (`shell_unsafe_after_resolution`) refuses the same string as "resolved <field>", so
+    # without the match the field-level refusal could be deleted and this stay green.
+    with pytest.raises(ConfigError, match=r"path .* contains"):
         load_config(_write_yaml(tmp_path, data))
 
 
@@ -501,16 +653,39 @@ def test_operation_with_shell_metacharacters_rejected(tmp_path: Path, bad: str):
         load_config(_write_yaml(tmp_path, data))
 
 
-@pytest.mark.parametrize("ok", ["opt_sp", "OPT+SP", "sp", "mlip_train", "goat"])
-def test_operation_accepts_every_real_spelling(tmp_path: Path, ok: str):
+@pytest.mark.parametrize(
+    ("ok", "expected"),
+    [
+        ("opt_sp", "opt_sp"),
+        ("OPT+SP", "opt_sp"),
+        ("sp", "sp"),
+        ("mlip_train", "mlip_train"),
+        ("goat", "goat"),
+    ],
+)
+def test_operation_accepts_every_real_spelling(tmp_path: Path, ok: str, expected: str):
     """The rule blocks shell metacharacters only — not the vocabulary engines actually use.
 
     `OPT+SP` matters: it is the legacy spelling, normalised to `opt_sp` before this
     validator sees it, and a stricter allowlist would have rejected it for no security gain.
+    The value is asserted, not just its presence: ``is not None`` was true of a normaliser
+    that handed the raw ``OPT+SP`` through.
     """
     data = _minimal_config()
     data["steps"][0]["operation"] = ok
-    assert load_config(_write_yaml(tmp_path, data)).steps[0].operation is not None
+    assert load_config(_write_yaml(tmp_path, data)).steps[0].operation == expected
+
+
+def test_directory_paths_with_a_comma_are_legal(tmp_path: Path):
+    """A comma breaks no channel a directory rides, so it is a directory name like any.
+
+    It was refused once, for the array manifest's path travelling ``--export``, which
+    sbatch splits on commas; the manifest now rides as the script's argument, and a
+    rule that is untrue of every other site these values reach went with the channel.
+    """
+    data = _minimal_config()
+    data["output_dir"] = "./out,puts"
+    assert load_config(_write_yaml(tmp_path, data)).output_dir.name == "out,puts"
 
 
 @pytest.mark.parametrize("ok", ["/opt/my orca/orca", "/opt/orca/orca", "orca"])
@@ -522,6 +697,36 @@ def test_executables_allow_spaces_and_bare_command_names(tmp_path: Path, ok: str
     """
     data = _minimal_config(executables={"orca": ok})
     assert load_config(_write_yaml(tmp_path, data)).executables["orca"] == ok
+
+
+def test_a_metacharacter_in_the_config_files_own_directory_is_refused(tmp_path: Path):
+    """The shell rule is re-asked after resolution, because a parent directory can carry one.
+
+    Reproduced before it was fixed: a config whose YAML contains nothing but
+    `output_dir: ./outputs`, sitting in a directory named `$(touch /tmp/MARKER)`, produced
+    `export OUTPUT_DIR="…/$(touch /tmp/MARKER)/outputs"` in the generated script — and bash
+    substitutes inside double quotes, so running the job created the file. The field
+    validator could not see it: it runs on the path as written, and `resolve_relative_paths`
+    anchors relative paths through `model_copy`, which runs no validators.
+
+    A directory name is the payload here, which is exactly the shape that matters on a
+    shared filesystem — the environment `docs/internals/security.md` is written for.
+    """
+    hostile = tmp_path / "$(echo pwned)"
+    hostile.mkdir()
+    config = hostile / "input.yaml"
+    config.write_text(yaml.safe_dump(_minimal_config()), encoding="utf-8")
+    with pytest.raises(ConfigError, match="resolved"):
+        load_config(config)
+
+
+def test_a_clean_config_directory_still_loads(tmp_path: Path):
+    """The re-check must not refuse an ordinary tree — it is a rule, not a mood."""
+    project = tmp_path / "proj-1_ok"
+    project.mkdir()
+    config = project / "input.yaml"
+    config.write_text(yaml.safe_dump(_minimal_config()), encoding="utf-8")
+    assert load_config(config).output_dir == project / "outputs"
 
 
 def test_explicit_null_scratch_dir_is_accepted(tmp_path: Path):
@@ -618,82 +823,6 @@ def test_legacy_mlff_block_becomes_options_and_extopt_engine():
     assert "bind" not in s.options  # obsolete sub-key dropped
 
 
-def test_legacy_qiskit_active_space_is_canonicalized(caplog: pytest.LogCaptureFixture):
-    """The YAML compatibility layer owns the old flat active-space spelling."""
-    from chemrefine.config_legacy import _normalize_step
-    from chemrefine.engines.qiskit.options import ActiveSpaceOptions, QiskitOptions
-
-    normalized = _normalize_step(
-        {
-            "step": 1,
-            "engine": "qiskit",
-            "operation": "sp",
-            "options": {"basis": "sto-3g", "active_electrons": 2, "active_orbitals": 2},
-        }
-    )
-
-    assert normalized["options"] == {
-        "basis": "sto-3g",
-        "active_space": {"electrons": 2, "orbitals": 2},
-    }
-    assert QiskitOptions.from_raw(normalized["options"]).active_space == ActiveSpaceOptions(
-        electrons=2, orbitals=2
-    )
-    assert "active_electrons" in caplog.text
-
-
-@pytest.mark.parametrize(
-    "options",
-    [
-        {"active_electrons": 2},
-        {"active_orbitals": 2},
-    ],
-)
-def test_legacy_qiskit_active_space_requires_both_flat_keys(options: dict[str, object]):
-    """An incomplete legacy pair fails before strict engine validation."""
-    from chemrefine.config_legacy import _normalize_step
-
-    with pytest.raises(ConfigError, match="provided together"):
-        _normalize_step({"engine": "qiskit", "options": options})
-
-
-def test_legacy_qiskit_active_space_rejects_mixed_spellings():
-    """Canonical and legacy active-space spellings cannot be combined."""
-    from chemrefine.config_legacy import _normalize_step
-
-    with pytest.raises(ConfigError, match="either active_space"):
-        _normalize_step(
-            {
-                "engine": "qiskit",
-                "options": {
-                    "active_space": {"electrons": 2, "orbitals": 2},
-                    "active_electrons": 2,
-                    "active_orbitals": 2,
-                },
-            }
-        )
-
-
-def test_qiskit_active_space_normalizer_is_scoped_and_idempotent():
-    """Current Qiskit YAML and other engines pass through the legacy quarantine unchanged."""
-    from chemrefine.config_legacy import _normalize_qiskit_active_space, _normalize_step
-
-    canonical = {
-        "engine": "qiskit",
-        "options": {"active_space": {"electrons": 2, "orbitals": 2}},
-    }
-    other = {
-        "engine": "orca",
-        "options": {"active_electrons": 2, "active_orbitals": 2},
-    }
-    invalid_options = {"engine": "qiskit", "options": "not-a-mapping"}
-
-    assert _normalize_step(canonical) == canonical
-    assert _normalize_step(other) == other
-    _normalize_qiskit_active_space(invalid_options)
-    assert invalid_options == {"engine": "qiskit", "options": "not-a-mapping"}
-
-
 def test_legacy_train_operation_selects_trainer():
     cfg = Config(
         template_dir="./t",
@@ -734,9 +863,234 @@ def test_legacy_sample_type_and_param_renames():
     # integer -> min, num_structures -> count
     assert isinstance(cfg.steps[1].sample, MinSample)
     assert cfg.steps[1].sample.count == 3
-    # energy_window -> min, energy -> window_kcalmol (unit dropped)
+    # energy_window -> min, energy -> window_kcalmol (an explicit kcal/mol value
+    # crosses unchanged; every other unit converts -- see the tests below)
     assert isinstance(cfg.steps[2].sample, MinSample)
     assert cfg.steps[2].sample.window_kcalmol == 8
+
+
+def _legacy_window_sample(parameters: dict) -> MinSample:
+    """The validated sample a v1 ``energy_window`` block with ``parameters`` becomes."""
+    cfg = Config(
+        template_dir="./t",
+        steps=[
+            {
+                "step": 1,
+                "engine": "orca",
+                "operation": "sp",
+                "sample_type": {"method": "energy_window", "parameters": parameters},
+            }
+        ],
+    )
+    sample = cfg.steps[0].sample
+    assert isinstance(sample, MinSample)
+    return sample
+
+
+def test_legacy_energy_window_value_keeps_its_hartree_meaning():
+    """v1's ``energy`` was hartree unless ``unit: kcal/mol`` said otherwise — so it converts.
+
+    ``window_kcalmol`` is kcal/mol by definition; carrying the number across unchanged
+    shrank the window ~627.5x for every v1 config that relied on the default, silently
+    discarding structures the run should have kept. The conversion mirrors v1's own rule:
+    only an explicit ``kcal/mol`` converted anything there, so any other spelling —
+    including none at all — meant the number was hartree.
+    """
+    implicit = _legacy_window_sample({"energy": 0.5})
+    assert implicit.window_kcalmol == pytest.approx(313.754737, abs=1e-4)
+    explicit = _legacy_window_sample({"energy": 0.5, "unit": "hartree"})
+    assert explicit.window_kcalmol == pytest.approx(313.754737, abs=1e-4)
+    # v1 compared any unit it did not recognise as hartree; mirrored, so a config
+    # that ran on v1 filters identically here rather than differently-wrong.
+    odd = _legacy_window_sample({"energy": 0.5, "unit": "eV"})
+    assert odd.window_kcalmol == pytest.approx(313.754737, abs=1e-4)
+    kcal = _legacy_window_sample({"energy": 8, "unit": "kcal/mol"})
+    assert kcal.window_kcalmol == 8
+
+
+def test_legacy_energy_window_conversion_names_both_numbers():
+    """The deprecation row states the conversion, not just the rename.
+
+    The rename row alone ("use `window_kcalmol`") reads as an endorsement of the value —
+    which is exactly how a silently reinterpreted window would go unnoticed. A row that
+    names the hartree number and the kcal/mol number it became is checkable at a glance.
+    """
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    rows: list[tuple[tuple[str | int, ...], str]] = []
+    _normalize_legacy(
+        {
+            "steps": [
+                {
+                    "step": 1,
+                    "engine": "orca",
+                    "sample": {"method": "energy_window", "energy": 0.5},
+                }
+            ]
+        },
+        report=lambda loc, message: rows.append((loc, message)),
+    )
+    [(loc, message)] = [(loc, m) for loc, m in rows if "window_kcalmol:" in m]
+    assert loc == ("steps", 0, "sample", "energy")
+    assert "0.5" in message and "313.755" in message
+
+
+def test_legacy_energy_window_non_numeric_value_is_left_for_validation():
+    """A value the conversion cannot read passes through for pydantic to refuse.
+
+    v1 would have crashed on it at filter time; v2 refuses it at the boundary with the
+    field error every other bad sample value gets — the conversion must not turn that
+    refusal into its own arithmetic traceback.
+    """
+    with pytest.raises(ValidationError):
+        Config(
+            template_dir="./t",
+            steps=[
+                {
+                    "step": 1,
+                    "engine": "orca",
+                    "operation": "sp",
+                    "sample_type": {"method": "energy_window", "parameters": {"energy": [1]}},
+                }
+            ],
+        )
+
+
+def test_a_quoted_legacy_energy_still_carries_its_hartree_meaning():
+    """``energy: "0.005"`` is a string to YAML but a number to v1 — it must convert.
+
+    The ``isinstance(int, float)`` gate let the quoted spelling skip the hartree
+    conversion, be renamed to ``window_kcalmol``, and be coerced by pydantic to
+    0.005 kcal/mol where v1 meant 0.005 Eh ≈ 3.14 kcal/mol — the exact silent ~627x
+    shrink the conversion was added to prevent, reachable through quoting.
+    """
+    quoted = _legacy_window_sample({"energy": "0.005"})
+    assert quoted.window_kcalmol == pytest.approx(3.137547, abs=1e-5)
+
+    # What the conversion cannot read as a number passes through untouched — a bool
+    # (YAML's `energy: true` is not a quantity) and a non-numeric string are both the
+    # model's coercion error to make, never this rewrite's arithmetic.
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    out = _normalize_legacy(
+        {
+            "steps": [
+                {"step": 1, "sample": {"method": "energy_window", "energy": True}},
+                {"step": 2, "sample": {"method": "energy_window", "energy": "abc"}},
+            ]
+        },
+        report=lambda loc, message: None,
+    )
+    assert out["steps"][0]["sample"]["window_kcalmol"] is True
+    assert out["steps"][1]["sample"]["window_kcalmol"] == "abc"
+
+
+def test_scalar_options_are_a_field_error_not_a_traceback():
+    """``options: 3`` must land as a pydantic row, from both loaders.
+
+    ``dict(3)`` raised a raw ``TypeError`` out of the legacy normalizer — a traceback
+    past ``load_config``'s exit-code contract, and a 500 out of
+    ``validate_config_text``, whose documented contract is "never raises". A
+    ``ValueError`` is what pydantic wraps.
+    """
+    from chemrefine.validate import validate_config_text
+
+    step = {"step": 1, "engine": "orca", "operation": "sp", "options": 3}
+    with pytest.raises(ValidationError, match="must be a mapping"):
+        Config(template_dir="./t", steps=[step])
+    report = validate_config_text("steps:\n  - step: 1\n    engine: orca\n    options: 3\n")
+    assert not report.ok
+    assert any("must be a mapping" in issue.message for issue in report.issues)
+
+
+@pytest.mark.parametrize(
+    ("text", "named"),
+    [
+        (
+            "steps:\n  - step: 1\n    engine: orca\n    operation: sp\n"
+            "    normal_mode_sampling_parameters: 5\n",
+            "steps[0].normal_mode_sampling_parameters",
+        ),
+        (
+            "steps:\n  - step: 1\n    engine: orca\n    operation: sp\n"
+            "    sample_type: {method: boltzmann, parameters: 5}\n",
+            "steps[0].sample_type.parameters",
+        ),
+        (
+            "orca_executable: /x\nexecutables: 3\n"
+            "steps:\n  - step: 1\n    engine: orca\n    operation: sp\n",
+            "executables",
+        ),
+    ],
+    ids=["nms-parameters", "sample-parameters", "executables"],
+)
+def test_a_scalar_where_a_legacy_mapping_belongs_is_a_field_error_from_both_loaders(
+    text: str, named: str
+):
+    """Every legacy key that holds a mapping refuses a scalar by name, as ``options`` does.
+
+    A ``dict()`` over the scalar raised a raw ``TypeError`` past both loaders — a traceback
+    out of ``load_config`` and a 500 out of ``validate_config_text``; the refusal is a
+    pydantic row from one and a report row from the other, and it names the key.
+    """
+    from chemrefine.validate import validate_config_text
+
+    with pytest.raises(ValidationError, match=re.escape(f"{named} must be a mapping")):
+        Config.model_validate(yaml.safe_load(text))
+    report = validate_config_text(text)
+    assert not report.ok
+    assert any(f"{named} must be a mapping" in issue.message for issue in report.issues)
+
+
+def test_every_legacy_rewrite_announces_itself():
+    """The migration doc promises one deprecation per legacy feature — held to it.
+
+    The engine rename map, the ``MLFF_TRAIN`` operation rewrite, and the obsolete
+    sub-key drop all rewrote silently: a config whose only legacy feature is
+    ``engine: mlff`` was named nothing and breaks at 3.0 with no warning ever issued.
+    """
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    rows: list[tuple[tuple[str | int, ...], str]] = []
+    _normalize_legacy(
+        {
+            "steps": [
+                {"step": 1, "engine": "mlff", "operation": "sp"},
+                {"step": 2, "operation": "MLFF_TRAIN"},
+                {"step": 3, "engine": "orca", "mlff": {"model_name": "m", "bind": "x:1"}},
+            ]
+        },
+        report=lambda loc, message: rows.append((loc, message)),
+    )
+    by_loc = dict(rows)
+    assert "use `mlip`" in by_loc[("steps", 0, "engine")]
+    assert "mlip-train" in by_loc[("steps", 1, "operation")]
+    assert "dropped" in by_loc[("steps", 2, "mlff", "bind")]
+
+
+def test_the_current_trainer_spelling_passes_without_a_warning():
+    """``engine: mlip-train`` + ``operation: mlip_train`` is v2's own vocabulary."""
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    rows: list[str] = []
+    _normalize_legacy(
+        {"steps": [{"step": 1, "engine": "mlip-train", "operation": "mlip_train"}]},
+        report=lambda loc, message: rows.append(message),
+    )
+    assert rows == []
+
+
+def test_a_step_name_with_a_leading_hyphen_is_refused():
+    """``-foo`` is a legal name to the pattern but an option to every argv.
+
+    The CLI and ``start_run`` both put the name on a command line, where ``-foo``
+    parses as a flag: exit 2 into an unwatched log after a pid was already returned —
+    the exact class the run-target guard closed for unknown names.
+    """
+    with pytest.raises(ValidationError, match="hyphen"):
+        StepConfig(step=1, engine="orca", operation="sp", name="-foo")
+    # An interior hyphen stays legal — the refusal is about argv position, not the char.
+    assert StepConfig(step=1, engine="orca", operation="sp", name="pre-opt").name == "pre-opt"
 
 
 def test_legacy_normal_mode_sampling_renamed():
@@ -851,7 +1205,7 @@ def test_normalizer_handles_step_without_operation():
     """Engine renames still apply when ``operation`` is absent (validation rejects later)."""
     from chemrefine.config_legacy import _normalize_step
 
-    s = _normalize_step({"step": 1, "engine": "DFT"})
+    s = _normalize_step({"step": 1, "engine": "DFT"}, 0, _silent)
     assert s["engine"] == "orca"
     assert "operation" not in s
 
@@ -918,6 +1272,92 @@ def test_config_rejects_a_backslash_in_a_directory_path():
         )
 
 
+# --- config: legacy rewrites announce themselves -----------------------------
+
+
+def test_every_legacy_rewrite_reports_where_it_happened():
+    """Each rewrite reaches the sink anchored at the key that caused it.
+
+    The point of the sink: before it, a rewrite spoke only to a logger, so
+    ``validate_config`` handed the agent, the GUI and every MCP client an empty
+    ``warnings`` list for a config written in a vocabulary due for removal in 3.0.
+    """
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    seen, sink = _collect()
+    _normalize_legacy(
+        {
+            "orca_executable": "/opt/orca/orca",
+            "initial_xyz": "./seed.xyz",
+            "steps": [
+                {
+                    "step": 1,
+                    "mlff": {"model_name": "small"},
+                    "normal_mode_sampling": True,
+                    "sample_type": {"method": "integer", "parameters": {"num_structures": 5}},
+                }
+            ],
+        },
+        report=sink,
+    )
+    by_loc = dict(seen)
+    assert by_loc[("orca_executable",)].startswith("`orca_executable` is deprecated")
+    assert by_loc[("initial_xyz",)].startswith("`initial_xyz` is deprecated")
+    assert by_loc[("steps", 0, "mlff")].startswith("step-level `mlff:` block is deprecated")
+    assert by_loc[("steps", 0, "normal_mode_sampling")].startswith("`normal_mode_sampling*`")
+    assert by_loc[("steps", 0, "sample_type")].startswith("`sample_type` is deprecated")
+    assert "`min`" in by_loc[("steps", 0, "sample", "method")]
+    assert "`count`" in by_loc[("steps", 0, "sample", "num_structures")]
+
+
+def test_the_step_index_anchors_the_finding_to_its_own_step():
+    """Two legacy steps produce two findings, each pointing at the right index."""
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    seen, sink = _collect()
+    _normalize_legacy({"steps": [{"step": 1}, {"step": 2, "pyscf": {"xc": "pbe"}}]}, report=sink)
+    assert [loc for loc, _ in seen] == [("steps", 1, "pyscf")]
+
+
+def test_a_current_config_announces_nothing():
+    """Idempotence, from the sink's side: nothing to rewrite, nothing to report."""
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    seen, sink = _collect()
+    _normalize_legacy(
+        {
+            "executables": {"orca": "/opt/orca/orca"},
+            "input": "./seed.xyz",
+            "steps": [{"step": 1, "engine": "orca", "sample": {"method": "min", "count": 5}}],
+        },
+        report=sink,
+    )
+    assert seen == []
+
+
+def test_reporting_replaces_the_log_rather_than_doubling_it(caplog):
+    """``report=`` redirects; it does not add a second voice.
+
+    The validator normalizes twice — once to collect, once inside
+    ``Config.model_validate`` — so a sink that also logged would say everything twice on a
+    path that used to say it once.
+    """
+    import logging
+
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    seen, sink = _collect()
+    with caplog.at_level(logging.WARNING, logger="chemrefine.config_legacy"):
+        _normalize_legacy({"orca_executable": "/opt/orca/orca"}, report=sink)
+    assert len(seen) == 1
+    assert caplog.records == []
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="chemrefine.config_legacy"):
+        _normalize_legacy({"orca_executable": "/opt/orca/orca"})
+    assert len(caplog.records) == 1
+
+
 # --- config: legacy sample normalizer edges ---------------------------------
 
 
@@ -925,7 +1365,7 @@ def test_normalize_sample_helpers_pass_through_non_dict():
     from chemrefine.config_legacy import _flatten_sample_type, _normalize_sample_block
 
     assert _flatten_sample_type("nope") == "nope"
-    assert _normalize_sample_block("nope") == "nope"
+    assert _normalize_sample_block("nope", (), _silent) == "nope"
 
 
 def test_flatten_then_normalize_carries_through_extra_top_level_keys():
@@ -934,7 +1374,7 @@ def test_flatten_then_normalize_carries_through_extra_top_level_keys():
     flat = _flatten_sample_type(
         {"method": "boltzmann", "parameters": {"weight": 95}, "by_parent": True}
     )
-    out = _normalize_sample_block(flat)
+    out = _normalize_sample_block(flat, (), _silent)
     assert out == {"method": "boltzmann", "percent_cumulative": 95, "by_parent": True}
 
 
@@ -942,4 +1382,91 @@ def test_normalize_sample_block_without_method_passes_keys_through():
     """A block with no ``method`` key leaves it out (validation rejects it later)."""
     from chemrefine.config_legacy import _normalize_sample_block
 
-    assert _normalize_sample_block({"count": 5}) == {"count": 5}
+    assert _normalize_sample_block({"count": 5}, (), _silent) == {"count": 5}
+
+
+# ---------------------------------------------------------------------------
+# The failure-policy vocabulary is read as three questions
+# ---------------------------------------------------------------------------
+
+_POLICY_TABLE = [
+    # policy, halts_on_failure, leaves_failures_pending, stores_backfills
+    ("stop", True, True, False),
+    ("skip", False, False, False),
+    ("best", False, False, True),
+]
+
+
+def test_the_policy_table_covers_the_vocabulary():
+    """Every policy `on_failure` accepts has a row below — a fourth one must take a stand."""
+    from typing import get_args
+
+    from chemrefine.config import FailurePolicy
+
+    assert {row[0] for row in _POLICY_TABLE} == set(get_args(FailurePolicy))
+
+
+@pytest.mark.parametrize(("policy", "halts", "pending", "stores"), _POLICY_TABLE)
+def test_the_three_policy_predicates(
+    policy: FailurePolicy, halts: bool, pending: bool, stores: bool
+):
+    """The three predicates are the vocabulary's whole meaning; each row is one policy's."""
+    step = StepConfig(step=1, engine="orca", on_failure=policy)
+    assert (step.halts_on_failure, step.leaves_failures_pending, step.stores_backfills) == (
+        halts,
+        pending,
+        stores,
+    )
+
+
+def test_a_policy_outside_the_vocabulary_fails_loud():
+    """The wildcard arm holds only `assert_never`: a forced value fails where it lands.
+
+    The guard that matters is mypy's — a fourth policy without an arm fails type-checking —
+    but a value forced past validation must not inherit `skip`'s answer either.
+    """
+    from typing import cast
+
+    from chemrefine.config import policy_stores_backfills
+
+    with pytest.raises(AssertionError):
+        policy_stores_backfills(cast(FailurePolicy, "later"))
+
+
+def test_a_stored_policy_is_recognised_only_from_the_vocabulary():
+    """The cache's stored policy is text; only a name this version knows is a policy."""
+    from chemrefine.config import is_failure_policy
+
+    assert all(is_failure_policy(row[0]) for row in _POLICY_TABLE)
+    assert not is_failure_policy("")
+    assert not is_failure_policy("later")
+
+
+# ---------------------------------------------------------------------------
+# Overrides are held to the fields' own rules
+# ---------------------------------------------------------------------------
+
+
+def test_an_override_is_validated_by_its_fields_own_rule():
+    """``with_overrides`` applies the declared constraint, in the model's wording.
+
+    ``model_copy`` runs no validators, which is how the budget floors came to be restated
+    at every entry point that applies an override — a CLI flag's ``min=1`` beside the
+    model's ``ge=1``, an agent tool's ``< 1`` beside both. One rule now, read off the
+    field: a valid value lands, an invalid one is the same ``ConfigError`` a bad YAML
+    value is, and a name that is not a field is a programming error rather than a
+    silently copied-in attribute.
+    """
+    config = Config.model_validate(_minimal_config())
+    assert config.with_overrides(max_cores=3).max_cores == 3
+    assert config.with_overrides(max_gpus=0).max_gpus == 0
+    with pytest.raises(
+        ConfigError, match="max_cores 0: Input should be greater than or equal to 1"
+    ):
+        config.with_overrides(max_cores=0)
+    with pytest.raises(
+        ConfigError, match="max_gpus -1: Input should be greater than or equal to 0"
+    ):
+        config.with_overrides(max_gpus=-1)
+    with pytest.raises(ConfigError, match="'max_nodes' is not a config field"):
+        config.with_overrides(max_nodes=2)

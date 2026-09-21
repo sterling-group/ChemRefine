@@ -27,8 +27,9 @@ from chemrefine.engines._provision import (
     build_backend_env,
     known_backend_extras,
     preflight_backends,
+    resolve_base_python,
 )
-from chemrefine.engines.api import get_engine, register
+from chemrefine.engines.api import get_engine, preflight_steps, register
 
 __all__ = [
     "backend_env_path",
@@ -37,7 +38,9 @@ __all__ = [
     "get_engine",
     "known_backend_extras",
     "preflight_backends",
+    "preflight_steps",
     "register",
+    "resolve_base_python",
 ]
 
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import shlex
+import subprocess
 import sys
 from io import BytesIO
 from pathlib import Path
@@ -37,22 +38,6 @@ from chemrefine.errors import JobFailureError
 # ---------------------------------------------------------------------------
 # CalculationData + Base contract
 # ---------------------------------------------------------------------------
-
-
-def test_calculation_data_round_trips_fields():
-    data = CalculationData(
-        symbols=("H", "O", "H"),
-        positions_angstrom=np.array([[0, 0, 0], [0.96, 0, 0], [-0.24, 0.93, 0]]),
-        charge=0,
-        multiplicity=1,
-        nthreads=4,
-        dograd=True,
-        settings={"method": "dft"},
-    )
-    assert data.symbols == ("H", "O", "H")
-    assert data.positions_angstrom.shape == (3, 3)
-    assert data.dograd is True
-    assert data.settings == {"method": "dft"}
 
 
 def test_default_bind_host_is_loopback():
@@ -242,7 +227,12 @@ def test_extopt_modules_have_main_entry_guard():
     for mod in (server, bridge):
         src = Path(mod.__file__).read_text(encoding="utf-8")
         assert 'if __name__ == "__main__":' in src, f"{mod.__name__} missing -m entry guard"
-        assert "main()" in src
+        # The guard must *invoke* main, not merely exist beside it: a bare "main()"
+        # substring is satisfied by the `def main()` line itself, so a guard rewritten
+        # to `pass` would import, exit 0, and start nothing.
+        assert 'if __name__ == "__main__":\n    raise SystemExit(main())' in src, (
+            f"{mod.__name__}'s -m entry guard does not invoke main()"
+        )
 
 
 def test_wrapper_passes_input_file_as_final_positional(tmp_path: Path):
@@ -342,21 +332,62 @@ def test_load_calculator_unknown_raises_keyerror():
         registry.load_calculator("not_a_backend")
 
 
-def test_every_registered_backend_conforms_to_base_protocol():
-    """Loaded backends should be ``ComputeBackend``-conformant classes.
+def test_every_registered_backend_implements_the_contract_itself():
+    """Conformance is Python's own ledger now: no hook left abstract, ``name`` declared.
 
-    We only check class-level shape (``name`` + ``calc`` + ``from_args``)
-    here — real instantiation requires backend dependencies (torch /
-    pyscf) the test env doesn't install.
+    ``ComputeBackend`` is an ABC, so an incomplete backend carries its missing hooks in
+    ``__abstractmethods__`` rather than inheriting them as no-op stubs — the shape the
+    old Protocol base allowed, where a class implementing nothing passed ``hasattr``
+    and ``isinstance`` and failed as a 500 per geometry. ``name`` is a bare ClassVar no
+    ``ABCMeta`` machinery sees, which is why it rides ``required_declarations``.
     """
     for name in registry.known_backends():
         cls = registry.load_calculator(name)
-        assert hasattr(cls, "name")
-        assert callable(cls.calc)
-        assert callable(cls.from_args)
-        assert callable(cls.add_cli_args)
-        assert callable(cls.settings_from_args)
-        assert callable(cls.server_cli_from_options)
+        assert not getattr(cls, "__abstractmethods__", None), (
+            f"{name}: {cls.__name__} leaves hooks abstract"
+        )
+        assert [d for d in cls.required_declarations if not hasattr(cls, d)] == []
+
+
+def test_an_empty_subclass_cannot_even_be_instantiated():
+    """The hazard the Protocol base allowed, closed by ``ABCMeta`` itself.
+
+    A subclass implementing nothing used to inherit every member as an ellipsis body
+    returning ``None`` — instantiable, passing every structural check, serving 500s.
+    Now Python refuses the construction and names the missing methods, and the class
+    carries its own ledger for the engine gate to read before any job exists.
+    """
+    from chemrefine.engines._backend_server.base import ComputeBackend
+
+    class _Empty(ComputeBackend):
+        name = "empty"
+
+    with pytest.raises(TypeError, match="abstract"):
+        _Empty()  # type: ignore[abstract]
+    assert sorted(_Empty.__abstractmethods__) == [
+        "add_cli_args",
+        "calc",
+        "from_args",
+        "server_cli_from_options",
+    ]
+
+
+def test_settings_from_args_is_a_default_a_backend_may_inherit():
+    """The one concrete method on the base — inheriting it is right, not an omission.
+
+    Both shipped backends are single-channel and inherit ``settings_from_args``, whose
+    body is a real ``return {}`` rather than a stub — which is why it is neither
+    abstract nor in ``required_declarations``: a check demanding every member be
+    implemented would reject both shipped backends.
+    """
+    from chemrefine.engines._backend_server.base import ComputeBackend
+
+    assert "settings_from_args" not in ComputeBackend.__abstractmethods__
+    assert "settings_from_args" not in ComputeBackend.required_declarations
+    for name in registry.known_backends():
+        cls = registry.load_calculator(name)
+        assert "settings_from_args" not in vars(cls)  # inherited — the default, not a copy
+        assert cls.settings_from_args(argparse.Namespace()) == {}
 
 
 # ---------------------------------------------------------------------------
@@ -398,7 +429,7 @@ def test_server_parse_args_defaults():
     args = server.parse_args(["--backend", "mlip"])
     assert args.backend == "mlip"
     assert args.bind == "127.0.0.1:0"
-    assert args.nthreads == 4
+    assert args.nthreads == 1  # one stateful calculator behind the route
     assert args.log_level == "INFO"
     assert args.method == "dft"  # PySCF default available regardless of backend
 
@@ -488,6 +519,35 @@ _CALC_PAYLOAD = {
 }
 
 
+@pytest.mark.parametrize(
+    "answer",
+    [(float("nan"), [[0.0, 0.0, 0.0]]), (-1.0, [[0.0, float("inf"), 0.0]])],
+    ids=["energy", "gradient"],
+)
+def test_calculate_refuses_a_non_finite_answer(answer, caplog):
+    """A model that cannot evaluate a geometry answers nan/inf; that is a 500, not a number.
+
+    Flask serialises ``NaN`` bare and the bridge's ``json.loads`` accepts it, so without
+    this the value reached ORCA's ``.engrad`` as the text ``nan``. The refusal takes the
+    same classified path as any other backend failure: a correlation id on the wire, the
+    reason in the server log.
+    """
+    import logging
+
+    class _Diverged:
+        name = "diverged"
+
+        def calc(self, data):
+            return answer
+
+    app = server.create_app(_Diverged())
+    with caplog.at_level(logging.ERROR):
+        resp = app.test_client().post("/calculate", json=_CALC_PAYLOAD)
+    assert resp.status_code == 500
+    assert "non-finite energy or gradient" in caplog.text
+    assert "nan" not in resp.get_data(as_text=True)
+
+
 def test_calculate_rejects_requests_without_token():
     """With a token configured, an unauthenticated POST is 401 — any same-node
     user can reach the loopback port, so possession of the token is the gate."""
@@ -503,6 +563,13 @@ def test_calculate_rejects_wrong_token():
         "/calculate", json=_CALC_PAYLOAD, headers={"Authorization": "Bearer wrong"}
     )
     assert resp.status_code == 401
+    # Non-ASCII is still just a wrong token. Werkzeug decodes headers as latin-1, and
+    # `compare_digest` refuses a non-ASCII str, so this used to be a 500 with a traceback
+    # from inside the auth gate — the one place that should answer plainly.
+    exotic = app.test_client().post(
+        "/calculate", json=_CALC_PAYLOAD, headers={"Authorization": "Bearer wröng"}
+    )
+    assert exotic.status_code == 401
 
 
 def test_calculate_accepts_bearer_token():
@@ -515,7 +582,7 @@ def test_calculate_accepts_bearer_token():
 
 
 def test_healthz_stays_open_with_token_configured():
-    """The run_block readiness curl carries no token — healthz must stay open."""
+    """The run_block readiness probe carries no token — healthz must stay open."""
     app = server.create_app(_MockCalculator(), token="s3cret")
     assert app.test_client().get("/healthz").status_code == 200
 
@@ -642,7 +709,46 @@ def test_client_parse_args_defaults():
     assert args.bind is None
     assert args.url_file is None
     assert args.method == "dft"
+    assert args.timeout == 600.0
     assert args.inputfile == "job.extinp.tmp"
+
+
+def test_the_client_timeout_default_is_the_options_model_default():
+    """One number for ``gradient_timeout_seconds``: the flag reads it off the model's field.
+
+    Compared against the model rather than against ``bridge.DEFAULT_TIMEOUT``, which is the
+    value under test — a comparison with itself holds after either number moves.
+    """
+    from chemrefine.engines._options import ExtOptOptions
+
+    field_default = ExtOptOptions.model_fields["gradient_timeout_seconds"].default
+    assert field_default == bridge.DEFAULT_TIMEOUT
+    assert bridge.parse_args(["--backend", "mlip", "job.extinp.tmp"]).timeout == field_default
+
+
+def test_client_timeout_is_a_flag_of_the_shared_skeleton():
+    """The per-call bound is the client's own knob, so every backend's wrapper can set it."""
+    args = bridge.parse_args(["--backend", "pyscf", "--timeout", "900", "job.extinp.tmp"])
+    assert args.timeout == 900.0
+
+
+def test_the_bridge_process_imports_no_ase_io():
+    """The wrapper runs once per ORCA optimizer step, so its import chain stays light.
+
+    ``ase.io`` is the heaviest import in reach — about half a second — and nothing on the
+    bridge's path reads a frame through ASE: :func:`protocol._read_xyz` exists so that it
+    does not have to. Held in a fresh interpreter, because this process imported ``ase.io``
+    long ago; the module name is what proves the whole chain, not one file's import list.
+    """
+    probe = (
+        "import sys\n"
+        "import chemrefine.engines.orca.extopt.bridge\n"
+        "sys.exit(1 if 'ase.io' in sys.modules else 0)\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, timeout=120, check=False
+    )
+    assert done.returncode == 0, done.stderr or "the bridge's import chain reached ase.io"
 
 
 def test_client_settings_from_args_is_empty_single_channel():
@@ -679,6 +785,22 @@ def test_submit_calculation_round_trip():
         )
     assert energy == -1.5
     assert gradient == [[0.0, 0.0, 0.0]]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"energy": NaN, "gradient": [[0.0, 0.0, 0.0]]}',
+        b'{"energy": -1.5, "gradient": [[0.0, Infinity, 0.0]]}',
+    ],
+    ids=["energy", "gradient"],
+)
+def test_submit_calculation_refuses_a_non_finite_answer(body: bytes):
+    """``json.loads`` accepts a bare ``NaN``; the bridge must not hand it to ORCA."""
+    with patch.object(bridge, "urlopen") as mock_open:
+        mock_open.return_value.__enter__.return_value = BytesIO(body)
+        with pytest.raises(JobFailureError, match="non-finite energy or gradient"):
+            bridge.submit_calculation(server_url="127.0.0.1:54321", data=_data())
 
 
 def test_submit_calculation_sends_bearer_token():
@@ -737,6 +859,43 @@ def test_submit_calculation_url_error_becomes_jobfailure():
     with (
         patch.object(bridge, "urlopen", side_effect=URLError("refused")),
         pytest.raises(JobFailureError, match="unreachable"),
+    ):
+        bridge.submit_calculation(server_url="x", data=_data())
+
+
+@pytest.mark.parametrize("expiry", [TimeoutError("timed out"), None])
+def test_submit_calculation_timeout_is_named_as_one(expiry: TimeoutError | None):
+    """A gradient that does not come back in time is a timeout, not an unreachable server.
+
+    The bound expires two ways — a bare ``TimeoutError`` from the socket while the server is
+    still computing, or one wrapped in a ``URLError`` when the connection itself timed
+    out. The bare one escaped every handler and crashed the wrapper with a traceback; the
+    wrapped one read as "unreachable". Both now name the wait and the knob that sets it.
+    """
+    from urllib.error import URLError
+
+    raised = expiry if expiry is not None else URLError(TimeoutError("timed out"))
+    with (
+        patch.object(bridge, "urlopen", side_effect=raised),
+        pytest.raises(JobFailureError, match="no reply within 42s") as excinfo,
+    ):
+        bridge.submit_calculation(server_url="x", data=_data(), timeout=42.0)
+    assert "gradient_timeout_seconds" in str(excinfo.value)
+    assert "unreachable" not in str(excinfo.value)
+
+
+def test_submit_calculation_truncated_response_becomes_jobfailure():
+    """IncompleteRead — a server that answers and dies mid-body — is a classified failure.
+
+    `http.client.HTTPException` is neither an HTTPError nor a URLError, so it crashed the
+    wrapper with a traceback in the runlog instead of the JobFailureError every other
+    server fault becomes.
+    """
+    from http.client import IncompleteRead
+
+    with (
+        patch.object(bridge, "urlopen", side_effect=IncompleteRead(b"{")),
+        pytest.raises(JobFailureError, match="broken response"),
     ):
         bridge.submit_calculation(server_url="x", data=_data())
 
@@ -845,14 +1004,13 @@ def test_client_main_writes_engrad(tmp_path: Path, monkeypatch):
 
 def test_client_main_tags_calls_with_extinp_jobname(tmp_path: Path, monkeypatch):
     """Without an explicit ``--tag``, ``main`` derives a per-structure tag from the
-    ``.extinp.tmp`` jobname so per-call artefacts land in a per-structure file."""
+    ``.extinp.tmp`` jobname so per-call artefacts land in a per-structure file — and the
+    ``--timeout`` it parsed is the one the request waits on."""
     inp = _write_extinp(tmp_path)  # writes step1_structure_0.extinp.tmp
     url_file = tmp_path / "server.url"
     url_file.write_text("127.0.0.1:1234\n", encoding="utf-8")
-    monkeypatch.setattr(
-        "sys.argv",
-        ["bridge.py", "--backend", "mlip", "--url-file", str(url_file), str(inp)],
-    )
+    argv = ["bridge.py", "--backend", "mlip", "--url-file", str(url_file), "--timeout", "42"]
+    monkeypatch.setattr("sys.argv", [*argv, str(inp)])
     captured: dict = {}
 
     class _Resp(BytesIO):
@@ -864,12 +1022,14 @@ def test_client_main_tags_calls_with_extinp_jobname(tmp_path: Path, monkeypatch)
 
     def _stub(req, timeout):
         captured["payload"] = json.loads(req.data.decode())
+        captured["timeout"] = timeout
         return _Resp(b'{"energy": -1.0, "gradient": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]}')
 
     with patch.object(bridge, "urlopen", side_effect=_stub):
         rc = bridge.main()
     assert rc == 0
     assert captured["payload"]["tag"] == "step1_structure_0"
+    assert captured["timeout"] == 42.0
 
 
 # ---------------------------------------------------------------------------
@@ -935,10 +1095,26 @@ def test_server_main_serves_with_fake_waitress(tmp_path: Path, monkeypatch):
         ],
     )
 
+    seen: dict[str, bool] = {}
+    real_bind = fake_sock.bind
+
+    def bind_while_loading(address):
+        # The marker is held for the whole calculator build, so it is still there at bind.
+        seen["loading"] = (tmp_path / "server.loading").is_file()
+        return real_bind(address)
+
+    fake_sock.bind = bind_while_loading
     with patch("socket.socket", return_value=fake_sock):
         rc = server.main()
     assert rc == 0
+    assert seen["loading"], "the loading marker is held until the URL is published"
+    assert not (tmp_path / "server.loading").exists(), "and released once it is"
     create_server_mock.assert_called_once()
+    # The pre-bound socket must be what waitress serves on — the one property the fake
+    # socket exists to prove. Passing the app without `sockets=` starts a second server
+    # on 0.0.0.0:8080 and leaves the advertised kernel port dead (the src comment's own
+    # warning), which `assert_called_once()` alone cannot see.
+    assert create_server_mock.call_args.kwargs["sockets"] == [fake_sock]
     fake_server.run.assert_called_once_with()
     assert url_file.read_text(encoding="utf-8") == "127.0.0.1:54321"
     # main() also writes the per-run bearer token next to the URL sidecar,
@@ -976,3 +1152,176 @@ def test_server_main_logs_why_it_cannot_start_when_the_server_deps_are_missing(m
     assert "waitress" in caplog.text
     assert "chemrefine[server]" in caplog.text
     assert "backends install" in caplog.text
+
+
+def test_an_extopt_subclass_is_refused_if_its_calculator_is_abstract():
+    """The gate at the kind's own base — earliest point the requirement can be asked.
+
+    ``ABCMeta`` refuses to *instantiate* an incomplete backend, but nothing instantiates
+    one before ``from_args`` runs inside the job — and the abstract classmethods stay
+    callable on the class, so left to the run this surfaces as a ``TypeError`` while
+    building the job script or a 500 per geometry. The gate reads
+    ``__abstractmethods__`` — Python's own ledger — at the engine's class statement.
+    """
+    from chemrefine.engines._backend_server.base import ComputeBackend
+    from chemrefine.engines._options import ExtOptOptions
+    from chemrefine.engines.orca.extopt.engine import ExtOptOrcaEngine
+
+    class _Empty(ComputeBackend):
+        name = "empty"
+
+    with pytest.raises(TypeError, match=r"leaves .* abstract"):
+
+        class _Bad(ExtOptOrcaEngine):
+            name = "bad-probe"
+            backend = "bad-probe"
+            wrapper_filename = "bad.sh"
+            options_cls = ExtOptOptions
+            calculator_cls = _Empty
+
+
+def test_an_extopt_subclass_is_refused_if_its_calculator_declares_no_name():
+    """The gate's other half: ``name`` is a bare ClassVar no ``ABCMeta`` watches.
+
+    A backend implementing every hook but never naming itself would serve — and then
+    answer ``/healthz`` and tag every log line off a missing attribute. The
+    ``required_declarations`` check refuses it at the same class statement.
+    """
+    from chemrefine.engines._backend_server.base import ComputeBackend
+    from chemrefine.engines._options import ExtOptOptions
+    from chemrefine.engines.orca.extopt.engine import ExtOptOrcaEngine
+
+    class _Nameless(ComputeBackend):
+        @classmethod
+        def add_cli_args(cls, parser: argparse.ArgumentParser) -> None: ...
+
+        @classmethod
+        def server_cli_from_options(cls, options: dict) -> list[str]:
+            return []
+
+        @classmethod
+        def from_args(cls, args: argparse.Namespace) -> _Nameless:
+            return cls()
+
+        def calc(self, data: CalculationData) -> tuple[float, list[list[float]]]:
+            return 0.0, []
+
+    with pytest.raises(TypeError, match=r"missing declaration\(s\) \['name'\]"):
+
+        class _Bad(ExtOptOrcaEngine):
+            name = "bad-probe"
+            backend = "bad-probe"
+            wrapper_filename = "bad.sh"
+            options_cls = ExtOptOptions
+            calculator_cls = _Nameless
+
+
+def test_an_extopt_intermediate_base_declares_no_calculator_and_is_allowed():
+    """A base between ``ExtOptOrcaEngine`` and a concrete engine names no backend of its own.
+
+    It has nothing to check yet, and refusing it would make the kind unsubclassable. A class
+    that never declares one at all is caught later, by ``register``'s
+    ``required_declarations``.
+    """
+    from chemrefine.engines.orca.extopt.engine import ExtOptOrcaEngine
+
+    class _Intermediate(ExtOptOrcaEngine):
+        """Shares plumbing; a concrete engine below it names the backend."""
+
+    assert "calculator_cls" not in _Intermediate.__dict__
+
+
+def test_no_two_backends_claim_the_same_cli_flag():
+    """The shared parsers put every backend's flags in one flat namespace.
+
+    ``server.parse_args`` and ``bridge.parse_args`` both loop over every registered backend
+    and let each add its own flags to a single parser — which is what keeps backend literals
+    out of the shared layer, and what makes a collision everyone's problem rather than the
+    newcomer's: argparse raises at ``parse_args``, so a third backend claiming a flag one of
+    a registered one already has takes the gradient server and the wrapper down for
+    *all* of them.
+
+    ``--device`` is the one to watch. It is the shared ``EngineOptions.device`` knob, MLIP
+    already exposes it, and it is the first thing a GPU-capable backend reaches for. The
+    registry's own docstring promises "adding a third backend is: write
+    engines/<name>/extopt_calc.py … there is no list here to update" — this is what keeps
+    that true, by failing here instead of in a job.
+    """
+    claimed: dict[str, str] = {}
+    for name in registry.known_backends():
+        parser = argparse.ArgumentParser()
+        registry.load_calculator(name).add_cli_args(parser)
+        for action in parser._actions:
+            for flag in action.option_strings:
+                if flag in ("-h", "--help"):
+                    continue
+                assert flag not in claimed, (
+                    f"backends {claimed[flag]!r} and {name!r} both claim {flag} — the shared "
+                    f"server and bridge parsers would raise for every backend, not just these"
+                )
+                claimed[flag] = name
+    assert claimed, "no backend contributed a flag — has the registry broken?"
+
+
+def test_the_shared_parsers_assemble_with_every_backend_registered():
+    """The collision above, asserted through the parsers that actually suffer it."""
+    from chemrefine.engines._backend_server import server
+
+    assert server.parse_args(["--backend", "mlip"]).backend == "mlip"
+    assert bridge.parse_args(["--backend", "pyscf", "x.extinp.tmp"]).backend == "pyscf"
+
+
+def test_the_flag_collision_guard_can_actually_fail():
+    """The negative case, because a guard that cannot fire is not a guard.
+
+    Registers a third backend claiming ``--device`` — the shared ``EngineOptions`` knob MLIP
+    already exposes — and asserts both that the guard above notices and that the shared
+    parsers really do break for *every* backend, not only the newcomer.
+    """
+    from typing import cast
+
+    from chemrefine.engines._backend_server import server
+    from chemrefine.engines._backend_server.base import ComputeBackend
+    from chemrefine.engines.api import ENGINES, CalculationEngine
+
+    class _Colliding(ComputeBackend):
+        name = "collide-probe"
+
+        @classmethod
+        def add_cli_args(cls, parser: argparse.ArgumentParser) -> None:
+            parser.add_argument("--device", default="cpu")
+
+        @classmethod
+        def from_args(cls, args: argparse.Namespace) -> _Colliding:
+            return cls()
+
+        @classmethod
+        def server_cli_from_options(cls, options: dict[str, object]) -> list[str]:
+            return []
+
+        def calc(self, data: object) -> tuple[float, list[list[float]]]:
+            return 0.0, []
+
+    class _CollidingEngine:
+        name = "collide-probe"
+        backend = "collide-probe"
+        calculator_cls = _Colliding
+
+        def prepare(self, ctx: object) -> None: ...
+        def submit(self, inputs: object, ctx: object) -> None: ...
+        def parse(self, inputs: object, ctx: object) -> None: ...
+
+    # The stub answers the contract structurally but not by signature — it returns None where
+    # a real engine returns StepInputs — and nothing here calls those methods: the collision
+    # happens while the parsers are being *built*.
+    ENGINES["collide-probe"] = cast("type[CalculationEngine]", _CollidingEngine)
+    try:
+        with pytest.raises(AssertionError, match="both claim --device"):
+            test_no_two_backends_claim_the_same_cli_flag()
+        # ...and this is what it stands in for: the shared parsers stop working for mlip too.
+        with pytest.raises(argparse.ArgumentError, match="conflicting option string: --device"):
+            server.parse_args(["--backend", "mlip"])
+        with pytest.raises(argparse.ArgumentError, match="conflicting option string: --device"):
+            bridge.parse_args(["--backend", "mlip", "x.extinp.tmp"])
+    finally:
+        ENGINES.pop("collide-probe", None)

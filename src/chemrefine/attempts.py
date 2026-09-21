@@ -78,12 +78,17 @@ def archive_previous(step_dir: Path, structure_ids: Iterable[str]) -> list[Path]
     (whose JSON is written in ``$WORK_DIR`` and only copied back on success) and every ORCA
     ensemble operation (which reads a ``*.finalensemble.xyz``-style sidecar, not the ``.out``).
 
-    Structures with no loose files are skipped, so a first run is a no-op.
+    What counts as prior work is whatever :func:`seal` would move — every entry that is not
+    an ``attempt*/`` directory, engine-written sub-directories included. Loose files alone
+    were the trigger once, which left a gap: a crash mid-seal that had moved the files but
+    not yet a ``tensors/`` left a canonical the next run did not archive, and the re-run's
+    copy-back then merged into it — the very two-calculations directory ``seal`` exists to
+    prevent. Structures holding nothing but attempts are skipped, so a first run is a no-op.
     """
     archived: list[Path] = []
     for sid in structure_ids:
         struct_dir = step_dir / sid
-        if struct_dir.is_dir() and any(p.is_file() for p in struct_dir.iterdir()):
+        if struct_dir.is_dir() and any(not ids.is_attempt_dir(p) for p in struct_dir.iterdir()):
             archived.append(archive(struct_dir))
     return archived
 

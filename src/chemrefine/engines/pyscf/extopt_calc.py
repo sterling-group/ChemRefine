@@ -29,7 +29,7 @@ from chemrefine.engines._backend_server.base import (
     tokens_from_options,
 )
 from chemrefine.engines.pyscf import _runtime
-from chemrefine.engines.pyscf.options import PyscfOptions
+from chemrefine.engines.pyscf.options import PyscfExtOptOptions
 from chemrefine.errors import JobFailureError
 
 logger = logging.getLogger(__name__)
@@ -59,9 +59,9 @@ class PyscfExtOptCalculator(ComputeBackend):
         self,
         *,
         method: str = "dft",
-        xc: str = "pbe",
-        basis: str = "def2-svp",
-        df: bool = False,
+        xc: str | None = None,
+        basis: str | None = None,
+        df: bool = True,
         gpu: bool = False,
         save_tensors: bool = False,
         localized: bool = False,
@@ -76,21 +76,30 @@ class PyscfExtOptCalculator(ComputeBackend):
         self.save_tensors = save_tensors
         self.localized = localized
         self.tensor_folder = tensor_folder
-        # Defaults on, unlike the other booleans here, because it is a correctness guard:
-        # a directly-constructed calculator must not be the lenient one.
+        # Every default here restates PyscfExtOptOptions' — the model is the canonical
+        # source, and a directly-constructed calculator must be the same calculator a
+        # YAML step's defaults build. `df` sat off here for a release after the model
+        # flipped it on, so a bare construction solved a different SCF shape than a
+        # default step; the lockstep test now holds every shared knob equal.
         self.strict_scf = strict_scf
 
     @classmethod
     def add_cli_args(cls, parser: argparse.ArgumentParser) -> None:
         """Register PySCF flags on a shared server / client parser.
 
-        Defaults mirror :class:`PyscfOptions`; the Pydantic model stays
-        the canonical name + default source. Adding a knob here means
-        also adding it to ``PyscfOptions`` (or vice-versa) — the
-        ``_KEY_VALUE_FLAGS`` / ``_BOOL_FLAGS`` tuples gate which knobs
-        are CLI-exposed.
+        Defaults mirror :class:`PyscfExtOptOptions` — with one deliberate exception.
+        ``--df`` is a ``store_true`` whose argparse default stays ``False`` although the
+        model's is ``True``: the engine emits every *resolved* value as a token
+        (``--df`` when on, nothing when off — see :meth:`server_cli_from_options`), so
+        the argparse default is what an omitted token means, and it has to be the off
+        state for a ``df: false`` step to survive the trip. No generated run block can
+        reach the argparse default; only a hand-run server does, and a hand-run without
+        ``--df`` runs the bare SCF. The Pydantic model stays the canonical name +
+        default source everywhere else. Adding a knob here means also adding it to
+        ``PyscfExtOptOptions`` (or vice-versa) — the ``_KEY_VALUE_FLAGS`` /
+        ``_BOOL_FLAGS`` tuples gate which knobs are CLI-exposed.
         """
-        defaults = PyscfOptions()
+        defaults = PyscfExtOptOptions()
         parser.add_argument(
             "--method",
             default=defaults.method,
@@ -100,12 +109,12 @@ class PyscfExtOptCalculator(ComputeBackend):
         parser.add_argument(
             "--xc",
             default=defaults.xc,
-            help="DFT exchange-correlation functional",
+            help="DFT exchange-correlation functional (required for --method dft)",
         )
         parser.add_argument(
             "--basis",
             default=defaults.basis,
-            help="Orbital basis set",
+            help="Orbital basis set (required)",
         )
         parser.add_argument(
             "--df",
@@ -190,12 +199,23 @@ class PyscfExtOptCalculator(ComputeBackend):
         :class:`~chemrefine.errors.JobFailureError` client-side, and the detail lands in the
         ExtOpt server log beside the structure's other artifacts.
         """
+        # The level-of-theory rule, at the server's own boundary. The engine's strict read
+        # enforces it before any job is generated, but this class is constructible bare —
+        # the lockstep test holds its defaults equal to the model's, which are now None —
+        # and a hand-run server carries only what its argv said. Reconstructing the
+        # named-knobs view lets the options model's one rule (and wording) answer here too.
+        named: dict[str, Any] = {"method": self.method}
+        if self.basis is not None:
+            named["basis"] = self.basis
+        if self.xc is not None:
+            named["xc"] = self.xc
+        basis = PyscfExtOptOptions.require_level_of_theory(named)
         mol = _runtime.build_mol(
             symbols=data.symbols,
             positions_angstrom=data.positions_angstrom,
             charge=data.charge,
             multiplicity=data.multiplicity,
-            basis=self.basis,
+            basis=basis,
         )
         energy, gradient, meta, mf = _runtime.run_dft(
             mol,
@@ -213,6 +233,13 @@ class PyscfExtOptCalculator(ComputeBackend):
             meta["gpu_used"],
             meta["elapsed_seconds"],
         )
+        if self.gpu and not meta["gpu_used"]:
+            # `_build_scf` answers a GPU that could not be set up by falling back to CPU
+            # and *returning* the reason; this is where that reason reaches a log. Without
+            # it a `device: cuda` step whose gpu4pyscf import passed preflight on the login
+            # node and failed to construct on the compute node ran every gradient on CPU,
+            # with `gpu=False` in the line above the only trace and the exception dropped.
+            logger.warning("%s", meta["gpu_msg"])
         if self.strict_scf and not meta["converged"]:
             raise JobFailureError(
                 f"PySCF SCF did not converge (E={energy:.10f} Eh, method={self.method}, "

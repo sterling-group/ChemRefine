@@ -11,7 +11,10 @@ a new exception class):
 ============  ============================================
 Exit code     Meaning
 ============  ============================================
-``1``         :class:`ChemRefineError` — generic / catch-all
+``1``         :class:`ChemRefineError` — generic / catch-all,
+              and :class:`NoUsableCacheError` for a non-submitting
+              step with no cache the configuration can serve
+              (same code; the subclass exists to be *caught*)
 ``2``         :class:`ConfigError` — YAML config invalid
 ``3``         :class:`EngineNotFoundError` — unknown engine
 ``4``         :class:`JobSubmissionError` — sbatch refused the job
@@ -29,11 +32,26 @@ Exit code     Meaning
 
 from __future__ import annotations
 
+from http.client import HTTPException
+from urllib.error import URLError
+
 
 class ChemRefineError(Exception):
     """Base class for every ChemRefine-raised exception."""
 
     exit_code: int = 1
+
+
+class NoUsableCacheError(ChemRefineError):
+    """A step that may not submit has no cache the current configuration can serve.
+
+    Raised by :func:`chemrefine.step.run_step` when a ``cache-only`` step cannot be served
+    from disk. A subclass sharing the generic code rather than a code of its own — like
+    :class:`OutputTerminationError`, what it adds is not a different exit status but an
+    *identity*: past a scoped rebuild's target, :func:`chemrefine.pipeline.run` catches
+    exactly this to end the report quietly at the first step the configuration cannot
+    vouch for, while the same failure anywhere else must still fail the run.
+    """
 
 
 class ConfigError(ChemRefineError):
@@ -115,3 +133,32 @@ class RunLockError(ChemRefineError):
     """
 
     exit_code = 10
+
+
+EXIT_CODES: dict[str, int] = {
+    name: obj.exit_code
+    for name, obj in list(globals().items())
+    if isinstance(obj, type) and issubclass(obj, ChemRefineError)
+}
+"""Every class above, mapped to the code it exits with — the taxonomy, derived once.
+
+Two callers used to derive this for themselves, and one of them derived it wrongly:
+``agent_tools`` built it from ``ChemRefineError.__subclasses__()``, which is direct
+subclasses only, so :class:`OutputTerminationError` was missing from every failure payload
+that advertised the whole taxonomy. Scanning this module's own namespace is what catches an
+indirect subclass, and living beside the classes is what stops a third copy appearing.
+"""
+
+
+ENDPOINT_UNREACHABLE: tuple[type[BaseException], ...] = (URLError, OSError, HTTPException)
+"""What a :mod:`urllib` fetch raises when an endpoint gives no usable answer — one tuple.
+
+Every fetch this package makes (the PubChem lookup, the model-endpoint check) catches
+this rather than a tuple of its own, because spelled per site the two drifted:
+``HTTPException`` — a reply that arrives and then breaks the protocol, ``IncompleteRead``
+on a dropped connection — reached one and not the other. ``URLError`` is DNS and a
+refused connection (and, as ``HTTPError``, an HTTP status a caller that wants the code
+catches first); ``OSError`` is a socket that fails or times out (``TimeoutError`` is
+one); ``HTTPException`` is the broken protocol. What a *body* that did arrive means —
+undecodable, not JSON, empty — is each caller's own verdict and stays beside it.
+"""

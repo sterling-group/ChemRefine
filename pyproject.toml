@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ChemRefine"
-version = "2.0.0"
+version = "2.0.0.dev1"
 description = "An automated and interoperable manager for computational chemistry workflows."
 readme = "README.md"
 license = "AGPL-3.0-or-later"
@@ -27,25 +27,27 @@ keywords = [
     "HPC",
 ]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Science/Research",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Chemistry",
     "Topic :: Scientific/Engineering :: Physics",
     "Typing :: Typed",
 ]
+# Each floor is the lowest version pip can actually install on the oldest supported
+# Python — held by CI's `floors` job, which installs exactly these versions on 3.11 and
+# runs the suite. The tested matrix is 3.11 through 3.14; newer Pythons resolve above some
+# floors on wheel availability alone, which is fine — the floor is a promise about the
+# range, not a pin. numpy's 1.26.0/1.26.1 and rdkit's bare 2024.9 are not on PyPI (yanked
+# / never published), so naming them would promise a minimum nobody can resolve; on Python
+# 3.13+ pip always resolves numpy to 2.x — pandas 2.2.3 (and later) supports both numpy
+# 1.26 and 2.x, so the matrix is internally consistent.
 dependencies = [
-    # Each floor is the lowest version pip can actually install for every Python in
-    # `requires-python` (3.11, 3.12, 3.13) — held by CI's `floors` job, which installs
-    # exactly these versions and runs the suite. numpy's 1.26.0/1.26.1 and rdkit's bare
-    # 2024.9 are not on PyPI (yanked / never published), so naming them would promise a
-    # minimum nobody can resolve. On Python 3.13 pip will always resolve numpy to 2.x —
-    # pandas 2.2.3 (and later) supports both numpy 1.26 and 2.x, so the matrix is
-    # internally consistent.
     "numpy>=1.26.2",
     "pyyaml>=6.0.2",
     # pandas is a hard requirement — every run writes steps.csv — but it is imported
@@ -54,53 +56,98 @@ dependencies = [
     "pandas>=2.2.3",
     "ase>=3.26.0",
     "rdkit>=2024.9.1",
-    "pydantic>=2.5",
+    # 2.12, not 2.5: the `floors` job installs the suite's extras alongside these pins,
+    # and both `[mcp]` and `[agent]` require pydantic>=2.12 — so `pydantic==2.5` was a
+    # floor no configuration could resolve (`pip install pydantic==2.5 'mcp>=2,<3'` is
+    # ResolutionImpossible, with no older 2.x mcp to back off to). A floor is the lowest
+    # version the tested configuration can actually install; this is it.
+    "pydantic>=2.12",
     "typer>=0.12",
+    # The marker evaluator: `chemrefine backends install` reads this project's own
+    # Requires-Dist to work out which Pythons a backend extra installs on, and the stdlib
+    # cannot evaluate a marker. Imported lazily in the provisioner, like pandas and rdkit.
+    "packaging>=24",
 ]
 
 [project.optional-dependencies]
-# Flask/waitress live here only — every backend that needs the ExtOpt
-# HTTP server (mlff, pyscf) cross-references `chemrefine[server]` instead
-# of re-pinning them, so the server deps have a single source of truth.
-# downloads: flask, waitress (tiny)
+# Flask/waitress live here only: every extra that needs the ExtOpt HTTP server or the
+# GUI cross-references `chemrefine[server]` rather than re-pinning them, so the server
+# deps have a single source of truth. Stated as the rule rather than a list of which
+# extras — the list was written when there were two and is now eight.
 server = [
     "flask>=3.0",
     "waitress>=3.0",
 ]
+# The MCP server (`chemrefine mcp`) — the official Model Context Protocol SDK.
+# v2 is its stable line (MCPServer, in-memory Client for tests); <3 guards the
+# next breaking major the way the v1→v2 rename broke FastMCP imports.
+#
+# 2.1, not 2: the two differ in what a *crashing* tool sends the client. 2.0 appends the
+# exception's own text; 2.1 keeps it on the server behind a generic line. Only the second
+# is a safe promise to make about a server that runs a user's pipelines and touches their
+# filesystem, so the floor is where the guarantee starts rather than where the code merely
+# runs. `mcp_server.actionable` is the other half — it raises our own `ChemRefineError` as
+# the SDK's `ToolError`, which both versions relay, so the actionable message still
+# reaches the model while a traceback does not.
+mcp = ["mcp>=2.1,<3"]
+# The YAML-builder GUI (`chemrefine gui`) — pure re-use of the [server] pins
+# (flask/waitress); the frontend is vendored static JS, no dependency of its own.
+gui = ["chemrefine[server]"]
+# The embedded chat agent (`chemrefine agent`) — PydanticAI's slim install with
+# the openai extra, which covers every OpenAI-compatible endpoint (OpenAI itself,
+# Ollama, vLLM, OpenRouter, Groq). Other native providers are their own
+# pydantic-ai-slim extras a user adds when needed.
+agent = ["pydantic-ai-slim[openai]>=2,<3"]
 # MLIP backends — one self-contained extra each (mirrors the per-backend modules in
 # engines/mlip/backends/). Every backend installs into its OWN dedicated environment:
 # their torch/e3nn trees conflict and can never share one env — MACE pins `e3nn==0.4.4`,
 # FAIRChem/SevenNet need `e3nn>=0.5`, orb/chgnet drag their own torch. So install each
 # separately (the `chemrefine backends` helper automates the per-backend env). `[mlip]`
 # defaults to FAIRChem / UMA (`uma-s-1p2`).
-# downloads: fairchem-core (→ torch +CUDA, e3nn>=0.5), + server (heavy)
+#
+# A `python_version` marker on a backend's own requirements is a claim: this extra installs
+# here, from wheels. Both pip and the provisioner read it — `engines/_provision` builds a
+# backend's managed env on the newest Python its extra claims rather than on whatever the
+# orchestrator runs — so a capped extra carries the marker on *every* requirement of its
+# own; half-installing around the pin the cap exists to hold is a subtler kind of broken.
+# An sdist here is not a slow install but torch or a vendored abseil compiling on a login
+# node, and ci.yml fails a cap that has outlived the missing wheel behind it.
 mlip-fairchem = [
     "fairchem-core>=2.18",
     "chemrefine[server]",
 ]
-# downloads: torch (+CUDA), e3nn==0.4.4, mace-torch, + server (heavy)
+# Capped at 3.13: our own `torch>=2.8,<2.9` pin has no cp314 wheels — cp314 first appears in
+# torch 2.9 — so 3.14 would build torch from source. Lift when the torch pin can move up.
 mlip-mace = [
-    "torch>=2.8.0,<2.9.0",
-    "e3nn==0.4.4",
-    "mace-torch>=0.3.16",
+    "torch>=2.8.0,<2.9.0; python_version < '3.14'",
+    "e3nn==0.4.4; python_version < '3.14'",
+    "mace-torch>=0.3.16; python_version < '3.14'",
     "chemrefine[server]",
 ]
-# downloads: sevenn (→ e3nn>=0.5, torch_geometric, torch), + server (heavy)
-mlip-sevenn = ["sevenn>=0.11", "chemrefine[server]"]
-# downloads: orb-models (→ torch>=2.8); needs Python >= 3.12, + server (heavy)
-# The marker is load-bearing: without it, `pip install chemrefine[mlip-orb]` on 3.11
-# backtracks through every orb-models release looking for a compatible one and ends in
-# a resolver wall of text instead of "requires a different Python".
-mlip-orb = ["orb-models; python_version >= '3.12'", "chemrefine[server]"]
-# downloads: chgnet (→ torch, pymatgen), + server (heavy)
-mlip-chgnet = ["chgnet>=0.4", "chemrefine[server]"]
-# The default MLIP install = FAIRChem / UMA (`uma-s-1p2`).
+# 0.11.1 is the first release with the unified `sevenn` CLI ("CLI interface changed
+# in backward-compatible manner. Now `sevenn` has subcommands for inference, train,
+# etc" — its release notes); the trainer drives `sevenn train`, so the floor is the
+# first version that has it.
+mlip-sevenn = ["sevenn>=0.11.1", "chemrefine[server]"]
+# 3.12 and only 3.12. orb-models pins `dm-tree==0.1.8`, whose newest wheels are cp312 — the
+# `==` puts 0.1.9's cp313 and 0.1.10's cp314 out of reach — and its sdist vendors an abseil
+# snapshot no GCC >= 13 compiles. Lift the ceiling when orb loosens that pin. The floor is
+# load-bearing too: unpinned, orb-models resolves on any Python by backtracking to a 2024
+# release, which is both the silent downgrade this refuses and what stopped CI telling a
+# cap that still binds from one that has expired. 0.6 is the first line requiring 3.12.
+mlip-orb = [
+    "orb-models>=0.6; python_version >= '3.12' and python_version < '3.13'",
+    "chemrefine[server]",
+]
+# chgnet 0.4.2 — the newest release — ships cp310-cp312 wheels only; on 3.13+ pip falls back
+# to its sdist and compiles the Cython graph extension against a toolchain a compute node
+# may not have. Lift when chgnet ships cp313 wheels.
+mlip-chgnet = ["chgnet>=0.4; python_version < '3.13'", "chemrefine[server]"]
 mlip = ["chemrefine[mlip-fairchem]"]
 # Back-compat alias: `mlff` was renamed to `mlip`; keep the old extra working.
 mlff = ["chemrefine[mlip]"]
 # The `pyscf` and `pyscf-extopt` engines import `pyscf` lazily; the extopt
 # path also needs the server, so cross-reference `[server]`.
-# downloads: pyscf (libcint/libxc), + server (moderate)
 pyscf = [
     "pyscf>=2.6",
     "chemrefine[server]",
@@ -114,21 +161,38 @@ pyscf = [
 # a pinned `--dry-run` resolution): 1.0 is gpu4pyscf's first stable release, and the
 # cutensor 2.x line is what it requires. These were the last unfloored pins in the file —
 # an extra with no floor promises whatever pip picks today, which is no promise at all.
-# downloads: gpu4pyscf-cuda12x (→ cupy/CUDA), cutensor-cu12, + pyscf (heavy, GPU)
 pyscf-gpu = [
     "gpu4pyscf-cuda12x>=1.0",
     "cutensor-cu12>=2.0.0",
     "chemrefine[pyscf]",
 ]
-# downloads: pytest, pytest-cov, hypothesis (tiny)
 test = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
     # Property tests for the numerical core (tests/test_properties.py) — the invariants
     # that have to hold for every input, as opposed to the cases someone thought of.
     "hypothesis>=6.100",
+    # The suite is not a subset of the package: it drives the ExtOpt sidecar
+    # (test_engines_extopt), the builder (test_gui), the MCP session (test_mcp_server)
+    # and the embedded agent (test_agent_embedded) against the real SDKs. Declaring that
+    # here rather than on each install line is what stops a job installing `[test]` alone
+    # and collecting a suite it cannot run — which is exactly what ci.yml's mutation-gate
+    # and provisioned-backend jobs were doing. `server` is named rather than left to
+    # arrive via `gui`, because the extopt tests need it for their own reason.
+    "chemrefine[server,mcp,gui,agent]",
+    # A Node for tests/test_gui_assets.py — `node --check` on the four scripts and `node -e`
+    # on the pure form logic, the one layer no Python gate can see. Declared rather than
+    # left to whatever is on PATH because a machine without one turned seven tests into
+    # skips while the suite still exited 0; CHEMREFINE_REQUIRE_NODE (set by ci.yml and
+    # release-check.sh) is what makes that impossible to ship.
+    #
+    # `>=24` is a *tool* floor and follows a different rule from the dependency floors
+    # above: the stable majors are 20, 22 and 24, and 24 is the only one still in active
+    # LTS — 20 went EOL in April 2025 and 22 is in maintenance. Not "the lowest that
+    # resolves", which would be 20 and would mean gating the frontend on an unsupported
+    # runtime. (The 25.x and 26.x lines are release candidates; pip skips them.)
+    "nodejs-wheel-binaries>=24",
 ]
-# downloads: mkdocs, mkdocs-material, mkdocstrings, interrogate (small)
 docs = [
     "mkdocs>=1.6",
     "mkdocs-material>=9.5",
@@ -138,10 +202,20 @@ docs = [
 # Convenience superset for contributors: cross-references `[test]` and
 # `[docs]` so their pinned tools (pytest, interrogate, ...) only need
 # one source of truth, plus the linting tools that have no separate
-# extra of their own.
-# downloads: test + docs, ruff, mypy, pre-commit (small)
+# extra of their own. `[test]` carries the SDKs the suite imports, so
+# naming them again here would be a second roster to keep in step.
 dev = [
     "chemrefine[test,docs]",
+    # `scripts/release-check.sh` reproduces CI's build-package job with `python -m build`,
+    # and promises a `[dev]` install is all it needs — so the tool it calls is declared
+    # here. twine stays out on purpose: it publishes rather than gates, and the script
+    # puts it in a throwaway venv of its own.
+    "build>=1.2",
+    # The same promise, for the gate it left out: the full check runs `pip-audit
+    # --skip-editable`. A tool floor rather than a resolution one, like the Node pin —
+    # 2.7 is where the flags this repo passes settled. (security.yml installs its own
+    # beside `[server]`: that job audits the runtime tree, not this one.)
+    "pip-audit>=2.7",
     # Matched to the pinned pre-commit hook rev — that hook is what actually gates,
     # so a floor years behind it is decorative.
     "ruff>=0.16",
@@ -169,6 +243,11 @@ Homepage = "https://github.com/sterling-group/ChemRefine"
 Documentation = "https://sterling-group.github.io/ChemRefine/"
 Repository = "https://github.com/sterling-group/ChemRefine.git"
 Issues = "https://github.com/sterling-group/ChemRefine/issues"
+# The blob form, not the docs site: GitHub's redirects survive a rename or an org
+# transfer, a github.io address has none — and a URL in a published wheel can never
+# be corrected. GitHub surfaces CONTRIBUTING.md by itself, so this is for PyPI's
+# sidebar, which is the one place a reader there looks for project links.
+Contributing = "https://github.com/sterling-group/ChemRefine/blob/main/CONTRIBUTING.md"
 
 [project.scripts]
 chemrefine = "chemrefine.cli:main"
@@ -178,23 +257,115 @@ packages = ["src/chemrefine"]
 
 [tool.hatch.build.targets.sdist]
 # `tests` ships so a distro packager can actually run the suite from the sdist —
-# the fixtures are ~1.3 MB, most of it trimmed real ORCA output and the compressed
-# e2e recordings, which is what makes the tests meaningful in the first place.
+# the fixtures are a megabyte or so, most of it trimmed real ORCA output and the
+# compressed e2e recordings, which is what makes the tests meaningful in the first
+# place. `examples` ships for the same reason (and as the paper artifacts they are):
+# the example sweep and one ORCA-inspect fixture read them, so without them the suite
+# the sdist promises fails.
+#
+# `docs` + `mkdocs.yml` ship so the tarball can rebuild its own site — 92 KB, and it
+# turns ~24 documentation guards from "skipped here" into "checked against the artifact
+# we publish", which is the drift class that let `examples/` fall out unnoticed. They
+# used to stay out on size, back when two tutorial GIFs were 13.6 of the directory's
+# 15 MB; the figures are 3 KB of frequency data now and the reason expired with them.
+# CONTRIBUTING.md and SECURITY.md are not courtesies in that list: `pymdownx.snippets`
+# runs with `check_paths: true` and two pages `--8<--` them, so a docs build without
+# them fails rather than degrades. CITATION.cff ships because a tarball of a cited tool
+# should carry its citation.
+#
+# Every pattern is anchored with a leading `/`. Hatchling patterns are
+# gitignore-style and a bare name matches at any depth — the unanchored
+# `README.md` shipped `examples/README.md` alone, which is how the drift went
+# unnoticed. CI runs this suite from the built sdist, so the promise is gated.
 include = [
-    "src/chemrefine",
-    "tests",
-    "README.md",
-    "LICENSE",
-    "CHANGELOG.md",
-    "pyproject.toml",
+    "/src/chemrefine",
+    "/tests",
+    "/examples",
+    "/docs",
+    "/mkdocs.yml",
+    "/README.md",
+    "/CONTRIBUTING.md",
+    "/SECURITY.md",
+    "/CITATION.cff",
+    "/LICENSE",
+    "/CHANGELOG.md",
+    "/pyproject.toml",
 ]
 
+# ── the lint gate: `pre-commit run --all-files` (ci.yml, release-check.sh) ──────────────────────
+
+# Biome's half of this gate lives in biome.jsonc — Biome reads no pyproject.toml.
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# Engine step templates are rendered through `string.Template` before they are
+# executed, so they legitimately contain bare `$PLACEHOLDER` tokens (e.g.
+# `charge=$CHARGE`) and are not parseable Python on their own. The e2e case
+# templates are the same kind of file and belong here for the same reason — they
+# only escaped notice while the first of them happened to keep every placeholder
+# inside a string literal, which is not a property worth relying on.
+extend-exclude = [
+    "examples/*/templates/*.py",
+    "examples/*/*/templates/*.py",
+    "tests/data/e2e/cases/*/templates/*.py",
+]
+
+[tool.ruff.lint]
+# `S` (bandit) is on so every shell-out and subprocess call has to be either safe by
+# construction or carry a `# noqa: S...` naming why it is fine — which turns the
+# security review into something a diff can show rather than something a reader has to
+# reconstruct. `ERA` catches commented-out code left behind.
+#
+# `ARG` is deliberately NOT selected: this codebase is Protocol- and base-class-heavy by
+# design, so unused parameters are usually the *contract* (an engine hook that ignores
+# `ctx`, a `ComputeBackend` classmethod that takes args it doesn't need). Enabling it
+# would mean ~15 noqa comments on interface methods, which makes the code worse.
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PTH", "RET", "C4", "TID", "S", "ERA"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests legitimately assert on subprocess plumbing, bind throwaway sockets, and use
+# assert as their whole purpose. ERA reads their `# section name` dividers as
+# commented-out code.
+"tests/**" = ["S", "ERA"]
+# This module stores captured program output verbatim, and ORCA prints trailing whitespace
+# on two of the lines in its abort. W291 sees those inside the literal and offers to strip
+# them — which would edit a fixture to suit the reader, the one thing a captured fixture must
+# never do. `test_the_captured_abort_is_still_what_orca_printed` pins them so the ignore is a
+# statement about the data rather than a licence.
+"tests/synthetic.py" = ["S", "ERA", "W291"]
+
+[tool.interrogate]
+ignore-init-module = true
+ignore-init-method = true
+ignore-magic = true
+ignore-nested-functions = true
+fail-under = 100
+exclude = ["tests", "examples", "build", "dist"]
+
+# ── the type gate: `mypy` ───────────────────────────────────────────────────────────────────────
+
 [tool.mypy]
-python_version = "3.11"
-files = ["src/chemrefine", "tests"]
+# The lowest version the *installed* dependency set can be checked at, which is no longer
+# the same as `requires-python`. numpy 2.5 requires Python >= 3.12 and its stubs use PEP
+# 695 `type` statements, so mypy targeting 3.11 fails parsing numpy's own `__init__.pyi` —
+# a configuration (3.11 + numpy 2.5) pip cannot produce, since 3.11 resolves numpy 2.4.x.
+# There is no way to scope that away: it is a parse error, so per-module `follow_imports`,
+# `ignore_errors` and `disable_error_code` all fail to suppress it (python/mypy#21178).
+#
+# 3.11 support is not weakened by this — it is held where it always mattered, by CI's
+# `test` matrix *running* the suite on 3.11 under a 100% coverage gate, so a 3.12-only
+# syntax or API in any line fails there. Raise this only when the floor of what the deps
+# allow rises again.
+python_version = "3.12"
+# Every directory ruff lints is type-checked too. `tools/`, `scripts/` and `docs/hooks/`
+# are not the package and get the relaxed settings below, but they are Python that runs —
+# and `tools/` sat outside this list long enough to collect three real type confusions
+# (a list rebound to a tuple, a float to a list) that `mypy .` reported and `mypy` did not.
+files = ["src/chemrefine", "tests", "scripts", "tools", "docs/hooks"]
 # Step templates are `string.Template` sources, not modules: they carry bare
 # `$PLACEHOLDER` tokens and are rendered before anything executes them. Excluded for
-# the same reason ruff excludes them — and because two cases naming their template
+# the same reason ruff excludes them — and because several cases naming their template
 # `step1.py` is the normal convention, not a module-name collision to resolve.
 #
 # This list must cover the same files as `[tool.ruff].extend-exclude`, and it is a regex
@@ -232,11 +403,7 @@ disallow_untyped_defs = false
 disallow_incomplete_defs = false
 disallow_untyped_calls = false
 disallow_untyped_decorators = false
-# `attr-defined` is noise in tests rather than signal, for two reasons that are both
-# deliberate technique: `get_engine` returns the narrow `CalculationEngine` protocol, so a
-# test exercising a `JobEngine` primitive is legitimately reaching past it; and
-# monkeypatching an imported module (`patch.object(slurm, "subprocess", ...)`) trips
-# `no_implicit_reexport`. A genuinely misspelled attribute in a test fails the test.
+# One comment per entry, inline. A misspelled attribute in a test still fails the test.
 disable_error_code = [
     # Two deliberate test techniques, not defects. `get_engine` returns the narrow
     # `CalculationEngine` protocol, so a test exercising a `JobEngine` primitive reaches
@@ -255,7 +422,6 @@ disable_error_code = [
 ]
 
 [[tool.mypy.overrides]]
-# Full strictness for the package itself.
 module = ["chemrefine.*"]
 # The four codes above are relaxed for the *tests*, and every reason given for relaxing them
 # is a testing technique — none of them describes `src/`. They are disabled globally anyway,
@@ -283,6 +449,9 @@ module = [
     "sevenn.*",
     "orb_models.*",
     "chgnet.*",
+    "pymatgen.*",
+    "torch.*",
+    "torch",
     "flask.*",
     "waitress.*",
     "pandas.*",
@@ -293,38 +462,7 @@ module = [
 ]
 ignore_missing_imports = true
 
-[tool.ruff]
-line-length = 100
-target-version = "py311"
-# Engine step templates are rendered through `string.Template` before they are
-# executed, so they legitimately contain bare `$PLACEHOLDER` tokens (e.g.
-# `charge=$CHARGE`) and are not parseable Python on their own. The e2e case
-# templates are the same kind of file and belong here for the same reason — they
-# only escaped notice while the single one that existed happened to keep every
-# placeholder inside a string literal, which is not a property worth relying on.
-extend-exclude = [
-    "examples/*/templates/*.py",
-    "examples/*/*/templates/*.py",
-    "tests/data/e2e/cases/*/templates/*.py",
-]
-
-[tool.ruff.lint]
-# `S` (bandit) is on so every shell-out and subprocess call has to be either safe by
-# construction or carry a `# noqa: S...` naming why it is fine — which turns the
-# security review into something a diff can show rather than something a reader has to
-# reconstruct. `ERA` catches commented-out code left behind.
-#
-# `ARG` is deliberately NOT selected: this codebase is Protocol- and base-class-heavy by
-# design, so unused parameters are usually the *contract* (an engine hook that ignores
-# `ctx`, a `ComputeBackend` classmethod that takes args it doesn't need). Enabling it
-# would mean ~15 noqa comments on interface methods, which makes the code worse.
-select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PTH", "RET", "C4", "TID", "S", "ERA"]
-
-[tool.ruff.lint.per-file-ignores]
-# Tests legitimately assert on subprocess plumbing, bind throwaway sockets, and use
-# assert as their whole purpose. ERA reads their `# section name` dividers as
-# commented-out code.
-"tests/**" = ["S", "ERA"]
+# ── the test gate: `pytest --cov --cov-fail-under=100` ──────────────────────────────────────────
 
 [tool.pytest.ini_options]
 # Tier-3 live-integration tests need real binaries (ORCA, an MLIP stack) and
@@ -337,7 +475,25 @@ pythonpath = ["tests"]
 # A warning from a dependency is how a deprecation reaches us before it becomes a
 # breakage; failing on it means we hear about it on the release that introduces it
 # rather than the one that removes the API. The suite is clean under this today.
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    # numpy 2.5 deprecates assigning `.shape`, and ase 3.29 still does it in ~18 places —
+    # `Atoms.new_array` among them, so *any* empty `Atoms()` warns. On a fresh install
+    # (numpy 2.5.2 + ase 3.29.0) that is 68 failures, none of them ours: chemrefine
+    # assigns `.shape` nowhere, and the two versions work together at runtime. They just
+    # say so, and `error` above turns saying so into a red suite.
+    #
+    # ase fixed all of it — every ndarray `.shape =` is gone from master, which is
+    # 3.30.0b1 — so this expires with the 3.30 release: raise the ase floor and delete
+    # the line. Capping numpy instead would constrain every user's environment to spare
+    # ourselves a warning none of them would ever see.
+    #
+    # Scoped to ase rather than to one module because the deprecation is spread across
+    # eleven of them and only two fire today; scoped by module rather than by message
+    # alone so it stays narrow — verified that the identical warning raised from
+    # chemrefine's own code still fails the suite.
+    'ignore:Setting the shape on a NumPy array:DeprecationWarning:ase\.',
+]
 markers = [
     "slow: tests that take longer than 1 second",
     "gpu: tests that require CUDA",
@@ -355,11 +511,3 @@ branch = true
 [tool.coverage.report]
 fail_under = 100
 show_missing = true
-
-[tool.interrogate]
-ignore-init-module = true
-ignore-init-method = true
-ignore-magic = true
-ignore-nested-functions = true
-fail-under = 100
-exclude = ["tests", "examples", "build", "dist"]

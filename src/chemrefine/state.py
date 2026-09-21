@@ -14,8 +14,8 @@ the other to name an outcome.
 
 ``StepConfig`` lives in :mod:`chemrefine.config` and is imported here for
 :class:`StepContext`, which carries a step's own specification alongside the
-state it runs over. That makes this module a Pydantic importer too — seventeen
-modules import it, so it is not a leaf on cost, only on direction: it depends on
+state it runs over. That makes this module a Pydantic importer too, and most of the
+package imports it — so it is not a leaf on cost, only on direction: it depends on
 the configuration vocabulary and on nothing above it.
 """
 
@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from functools import cached_property
 from pathlib import Path
 
 import numpy as np
@@ -61,7 +62,7 @@ class Structure:
     writes through it. The protection is therefore a rule rather than a flag: any code
     that moves atoms or attaches labels works on ``struct.atoms.copy()``, never in place
     (see :func:`chemrefine.nms._displaced` and the trainer dataset writers).
-    :func:`chemrefine.cache.parents_digest` hashes these positions into every downstream
+    :func:`chemrefine.cache.structure_digest` hashes these positions into every downstream
     step's cache key, so an in-place write would not crash anything — it would silently
     re-fingerprint work that was already done. Each copy site carries a test asserting
     the source structure comes through untouched."""
@@ -95,6 +96,14 @@ class Structure:
     """Imaginary normal modes (mode index → cm⁻¹) from a frequency calc, read in the same
     pass as energy/geometry; ``None`` = no frequency table (distinct from ``{}`` = a verified
     minimum). The engine-independent NMS coordinator reads this off the structure."""
+    frequencies: dict[int, float] | None = None
+    """Every normal mode (mode index → cm⁻¹) from a frequency calc, in the same index space,
+    of which :attr:`imaginary_freqs` is a subset; ``None`` = no frequency table.
+
+    NMS wants only the imaginary ones, so only those were ever kept — and anything that
+    names a mode *afterwards* (a viewer's mode list, ``analyze_mode``) had an index with no
+    frequency to show beside it. Persisted, so it survives to a laptop reading a finished
+    tree, where the ``.out`` files may not have come along."""
     normal_modes: NDArray[np.float64] | None = None
     """Normal-mode displacement tensor ``(n_atoms, 3, n_modes)`` from a frequency calc; ``None``
     when absent. A **transient** artifact used by NMS to displace along imaginary modes — it is
@@ -140,6 +149,18 @@ class PipelineState:
 
     def __len__(self) -> int:
         return len(self.structures)
+
+    @cached_property
+    def by_id(self) -> dict[str, Structure]:
+        """The structures indexed by id, built once per state however many readers ask.
+
+        Every per-job reader — the assembler's parent lookup, a script engine's seed lookup,
+        the ``on_failure: best`` backfill — asked the tuple the same question and each built
+        the map again, so parsing a step was quadratic in its parent count: the driver parses
+        one job at a time, and every parse rebuilt the index. Cached on the instance because
+        the state is frozen — its structures never change, so the index cannot go stale.
+        """
+        return {s.id: s for s in self.structures}
 
 
 @dataclass(frozen=True)
@@ -250,11 +271,12 @@ class RunBlock:
 
 @dataclass(frozen=True)
 class JobBatch:
-    """Opaque handle returned by ``engine.submit`` and consumed by ``engine.wait``.
+    """Opaque handle returned by ``engine.submit``, which blocks until the jobs finish.
 
     ``jobs`` maps each input file path to its job identifier (a SLURM
     job ID, a local-runner PID, or whatever the engine's submitter
-    produces). The wait step polls this mapping.
+    produces). There is no ``wait``: submission blocks, so the batch a caller receives
+    describes jobs that have already finished.
 
     **Opaque** is the operative word: a structure re-run in the same batch reuses its input
     path, so the mapping holds that structure's *latest* attempt and there is no longer one
@@ -329,7 +351,7 @@ class FailureRecord:
     """A ledger entry — one failed structure, as persisted to ``failed_jobs.json``.
 
     The recovery paths read this back to decide what to re-attempt, so it is a typed
-    record rather than a bare dict indexed with string literals at four call sites.
+    record rather than a bare dict indexed with string literals at each of its call sites.
     """
 
     structure_id: str

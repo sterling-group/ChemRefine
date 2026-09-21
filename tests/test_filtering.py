@@ -14,7 +14,7 @@ from chemrefine.config import (
     MinSample,
 )
 from chemrefine.errors import ConfigError
-from chemrefine.filtering import apply
+from chemrefine.filtering import apply, ranking_energy
 from chemrefine.quantities import HARTREE_TO_KCALMOL
 from chemrefine.state import StepResults, Structure
 
@@ -166,6 +166,28 @@ def test_boltzmann_keeps_more_when_threshold_high():
     assert len(state.structures) >= 4
 
 
+def test_the_boltzmann_filter_answers_at_the_configured_temperature():
+    """``temperature_k`` must reach the weights — nothing else in the suite checked it.
+
+    Hardwiring 298.15 in place of ``sample.temperature_k`` passed the entire suite
+    (proven by a full-run mutant), which means a ``temperature_k: 77`` step silently
+    filtered at room temperature — the wrong-scientific-answer class the mutation gate
+    exists for. The fixture splits the two: a 2 kcal/mol gap at 99 % cumulative gives
+    the ground structure >99.99 % of the weight at 77 K (it stands alone) but only
+    ~96.7 % at 298.15 K (the higher one must survive too), so the mutant now fails in
+    either direction.
+    """
+    r = _results(("low", -1.0), ("high", -1.0 + 2.0 / HARTREE_TO_KCALMOL))
+    cold = apply(
+        r, BoltzmannSample(method="boltzmann", percent_cumulative=99.0, temperature_k=77.0)
+    )
+    room = apply(
+        r, BoltzmannSample(method="boltzmann", percent_cumulative=99.0, temperature_k=298.15)
+    )
+    assert [s.id for s in cold.structures] == ["low"]
+    assert [s.id for s in room.structures] == ["low", "high"]
+
+
 # ---------------------------------------------------------------------------
 # max — count
 # ---------------------------------------------------------------------------
@@ -288,7 +310,9 @@ def test_unknown_sample_type_raises():
         energy_type = "electronic"
 
     r = _results(("a", -1.0))
-    with pytest.raises(TypeError):
+    # `assert_never`'s own refusal. A bare `TypeError` came from `tuple(None)` three
+    # frames on, so the test also passed a filter that returned None by mistake.
+    with pytest.raises(AssertionError, match="unreachable"):
         apply(r, BogusSample())
 
 
@@ -383,3 +407,38 @@ def test_full_thermochemistry_ranks_on_it_not_on_electronic():
 
     # Lowest *Gibbs* is "0", even though "1" has the lower electronic energy.
     assert [s.id for s in survivors.structures] == ["0"]
+
+
+# ---------------------------------------------------------------------------
+# The one answer to "which energy is this step's energy"
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("sample", "energy_type", "attr", "label"),
+    [
+        (None, "electronic", "energy_hartree", "E"),
+        (MinSample(method="min", count=1), "electronic", "energy_hartree", "E"),
+        (MinSample(method="min", count=1, energy_type="gibbs"), "gibbs", "gibbs_hartree", "G"),
+        (
+            MinSample(method="min", count=1, energy_type="enthalpy"),
+            "enthalpy",
+            "enthalpy_hartree",
+            "H",
+        ),
+        (
+            MinSample(method="min", count=1, energy_type="electronic_zero_point"),
+            "electronic_zero_point",
+            "energy_zpe_hartree",
+            "E_ZPE",
+        ),
+    ],
+)
+def test_ranking_energy_is_the_steps_own(sample, energy_type: str, attr: str, label: str):
+    """The filter, NMS's promotion, ``steps.csv`` and the ensemble caption read one answer.
+
+    No ``sample`` means no declared preference — electronic, the energy every calculation
+    reports. Any other answer hardcoded here would send all four readers to the wrong
+    energy at once, which is why the fallback is a mutation-gate entry.
+    """
+    assert ranking_energy(sample) == (energy_type, attr, label)

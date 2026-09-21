@@ -15,21 +15,30 @@ def test_version_falls_back_when_uninstalled():
     """``__version__`` is set to a sentinel when the package isn't installed."""
     import chemrefine
 
-    with patch("importlib.metadata.version", side_effect=PackageNotFoundError):
-        reloaded = importlib.reload(chemrefine)
-        assert reloaded.__version__ == "0.0.0+unknown"
-
-    # Restore the real metadata-driven version for any subsequent tests in
-    # the same process; otherwise the sentinel sticks around.
-    importlib.reload(chemrefine)
+    try:
+        with patch("importlib.metadata.version", side_effect=PackageNotFoundError):
+            reloaded = importlib.reload(chemrefine)
+            assert reloaded.__version__ == "0.0.0+unknown"
+    finally:
+        # In a `finally`: restore the real metadata-driven version even when the
+        # assertion above fails, or the sentinel sticks to the module object for
+        # every later test in the process.
+        importlib.reload(chemrefine)
 
 
 def test_version_reads_from_metadata_when_installed():
-    """The happy path: ``importlib.metadata.version`` returns a real string."""
+    """The happy path, held to the actual metadata.
+
+    ``isinstance(str) and truthy`` was satisfied by the *fallback sentinel* too, so
+    this test could not fail — the one answer it must give is "the installed
+    distribution's own version string, not the sentinel".
+    """
+    import importlib.metadata
+
     import chemrefine
 
-    assert isinstance(chemrefine.__version__, str)
-    assert chemrefine.__version__
+    assert chemrefine.__version__ == importlib.metadata.version("chemrefine")
+    assert chemrefine.__version__ != "0.0.0+unknown"
 
 
 def test_python_dash_m_runs_the_cli():
@@ -68,20 +77,28 @@ def test_python_dash_m_translates_legacy_argv():
 
 @pytest.mark.filterwarnings("ignore:.*found in sys.modules.*:RuntimeWarning")
 @pytest.mark.parametrize(
-    "module",
+    ("module", "argparse_help"),
     [
-        "chemrefine.engines.orca.extopt.bridge",
-        "chemrefine.engines._backend_server.server",
+        ("chemrefine.engines.orca.extopt.bridge", True),
+        ("chemrefine.engines._backend_server.server", True),
+        ("chemrefine.engines.mlip.train.driver", True),
     ],
 )
-def test_module_entrypoint_runs_main(module, monkeypatch):
+def test_module_entrypoint_runs_main(module, argparse_help, monkeypatch):
     """`python -m <module>` dispatches through the ``if __name__ == "__main__"`` guard.
 
-    Driven via ``--help`` so ``main()`` exits cleanly (argparse SystemExit) without
-    binding a socket or contacting a backend. ``runpy`` executes the module as
-    ``__main__`` in-process so the guard line runs under coverage — a spawned
-    subprocess isn't viable here (the server blocks; the bridge needs a live backend).
+    Driven via ``--help`` without binding a socket or contacting a backend. ``runpy``
+    executes the module as ``__main__`` in-process so the guard line runs under coverage
+    — a spawned subprocess isn't viable here (the server blocks; the bridge needs a live
+    backend). All three carry argparse — the train driver joined them when the plan
+    facts moved onto its command line — so ``--help`` exits code 0 like the CLI's. A
+    bare ``raises(SystemExit)`` would equally have hidden a broken argument table
+    exiting 2.
     """
     monkeypatch.setattr(sys, "argv", [module, "--help"])
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit) as excinfo:
         runpy.run_module(module, run_name="__main__")
+    if argparse_help:
+        assert excinfo.value.code == 0
+    else:
+        assert "usage:" in str(excinfo.value.code)

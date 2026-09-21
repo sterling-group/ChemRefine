@@ -5,17 +5,32 @@
 ```bash
 git clone https://github.com/sterling-group/ChemRefine.git
 cd ChemRefine
-pip install -e ".[dev]"     # test + docs tooling, ruff, pre-commit
+pip install -e ".[dev]"     # every tool the gates call: test + docs tooling,
+                            # ruff, pre-commit, build, pip-audit
 pre-commit install          # REQUIRED — CI runs these same hooks
 ```
 
-`pre-commit install` is not optional: CI runs `ruff check`, `ruff format`,
-and `interrogate` through the pinned pre-commit hooks, so a clone that
-skips the hook install drifts out of format and fails its first PR.
+`pre-commit install` is not optional, and the line above does not cover it:
+that one installs the pre-commit *tool*, this one writes the hook into this
+clone's `.git/hooks`, which is what makes it run on a commit. CI runs
+`ruff check`, `ruff format` and `interrogate` through the pinned hooks, so a
+clone that skips it drifts out of format and fails its first PR.
 
 ## The gates
 
-Every PR must pass all of these — run them locally before pushing:
+One command runs every gate your pull request will face:
+
+```bash
+scripts/release-check.sh --pr
+```
+
+It needs nothing but a `[dev]` install — no ORCA, no MLIP stack — and gates
+the checkout you are standing in, refusing to run against a `chemrefine`
+installed anywhere else. If it passes, CI will too, apart from the four
+things no workstation can do (named at the end of the run, and listed under
+[Releases](#releases)).
+
+For the inner loop, the individual gates are still the fastest way round:
 
 ```bash
 pre-commit run --all-files                    # lint + format + docstring coverage
@@ -27,10 +42,30 @@ python scripts/mutation_gate.py               # critical predicates are *checked
 
 The coverage gate is real: new code ships with tests that cover every
 line and branch, and every module/class/function carries a docstring
-(`interrogate --fail-under=100`). The suite is fast (< 10 s) — run it often.
-The mutation gate is the slow one (~3 min) because it runs the suite once per
-mutation; it only needs re-running when you touch one of the predicates it lists
+(`interrogate --fail-under=100`). The suite takes under a minute — run it often.
+The mutation gate is the slow one (~1.5 min) because it runs a suite per mutation;
+it only needs re-running when you touch one of the predicates it lists
 (`python scripts/mutation_gate.py --list`).
+
+**The GUI's JavaScript is checked with a Node, and `[test]` installs one.**
+`tests/test_gui_assets.py` parses the builder's static assets and executes its
+pure form logic — the one layer coverage cannot see, where a stray brace blanks
+the whole page and an `@click` naming a deleted method fails silently. It uses
+any `node` on `PATH` first and falls back to the one `nodejs-wheel-binaries`
+ships, so there is nothing to install and nothing to remember.
+
+Without a Node those cases **skip**, and a skip exits 0 — a machine with none
+would run every gate green while checking the frontend not at all. Setting
+`CHEMREFINE_REQUIRE_NODE=1` turns that skip into a failure; `ci.yml` and
+`scripts/release-check.sh` both set it, so a skip can never reach a release.
+
+**Biome is the frontend's ruff.** `pre-commit` runs `biome check --write` over
+`src/chemrefine/gui/static/`: it formats the JavaScript and CSS and lints all
+three languages, with the settings and their reasons in `biome.jsonc`. It is
+the one hook that is not `language: python`, so on a machine with no Node the
+first `pre-commit` run downloads one into `~/.cache/pre-commit`. The vendored
+bundles under `static/vendor/` are excluded — they must stay byte-identical to
+what upstream published.
 
 ### The gates above do not cover the `integration` tier
 
@@ -102,13 +137,13 @@ survivors, a new operation) is not a re-parse, and needs the live tier:
 ## Conventions
 
 - **Engines** are plugins. Read the
-  [Adding an Engine recipe](docs/developer/adding-an-engine.md) before
-  adding one — it names the base class to subclass for each shape of
+  [Adding an Engine recipe](https://sterling-group.github.io/ChemRefine/developer/adding-an-engine/)
+  before adding one — it names the base class to subclass for each shape of
   backend, and the contract fixture every engine must ship.
 - **Legacy YAML/CLI vocabulary** lives in exactly two quarantine zones:
   `config_legacy.py` (YAML keys) and `cli_legacy.py` (v1 flag-style argv).
   New legacy spellings go there, nowhere else. Both are scheduled for removal in
-  3.0 — see `docs/migrating-v1-to-v2.md`.
+  3.0 — see `docs/get-started/upgrading-from-v1.md`.
 - **Tests are tiered.** Unit tests mirror `src/` one file per module
   (`tests/test_<module>.py`, `tests/test_engines_<name>*.py`); shared
   synthetic ORCA snippets live in `tests/synthetic.py`. The recorded
@@ -124,17 +159,26 @@ survivors, a new operation) is not a re-parse, and needs the live tier:
   run the drift-detector test
   (`tests/test_e2e_relocate.py::test_rebuilt_records_match_the_archived_ones_field_for_field`)
   with `--update-recordings`.
-- **Commits** are short, present-tense, and prefixed
-  (`feat:`/`fix:`/`refactor:`/`docs:`/`ci:`/`test:`/`harden:`), matching `git log`.
-  No `Co-Authored-By:` trailers and no generated-by/AI attribution footers —
-  `git log` is clean of them today, keep it that way.
+- **Commits** are short, present-tense, and prefixed with a type from the fixed
+  set (`build`, `chore`, `ci`, `docs`, `feat`, `fix`, `harden`, `perf`,
+  `refactor`, `revert`, `style`, `test`) — the conventional-commits vocabulary
+  plus `harden`, this repo's name for a change that closes a hole without
+  altering behaviour. An area goes in parentheses, never in place of the type:
+  `feat(gui):`, not `gui:`. Keep the subject under 72 characters.
 
 ## Landing a change
 
-`main` is protected: branch off it, open a PR, and let CI go green — the
-`required-checks-pass` job aggregates the required checks. PRs are
-squash-merged, so one PR is one commit on `main`, and each merge redeploys
-the docs.
+`main` is protected. Branch off it and name the branch for what it does —
+`type/short-description`, with the same type vocabulary the commits use:
+`fix/nms-imaginary-mode-count`, `docs/cluster-forwarding`. Open a PR and let
+CI go green — the `required-checks-pass` job aggregates the required checks.
+
+PRs are squash-merged, which has a consequence worth stating outright: **the
+PR title becomes the one commit on `main`, and the messages on your branch
+are discarded.** So the title carries the same `type(scope): subject` format
+the commits do, and `.github/workflows/pr-title.yml` checks it there — on the
+text that lands, rather than on the text that never does. Each merge
+redeploys the docs and deletes the branch.
 
 ## GitHub Actions
 
@@ -174,11 +218,28 @@ Before tagging: bump the version, retitle the Unreleased section in
 scripts/release-check.sh
 ```
 
-It runs everything CI runs, then installs the built wheel into a throwaway
-venv and runs the tier-3 suite against a real ORCA. CI cannot do that last
-part: GitHub-hosted runners have no ORCA, and automating it would mean a
-self-hosted runner, which is unsafe on a public repository — a pull request
-from a fork can execute arbitrary code on it.
+That is the `--pr` gate above plus the two halves only a workstation has:
+`pip-audit` (installed by `[dev]`), whose CI job is a weekly sweep rather
+than a per-tag one, and the tier-3 suite against a real ORCA and the
+managed MLIP/PySCF envs — the one thing here you install yourself. CI
+cannot do that last part — GitHub-hosted runners have no ORCA, and
+automating it would mean a self-hosted runner, which is unsafe on a public
+repository: a pull request from a fork can execute arbitrary code on it.
+
+Five CI jobs are deliberately **not** replicated locally, because doing so
+would cost more than it covers: the dependency-floors job and the 3.11–3.14
+matrix both need interpreters most machines lack, and CodeQL, Scorecard and
+dependency-review are GitHub-hosted analyses with no local equivalent. The
+first two run on the tag anyway — `publish.yml` calls `ci.yml`, so nothing
+reaches PyPI without the full matrix having passed. The three analyses never
+run on a tag: CodeQL and dependency-review run on every pull request, and
+CodeQL and Scorecard on every push to `main`, so a tagged commit has been
+through them as the pull request that landed it.
+
+Nothing machine-specific is baked into the script: it gates with whichever
+venv or conda env is active. Put per-machine paths (`PY`, `LIVE_PY`, `ORCA`)
+in an untracked `scripts/release-check.env` beside it — `LIVE_PY` is the one
+to set when the MLIP and PySCF stacks live in an environment of their own.
 
 That matters because the defects worth catching before a release are the
 ones every structural gate passes. A parser that misreads real output, or a

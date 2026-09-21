@@ -1,0 +1,15 @@
+{
+  "model": "MlipOptions",
+  "note": "The direct mlip engine's model; mlip-extopt reads its own subclass and files it beside its fixture.",
+  "examples": [
+    "model_name",
+    "task_name",
+    "device",
+    "cores"
+  ],
+  "tests_only": [
+    "model_path",
+    "backend_python",
+    "extra"
+  ]
+}

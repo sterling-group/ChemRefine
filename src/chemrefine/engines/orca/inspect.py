@@ -2,7 +2,8 @@
 
 The writer half — generating the per-structure ``.inp`` — lives in
 :mod:`chemrefine.engines.orca.input`. This module only *reads* a template: it infers the
-run type (for parser dispatch + NMS) and the PAL count, in a single pass.
+run type (for parser dispatch + NMS), the PAL count, and the ``%maxcore`` memory, in a
+single pass.
 
 When a step omits ``operation``, ChemRefine inspects the resolved ORCA template to decide
 which parser to use and (for NMS) whether the run optimises a TS and whether it computes
@@ -16,8 +17,12 @@ from the ``%pal``/``nprocs``/``PALn`` declaration anywhere in the template.
 
 The returned :attr:`OrcaInputInfo.operation` is one of the strings
 :func:`chemrefine.engines.orca.output.parse_output` already understands
-(``opt_sp`` / ``sp`` / ``pes`` / ``goat`` / ``docker`` / ``solvator``). With no run-type
-keyword at all it defaults to ``sp`` — ORCA's own fallback (a single point).
+(``opt_sp`` / ``sp`` / ``pes`` / ``goat`` / ``docker`` / ``solvator``), or the name of a
+run kind whose output has no reader of its own yet — a reaction path (``irc``), a band of
+images (``neb``), a trajectory (``md``) — which the engine reads as its final structure
+until a reader joins the dispatch, so a template that names one runs and says what it is.
+With no run-type keyword at all it defaults to ``sp`` — ORCA's own fallback (a single
+point).
 """
 
 from __future__ import annotations
@@ -26,8 +31,14 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-# A ``%geom … Scan … end`` block (a relaxed surface scan) → the ``pes`` parser.
-_GEOM_SCAN_RE = re.compile(r"%geom\b.*?\bscan\b.*?\bend\b", re.IGNORECASE | re.DOTALL)
+# A relaxed surface scan is a ``Scan`` sub-block inside ``%geom`` → the ``pes`` parser. The
+# block's body is what lies between the ``%geom`` opener and the next element of the input —
+# another ``%`` block, a ``*`` coordinate section or a ``!`` keyword line — and ``scan`` is
+# looked for in that body alone: a path naming ``scan`` in a later block, or a ``scan.xyz``
+# on the coordinate line, belongs to a different element. The body is not cut at the first
+# ``end`` because the ``Scan`` sub-block closes with one of its own before the block's.
+_GEOM_BLOCK_RE = re.compile(r"%geom\b([^%*!]*)", re.IGNORECASE)
+_SCAN_TOKEN_RE = re.compile(r"\bscan\b", re.IGNORECASE)
 
 # Whole-token spellings of the two run-type keywords this keys on, as ORCA 6.1.1 accepts
 # them. Matched against whole tokens, so a keyword that merely contains one of these
@@ -49,13 +60,29 @@ _OPT_TOKEN_RE = re.compile(
 )
 _FREQ_TOKEN_RE = re.compile(r"(?:num|an)?freq", re.IGNORECASE)
 
+# The run kinds whose product is many geometries rather than one. Whole-token spellings
+# again: the nudged-elastic-band family is one keyword with optional prefixes (the ``Fast``
+# and ``Zoom`` variants, a convergence level) and suffixes (``-CI`` climbing image, ``-TS``
+# saddle refinement, ``-IDPP`` path only); a reaction path is the bare ``IRC``; a
+# trajectory is driven from a ``%md … end`` block rather than a keyword.
+_NEB_TOKEN_RE = re.compile(r"(?:fast-|zoom-|loose-|tight-)?neb(?:-ci|-ts|-idpp)?", re.IGNORECASE)
+_MD_BLOCK_RE = re.compile(r"%md\b.*?\bend\b", re.IGNORECASE | re.DOTALL)
+
 # Every spelling of an ORCA PAL declaration, as ``(prefix)(count)`` pairs so :func:`_read_pal`
 # reads the count and :func:`chemrefine.engines.orca.input.clamp_pal` rewrites it in place.
-_PAL_PATTERNS = (
+#
+# Public, not underscored, because that second reader lives in another module: the reader
+# and the rewriter have to agree on what a PAL declaration looks like, and one list is how
+# they cannot drift.
+PAL_PATTERNS = (
     re.compile(r"(nprocs\s+)(\d+)", re.IGNORECASE),
     re.compile(r"\b(PAL)(\d+)\b", re.IGNORECASE),
     re.compile(r"(^\s*PAL\s+)(\d+)\b", re.IGNORECASE | re.MULTILINE),
 )
+
+# ORCA's per-core memory declaration, in MB — qorca's grammar, which submits against real
+# clusters with it. ``%maxcore`` takes no ``end``; the number is the whole block.
+_MAXCORE_RE = re.compile(r"%maxcore\s+(\d+)", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -64,13 +91,16 @@ class OrcaInputInfo:
 
     ``operation`` is the parser key (see :mod:`chemrefine.engines.orca.output`); ``is_ts``
     marks an ``OptTS`` (drives the NMS ``ts`` target); ``has_freq`` marks a frequency calc
-    (gates NMS); ``pal`` is the declared core count (``1`` if none).
+    (gates NMS); ``pal`` is the declared core count (``1`` if none); ``maxcore`` is the
+    declared per-core memory in MB (``None`` if the template names none — absence means
+    "the header's memory policy stands", so it is not defaulted).
     """
 
     operation: str
     is_ts: bool
     has_freq: bool
     pal: int
+    maxcore: int | None = None
 
 
 def _strip_orca_comments(text: str) -> str:
@@ -99,21 +129,30 @@ def _strip_orca_comments(text: str) -> str:
 
 def _read_pal(text: str) -> int:
     """Return the PAL / ``nprocs`` count declared in ORCA input text (``1`` if none)."""
-    for pattern in _PAL_PATTERNS:
+    for pattern in PAL_PATTERNS:
         m = pattern.search(text)
         if m:
             return int(m.group(2))
     return 1
 
 
+def _has_geom_scan(decommented: str) -> bool:
+    """Whether any ``%geom`` block's body declares a ``Scan`` — see :data:`_GEOM_BLOCK_RE`."""
+    return any(_SCAN_TOKEN_RE.search(m.group(1)) for m in _GEOM_BLOCK_RE.finditer(decommented))
+
+
 def inspect_template(template_path: str | Path) -> OrcaInputInfo:
     """Infer run type + PAL from an ORCA template in a single read.
 
     Ensemble runs are simple keywords (``! GOAT`` / ``! DOCKER`` / ``! SOLVATOR``); a relaxed
-    scan is a ``%geom … Scan … end`` block; an ``Opt`` (or ``OptTS``) is an optimization
-    (``opt_sp``); anything else — including a bare single point or a frequency-only job —
-    parses from the ``.out`` like ``sp``. ``OptTS`` and any ``…Freq`` are flagged regardless.
-    Comments are ignored and matching is case-insensitive.
+    scan is a ``%geom … Scan … end`` block; a reaction path (``! IRC``), a band of images
+    (``! NEB…``) and a trajectory (a ``%md … end`` block) are named for what they are
+    (``irc`` / ``neb`` / ``md``); an ``Opt`` (or ``OptTS``) is an optimization (``opt_sp``);
+    anything else — including a bare single point or a frequency-only job — parses from the
+    ``.out`` like ``sp``. A many-geometry kind wins over an optimisation keyword beside it,
+    because the optimisation is then one stage of it: ``! OptTS Freq IRC`` refines a saddle
+    and walks the path, and the path is the product. ``OptTS`` and any ``…Freq`` are flagged
+    regardless. Comments are ignored and matching is case-insensitive.
     """
     text = Path(template_path).read_text(encoding="utf-8", errors="replace")
     decommented = _strip_orca_comments(text)
@@ -134,15 +173,23 @@ def inspect_template(template_path: str | Path) -> OrcaInputInfo:
         operation = "docker"
     elif "solvator" in keywords:
         operation = "solvator"
-    elif _GEOM_SCAN_RE.search(decommented):
+    elif _has_geom_scan(decommented):
         operation = "pes"
+    elif "irc" in keywords:
+        operation = "irc"
+    elif any(_NEB_TOKEN_RE.fullmatch(token) for token in keywords):
+        operation = "neb"
+    elif "md" in keywords or _MD_BLOCK_RE.search(decommented):
+        operation = "md"
     elif any(_OPT_TOKEN_RE.fullmatch(token) for token in keywords):
         operation = "opt_sp"
     else:
         operation = "sp"  # ORCA's own fallback: a single point
+    maxcore = _MAXCORE_RE.search(decommented)
     return OrcaInputInfo(
         operation=operation,
         is_ts="optts" in keywords,
         has_freq=any(_FREQ_TOKEN_RE.fullmatch(token) for token in keywords),
         pal=_read_pal(decommented),
+        maxcore=int(maxcore.group(1)) if maxcore else None,
     )

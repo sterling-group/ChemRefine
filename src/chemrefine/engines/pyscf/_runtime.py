@@ -1,11 +1,9 @@
 """Shared PySCF compute helpers used by both extopt and direct engines.
 
-Exposes :func:`build_mol`, :func:`run_dft`,
-:func:`get_active_space_tensors`, :func:`save_tensors`, and
-:func:`print_tensors_file`. All PySCF imports are lazy (inside the
-helper bodies) so this module imports cleanly when ``pyscf`` isn't
-installed — the integration suite patches them out under mocked CPU
-backends.
+Exposes :func:`build_mol`, :func:`run_dft`, :func:`get_active_space_tensors`
+and :func:`save_tensors`. All PySCF imports are lazy (inside the helper
+bodies) so this module imports cleanly when ``pyscf`` isn't installed —
+the integration suite patches them out under mocked CPU backends.
 """
 
 from __future__ import annotations
@@ -18,9 +16,28 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from chemrefine.errors import ConfigError
 from chemrefine.quantities import BOHR_TO_ANGSTROM
 
 logger = logging.getLogger(__name__)
+
+
+def _host(array: Any) -> NDArray[Any]:
+    """``array`` as a numpy array on the host, whichever device computed it.
+
+    The one seam through which an array leaves the SCF object. gpu4pyscf keeps its orbital
+    coefficients and occupations as CuPy arrays, whose documented way home is ``.get()``;
+    numpy and pyscf refuse a CuPy operand, so every downstream ``@``, ``ao2mo`` and Boys
+    localisation fails after the SCF and gradient have already succeeded — with the CPU
+    fallback the only reason ``device: cuda`` and ``save_tensors`` ever worked together.
+    Applied to every array read off ``mf`` or its kernels rather than at the one site that
+    happened to fail, so the rule is "arrays leaving the SCF are host arrays" and a future
+    reader inherits it. A numpy array has no ``.get`` and passes straight through.
+    """
+    transfer = getattr(array, "get", None)
+    if callable(transfer) and not isinstance(array, np.ndarray):
+        return np.asarray(transfer())
+    return np.asarray(array)
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +79,7 @@ def build_mol(
 
 
 def _build_scf(
-    mol: Any, *, method: str, xc: str, want_gpu: bool, closed_shell: bool
+    mol: Any, *, method: str, xc: str | None, want_gpu: bool, closed_shell: bool
 ) -> tuple[Any, bool, str]:
     """Construct the (un-run) SCF object; return ``(mf, gpu_used, gpu_msg)``.
 
@@ -99,8 +116,8 @@ def run_dft(
     mol: Any,
     *,
     method: str = "dft",
-    xc: str = "pbe",
-    use_df: bool = False,
+    xc: str | None,
+    use_df: bool,
     want_gpu: bool = False,
     nthreads: int = 1,
     dograd: bool = True,
@@ -111,10 +128,28 @@ def run_dft(
     GPU path uses :mod:`gpu4pyscf.dft` when ``want_gpu`` is true and the
     import succeeds; otherwise the calculation runs on CPU.
 
+    ``use_df`` and ``xc`` have **no default here on purpose** — the caller must say.
+    What "unspecified" means belongs to
+    :class:`~chemrefine.engines.pyscf.options.PyscfOptions` alone: ``use_df``'s old
+    ``False`` was a fourth spelling of that decision, sitting on the off state after
+    the model flipped on — exactly the drift that shipped twice (the
+    model-vs-calculator split the comment in ``extopt_calc`` recounts), latent only
+    because the one caller passes explicitly. ``xc``'s old ``"pbe"`` was the same
+    shape one release later: once the model stopped defaulting the level of theory,
+    a literal here would have been the last silent spelling of it. A ``dft`` call
+    with ``xc=None`` is refused by name — the API-boundary half of
+    ``PyscfOptions.require_level_of_theory``'s rule. Knobs with no default cannot
+    drift.
+
     ``gradient`` is returned as a list of ``[gx, gy, gz]`` rows when
     ``dograd`` is true, otherwise as an empty list. ``mf`` is returned
     so the caller can run downstream tensor extraction.
     """
+    if method == "dft" and not xc:
+        raise ConfigError(
+            "run_dft: method 'dft' needs an xc functional — pass the one the step's "
+            "options named (pyscf steps require it; see PyscfOptions.require_level_of_theory)"
+        )
     from pyscf import lib
 
     lib.num_threads(nthreads)
@@ -136,8 +171,8 @@ def run_dft(
     gradient_rows: list[list[float]] = []
     grad_norm = 0.0
     if dograd:
-        g = mf.nuc_grad_method().kernel()
-        gradient_rows = [[float(c) for c in row] for row in np.asarray(g).reshape(-1, 3)]
+        g = _host(mf.nuc_grad_method().kernel())
+        gradient_rows = [[float(c) for c in row] for row in g.reshape(-1, 3)]
         grad_norm = float(np.linalg.norm(g))
 
     meta = {
@@ -169,20 +204,35 @@ def get_active_space_tensors(
     When ``localized`` is true, Boys-localize the occupied and virtual
     blocks separately before transforming. The two-electron tensor uses
     :func:`pyscf.ao2mo.incore.full`.
+
+    **Closed-shell only**, and refused up front rather than left to numpy. The maths below
+    reads ``mf.mo_coeff`` as one ``(nao, nmo)`` matrix; UHF/UKS carry a spin-paired
+    ``[mo_a, mo_b]``, so an open-shell system fails as a shape mismatch three frames down —
+    or, with ``localized``, hands :mod:`pyscf.lo` a block sliced along the wrong axis and
+    fails deeper still. Neither message names the spin state or the knob. The engine
+    refuses a ``save_tensors`` step at ``prepare`` (before anything submits); this is the
+    same rule at the API boundary, for a caller driving the server without the engine.
     """
     from pyscf import ao2mo
 
+    if mol.spin != 0:
+        raise ConfigError(
+            f"save_tensors supports closed-shell systems only (RHF/RKS): this molecule has "
+            f"spin {mol.spin} (multiplicity {mol.spin + 1}), whose UHF/UKS orbitals are "
+            f"spin-paired and do not fit the restricted MO transform. Drop save_tensors "
+            f"for this step, or run it as a closed-shell system."
+        )
     nuc = float(mol.energy_nuc())
     ao_kin = mol.intor("int1e_kin")
     ao_nuc = mol.intor("int1e_nuc")
     ao_obi = ao_kin + ao_nuc
     ao_eri = mol.intor("int2e")
-    coeff = mf.mo_coeff
+    coeff = _host(mf.mo_coeff)
 
     if localized:
         from pyscf import lo
 
-        nocc = int((mf.mo_occ > 0).sum())
+        nocc = int((_host(mf.mo_occ) > 0).sum())
         coeff_occ = coeff[:, :nocc]
         coeff_vir = coeff[:, nocc:]
         loc_occ = lo.Boys(mol, coeff_occ).kernel(verbose=0)
@@ -206,22 +256,19 @@ def save_tensors(
     """Write ``nuc / h1 / h2`` to a single compressed ``.npz`` and return its path.
 
     Keys (``hc`` for the nuclear-repulsion scalar, ``h1e`` for the
-    one-electron tensor, ``h2e`` for the two-electron tensor) match
-    the format the downstream inspection helpers expect.
+    one-electron tensor, ``h2e`` for the two-electron tensor) name the
+    format for whatever reads the file — chemrefine only writes it.
+
+    There is deliberately no reader here. A ``print_tensors_file`` pretty-printer sat
+    beside this for a long time with no caller in the package, which cost more than the
+    lines: it was the one ``np.load`` in ChemRefine without ``allow_pickle=False`` (see
+    :func:`chemrefine.cache._read_arrays`, where that flag is the stated reason a cache
+    load cannot execute code), so a reader comparing the two learned the wrong rule from
+    code nothing ran. Anything consuming these tensors is downstream analysis, and it
+    should load them with ``allow_pickle=False`` like every other ``.npz`` this package
+    reads.
     """
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(target, hc=nuc, h1e=h1, h2e=h2)
     return target
-
-
-def print_tensors_file(npz_file: str | Path) -> None:
-    """Pretty-print the tensors stored in a :func:`save_tensors` output file."""
-    data = np.load(str(npz_file))
-    print(f"File: {npz_file}")
-    print("hc (scalar):")
-    print(data["hc"])
-    print("h1e (one-electron tensor):")
-    print(data["h1e"])
-    print("h2e (two-electron tensor):")
-    print(data["h2e"])

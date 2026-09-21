@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
+import os
+import struct
+import sys
+import zipfile
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -14,15 +21,14 @@ from chemrefine import cache
 from chemrefine.cache import (
     CACHE_FORMAT_VERSION,
     RESULT_FORMAT_VERSION,
+    ResolutionSpec,
     StepKey,
-    fingerprint,
     invalidate,
     load,
     load_if_valid,
     load_manifest,
     manifest_path,
     option_file_digests,
-    parents_digest,
     save,
     save_manifest,
     save_result_records,
@@ -55,9 +61,37 @@ def _parents(*ids: str) -> tuple[Structure, ...]:
     return tuple(Structure(id=i, atoms=Atoms("H")) for i in ids)
 
 
-def _key(*ids: str, step_cfg: StepConfig | None = None, template: Path | None = None) -> StepKey:
+def _key(
+    *ids: str,
+    step_cfg: StepConfig | None = None,
+    template: Path | None = None,
+    charge: int = 0,
+    multiplicity: int = 1,
+    engine_options: dict | None = None,
+    resolution: ResolutionSpec | None = None,
+    aux_files: dict[str, Path] | None = None,
+) -> StepKey:
     """The key a step over these parents would be written under."""
-    return StepKey.of(step_cfg or _cfg(), _parents(*ids), template)
+    return StepKey.of(
+        step_cfg or _cfg(),
+        _parents(*ids),
+        template,
+        charge=charge,
+        multiplicity=multiplicity,
+        engine_options=engine_options,
+        resolution=resolution,
+        aux_files=aux_files,
+    )
+
+
+def _resolution(
+    target: str = "minimum", displacement: float = 1.0, seed: int = 42
+) -> ResolutionSpec:
+    """A resolution spec the way ``derive_step_key`` splits the NMS reading."""
+    return ResolutionSpec(
+        criterion={"target": target, "ts_mode_index": None},
+        search={"displacement_value": displacement, "num_random_displacements": 1, "seed": seed},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -65,40 +99,299 @@ def _key(*ids: str, step_cfg: StepConfig | None = None, template: Path | None = 
 # ---------------------------------------------------------------------------
 
 
-def test_fingerprint_stable_for_same_inputs():
-    cfg = _cfg()
-    assert fingerprint(cfg, ("0", "1")) == fingerprint(cfg, ("0", "1"))
+def test_the_key_is_stable_for_identical_inputs():
+    assert _key("0", "1").fingerprint == _key("0", "1").fingerprint
+    assert len(_key("0").fingerprint) == 16
 
 
-def test_fingerprint_changes_when_config_changes():
-    a = fingerprint(_cfg(charge=0), ("0",))
-    b = fingerprint(_cfg(charge=-1), ("0",))
-    assert a != b
+def test_the_key_moves_when_parents_change():
+    assert _key("0").fingerprint != _key("0", "1").fingerprint
 
 
-def test_fingerprint_changes_when_parents_change():
-    cfg = _cfg()
-    assert fingerprint(cfg, ("0",)) != fingerprint(cfg, ("0", "1"))
+def test_the_effective_charge_is_the_identity_not_the_override():
+    """Workflow ``charge: 0`` vs ``charge: 2`` must be two different steps.
+
+    The old payload hashed the per-step *override* — ``None`` when inherited — so a
+    workflow-level charge edit changed every job's physics while every fingerprint stood
+    still (reproduced on the shipped payload before this model replaced it). The key now
+    takes the effective value the jobs render.
+    """
+    assert _key("0", charge=0).fingerprint != _key("0", charge=2).fingerprint
+    assert _key("0", multiplicity=1).fingerprint != _key("0", multiplicity=3).fingerprint
 
 
-def test_fingerprint_is_sixteen_chars():
-    assert len(fingerprint(_cfg(), ("0",))) == 16
+def test_an_undeclared_option_moves_no_key():
+    """A key nothing reads cannot change a job — validate warns about it; the key ignores it.
+
+    Engine options enter the key only *as the engine's declared model reads them*; a junk
+    or typo'd key reaches no engine (script engines substitute declared fields only) and
+    therefore no result.
+    """
+    plain = _key("0", step_cfg=_cfg(options={}))
+    junk = _key("0", step_cfg=_cfg(options={"typo_knob": 7}))
+    assert plain.fingerprint == junk.fingerprint
+    assert plain.row_keys == junk.row_keys
 
 
-def test_fingerprint_changes_with_parents_digest():
-    cfg = _cfg()
-    assert fingerprint(cfg, ("0",), parents_digest="aaa") != fingerprint(
-        cfg, ("0",), parents_digest="bbb"
+def test_a_declared_option_moves_the_row_key():
+    a = _key("0", engine_options={"cores": 4})
+    b = _key("0", engine_options={"cores": 8})
+    assert a.row_keys != b.row_keys
+    assert a.fingerprint != b.fingerprint
+
+
+def test_a_template_referenced_aux_file_is_part_of_the_row_key(tmp_path: Path):
+    """Editing a file the template references must move the key — that is the re-run.
+
+    The template digest covers only the path *string*: a ``%DOCKER GUEST`` edit to the
+    guest geometry changed every docking result while every fingerprint stood still,
+    and ``resume`` served the stale answers. The same rationale that pinned
+    ``model_path`` bytes via ``option_file_digests``, applied to the enumeration the
+    engine hands over. And the change is scoped: a step whose template names no aux
+    files keys exactly as it did before the parameter existed.
+    """
+    guest = tmp_path / "cl.xyz"
+    guest.write_text("1\nchloride\nCl 0.0 0.0 0.0\n", encoding="utf-8")
+
+    before = _key("0", aux_files={"cl.xyz": guest})
+    assert before == _key("0", aux_files={"cl.xyz": guest})  # stable while the file stands
+
+    guest.write_text("1\nchloride moved\nCl 0.5 0.0 0.0\n", encoding="utf-8")
+    after = _key("0", aux_files={"cl.xyz": guest})
+    assert before.row_keys != after.row_keys
+    assert before.fingerprint != after.fingerprint
+
+    # The digest is keyed by the *written* reference, never the resolved path: a
+    # relocated tree re-derives the same key from the same bytes, which is the
+    # guarantee `rebuild-cache` on a moved project stands on.
+    elsewhere = tmp_path / "moved" / "cl.xyz"
+    elsewhere.parent.mkdir()
+    elsewhere.write_bytes(guest.read_bytes())
+    assert _key("0", aux_files={"cl.xyz": elsewhere}) == after
+
+    # Scoped-change regression: no aux files means the pre-parameter key, bit for bit —
+    # existing trees must not re-run over this feature's arrival.
+    assert _key("0", aux_files={}) == _key("0")
+    # A file that cannot be read contributes no entry (option_file_digests' escape):
+    # the key moves only when the file appears.
+    assert _key("0", aux_files={"missing.pc": tmp_path / "missing.pc"}) == _key("0")
+
+
+def test_the_nms_family_moves_only_the_resolution_key():
+    """The flag and its options steer post-round-1 resolution — never a job.
+
+    Same rows either way is what makes flipping ``nms: true`` a served edit: every
+    round-1 output on disk remains provably this configuration's.
+    """
+    plain = _key("0")
+    resolving = _key("0", resolution=_resolution())
+    assert plain.row_keys == resolving.row_keys
+    assert plain.fingerprint != resolving.fingerprint
+    assert plain.criterion_key == plain.search_key == ""
+    assert resolving.criterion_key != "" and resolving.search_key != ""
+
+
+def test_search_retunes_keep_the_criterion_key_criterion_changes_move_it():
+    """The search/criterion split, structurally: search tunes the hunt, criterion the answer.
+
+    The criterion key is what decides whether an ``attemptK/`` resolution on disk may be
+    trusted; the rows are untouched by both, which is why neither edit ever re-runs
+    round 1.
+    """
+    base = _key("0", resolution=_resolution())
+    retuned = _key("0", resolution=_resolution(displacement=2.0, seed=7))
+    recriterioned = _key("0", resolution=_resolution(target="ts"))
+    assert base.row_keys == retuned.row_keys == recriterioned.row_keys
+    assert base.fingerprint != retuned.fingerprint  # a different step...
+    assert base.criterion_key == retuned.criterion_key  # ...same resolution verdict
+    assert base.criterion_key != recriterioned.criterion_key
+
+
+def test_manifest_provenance_round_trips(tmp_path: Path):
+    """What save_manifest writes per row, load_manifest_provenance reads back — exactly."""
+    from chemrefine.cache import load_manifest_provenance
+
+    key = _key("0", "1", resolution=_resolution())
+    inputs = StepInputs(
+        files=(
+            (tmp_path / "0.inp", tmp_path / "0.out", "0"),
+            (tmp_path / "1.inp", tmp_path / "1.out", "1"),
+        )
+    )
+    save_manifest(inputs, tmp_path, operation="opt_sp", engine="fake", **key.manifest_stamp())
+    provenance = load_manifest_provenance(tmp_path)
+    assert provenance.fingerprint == key.fingerprint
+    assert provenance.criterion_key == key.criterion_key
+    assert provenance.search_key == key.search_key
+    assert provenance.rows == key.manifest_rows()
+    # And the file layout is untouched by the extra keys.
+    assert load_manifest(tmp_path) == inputs
+
+
+def test_the_stamp_fills_every_provenance_slot_save_manifest_has():
+    """The drift class, pinned in the direction it fired.
+
+    ``save_manifest`` defaults every stamp field to ``""`` — unprovable, adoptable — so a
+    slot added to it and not to :meth:`StepKey.manifest_stamp` (``search_key`` was, once,
+    at every call site at once) would silently disarm the refusals built on it. The
+    projection and the signature must name the same slots, and the projection must
+    fill them from the key rather than with the default.
+    """
+    import inspect
+
+    key = _key("0", "1", resolution=_resolution())
+    stamp = key.manifest_stamp()
+    slots = set(inspect.signature(save_manifest).parameters) - {
+        "inputs",
+        "step_dir",
+        "operation",
+        "engine",
+    }
+    assert set(stamp) == slots
+    assert all(stamp.values()), "a stamped slot must never carry the default"
+
+
+def test_the_manifest_spells_its_files_relative_to_the_step_directory(tmp_path: Path):
+    """Everything about a tree is addressed relatively; the manifest was the one exception.
+
+    Spelled absolute it named the machine the step ran on, and a copied tree's
+    `rebuild-cache` / ledgered `rerun` read paths that were not there. A file outside the
+    step directory has no relative spelling and stays absolute — the writer is total.
+    """
+    step_dir = tmp_path / "outputs" / "step1"
+    elsewhere = tmp_path / "shared" / "seed.xyz"
+    inputs = StepInputs(
+        files=(
+            (step_dir / "0" / "step1_0.inp", step_dir / "0" / "step1_0.out", "0"),
+            (elsewhere, step_dir / "1" / "step1_1.out", "1"),
+        )
+    )
+    save_manifest(inputs, step_dir, operation="opt_sp", engine="fake")
+    records = json.loads(cache.manifest_path(step_dir).read_text(encoding="utf-8"))["files"]
+    assert [(r["input"], r["output"]) for r in records] == [
+        ("0/step1_0.inp", "0/step1_0.out"),
+        (str(elsewhere), "1/step1_1.out"),
+    ]
+    # Read back, every path is the one the caller wrote.
+    assert load_manifest(step_dir) == inputs
+
+
+def test_a_moved_tree_reads_its_own_manifest(tmp_path: Path):
+    """The point of the relative spelling: the manifest follows the tree it describes."""
+    import shutil
+
+    before = tmp_path / "here" / "step1"
+    inputs = StepInputs(files=((before / "0" / "a.inp", before / "0" / "a.out", "0"),))
+    save_manifest(inputs, before, operation="opt_sp", engine="fake")
+
+    after = tmp_path / "there" / "step1"
+    shutil.move(str(before.parent), str(after.parent))
+
+    assert load_manifest(after) == StepInputs(
+        files=((after / "0" / "a.inp", after / "0" / "a.out", "0"),)
     )
 
 
-def test_fingerprint_changes_with_template_digest():
-    # Editing a template (same basename) must re-run the step — the content
-    # digest is what carries that, since the basename alone is unchanged.
-    cfg = _cfg()
-    assert fingerprint(cfg, ("0",), template_digest="aaa") != fingerprint(
-        cfg, ("0",), template_digest="bbb"
+def test_a_manifest_with_absolute_paths_reads_them_verbatim(tmp_path: Path):
+    """Every manifest written before the relative spelling, and every hand-written v1
+    adoption manifest, names absolute paths — and reads exactly as it always did."""
+    from chemrefine.cache import manifest_path
+
+    step_dir = tmp_path / "step1"
+    manifest_path(step_dir).parent.mkdir(parents=True)
+    manifest_path(step_dir).write_text(
+        json.dumps(
+            {
+                "operation": "goat",
+                "engine": "orca",
+                "fingerprint": "",
+                "files": [
+                    {"input": "/abs/run/step1/0/s.inp", "output": "/abs/run/s.out", "id": "0"}
+                ],
+            }
+        ),
+        encoding="utf-8",
     )
+    assert load_manifest(step_dir) == StepInputs(
+        files=((Path("/abs/run/step1/0/s.inp"), Path("/abs/run/s.out"), "0"),)
+    )
+
+
+def test_a_bare_manifest_reads_as_unprovenanced(tmp_path: Path):
+    """A manifest without row keys — every pre-provenance tree — is empty provenance."""
+    from chemrefine.cache import load_manifest_provenance
+
+    save_manifest(
+        StepInputs(files=((tmp_path / "0.inp", tmp_path / "0.out", "0"),)),
+        tmp_path,
+        operation="opt_sp",
+        engine="fake",
+        fingerprint="feedfacefeedface",
+    )
+    provenance = load_manifest_provenance(tmp_path)
+    assert provenance.rows == {}
+    assert provenance.fingerprint == "feedfacefeedface"
+
+
+def test_a_manifest_that_is_not_a_mapping_is_the_caches_own_error(tmp_path: Path):
+    """Valid JSON of the wrong shape — a bare list — is a corrupt manifest to both readers.
+
+    ``read_json`` guarantees only that the file parsed; a hand-edited or foreign manifest
+    can hold any JSON value. The provenance reader used to answer such a file with
+    all-empty provenance, routing the caller to ``rebuild-cache`` as for a pre-provenance
+    tree — but ``rebuild-cache`` reads the same file through ``load_manifest`` first and
+    refuses it as corrupt, so the advice led straight to the refusal. One reading of the
+    file now, one verdict: the cache's own error, exit 7, whichever reader meets it.
+    """
+    from chemrefine.cache import load_manifest, load_manifest_provenance, manifest_path
+
+    manifest_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+    manifest_path(tmp_path).write_text('["not", "a", "mapping"]', encoding="utf-8")
+    with pytest.raises(CacheError, match=r"corrupt manifest .*not a JSON object"):
+        load_manifest_provenance(tmp_path)
+    with pytest.raises(CacheError, match=r"corrupt manifest .*not a JSON object"):
+        load_manifest(tmp_path)
+
+
+@pytest.mark.parametrize("missing", ["id", "input", "output"])
+def test_a_record_missing_a_field_is_the_caches_own_error_from_either_reader(
+    tmp_path: Path, missing: str
+):
+    """A record of the wrong shape is one ``CacheError``, whichever reader meets it first.
+
+    Both public readers project one shape-checked reading of the file, so a row that
+    carries a ``row_key`` but lacks a field is refused identically. The ``CACHE_ONLY``
+    route reads the provenance without going through the layout reader first, and it
+    used to get a bare ``KeyError`` there — exit 1 and a traceback over a hand-edited
+    earlier step — while ``load_manifest`` got the cache's error and the rebuild advice.
+    """
+    import json
+
+    from chemrefine.cache import load_manifest, load_manifest_provenance, manifest_path
+
+    manifest_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "row_key": "abc",
+        "parent_digest": "d",
+        "id": "0",
+        "input": "a.inp",
+        "output": "a.out",
+    }
+    del record[missing]
+    manifest_path(tmp_path).write_text(json.dumps({"files": [record]}), encoding="utf-8")
+
+    with pytest.raises(CacheError, match=rf"corrupt manifest .*{missing}"):
+        load_manifest(tmp_path)
+    with pytest.raises(CacheError, match=rf"corrupt manifest .*{missing}"):
+        load_manifest_provenance(tmp_path)
+
+
+def test_manifest_rows_align_ids_keys_and_digests():
+    key = _key("0", "1")
+    rows = key.manifest_rows()
+    assert set(rows) == {"0", "1"}
+    assert rows["0"] == (key.row_keys[0], key.parent_digests[0])
+    assert rows["1"] == (key.row_keys[1], key.parent_digests[1])
 
 
 # ---------------------------------------------------------------------------
@@ -124,14 +417,33 @@ def test_a_path_that_does_not_exist_contributes_no_entry(tmp_path: Path):
     assert set(option_file_digests({"model_path": str(missing)})) == {"model_path"}
 
 
-def test_a_value_that_only_looks_like_a_path_is_not_a_reason_to_fail(tmp_path: Path):
-    """Options are free-form text; most values are not paths and some are hostile to being asked.
+def test_a_path_the_filesystem_refuses_to_answer_for_contributes_no_entry():
+    """A declared path can still be hostile to being asked.
 
-    A name past the filesystem's length limit raises from `is_file()` rather than returning
-    False. A step that never asked to be pinned to a file must not fail its whole run over
-    one — the value simply contributes no digest.
+    A name past the filesystem's length limit raises from ``open`` rather than reporting
+    a missing file. It is no more a file to pin to than a missing one, and no reason to
+    fail the run at key time — the value contributes no digest, and the job that goes on
+    to load it names the mistake.
     """
-    assert option_file_digests({"note": "x" * 5000}) == {}
+    assert option_file_digests({"model_path": "x" * 5000}) == {}
+
+
+def test_only_a_declared_path_knob_is_digested(tmp_path: Path):
+    """The knobs that name files are ``STEP_OPTION_PATHS``, not whatever resolves to one.
+
+    Guessing from the value pinned the wrong things. ``backend_python`` names an
+    interpreter, and an interpreter is a file: patching Python in place re-ran every
+    finished step of a workflow that had merely named it, with nothing saying why. And a
+    free-text value that happened to match a file in the driver's working directory keyed
+    the step differently from every other directory it could be launched in. The loader
+    resolves and the key basenames exactly the declared list; the digest reads it too, so
+    the three cannot disagree about which option is a path.
+    """
+    weights = tmp_path / "model.pt"
+    weights.write_bytes(b"weights")
+    assert option_file_digests({"backend_python": sys.executable}) == {}
+    assert option_file_digests({"note": str(weights)}) == {}
+    assert set(option_file_digests({"model_path": str(weights)})) == {"model_path"}
 
 
 def test_a_named_file_is_digested_by_its_contents(tmp_path: Path):
@@ -145,21 +457,40 @@ def test_a_named_file_is_digested_by_its_contents(tmp_path: Path):
     assert len(after["model_path"]) == 16
 
 
-def test_a_step_that_names_no_file_keys_exactly_as_it_did_before(tmp_path: Path):
-    """The digests join the payload only when there are some — otherwise nothing moves.
+def test_the_option_digest_is_computable_where_sha1_is_policy_restricted(
+    tmp_path: Path, monkeypatch
+):
+    """The digest must not need the code path a crypto policy can switch off.
 
-    An unconditional key would re-hash every payload there is, invalidating every cached step
-    at once: on a user's disk that reads as a bug rather than as the one narrow change it is,
-    and in this repo it strands every recorded e2e archive, whose caches were captured under
-    the old key. Pinned here because the failure mode is a suite that goes green again only
-    after someone re-records, which looks like flakiness.
+    `file_digest` handed the *name* `"sha1"` builds its hash through `hashlib.new(...)` with
+    `usedforsecurity` left at the default, which a host configured to allow SHA-1 only as a
+    fingerprint refuses outright. This runs on every `StepKey.of` — every step, every run —
+    and the `except OSError` beside it would not catch a `ValueError`, so the run would end
+    in a traceback outside the exit-code contract. Passing the constructor keeps `new` out of
+    it entirely, which is what this pins: `new` raising must not matter.
     """
-    cfg = _cfg(options={"task_name": "mace_off", "device": "cpu"})
-    parents = _parents("0")
+    model = tmp_path / "model.pt"
+    model.write_bytes(b"weights")
 
-    assert fingerprint(cfg, ("0",), parents_digest=parents_digest(parents)) == fingerprint(
-        cfg, ("0",), parents_digest=parents_digest(parents), option_digests={}
-    )
+    def refuse(name: str, *args: object, **kwargs: object):
+        raise AssertionError(f"hashlib.new({name!r}) is the path a crypto policy can refuse")
+
+    monkeypatch.setattr(cache.hashlib, "new", refuse)
+    assert len(option_file_digests({"model_path": str(model)})["model_path"]) == 16
+
+
+def test_the_option_digest_value_is_the_plain_sha1_of_the_file(tmp_path: Path):
+    """Pin the value, because it is a cache key.
+
+    `usedforsecurity` is a policy hint to the backend, not an input to the hash — so marking
+    the fingerprint must leave every stored key exactly where it was. Were that ever untrue,
+    the symptom would be silent: every cached step in every existing output tree invalidated
+    at once, which reads as a bug rather than as the one-line change that caused it.
+    """
+    model = tmp_path / "model.pt"
+    model.write_bytes(b"chemrefine-fixed-test-vector")
+    expected = hashlib.sha1(b"chemrefine-fixed-test-vector").hexdigest()[:16]
+    assert option_file_digests({"model_path": str(model)}) == {"model_path": expected}
 
 
 def test_retraining_a_model_re_runs_the_step_that_consumes_it(tmp_path: Path):
@@ -186,23 +517,46 @@ def _h2(spacing: float = 0.74, energy: float | None = None) -> Structure:
     return Structure(id="0", atoms=atoms, energy_hartree=energy)
 
 
-def test_parents_digest_stable_for_identical_content():
-    assert parents_digest([_h2()]) == parents_digest([_h2()])
+def test_structure_digest_stable_for_identical_content():
+    from chemrefine.cache import structure_digest
+
+    assert structure_digest(_h2()) == structure_digest(_h2())
 
 
-def test_parents_digest_changes_when_geometry_changes():
-    """Same IDs, different coordinates — the digest is what catches an edited seed file."""
-    assert parents_digest([_h2(spacing=0.74)]) != parents_digest([_h2(spacing=0.75)])
+def test_structure_digest_changes_when_geometry_changes():
+    """Same ID, different coordinates — the digest is what catches an edited seed file."""
+    from chemrefine.cache import structure_digest
+
+    assert structure_digest(_h2(spacing=0.74)) != structure_digest(_h2(spacing=0.75))
 
 
-def test_parents_digest_changes_when_energy_changes():
-    assert parents_digest([_h2(energy=-1.0)]) != parents_digest([_h2(energy=-1.1)])
+def test_structure_digest_does_not_depend_on_the_energys_python_type():
+    """A numpy scalar and the float it round-trips to through JSON share one digest.
+
+    ``repr(np.float64(x))`` is ``np.float64(x)`` on numpy 2, ``repr(float(x))`` is ``x``.
+    Hashed as they came, a parser handing the driver a numpy scalar keyed a structure one
+    way in memory and another after a cache load, so every downstream row missed its
+    cache on every resume.
+    """
+    import numpy as np
+
+    from chemrefine.cache import structure_digest
+
+    assert structure_digest(_h2(energy=-1.25)) == structure_digest(_h2(energy=np.float64(-1.25)))
 
 
-def test_parents_digest_changes_when_id_changes():
+def test_structure_digest_changes_when_energy_changes():
+    from chemrefine.cache import structure_digest
+
+    assert structure_digest(_h2(energy=-1.0)) != structure_digest(_h2(energy=-1.1))
+
+
+def test_structure_digest_changes_when_id_changes():
+    from chemrefine.cache import structure_digest
+
     a = _h2()
     b = Structure(id="7", atoms=a.atoms, energy_hartree=a.energy_hartree)
-    assert parents_digest([a]) != parents_digest([b])
+    assert structure_digest(a) != structure_digest(b)
 
 
 # ---------------------------------------------------------------------------
@@ -241,13 +595,15 @@ def test_the_step_document_is_compact_but_the_records_beside_it_are_not(tmp_path
         chemrefine_version="2.0.0",
     )
 
-    document = (step_dir / "_cache" / "step.json").read_text()
+    document = (step_dir / "_cache" / "step.json").read_text(encoding="utf-8")
     assert "\n" not in document, "the step document carries no layout"
     assert '"step":' in document and '"step": ' not in document
 
     save_result_records(_results().structures, step_dir, step=1)
     records = list(step_dir.glob("*.result.json"))
-    assert records and all("\n" in p.read_text() for p in records), "records stay readable"
+    assert records and all("\n" in p.read_text(encoding="utf-8") for p in records), (
+        "records stay readable"
+    )
 
 
 def test_save_and_load_round_trip(tmp_path: Path):
@@ -282,37 +638,6 @@ def test_template_contents_round_trip_through_validity(tmp_path: Path):
     assert load_if_valid(key=_key("0", template=template), step_dir=step_dir)
     template.write_text("! Opt Freq\n", encoding="utf-8")
     assert not load_if_valid(key=_key("0", template=template), step_dir=step_dir)
-
-
-def test_reuse_fingerprint_round_trips(tmp_path: Path):
-    """An NMS step's coarser key is persisted, and the key derives it — no caller passes it.
-
-    A site that forgot to is what `StepKey` exists to make impossible.
-    """
-    step_dir = tmp_path / "step1"
-    nms_cfg = _cfg(nms=True, options={"target": "minimum", "displacement_value": 1.0})
-    key = _key("0", step_cfg=nms_cfg)
-    assert key.reuse_fingerprint  # non-empty for an NMS step
-    save(
-        step_cfg=nms_cfg,
-        key=key,
-        results=_results(),
-        step_dir=step_dir,
-        chemrefine_version="2.0.0",
-    )
-    assert load(step_dir).reuse_fingerprint == key.reuse_fingerprint
-
-
-def test_reuse_fingerprint_defaults_empty(tmp_path: Path):
-    step_dir = tmp_path / "step1"
-    save(
-        step_cfg=_cfg(),
-        key=_key("0", step_cfg=_cfg()),
-        results=_results(),
-        step_dir=step_dir,
-        chemrefine_version="2.0.0",
-    )
-    assert load(step_dir).reuse_fingerprint == ""
 
 
 def test_round_trip_preserves_positions_forces_and_flags(tmp_path: Path):
@@ -382,7 +707,7 @@ def test_load_tolerates_cache_without_thermochemistry(tmp_path: Path):
         chemrefine_version="2.0.0",
     )
     path = _cache_path(tmp_path / "step1")
-    doc = json.loads(path.read_text())
+    doc = json.loads(path.read_text(encoding="utf-8"))
     for entry in doc["structures"]:  # simulate an older document
         entry.pop("gibbs_hartree", None)
         entry.pop("enthalpy_hartree", None)
@@ -394,13 +719,15 @@ def test_load_tolerates_cache_without_thermochemistry(tmp_path: Path):
     assert loaded.energy_zpe_hartree is None
 
 
-def test_round_trip_keeps_parents_digest_stable(tmp_path: Path):
+def test_round_trip_keeps_the_structure_digest_stable(tmp_path: Path):
     """The load-bearing property: a JSON round-trip must not perturb the digest.
 
-    Downstream steps fingerprint against ``parents_digest`` of *loaded*
+    Downstream steps key their rows against ``structure_digest`` of *loaded*
     structures (exact float64 bytes); any drift would invalidate every
     downstream cache on resume.
     """
+    from chemrefine.cache import structure_digest
+
     struct = _h2(spacing=0.7414213562373095, energy=-1.1283791670955126)
     step_dir = tmp_path / "step1"
     save(
@@ -410,8 +737,8 @@ def test_round_trip_keeps_parents_digest_stable(tmp_path: Path):
         step_dir=step_dir,
         chemrefine_version="2.0.0",
     )
-    loaded = load(step_dir).results.structures
-    assert parents_digest(loaded) == parents_digest([struct])
+    [loaded] = load(step_dir).results.structures
+    assert structure_digest(loaded) == structure_digest(struct)
 
 
 def test_load_missing_returns_none(tmp_path: Path):
@@ -462,7 +789,6 @@ def test_load_rejects_legacy_summary_sidecar(tmp_path: Path):
                 "cache_format": CACHE_FORMAT_VERSION,
                 "chemrefine_version": "2.0.0",
                 "fingerprint": "abc",
-                "reuse_fingerprint": "",
                 "step": 1,
                 "name": None,
                 "engine": "fake",
@@ -500,13 +826,13 @@ def test_load_if_valid_true_when_cache_matches(tmp_path: Path):
 def test_load_if_valid_false_when_config_changes(tmp_path: Path):
     step_dir = tmp_path / "step1"
     save(
-        step_cfg=_cfg(charge=0),
-        key=_key("0", step_cfg=_cfg(charge=0)),
+        step_cfg=_cfg(),
+        key=_key("0", charge=0),
         results=_results(),
         step_dir=step_dir,
         chemrefine_version="2.0.0",
     )
-    assert not load_if_valid(key=_key("0", step_cfg=_cfg(charge=-1)), step_dir=step_dir)
+    assert not load_if_valid(key=_key("0", charge=-1), step_dir=step_dir)
 
 
 def test_load_if_valid_false_when_cache_is_corrupt(tmp_path: Path):
@@ -516,6 +842,65 @@ def test_load_if_valid_false_when_cache_is_corrupt(tmp_path: Path):
     cache_dir.mkdir(parents=True)
     (cache_dir / "step.json").write_bytes(b"{not json")
     assert not load_if_valid(key=_key("0", step_cfg=_cfg()), step_dir=step_dir)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
+def test_an_unreadable_document_is_the_cache_error_a_corrupt_one_gets(tmp_path: Path):
+    """Present-but-unreadable is the other half of what ``read_json`` promises to refuse.
+
+    ``is_file`` is true of a mode-000 document — a colleague's driver, a restored backup —
+    and the ``PermissionError`` from the read escaped every handler as a traceback with
+    exit 1, where the docs promise exit 7 and the ``rebuild-cache`` advice. The lease and
+    sidecar readers already said so; the JSON reader was the one copy without the net.
+    """
+    step_dir = tmp_path / "step1"
+    document = step_dir / "_cache" / "step.json"
+    document.parent.mkdir(parents=True)
+    document.write_text("{}", encoding="utf-8")
+    document.chmod(0)
+    try:
+        with pytest.raises(CacheError, match="unreadable step cache"):
+            load(step_dir)
+        # `load_if_valid` treats it as it treats a corrupt document: a miss, never a raise.
+        assert load_if_valid(key=_key("0", step_cfg=_cfg()), step_dir=step_dir) is None
+    finally:
+        document.chmod(0o644)
+
+
+def test_a_document_that_is_not_text_is_unreadable_too(tmp_path: Path):
+    """Bytes that are not UTF-8 raise ``UnicodeDecodeError`` — a ``ValueError``, not JSON's."""
+    document = tmp_path / "step1" / "_cache" / "step.json"
+    document.parent.mkdir(parents=True)
+    document.write_bytes(b"\xff\xfe\x00")
+    with pytest.raises(CacheError, match="unreadable step cache"):
+        load(tmp_path / "step1")
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through any mode")
+def test_an_unwritable_cache_directory_is_a_cache_error(tmp_path: Path):
+    """The write half of the same promise: "cache corrupt or unwritable" is the cache's code.
+
+    A read-only ``_cache/`` — another account's tree, a full or read-only mount — raised
+    the ``OSError`` from the temp-file write straight through ``save`` and every other
+    ``_cache/`` writer, a traceback where the docs promise exit 7.
+    """
+    step_dir = tmp_path / "step1"
+    cache_dir = step_dir / "_cache"
+    cache_dir.mkdir(parents=True)
+    cache_dir.chmod(0o500)
+    try:
+        with pytest.raises(CacheError, match="cannot write"):
+            save(
+                step_cfg=_cfg(),
+                key=_key("0", step_cfg=_cfg()),
+                results=_results(),
+                step_dir=step_dir,
+                chemrefine_version="2.0.0",
+            )
+        with pytest.raises(CacheError, match="cannot write"):
+            cache.write_json(cache_dir / "manifest.json", {"files": []})
+    finally:
+        cache_dir.chmod(0o755)
 
 
 def _saved(tmp_path: Path) -> Path:
@@ -587,6 +972,68 @@ def test_the_sidecar_refuses_to_unpickle(tmp_path: Path):
         load(step_dir)
 
 
+def _empty_file(path: Path) -> None:
+    path.write_bytes(b"")
+
+
+def _torn_archive(path: Path) -> None:
+    data = path.read_bytes()
+    path.write_bytes(data[: len(data) // 2])
+
+
+def _bad_member_crc(path: Path) -> None:
+    # The last byte of the first member's array data: the bytes still parse as an array,
+    # and only the container's CRC knows they are not the ones that were written.
+    with zipfile.ZipFile(path) as archive:
+        info = archive.infolist()[0]
+    raw = bytearray(path.read_bytes())
+    name_len, extra_len = struct.unpack_from("<HH", raw, info.header_offset + 26)
+    start = info.header_offset + 30 + name_len + extra_len
+    raw[start + info.compress_size - 1] ^= 0xFF
+    path.write_bytes(bytes(raw))
+
+
+def _short_member(path: Path) -> None:
+    buf = io.BytesIO()
+    np.save(buf, np.zeros((2, 3)))
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("positions.npy", buf.getvalue()[:-8])
+
+
+def _directory(path: Path) -> None:
+    path.unlink()
+    path.mkdir()
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [_empty_file, _torn_archive, _bad_member_crc, _short_member, _directory],
+    ids=["empty-file", "torn-archive", "bad-member-crc", "short-member", "directory"],
+)
+def test_a_damaged_sidecar_is_the_caches_own_error_at_every_layer(
+    tmp_path: Path, damage: Callable[[Path], None]
+):
+    """One case per layer the file has, because each layer refuses in its own type.
+
+    A sidecar is a filesystem entry (``OSError``) holding a ZIP container (``BadZipFile``:
+    torn, or a member whose CRC no longer matches) holding ``.npy`` members (``ValueError``
+    for a short or garbled one; ``EOFError`` for a file with no bytes at all). A net written
+    from the failures that had been seen covered two of the four, and a sidecar half-copied
+    off a cluster reached the user as a traceback with exit 1 where the docs promise the
+    cache's own error and its rebuild advice. Held per layer so a numpy that moves a
+    refusal between them goes red here rather than back to the traceback. A directory
+    where the file should be is refused one line earlier, by the existence check, with
+    the "has no arrays.npz" wording — the same error type by a shorter route, so the
+    match is on the file every message names.
+    """
+    step_dir = _saved(tmp_path)
+    damage(cache._arrays_path(step_dir))
+
+    with pytest.raises(CacheError, match=r"arrays\.npz"):
+        load(step_dir)
+    assert load_if_valid(key=_key("0", "1", step_cfg=_cfg()), step_dir=step_dir) is None
+
+
 def _orphan_sidecar(step_dir: Path, *structures: Structure) -> None:
     """Write a sidecar for ``structures`` over ``step_dir``'s, leaving its document behind.
 
@@ -596,7 +1043,7 @@ def _orphan_sidecar(step_dir: Path, *structures: Structure) -> None:
     """
     records = [cache.structure_record(s) for s in structures]
     arrays = cache._split_arrays(records)
-    cache._atomic_write(cache._arrays_path(step_dir), cache._npz_bytes(arrays))
+    cache.atomic_write(cache._arrays_path(step_dir), cache._npz_bytes(arrays))
 
 
 def test_a_sidecar_from_another_save_is_refused_not_read(tmp_path: Path):
@@ -607,7 +1054,7 @@ def test_a_sidecar_from_another_save_is_refused_not_read(tmp_path: Path):
     it repairs a step and is killed. Nothing upstream can catch it: the records parse, and the
     fingerprint matches because it covers the step's *inputs*, not what is on disk. Read, the
     pair returns each structure's old energy beside another's geometry, and
-    `parents_digest` then carries those coordinates into every step computed from them.
+    `structure_digest` then carries those coordinates into every step computed from them.
     """
     step_dir = _saved(tmp_path)  # ids "0" and "1", both at the origin
     moved = Structure(id="0", atoms=Atoms("H", positions=[[9.0, 9.0, 9.0]]))
@@ -618,6 +1065,45 @@ def test_a_sidecar_from_another_save_is_refused_not_read(tmp_path: Path):
     assert not load_if_valid(key=_key("0", "1", step_cfg=_cfg()), step_dir=step_dir), (
         "a mismatched pair is a cache miss, so the step re-runs"
     )
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_a_non_finite_geometry_is_never_cached(tmp_path: Path, bad: float):
+    """The half of the no-NaN promise `write_json` cannot make.
+
+    `allow_nan=False` refuses a non-finite value in the *document*, but coordinates are the
+    one part of a record that never reaches it: `_split_arrays` moves them into the
+    `arrays.npz` sidecar, a raw buffer with no such check. What that cost is not a crash but
+    a silence — the geometry round-trips save → load intact and `structure_digest` hashes it
+    to a perfectly stable key, so every later step is computed from coordinates that are not
+    numbers with nothing anywhere reporting a problem.
+    """
+    struct = Structure(id="0", atoms=Atoms("H2", positions=[[0, 0, 0], [bad, 0, 1.5]]))
+    with pytest.raises(CacheError, match="non-finite coordinates"):
+        save(
+            step_cfg=_cfg(),
+            key=_key("0", step_cfg=_cfg()),
+            results=StepResults(structures=(struct,)),
+            step_dir=tmp_path / "step1",
+            chemrefine_version="2.0.0",
+        )
+
+
+def test_a_non_finite_force_is_never_cached(tmp_path: Path):
+    """Forces ride the same sidecar, and are what an ``mlip-train`` step would go on to fit."""
+    struct = Structure(
+        id="0",
+        atoms=Atoms("H", positions=[[0.0, 0.0, 0.0]]),
+        forces_ev_per_a=np.array([[float("nan"), 0.0, 0.0]]),
+    )
+    with pytest.raises(CacheError, match="non-finite forces"):
+        save(
+            step_cfg=_cfg(),
+            key=_key("0", step_cfg=_cfg()),
+            results=StepResults(structures=(struct,)),
+            step_dir=tmp_path / "step1",
+            chemrefine_version="2.0.0",
+        )
 
 
 def test_a_sidecar_of_the_same_length_is_still_refused(tmp_path: Path):
@@ -690,6 +1176,17 @@ def test_load_if_valid_false_when_no_cache(tmp_path: Path):
     assert not load_if_valid(key=_key("0"), step_dir=tmp_path / "step1")
 
 
+def test_has_results_answers_for_the_document_not_the_directory(tmp_path: Path):
+    """A ledger alone makes the directory; only ``step.json`` makes the step cached."""
+    step_dir = tmp_path / "step1"
+    cache.save_failure_records(step_dir, [])
+    assert not cache.has_results(step_dir)
+    cache._cache_path(step_dir).write_text("{}", encoding="utf-8")
+    assert cache.has_results(step_dir)
+    cache.invalidate(step_dir)
+    assert not cache.has_results(step_dir)
+
+
 # ---------------------------------------------------------------------------
 # load_if_valid — single load + fingerprint check (the cache-hit fast path)
 # ---------------------------------------------------------------------------
@@ -715,13 +1212,13 @@ def test_load_if_valid_returns_none_on_mismatch(tmp_path: Path):
     """A changed config returns None (re-run), never a stale cache."""
     step_dir = tmp_path / "step1"
     save(
-        step_cfg=_cfg(charge=0),
-        key=_key("0", step_cfg=_cfg(charge=0)),
+        step_cfg=_cfg(),
+        key=_key("0", charge=0),
         results=_results(),
         step_dir=step_dir,
         chemrefine_version="2.0.0",
     )
-    assert load_if_valid(key=_key("0", step_cfg=_cfg(charge=-1)), step_dir=step_dir) is None
+    assert load_if_valid(key=_key("0", charge=-1), step_dir=step_dir) is None
 
 
 # ---------------------------------------------------------------------------
@@ -801,7 +1298,7 @@ def test_manifest_save_records_operation_and_engine(tmp_path: Path):
 
     inputs = _manifest_inputs(tmp_path)
     path = save_manifest(inputs, tmp_path / "step1", operation="goat", engine="orca")
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     assert data["operation"] == "goat"
     assert data["engine"] == "orca"
 
@@ -843,7 +1340,7 @@ def test_save_result_records_writes_versioned_canonical_records(tmp_path: Path):
 
     path = tmp_path / "step2_0-1.result.json"
     assert path.is_file()
-    record = json.loads(path.read_text())
+    record = json.loads(path.read_text(encoding="utf-8"))
     assert record["result_format"] == RESULT_FORMAT_VERSION
     assert record["id"] == "0-1"
     assert record["parent_id"] == "0"
@@ -864,7 +1361,7 @@ def test_result_record_round_trips_through_structure_from_record(tmp_path: Path)
         terminated_normally=True,
     )
     save_result_records([structure], tmp_path, step=1)
-    record = json.loads((tmp_path / "step1_0.result.json").read_text())
+    record = json.loads((tmp_path / "step1_0.result.json").read_text(encoding="utf-8"))
     record.pop("result_format")
 
     rebuilt = structure_from_record(record)
@@ -873,6 +1370,36 @@ def test_result_record_round_trips_through_structure_from_record(tmp_path: Path)
     assert rebuilt.energy_hartree == structure.energy_hartree
     assert rebuilt.converged is True
     assert rebuilt.atoms.get_chemical_symbols() == ["H", "H"]
+
+
+def test_both_mode_tables_round_trip_and_neither_is_required(tmp_path: Path):
+    """The whole table is persisted so a finished tree can be read without its outputs.
+
+    Additive, like ``resolved_from``: a record written before the key existed loads as
+    ``None`` and needs no :data:`RESULT_FORMAT_VERSION` bump. ``None`` must survive as
+    ``None`` rather than flattening to ``{}`` — "no frequency table" and "a table with no
+    imaginary modes" are the difference between "unknown" and "a verified minimum", which
+    is what NMS's ``_is_resolved`` branches on.
+    """
+    structure = Structure(
+        id="0",
+        atoms=Atoms("H2", positions=[[0.0, 0.0, 0.0], [0.0, 0.0, 0.74]]),
+        energy_hartree=-1.17,
+        imaginary_freqs={0: -512.4},
+        frequencies={0: -512.4, 6: 284.9, 7: 1103.7},
+    )
+    record = structure_record(structure)
+    assert record["frequencies"] == {"0": -512.4, "6": 284.9, "7": 1103.7}
+    rebuilt = structure_from_record(record)
+    assert rebuilt.frequencies == structure.frequencies
+    assert rebuilt.imaginary_freqs == structure.imaginary_freqs
+
+    older = {k: v for k, v in record.items() if k != "frequencies"}
+    assert structure_from_record(older).frequencies is None
+
+    empty = structure_record(Structure(id="1", atoms=Atoms("H"), imaginary_freqs={}))
+    assert (empty["imaginary_freqs"], empty["frequencies"]) == ({}, None)
+    assert structure_from_record(empty).imaginary_freqs == {}  # not None: a verified minimum
 
 
 # --- cache: corrupt failed-jobs ledger --------------------------------------
@@ -945,3 +1472,80 @@ def test_cache_documents_honour_the_umask(tmp_path: Path):
         assert mode == 0o644, (
             f"{name} is {oct(mode)}, unreadable to the group the tree is shared with"
         )
+
+
+def test_a_write_that_cannot_re_mode_leaves_nothing_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A failed re-mode must strand neither the temp file nor its descriptor.
+
+    ``fchmod`` is the one step between ``mkstemp`` and ``fdopen`` that genuinely fails —
+    shared filesystems and FUSE/CIFS mounts refuse it. Done before the ``fdopen`` it took
+    both halves with it: nothing owned the descriptor yet, and the ``finally`` had not been
+    entered, so a ``.tmp_*.part`` stayed in the directory the user was writing to. That is a
+    nuisance once and an accumulation on the GUI's waitress threads, which write the user's
+    config through this same writer.
+    """
+    import os
+
+    monkeypatch.setattr(os, "fchmod", lambda *a: (_ for _ in ()).throw(OSError("EPERM")))
+    target = tmp_path / "doc.json"
+    with pytest.raises(OSError, match="EPERM"):
+        cache.atomic_write(target, b'{"a": 1}')
+
+    assert not target.exists(), "a failed write must not leave a partial document"
+    assert list(tmp_path.iterdir()) == [], (
+        f"temp residue survived a failed re-mode: {[p.name for p in tmp_path.iterdir()]}"
+    )
+
+
+@pytest.mark.skipif(
+    not cache._PROC_STATUS.is_file(),
+    reason="this kernel does not publish Umask; only the fallback probe exists here",
+)
+def test_the_umask_is_read_without_ever_being_written(monkeypatch: pytest.MonkeyPatch):
+    """Reading the umask by setting it is a process-global write other threads see.
+
+    ``os.umask`` reads by writing, so between the clear and the restore anything another
+    thread creates is made with no mask at all and a ``mkdir`` lands 0777 — world-writable
+    directories under an output tree that is routinely shared. The window is reachable:
+    the GUI runs on four waitress threads whose handlers both write through this module
+    and call ``Path.mkdir``. Linux publishes the value instead (``umask(2)``), so nothing
+    here may call ``os.umask`` at all.
+    """
+    import os
+
+    expected = next(
+        int(line.split()[1], 8)
+        for line in cache._PROC_STATUS.read_text(encoding="utf-8").splitlines()
+        if line.startswith("Umask:")
+    )
+    monkeypatch.setattr(os, "umask", lambda _mask: pytest.fail("read the umask by setting it"))
+
+    assert cache._umask() == expected
+
+
+@pytest.mark.parametrize("published", ["no status file at all", "a status file without the field"])
+def test_the_umask_falls_back_when_the_kernel_does_not_publish_it(
+    published: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A kernel older than 4.7 has no ``Umask`` field, and must still get the right mode.
+
+    Both ways the field can be absent take the probe, and the probe has to put back what
+    it set — otherwise the first cache write of the run would leave the process at umask
+    0 and every file after it world-writable, which is worse than the race it replaces.
+    Asking twice is what proves the restore happened.
+    """
+    import os
+
+    status = tmp_path / "status"
+    if published == "a status file without the field":
+        status.write_text("Name:\tpython\nPid:\t1\n", encoding="utf-8")
+    monkeypatch.setattr(cache, "_PROC_STATUS", status)
+
+    previous = os.umask(0o027)
+    try:
+        assert cache._umask() == 0o027
+        assert cache._umask() == 0o027
+    finally:
+        os.umask(previous)

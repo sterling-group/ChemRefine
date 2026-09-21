@@ -19,10 +19,11 @@ from pathlib import Path
 from typing import ClassVar, Generic, TypeVar, cast
 
 from chemrefine.engines import _provision
-from chemrefine.engines._job import JobEngine, gpus_from_options
+from chemrefine.engines._job import JobEngine
 from chemrefine.engines._options import EngineOptions
 from chemrefine.engines._script import output as script_output
 from chemrefine.engines._script import render as script_render
+from chemrefine.engines._script.contract import SCRIPT_OUTPUT, OutputField
 from chemrefine.engines.api import ParsedResult, RunBlock
 from chemrefine.state import StepContext
 
@@ -48,6 +49,25 @@ class ScriptEngine(JobEngine, Generic[OptsT]):
     placeholders all resolve the same defaults; the ExtOpt engines declare the same
     ClassVar for the same reason."""
 
+    output_fields: ClassVar[tuple[OutputField, ...]] = SCRIPT_OUTPUT
+    """What this engine's ``step{N}.py`` may report back — the output side's ``_vars_from``.
+
+    The input seam lets an engine choose which options reach the template; this is the same
+    choice for the return trip, and the two are the whole of what a script engine varies. A
+    subclass reporting more than the shared set extends the tuple in its own module::
+
+        output_fields = (*SCRIPT_OUTPUT, OutputField("gibbs_hartree", "gibbs_hartree"))
+
+    and the generated footer, the finiteness sweep, the JSON mapping and the scaffold's
+    starter comment all follow from it — no building block edited, which is what
+    ``docs/developer/adding-an-engine.md`` promises for every engine kind. A quantity the
+    record has no home for — diagnostics an engine wants kept beside the result — is
+    declared with ``field=None`` and stays in the raw JSON sidecar, read by nothing.
+
+    Declared here rather than passed per call because it is a property of the engine, not of
+    a step: the writer and the reader are two processes on two machines, and they have to
+    agree without talking."""
+
     # -- input -------------------------------------------------------------
 
     def build_input(
@@ -68,6 +88,7 @@ class ScriptEngine(JobEngine, Generic[OptsT]):
             charge=ctx.charge,
             multiplicity=ctx.multiplicity,
             extra_vars=self._template_vars(ctx),
+            fields=self.output_fields,
         )
 
     def _template_vars(self, ctx: StepContext) -> dict[str, object]:
@@ -84,12 +105,15 @@ class ScriptEngine(JobEngine, Generic[OptsT]):
         # narrowed here — once, in the one place that reads it — rather than by each
         # subclass asserting its way back to the type it already declared.
         opts = cast(OptsT, self.options_cls.from_raw_lenient(ctx.step_cfg.options))
-        return self._vars_from(opts)
+        return {**script_render.model_placeholders(opts), **self._vars_from(opts)}
 
     def _vars_from(self, opts: OptsT) -> dict[str, object]:
-        """Which placeholders this engine exposes, from its validated options (default: none).
+        """The *derived* placeholders this engine adds beyond its declared knobs (default: none).
 
-        Subclasses read ``opts``' fields by name; the reading of them is the base's job.
+        Every field of :attr:`options_cls` is a placeholder already, by the read above
+        (:func:`~chemrefine.engines._script.render.model_placeholders`); this is for a name
+        the model does not hold as a field. Subclasses read ``opts`` by attribute; the
+        reading of the options is the base's job.
         """
         return {}
 
@@ -103,21 +127,34 @@ class ScriptEngine(JobEngine, Generic[OptsT]):
         """
         return self.options_cls.from_raw_lenient(ctx.step_cfg.options).cores
 
-    def gpus(self, ctx: StepContext) -> int:
-        """A GPU if this engine's validated options request one; else CPU."""
-        return gpus_from_options(ctx.step_cfg.options, self.options_cls)
+    def slurm_layout(self, ctx: StepContext) -> tuple[int, int]:
+        """One threaded process: ``(1, min(cores, max_cores))``.
+
+        A script is one Python process threading through OpenMP, MKL or torch — never MPI
+        ranks — so its cores are spelled as ``--cpus-per-task`` on a single task, which
+        SLURM cannot split across nodes. The ranks spelling asks for N tasks of one CPU
+        each, which a scheduler may grant across nodes: the process then runs N threads on
+        the first node's share while the throttler is charged all N. The clamp is the base
+        rule's — one process can use fewer threads than asked.
+        """
+        return (1, min(self.pal(ctx), ctx.max_cores))
 
     def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> RunBlock:
         """Run the rendered Python script inside ``$WORK_DIR``, capped to its core budget.
 
         Script engines (pyscf / mlip direct) are OpenMP/MKL/torch-threaded with no MPI, so the
-        thread count is pinned to the step's ``options.cores`` (= :meth:`pal`) — the real
-        oversubscription guard on a laptop where jobs run concurrently, and harmless under
-        SLURM. (ORCA is the opposite — MPI ranks, ``OMP=1``.) The script's interpreter comes
-        from the provisioner (a managed backend env when one exists), so conflicting backends
-        can run side by side in one pipeline.
+        thread count is pinned to what the job is actually *granted* — the
+        :meth:`slurm_layout` product, which is ``options.cores`` clamped to ``max_cores``,
+        the same number the SLURM directives request and the throttler charges. The raw
+        :meth:`pal` here let a step asking for more than the budget export the ask rather
+        than the grant: charged ``max_cores``, threading ``cores`` — the exact
+        oversubscription this export exists to prevent, on every local run. (ORCA is the
+        opposite — MPI ranks, ``OMP=1``.) The script's interpreter comes from the
+        provisioner (a managed backend env when one exists), so conflicting backends can run
+        side by side in one pipeline.
         """
-        cores = self.pal(ctx)
+        ntasks, cpus_per_task = self.slurm_layout(ctx)
+        cores = ntasks * cpus_per_task
         interpreter = _provision.launcher_for(self, ctx.step_cfg.options)
         return RunBlock(
             body=f"export OMP_NUM_THREADS={cores}\n"
@@ -131,8 +168,16 @@ class ScriptEngine(JobEngine, Generic[OptsT]):
     def parse_one(
         self, output_path: Path, structure_id: str, ctx: StepContext
     ) -> list[ParsedResult]:
-        """Read one output JSON into a single ``ParsedResult`` (seed geometry as fallback)."""
-        seed = next((s for s in ctx.prev_state.structures if s.id == structure_id), None)
+        """Read one output JSON into a single ``ParsedResult`` (seed geometry as fallback).
+
+        Read through :attr:`output_fields`, the same contract :meth:`build_input` rendered the
+        footer from — so what the script was told it could write and what the driver reads
+        back cannot come apart.
+        """
+        seed = ctx.prev_state.by_id.get(structure_id)
         return script_output.parse_output(
-            output_path, label=self.label, fallback=seed.atoms if seed is not None else None
+            output_path,
+            label=self.label,
+            fallback=seed.atoms if seed is not None else None,
+            fields=self.output_fields,
         )

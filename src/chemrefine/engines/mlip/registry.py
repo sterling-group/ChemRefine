@@ -2,9 +2,9 @@
 
 One registry, keyed by ``task_name``, shared by inference and training. Each entry names a
 :class:`MlipLibrary` — the environment that provides the library — plus whichever capabilities
-that library offers: an ASE calculator builder, a :class:`~chemrefine.engines.mlip.training.
-Trainer`, or both. :mod:`chemrefine.engines.mlip.calculator` reads the first;
-:mod:`chemrefine.engines.mlip.train_engine` reads the second; the provisioner reads the
+that library offers: an ASE calculator builder, a :class:`~chemrefine.engines.mlip.train.base.
+TrainerBase` subclass, or both. :mod:`chemrefine.engines.mlip.calculator` reads the first;
+:mod:`chemrefine.engines.mlip.train.engine` reads the second; the provisioner reads the
 library.
 
 Why one registry and not two
@@ -50,30 +50,32 @@ one ``[project.optional-dependencies]`` entry for the extra it names (asserted b
 ``test_engines_mlip_training.py``, since an extra nothing installs is an env that cannot be
 provisioned). It declares its environment once and hangs its capabilities off it::
 
-    from chemrefine.engines.mlip.registry import MlipLibrary
+    from chemrefine.engines.mlip.registry import CalculatorSpec, MlipLibrary
 
     MY_MLIP = MlipLibrary(
         extra="mlip-my_mlip", package="my-mlip-lib", import_name="my_mlip_library"
     )
 
     @MY_MLIP.calculator("my_task")
-    def _build_my_mlip(*, model_name="", device="cuda", model_path=None, **_):
+    def _build_my_mlip(spec: CalculatorSpec):
         from my_mlip_library import MyCalculator      # imported lazily, inside the builder
 
-        return MyCalculator(model=model_path or model_name, device=device)
+        return MyCalculator(model=spec.weights or spec.model_name, device=spec.device)
 
     @MY_MLIP.trainer("my_task")                        # optional — omit if it cannot train
-    class MyTrainer: ...
+    class MyTrainer(TrainerBase): ...                  # or ApiTrainerBase, for API-only libs
 
 Both decorators are variadic, which is what lets one library register a family of heads from a
-single list rather than a stack of decorators per capability — FAIRChem's seven heads are
+single list rather than a stack of decorators per capability — FAIRChem's head family is
 declared once and used by both.
 """
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from chemrefine.engines.api import BackendRequirement
@@ -81,15 +83,48 @@ from chemrefine.engines.mlip.options import MlipOptions
 from chemrefine.errors import ConfigError
 
 if TYPE_CHECKING:
-    from chemrefine.engines.mlip.training import Trainer
+    from chemrefine.engines.mlip.train.base import TrainerBase
 
-LEGACY_MACE_TASK = "custom_mace"
-"""A back-compat alias for MACE, kept only so configs written against v1 still resolve.
 
-It is **not** a mechanism, and there is deliberately no ``custom_fairchem`` beside it. A local
-checkpoint is ``model_path``, which every library's builder honours itself — see the module
-docstring. Configs naming this should say which MACE family they mean (``mace_off`` and
-friends) instead; it is registered on the MACE library so that saying nothing still works."""
+@dataclass(frozen=True)
+class CalculatorSpec:
+    """Everything a builder may read — filled and vetted by the dispatch, never by hand.
+
+    **This frozen value is the whole calculator-builder contract.** The previous contract
+    was four keyword arguments plus ``**_``, stated in docstrings and enforced by nothing
+    — which is how three shipped builders came to silently swallow a knob the dispatch
+    was passing (``model_path`` on sevenn and orb, ``model_name`` on chgnet): a keyword
+    that lands in a catch-all vanishes without a trace. A single positional spec has no
+    catch-all to vanish into; a builder that ignores a field ignores it *visibly*, in
+    code a reviewer can read.
+
+    ``weights`` arrives already existence-checked (the dispatch's job, done once —
+    previously five pasted copies of the same ``is_file()`` idiom, one per builder).
+    ``charge`` and ``multiplicity`` are ``None`` when the caller did not say — the door
+    for charge-aware libraries (AIMNet2's calculator takes a total charge; ``mace_omol``
+    reads one), which the old four-knob shape could not express. A builder for a
+    charge-blind library simply never reads them.
+
+    The builder's *return* stays ``Any`` deliberately: ASE calculators are an untyped
+    third-party surface, and a home-grown protocol over them would be aspirational
+    typing with no enforcement value.
+    """
+
+    task_name: str
+    model_name: str
+    device: str
+    weights: Path | None
+    charge: int | None = None
+    multiplicity: int | None = None
+
+
+CalculatorBuilder = Callable[[CalculatorSpec], Any]
+"""The typed shape every registered builder has: one spec in, an ASE calculator out.
+
+The alias is what makes the contract *static* — ``@LIB.calculator`` is typed over it, so
+mypy checks each builder at its own decorator site — and :meth:`MlipLibrary.calculator`
+verifies the callable's arity at registration, so a malformed drop-in fails at import of
+its own module with a message naming the rule."""
 
 
 @dataclass(frozen=True)
@@ -111,31 +146,92 @@ class MlipLibrary:
     package: str
     import_name: str
 
-    def calculator(self, *task_names: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    def calculator(self, *task_names: str) -> Callable[[CalculatorBuilder], CalculatorBuilder]:
         """Register a builder for each of ``task_names``; return it unchanged.
 
-        The builder takes keyword arguments (``task_name``, ``model_name``, ``device``,
-        ``model_path``, plus a catch-all ``**_``) and returns an ASE calculator. Its backend
-        import needs no guard — :func:`~chemrefine.engines.mlip.calculator.build_calculator`
-        turns an ``ImportError`` into the install hint built from this library's metadata.
+        The builder is a :data:`CalculatorBuilder` — one :class:`CalculatorSpec` in, an
+        ASE calculator out; the spec's docstring is the contract. Its backend import
+        needs no guard — :func:`~chemrefine.engines.mlip.calculator.build_calculator`
+        turns an ``ImportError`` into the install hint built from this library's
+        metadata.
+
+        The decorator is the gate: a builder that is not a single-parameter callable is
+        refused **here**, at import of the module that declares it. The old shape —
+        keyword arguments plus a catch-all — was checked by nothing, and three shipped
+        builders silently swallowed a knob the dispatch was passing before anyone
+        noticed; arity is the property a signature can actually prove, so it is proven.
         """
 
-        def _wrap(fn: Callable[..., Any]) -> Callable[..., Any]:
+        def _wrap(fn: CalculatorBuilder) -> CalculatorBuilder:
+            if not callable(fn):
+                raise TypeError(
+                    f"{self.extra}: @calculator({', '.join(map(repr, task_names))}) "
+                    f"must decorate a callable, got {fn!r}"
+                )
+            parameters = [
+                p
+                for p in inspect.signature(fn).parameters.values()
+                if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+            ]
+            if len(parameters) != 1 or len(inspect.signature(fn).parameters) != 1:
+                raise TypeError(
+                    f"{self.extra}: builder {getattr(fn, '__name__', fn)!r} must take "
+                    f"exactly one positional parameter — the CalculatorSpec. The spec "
+                    f"replaces the old keyword shape so no knob can vanish into a "
+                    f"catch-all."
+                )
             for name in task_names:
                 _put(name, self, builder=fn)
             return fn
 
         return _wrap
 
-    def trainer(self, *task_names: str) -> Callable[[type[Trainer]], type[Trainer]]:
-        """Register a :class:`~chemrefine.engines.mlip.training.Trainer` for ``task_names``.
+    def trainer(self, *task_names: str) -> Callable[[type[TrainerBase]], type[TrainerBase]]:
+        """Register a :class:`~chemrefine.engines.mlip.train.base.TrainerBase` subclass.
 
         Optional: a library that ships no training entry point simply never calls this, and
         :func:`trainer_for` then reports it as runnable but not trainable — which is a
         different thing from an unknown task, and worth saying differently.
+
+        The decorator is the gate, mirroring :meth:`calculator`: a class that is not a
+        concrete ``TrainerBase`` — or that leaves a declaration the machinery reads
+        unset — is refused **here**, at import of the module that declares it, naming
+        the missing item. The class statement already enforces the abstract hooks at
+        instantiation; this check moves the failure to discovery time and covers the
+        bare ``ClassVar`` declarations no ``ABCMeta`` machinery watches.
         """
 
-        def _wrap(cls: type[Trainer]) -> type[Trainer]:
+        def _wrap(cls: type[TrainerBase]) -> type[TrainerBase]:
+            # Function-level import: the registry cannot import ``train.base`` at module
+            # top — ``train/__init__`` pulls in ``train.engine``, which imports this
+            # module back while it is still initialising.
+            from chemrefine.engines.mlip.train.base import ApiTrainerBase, TrainerBase
+
+            names = ", ".join(map(repr, task_names))
+            if not (isinstance(cls, type) and issubclass(cls, TrainerBase)):
+                raise TypeError(
+                    f"{self.extra}: @trainer({names}) must decorate a TrainerBase "
+                    f"subclass (ApiTrainerBase for a library without a CLI), got {cls!r}"
+                )
+            abstract = sorted(getattr(cls, "__abstractmethods__", ()))
+            if abstract:
+                raise TypeError(
+                    f"{self.extra}: trainer {cls.__name__} leaves {abstract} abstract — "
+                    f"every hook must be implemented before registration"
+                )
+            required = ["label", "output_globs"]
+            if issubclass(cls, ApiTrainerBase):
+                required += ["driver_task", "missing_config_hint", "artifact_filename"]
+            missing = [name for name in required if not hasattr(cls, name)]
+            if cls.needs_validation and not cls.validation_reason:
+                missing.append("validation_reason")
+            if cls.periodic_only and not cls.periodic_reason:
+                missing.append("periodic_reason")
+            if missing:
+                raise TypeError(
+                    f"{self.extra}: trainer {cls.__name__} is missing declaration(s) "
+                    f"{missing} — the machinery reads them; see TrainerBase"
+                )
             for name in task_names:
                 _put(name, self, trainer=cls)
             return cls
@@ -154,8 +250,8 @@ class BackendSpec:
     """
 
     library: MlipLibrary
-    builder: Callable[..., Any] | None = None
-    trainer: type[Trainer] | None = None
+    builder: CalculatorBuilder | None = None
+    trainer: type[TrainerBase] | None = None
 
     @property
     def extra(self) -> str:
@@ -180,8 +276,8 @@ def _put(
     name: str,
     library: MlipLibrary,
     *,
-    builder: Callable[..., Any] | None = None,
-    trainer: type[Trainer] | None = None,
+    builder: CalculatorBuilder | None = None,
+    trainer: type[TrainerBase] | None = None,
 ) -> None:
     """Add or extend the entry for ``name`` with one capability.
 
@@ -230,7 +326,7 @@ def backend_spec(task_name: str) -> BackendSpec:
     return spec
 
 
-def calculator_for(task_name: str) -> Callable[..., Any]:
+def calculator_for(task_name: str) -> CalculatorBuilder:
     """The builder a ``task_name`` dispatches to; raises if the library cannot be run."""
     spec = backend_spec(task_name)
     if spec.builder is None:
@@ -238,7 +334,7 @@ def calculator_for(task_name: str) -> Callable[..., Any]:
     return spec.builder
 
 
-def trainer_for(task_name: str) -> type[Trainer]:
+def trainer_for(task_name: str) -> type[TrainerBase]:
     """The trainer a ``task_name`` dispatches to; raises if that library cannot be trained.
 
     "Unknown task" and "known task, no trainer" are different mistakes and get different
@@ -276,8 +372,9 @@ def trainer_output_globs() -> tuple[str, ...]:
     :class:`~chemrefine.state.StepContext` in hand, so ``mlip-train`` cannot answer for *this*
     step's trainer and has to answer for all of them. Derived here, from the trainers'
     declarations, because a hand-maintained superset is a list that silently stops being one
-    the day a library is added — nothing else would connect a new trainer's globs to the
-    engine's ClassVar. A test holds the two equal.
+    the day a library is added. :class:`~chemrefine.engines.mlip.train.engine.MlipTrainEngine`
+    reads this directly — its ``output_globs`` property — so the roster is correct by
+    construction, not by a test holding two spellings equal.
 
     A superset is the safe direction — copying back a pattern nothing wrote costs nothing,
     where *missing* one loses a model to the scratch cleanup.

@@ -21,6 +21,7 @@ import pytest
 from ase import Atoms
 
 from chemrefine.engines.mlip.calculator import MlipCalculator, build_calculator
+from chemrefine.engines.mlip.registry import backend_spec, registered_backends
 from chemrefine.errors import ConfigError
 
 
@@ -104,15 +105,25 @@ def test_a_local_checkpoint_goes_through_the_named_familys_own_loader(
     factories[task].assert_called_once_with(model=model_file, device="cuda")
 
 
-def test_a_checkpoint_that_is_not_there_names_the_path(tmp_path: Path):
-    """Checked before MACE sees it: its own failure is a `torch.load` traceback.
+def _registered_tasks() -> list[str]:
+    from chemrefine.engines.mlip.registry import registered_backends
 
-    That traceback names neither the step nor the option the path came from, which on a
-    pipeline whose training step ran overnight is the difference between a typo and a hunt.
+    return sorted(registered_backends())
+
+
+@pytest.mark.parametrize("task", _registered_tasks())
+def test_a_checkpoint_that_is_not_there_names_the_task(tmp_path: Path, task: str):
+    """The dispatch vets the checkpoint once, for every backend, before any library imports.
+
+    The refusal names the ``task_name`` the user wrote — the YAML value they can act on.
+    A library's own failure is a ``torch.load`` traceback naming neither the step nor the
+    option, which on a pipeline whose training step ran overnight is the difference
+    between a typo and a hunt. One parametrised test rather than a copy per backend,
+    because the check itself lives in the dispatch rather than in each builder.
     """
     missing = tmp_path / "does_not_exist.model"
-    with pytest.raises(FileNotFoundError, match=f"MACE checkpoint not found: {missing}"):
-        MlipCalculator(task_name="mace_off", model_name="x", model_path=str(missing))
+    with pytest.raises(FileNotFoundError, match=f"{task} checkpoint not found: {missing}"):
+        MlipCalculator(task_name=task, model_name="x", model_path=str(missing))
 
 
 def test_the_legacy_alias_without_a_checkpoint_says_what_to_write_instead(monkeypatch):
@@ -186,14 +197,6 @@ def test_build_fairchem_loads_a_local_checkpoint_through_the_path_api(monkeypatc
     assert calc.calculator == "FAIRCHEM_CALC"
 
 
-def test_build_fairchem_missing_checkpoint_raises(monkeypatch, tmp_path):
-    """Named a checkpoint that is not there — say so, rather than fail inside torch.load."""
-    _install_fake_fairchem(monkeypatch)
-    _install_fake_load_predict_unit(monkeypatch)
-    with pytest.raises(FileNotFoundError, match="FAIRChem checkpoint not found"):
-        MlipCalculator(task_name="omol", model_path=str(tmp_path / "absent.pt"))
-
-
 def test_build_fairchem_routes_through_predictor(monkeypatch):
     """The builder loads the checkpoint then constructs a ``FAIRChemCalculator``."""
     get_predict_unit, fairchem_calc = _install_fake_fairchem(monkeypatch)
@@ -224,27 +227,67 @@ def test_build_fairchem_defaults_model_name(monkeypatch):
 
 
 def _install_fake_chgnet(monkeypatch) -> tuple[MagicMock, MagicMock]:
-    """Install a fake ``chgnet.model`` (canonical import); return ``(loader, calc)``."""
-    loader = MagicMock(return_value="CHGNET_MODEL")
+    """Install a fake ``chgnet.model`` (canonical import); return ``(CHGNet cls, calc)``.
+
+    ``load`` and ``from_file`` accept only what the real classmethods accept — ``load``
+    is keyword-only with a ``model_name`` — so a builder calling either with a stray
+    positional fails here the way it fails in production. The old bare ``MagicMock``
+    accepted anything, which is how ``CHGNet.load(path)`` — a ``TypeError`` against the
+    real keyword-only signature — sat pinned as the checkpoint path for two releases.
+    """
+
+    def _load(*, model_name: str = "0.3.0", **_kwargs: object) -> str:
+        return "CHGNET_MODEL"
+
+    def _from_file(path: str, **_kwargs: object) -> str:
+        return f"CHGNET_FROM_FILE:{path}"
+
     chgnet_cls = MagicMock()
-    chgnet_cls.load = loader
+    chgnet_cls.load = MagicMock(side_effect=_load)
+    chgnet_cls.from_file = MagicMock(side_effect=_from_file)
     calc_class = MagicMock(return_value="CHGNET_CALC")
     model_mod = _fake_module("chgnet.model", CHGNet=chgnet_cls, CHGNetCalculator=calc_class)
     monkeypatch.setitem(sys.modules, "chgnet", _fake_module("chgnet", model=model_mod))
     monkeypatch.setitem(sys.modules, "chgnet.model", model_mod)
-    return loader, calc_class
+    return chgnet_cls, calc_class
 
 
-def test_build_chgnet_uses_default_when_no_model_path(monkeypatch):
-    loader, calc_class = _install_fake_chgnet(monkeypatch)
-    calc = MlipCalculator(task_name="chgnet", model_name="ignored", device="cpu")
-    loader.assert_called_once_with()
+def test_build_chgnet_uses_the_released_default_when_nothing_is_named(monkeypatch):
+    chgnet_cls, calc_class = _install_fake_chgnet(monkeypatch)
+    calc = MlipCalculator(task_name="chgnet", device="cpu")
+    chgnet_cls.load.assert_called_once_with()
+    chgnet_cls.from_file.assert_not_called()
     calc_class.assert_called_once_with(model="CHGNET_MODEL", use_device="cpu")
     assert calc.calculator == "CHGNET_CALC"
 
 
+def test_build_chgnet_passes_a_release_name_through(monkeypatch):
+    """`model_name` is a CHGNet release for keyword-only `load` — the knob the old
+    kwargs builder silently dropped into its catch-all, which the spec makes impossible."""
+    chgnet_cls, _calc_class = _install_fake_chgnet(monkeypatch)
+    MlipCalculator(task_name="chgnet", model_name="0.3.0", device="cpu")
+    chgnet_cls.load.assert_called_once_with(model_name="0.3.0")
+    chgnet_cls.from_file.assert_not_called()
+
+
+def test_a_chgnet_checkpoint_goes_through_from_file(monkeypatch, tmp_path: Path):
+    """A local checkpoint is ``CHGNet.from_file``'s job — ``load`` takes release names.
+
+    ``CHGNet.load`` is keyword-only (``*, model_name="0.3.0"``) and resolves names, never
+    paths; ``from_file`` reads the ``{"model": as_dict()}`` file the training driver
+    saves. This is what closes the train→run round trip for a fine-tuned CHGNet.
+    """
+    chgnet_cls, calc_class = _install_fake_chgnet(monkeypatch)
+    model_file = tmp_path / "finetuned.pth.tar"
+    model_file.touch()
+    MlipCalculator(task_name="chgnet", device="cpu", model_path=str(model_file))
+    chgnet_cls.from_file.assert_called_once_with(str(model_file))
+    chgnet_cls.load.assert_not_called()
+    calc_class.assert_called_once_with(model=f"CHGNET_FROM_FILE:{model_file}", use_device="cpu")
+
+
 # ---------------------------------------------------------------------------
-# SevenNet — task_name selects it, model_name is the checkpoint
+# SevenNet — task_name selects it, the weights come from name or path
 # ---------------------------------------------------------------------------
 
 
@@ -261,6 +304,31 @@ def test_build_sevenn_constructs_calculator(monkeypatch):
     calc = MlipCalculator(task_name="sevenn", model_name="7net-0", device="cpu")
     factory.assert_called_once_with(model="7net-0", device="cpu")
     assert calc.calculator == "SEVENN_CALC"
+
+
+def test_a_sevenn_checkpoint_reaches_sevenns_own_loader(monkeypatch, tmp_path: Path):
+    """``model_path`` is honoured with SevenNet's library, like every builder's.
+
+    ``SevenNetCalculator``'s ``model`` is typed ``str | Path`` — "or path to the checkpoint"
+    — and its resolution checks the filesystem before trying release names. Dropping the
+    option instead ran the *named release* against a config that pinned a file, silently:
+    the fingerprint had digested the checkpoint, so the run even looked pinned to it.
+    """
+    factory = _install_fake_sevenn(monkeypatch)
+    model_file = tmp_path / "finetuned.pth"
+    model_file.touch()
+    MlipCalculator(
+        task_name="sevenn", model_name="7net-0", device="cuda", model_path=str(model_file)
+    )
+    factory.assert_called_once_with(model=model_file, device="cuda")
+
+
+def test_build_sevenn_falls_back_to_the_librarys_own_default(monkeypatch):
+    """Neither name nor path: SevenNet's own default release loads — the library owns its
+    default, exactly as FAIRChem's builder owns `uma-s-1p2`."""
+    factory = _install_fake_sevenn(monkeypatch)
+    MlipCalculator(task_name="sevenn", device="cpu")
+    factory.assert_called_once_with(device="cpu")
 
 
 # ---------------------------------------------------------------------------
@@ -298,11 +366,113 @@ def test_build_orb_constructs_real_orb_calculator(monkeypatch):
     assert calc.calculator == "ORB_CALC"
 
 
+def test_an_unset_orb_model_name_runs_the_default_loader(monkeypatch, tmp_path: Path):
+    """``task_name: orb`` alone runs a model, as every other library's builder does.
+
+    The ``model_name`` contract is that unset means the library's own default. Every other
+    builder honoured it while ORB's asked ``pretrained`` for a loader named ``""`` and
+    reported "unknown ORB model ''" — inside the job, after the step was scheduled. A
+    checkpoint from an ``mlip-train`` step is the same case: it carries weights, not an
+    architecture, and the run that produced it never had to name one either.
+    """
+    loader, calc_class, orbff = _install_fake_orb(monkeypatch)
+    MlipCalculator(task_name="orb", device="cpu")
+    loader.assert_called_once_with(device="cpu")
+    calc_class.assert_called_once_with(orbff, device="cpu")
+
+    loader.reset_mock()
+    model_file = tmp_path / "finetuned.ckpt"
+    model_file.touch()
+    MlipCalculator(task_name="orb", device="cpu", model_path=str(model_file))
+    loader.assert_called_once_with(weights_path=str(model_file), device="cpu")
+
+
+_FAKE_LIBRARIES = {
+    "mace": _install_fake_mace,
+    "fairchem": _install_fake_fairchem,
+    "chgnet": _install_fake_chgnet,
+    "sevenn": _install_fake_sevenn,
+    "orb_models": _install_fake_orb,
+}
+"""One fake per library the registry knows, keyed by the module the provisioner probes."""
+
+
+@pytest.mark.parametrize("task_name", sorted(registered_backends()))
+def test_every_backend_builds_a_calculator_with_model_name_unset(monkeypatch, task_name: str):
+    """Unset ``model_name`` means the library's own default, for every registered backend.
+
+    The contract is stated on the options model and in the docs table, and it was held by
+    hand: one builder asked its library for a loader named ``""`` and reported an unknown
+    model — inside the job, after the step was scheduled. Held here over the registry
+    rather than per backend, a backend added later is covered by existing, and a library
+    with no fake in the table above fails loudly instead of going quietly untested.
+
+    The one task that names no library default — the legacy ``custom_mace`` alias, whose
+    meaning is "your own checkpoint" — keeps the other half of the contract: a
+    :class:`ConfigError` before the library is touched, naming ``model_path`` as the
+    knob to write. Anything else escaping a builder is the failure this test refuses.
+    """
+    library = backend_spec(task_name).library.import_name
+    _FAKE_LIBRARIES[library](monkeypatch)
+    try:
+        calc = MlipCalculator(task_name=task_name, device="cpu")
+    except ConfigError as e:
+        assert "model_path" in str(e), f"{task_name}: a refusal that does not name the fix"
+    else:
+        assert calc.calculator is not None
+
+
 def test_build_orb_unknown_loader_raises(monkeypatch):
-    """A model that isn't a loader in orb_models.forcefield.pretrained errors."""
+    """A model that isn't a loader in orb_models.forcefield.pretrained is a config error.
+
+    ``ConfigError`` rather than ``ValueError``: the name came from the YAML, and the
+    exit-code contract every config mistake honours must hold here too — bare, it
+    reached the ExtOpt server as "crashed during startup" and the CLI as a traceback.
+    """
     _install_fake_orb(monkeypatch)
-    with pytest.raises(ValueError, match="unknown ORB model"):
+    with pytest.raises(ConfigError, match="unknown ORB model"):
         MlipCalculator(task_name="orb", model_name="orb_not_a_loader", device="cpu")
+
+
+def test_an_orb_checkpoint_reaches_the_named_loaders_weights_path(monkeypatch, tmp_path: Path):
+    """``model_path`` is honoured with ORB's library, like every builder's.
+
+    The pretrained loaders take ``weights_path`` (defaulting to the release URL) and accept
+    a local file. ``model_name`` still names the loader: a checkpoint carries weights, not
+    an architecture, so the loader that built it is named alongside it — the same doctrine
+    as naming the library that trained it.
+    """
+    loader, calc_class, orbff = _install_fake_orb(monkeypatch)
+    model_file = tmp_path / "finetuned.ckpt"
+    model_file.touch()
+    MlipCalculator(
+        task_name="orb",
+        model_name="orb_v3_conservative_inf_omat",
+        device="cpu",
+        model_path=str(model_file),
+    )
+    loader.assert_called_once_with(weights_path=str(model_file), device="cpu")
+    calc_class.assert_called_once_with(orbff, device="cpu")
+
+
+def test_an_orb_loader_without_weights_path_is_a_version_message(monkeypatch, tmp_path: Path):
+    """An older loader signature becomes a ConfigError naming the limitation.
+
+    orb-models grew ``weights_path`` over time; against an older install the keyword raises
+    ``TypeError`` from deep inside the loader, naming neither the step nor the option. The
+    builder turns that into the version limitation it is, with the two ways out.
+    """
+    loader, _calc_class, _orbff = _install_fake_orb(monkeypatch)
+    loader.side_effect = TypeError("unexpected keyword argument 'weights_path'")
+    model_file = tmp_path / "finetuned.ckpt"
+    model_file.touch()
+    with pytest.raises(ConfigError, match="takes no local"):
+        MlipCalculator(
+            task_name="orb",
+            model_name="orb_v3_conservative_inf_omat",
+            device="cpu",
+            model_path=str(model_file),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -338,6 +508,85 @@ def test_single_point_returns_energy_and_negative_gradient(monkeypatch):
     assert atoms.calc is calc.calculator
 
 
+class _StubAtomsWithInfo:
+    """The duck-typed stub above, plus the ``info`` dict the species stamping writes."""
+
+    def __init__(self, info: dict | None = None):
+        self.calc = None
+        self.info: dict = dict(info or {})
+
+    def get_potential_energy(self):
+        return -1.0
+
+    def get_forces(self):
+        return np.zeros((1, 3))
+
+
+def test_single_point_stamps_charge_and_spin_where_the_libraries_read_them(monkeypatch):
+    """Constructor charge/multiplicity land in ``atoms.info`` — the per-geometry channel.
+
+    Both shipped charge-aware backends read ``atoms.info["charge"]`` / ``["spin"]``
+    (FAIRChem's a2g args name exactly those keys; MACE's calculator maps them onto its
+    ``total_charge``/``total_spin`` inputs) and silently assume a neutral singlet when
+    they are absent. Before the wrapper stamped them, the constructor arguments
+    selected nothing on the direct path — an anion scored as a neutral molecule with
+    nothing said — while the ExtOpt adapter stamped the very same keys from ORCA's
+    per-call values (its own test sits in ``test_engines_mlip.py``).
+    """
+    _install_fake_mace(monkeypatch)
+    calc = MlipCalculator(task_name="mace_omol", device="cpu", charge=-1, multiplicity=2)
+
+    atoms = _StubAtomsWithInfo()
+    calc.single_point(atoms)
+
+    assert atoms.info == {"charge": -1, "spin": 2}
+
+
+def test_a_value_the_template_set_on_the_atoms_itself_wins(monkeypatch):
+    """``setdefault``: ``atoms.info`` is per-structure state, more specific than the step's.
+
+    A template that sets its own per-geometry charge (a scan over charge states, say)
+    must not have it overwritten by the step-wide constructor value.
+    """
+    _install_fake_mace(monkeypatch)
+    calc = MlipCalculator(task_name="mace_omol", device="cpu", charge=-1, multiplicity=2)
+
+    atoms = _StubAtomsWithInfo({"charge": 0})
+    calc.single_point(atoms)
+
+    assert atoms.info == {"charge": 0, "spin": 2}
+
+
+def test_unset_charge_and_multiplicity_stamp_nothing(monkeypatch):
+    """The defaults invent no keys — absent stays absent, and the library's own
+    neutral-singlet assumption applies exactly as it would to a bare calculator."""
+    calc = _calc_with_fake(monkeypatch)
+
+    atoms = _StubAtomsWithInfo()
+    calc.single_point(atoms)
+
+    assert atoms.info == {}
+
+
+def test_optimize_stamps_the_same_keys(monkeypatch):
+    """The optimisation path shares the stamping — LBFGS calls the calculator per step,
+    and every one of those calls reads the same ``atoms.info``."""
+    _install_fake_mace(monkeypatch)
+    calc = MlipCalculator(task_name="mace_omol", device="cpu", charge=1, multiplicity=1)
+
+    lbfgs_instance = MagicMock()
+    monkeypatch.setitem(
+        sys.modules,
+        "ase.optimize",
+        _fake_module("ase.optimize", LBFGS=MagicMock(return_value=lbfgs_instance)),
+    )
+    atoms = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
+    calc.optimize(atoms, fmax=0.05, steps=10)
+
+    assert atoms.info["charge"] == 1
+    assert atoms.info["spin"] == 1
+
+
 def test_optimize_invokes_lbfgs_with_fmax_and_steps(monkeypatch):
     """``optimize`` runs ``ase.optimize.LBFGS(...).run(fmax=…, steps=…)``."""
     calc = _calc_with_fake(monkeypatch)
@@ -354,3 +603,36 @@ def test_optimize_invokes_lbfgs_with_fmax_and_steps(monkeypatch):
     lbfgs_instance.run.assert_called_once_with(fmax=0.05, steps=10)
     assert result is atoms
     assert atoms.calc is calc.calculator
+
+
+def test_optimize_keeps_the_optimisers_verdict(monkeypatch, caplog):
+    """An optimiser that ran out of steps says so; the helper no longer discards it.
+
+    ``LBFGS.run`` returns whether ``fmax`` was reached within ``steps``. With that boolean
+    dropped, an exhausted optimisation was indistinguishable from a converged one: the
+    template wrote the last geometry's energy, the parser read no verdict, and the structure
+    ranked as a survivor. The verdict now lands on the atoms and on the wrapper, so a
+    template assigns ``converged = mlip.last_converged`` and the output contract carries it.
+    """
+    calc = _calc_with_fake(monkeypatch)
+    lbfgs_instance = MagicMock()
+    lbfgs_instance.run.return_value = False
+    monkeypatch.setitem(
+        sys.modules,
+        "ase.optimize",
+        _fake_module("ase.optimize", LBFGS=MagicMock(return_value=lbfgs_instance)),
+    )
+    atoms = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
+    assert calc.last_converged is None, "no verdict before the first optimisation"
+
+    with caplog.at_level("WARNING", logger="chemrefine.engines.mlip.calculator"):
+        calc.optimize(atoms, fmax=0.05, steps=10)
+
+    assert calc.last_converged is False
+    assert atoms.info["converged"] is False
+    assert "10 steps" in caplog.text and "0.05" in caplog.text
+
+    lbfgs_instance.run.return_value = True
+    calc.optimize(atoms, fmax=0.05, steps=10)
+    assert calc.last_converged is True
+    assert atoms.info["converged"] is True

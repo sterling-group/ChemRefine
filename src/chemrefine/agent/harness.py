@@ -1,0 +1,164 @@
+"""Assemble the PydanticAI agent: shared tools, gated mutations, packaged knowledge.
+
+The harness registers :data:`chemrefine.agent_tools.TOOLS` verbatim — the same
+functions the MCP server serves, schemas derived from the same signatures — and wraps
+exactly the :data:`~chemrefine.agent_tools.MUTATING_TOOLS` in a confirmation callback:
+where an MCP client's own approval dialog gates a mutating call, the embedded chat has
+no client in front of it, so the gate lives here. A declined call returns a structured
+``{"denied": …}`` result the model can read and continue from — a refusal is an answer,
+not a crash — which also bounds what a prompt-injected instruction can do: nothing
+mutating happens without the human's yes.
+
+Instructions = the packaged agent guide (:func:`chemrefine.agent_tools.guide_text`,
+identical bytes to the MCP resource) plus the session context (which config file, if
+any). The model is a parameter, never constructed here — that is what lets the tests
+run the entire harness against ``TestModel``/``FunctionModel`` offline.
+
+PydanticAI is imported at module scope, the way :mod:`chemrefine.mcp_server` imports its
+SDK: :mod:`.chat` imports this module, and the CLI imports :mod:`.chat` inside ``except
+ImportError`` to turn a missing ``chemrefine[agent]`` into an install hint. Deferring the
+import into the builders left that guard unreachable and ``chemrefine agent`` raising a
+traceback instead. :mod:`.providers` deliberately does the opposite — it imports no SDK
+at runtime, so ``chemrefine agent --check`` still runs before the extra is installed.
+"""
+
+from __future__ import annotations
+
+import functools
+import json
+from collections.abc import Callable
+from typing import Any
+
+from pydantic_ai import Agent, DeferredToolRequests
+from pydantic_ai.models import Model
+from pydantic_ai.settings import ModelSettings
+
+from chemrefine import agent_tools
+from chemrefine.agent.providers import chat_timeout_seconds
+
+ConfirmFn = Callable[[str, str], bool]
+"""``(tool_name, rendered_args) -> allow?`` — the chat asks the human, tests script it."""
+
+
+def _gated(fn: Callable[..., Any], confirm: ConfirmFn) -> Callable[..., Any]:
+    """Wrap a mutating tool so nothing happens before the human says yes.
+
+    ``functools.wraps`` keeps the name, docstring and (via ``__wrapped__``) the
+    signature, so the model sees the identical tool schema either way.
+    """
+
+    @functools.wraps(fn)
+    def gate(*args: Any, **kwargs: Any) -> Any:
+        rendered = json.dumps(kwargs) if kwargs else json.dumps(list(args))
+        if not confirm(fn.__name__, rendered):
+            return {"denied": f"the user declined {fn.__name__}; ask what they would like instead"}
+        return fn(*args, **kwargs)
+
+    return gate
+
+
+TERMINAL_GATE = (
+    "You are running inside `chemrefine agent`, a terminal chat. Mutating tools ask the "
+    "user for confirmation before executing; a result with a `denied` key means they "
+    "said no — adjust course, never retry the same call unprompted. Show the YAML and "
+    "wait for a go-ahead before start_run."
+)
+"""What the terminal harness tells the model — and what it will actually see.
+
+The shape is real: :func:`_gated` returns ``{"denied": …}``, so "a result with a `denied`
+key" is a description of the payload rather than a figure of speech."""
+
+WEB_GATE = (
+    "You are running inside the ChemRefine workflow builder's chat panel, beside a live "
+    "YAML editor the user is watching. Mutating tools pause the run and ask the user to "
+    "allow or deny each call; a denial comes back as a tool result saying the call was "
+    "denied — adjust course, never retry the same call unprompted. Show the YAML and "
+    "wait for a go-ahead before start_run."
+)
+"""The same contract for the web harness, whose denial is the SDK's, not ours.
+
+``requires_approval`` denials arrive as PydanticAI's ``ToolDenied``, whose default message
+is "The tool call was denied." — no ``denied`` key anywhere. Telling the web model to look
+for the terminal's payload named a marker it could never see, so the "never retry"
+instruction had nothing to key on."""
+
+
+def _turn_settings() -> ModelSettings:
+    """Per-request settings both harnesses share — currently just how long a turn may take.
+
+    Applied here rather than at the two call sites so the terminal REPL and the web panel
+    cannot drift apart, and as a request setting rather than a bespoke HTTP client because
+    the web harness builds an agent per turn: a client per turn would leak connections for
+    the lifetime of the server.
+    """
+    return ModelSettings(timeout=chat_timeout_seconds())
+
+
+def instructions(config_path: str | None, *, gate: str) -> str:
+    """The system prompt: the packaged guide, the gate contract, the session context.
+
+    ``gate`` is required rather than defaulted because there is no safe default: the two
+    harnesses enforce the same guarantee through different machinery and hand the model
+    different evidence of a refusal, and a default would silently give one of them the
+    other's contract — which is exactly the bug this parameter exists to prevent.
+    """
+    parts = [agent_tools.guide_text(), gate]
+    if config_path is not None:
+        parts.append(
+            f"The user's config file for this session: {config_path} — summarize_config "
+            "and run_status are the right first calls."
+        )
+    return "\n\n".join(parts)
+
+
+def build_agent(
+    model: Model | str,
+    *,
+    confirm: ConfirmFn,
+    config_path: str | None = None,
+) -> Agent[None, str]:
+    """The assembled agent — every shared tool registered, mutations behind ``confirm``."""
+    agent: Agent[None, str] = Agent(
+        model,
+        instructions=instructions(config_path, gate=TERMINAL_GATE),
+        model_settings=_turn_settings(),
+    )
+    for tool in agent_tools.TOOLS:
+        if tool.__name__ in agent_tools.MUTATING_TOOLS:
+            agent.tool_plain(_gated(tool, confirm))
+        else:
+            agent.tool_plain(tool)
+    return agent
+
+
+def build_web_agent(
+    model: Model | str,
+    *,
+    config_path: str | None = None,
+) -> Agent[None, Any]:
+    """The deferred-approval variant, for harnesses that cannot block on a prompt.
+
+    The terminal chat's gate is a blocking ``confirm`` — impossible in the middle of an
+    HTTP request. Here the mutating tools are registered with
+    ``requires_approval=True`` instead: a gated call *suspends* the run, the result
+    comes back as a ``DeferredToolRequests`` naming each call and its arguments (the
+    GUI renders allow/deny cards), and the next request resumes the same run with a
+    ``DeferredToolResults`` verdict — the tool executes only on an explicit yes,
+    exactly the guarantee the terminal gate gives, enforced by the SDK rather than a
+    wrapper.
+
+    Same guarantee, different evidence — which is why the instructions carry
+    :data:`WEB_GATE` rather than :data:`TERMINAL_GATE`. A denial here is the SDK's
+    ``ToolDenied``, not the terminal wrapper's ``{"denied": …}``, and the model is told
+    about the one it will actually receive.
+    """
+    agent: Agent[None, Any] = Agent(
+        model,
+        instructions=instructions(config_path, gate=WEB_GATE),
+        output_type=[str, DeferredToolRequests],
+        model_settings=_turn_settings(),
+    )
+    for tool in agent_tools.TOOLS:
+        register = agent.tool_plain(requires_approval=tool.__name__ in agent_tools.MUTATING_TOOLS)
+        register(tool)
+    return agent

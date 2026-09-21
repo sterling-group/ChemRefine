@@ -11,8 +11,8 @@ stated price — the rule for a new engine is "use :func:`read_xyz_frames` /
 
 * the ExtOpt wrapper's plain-format reader
   (``chemrefine.engines.orca.extopt.protocol._read_xyz``) runs in a fresh process
-  once per ORCA optimizer step, and importing this module costs ~0.5 s of
-  ``ase.io`` before it reads a thing;
+  once per ORCA optimizer step, and :func:`read_xyz_frames` imports ~0.5 s of
+  ``ase.io`` on its first call;
 * the ORCA ensemble walkers (:mod:`chemrefine.engines.orca.output.ensembles`)
   parse per-format energy headers and skip corrupt frames mid-file — neither of
   which ASE's reader can express.
@@ -28,9 +28,9 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 from ase import Atoms
-from ase.io import read as ase_read
 from numpy.typing import NDArray
 
+from chemrefine.errors import ConfigError
 from chemrefine.quantities import (
     DEFAULT_TEMPERATURE_K,
     HARTREE_TO_KCALMOL,
@@ -45,6 +45,29 @@ if TYPE_CHECKING:
 _CSV_PRECISION = 8
 _NATURAL_PART = re.compile(r"(\d+)")
 
+STEPS_CSV_COLUMNS = (
+    "Step",
+    "Conformer",
+    "Energy (Hartree)",
+    "Energy (kcal/mol)",
+    "dE (kcal/mol)",
+    "Boltzmann Weight",
+    "% Total",
+    "% Cumulative",
+    "Energy type",
+)
+"""The columns of ``steps.csv``, in order — the report's schema, addressable.
+
+Public and load-bearing rather than a line of prose in a docstring, because three things
+outside this function depend on these exact strings: :func:`chemrefine.agent_tools.
+get_results` hands whole rows to agents, the GUI's results table names them in
+``index.html``, and whatever a user reads the file with names them too.
+
+:func:`save_step_csv` selects by this tuple before writing, so the frame it assembled and
+the schema it promises cannot drift apart; ``tests/test_gui_assets.py`` compares the
+page's hardcoded names against it, so the page cannot drift from either. Renaming a column
+is still allowed — it just now has to be done here, where every reader is looking."""
+
 logger = logging.getLogger(__name__)
 
 
@@ -57,8 +80,38 @@ def natural_key(name: str | Path) -> list[object]:
     """Return a list suitable for ``sorted(..., key=natural_key)`` natural ordering.
 
     ``"step10.out"`` sorts after ``"step2.out"`` instead of before it.
+
+    ``isdecimal``, not ``isdigit``, for the reason ``StepConfig.matches`` uses it: the
+    two disagree on the Unicode ``No`` category — ``"²".isdigit()`` is ``True`` and
+    ``int("²")`` raises — and this predicate exists only to guard that ``int``. A seed
+    directory holding a file like ``v2²3.xyz`` therefore ended the run in a bare
+    ``ValueError`` from the sort, outside the exit-code contract. Ordering is
+    unchanged: every chunk the ``\\d+`` capture isolates is decimal already.
     """
-    return [int(p) if p.isdigit() else p.lower() for p in _NATURAL_PART.split(str(name))]
+    return [int(p) if p.isdecimal() else p.lower() for p in _NATURAL_PART.split(str(name))]
+
+
+# ---------------------------------------------------------------------------
+# Text
+# ---------------------------------------------------------------------------
+
+
+def read_utf8(path: Path, *, what: str) -> str:
+    """Read a user-authored text file as UTF-8, or refuse it as a :class:`ConfigError`.
+
+    The one reader for the files a person writes and ChemRefine parses — the config, the
+    step templates, the SLURM header. ``UnicodeDecodeError`` is a ``ValueError``, not an
+    ``OSError``, so every ``except OSError`` around a ``read_text`` let a latin-1 file
+    (an ``Å`` in a comment, saved by an editor on a cluster) escape as a traceback: the
+    loader exited 1 where every other malformed file exits 2, the validator raised past
+    its never-raises contract, and the GUI answered a logged 500. ``what`` names the kind
+    of file so the refusal reads as the mistake it is. ``OSError`` is left to the caller,
+    which already has its own wording for a file that cannot be opened.
+    """
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as e:
+        raise ConfigError(f"{what} {path} is not UTF-8 text ({e})") from e
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +133,42 @@ def _xyz_frame_lines(atoms: Atoms, comment: str) -> list[str]:
     for symbol, (x, y, z) in zip(atoms.get_chemical_symbols(), atoms.get_positions(), strict=True):
         lines.append(f"{symbol:2s} {x:.6f} {y:.6f} {z:.6f}")
     return lines
+
+
+def extended_xyz_text(atoms: Atoms, *, displacements: NDArray[np.float64] | None = None) -> str:
+    """One structure as extended-XYZ text, optionally carrying a per-atom displacement.
+
+    Extended XYZ rather than the plain frame above, because it is the one format that
+    carries all three things a viewer needs and does it in columns anything can read: the
+    geometry, the cell as ``Lattice="…"`` when the structure has one, and — with
+    ``displacements`` — three more columns per atom. ASE writes it; the GUI's viewer reads
+    the same file for a molecule, for a periodic cell, and for an animated normal mode,
+    which is why this is a text format and not a JSON payload of our own design.
+
+    ``displacements`` must be one 3-vector per atom, in the same order — a normal mode's
+    column out of the ``(n_atoms, 3, n_modes)`` tensor, typically.
+    """
+    import io as _io
+
+    from ase.io import write
+
+    payload = atoms
+    columns = ["symbols", "positions"]
+    if displacements is not None:
+        vectors = np.asarray(displacements, dtype=float)
+        if vectors.shape != (len(atoms), 3):
+            raise ValueError(
+                f"displacements must be one 3-vector per atom: got {vectors.shape}, "
+                f"expected {(len(atoms), 3)}"
+            )
+        # A copy, so attaching the array for a render cannot mutate a caller's structure —
+        # these come out of the step cache, which other readers share.
+        payload = atoms.copy()
+        payload.new_array("displacement", vectors)
+        columns = [*columns, "displacement"]
+    buffer = _io.StringIO()
+    write(buffer, payload, format="extxyz", columns=columns)
+    return buffer.getvalue()
 
 
 def write_single_xyz(geometry: Atoms | CoordList, path: str | Path, *, comment: str = "") -> Path:
@@ -200,7 +289,14 @@ def read_xyz_frames(path: str | Path) -> list[Atoms]:
     int(): '\\n'``) on the trailing blank lines that editors and ORCA routinely
     leave on real files. ``index=":"`` returns all frames; a single-frame file
     yields a one-element list, so callers never special-case frame count.
+
+    ``ase.io`` is imported here, on the first read, rather than with the module: it costs
+    about half a second, and importing this module is how every process in the package
+    starts — the CLI answering ``--help``, and the ExtOpt wrapper ORCA spawns once per
+    optimizer step, which never reads a frame through here.
     """
+    from ase.io import read as ase_read
+
     return cast("list[Atoms]", ase_read(str(path), index=":", format="extxyz"))
 
 
@@ -225,6 +321,35 @@ def _conformer_rows(mol: Any) -> CoordList:
     return rows
 
 
+def embed_smiles(smiles: str, *, max_attempts: int = 10, random_seed: int = 42) -> CoordList:
+    """One SMILES → embedded, UFF-relaxed 3D coordinate rows; raises on failure.
+
+    The single-molecule seam under :func:`smiles_to_xyz`'s CSV loop, public because the
+    two callers want opposite failure behaviour: a CSV sweep logs a bad row and keeps
+    going, while a caller embedding one *explicit* SMILES (the agent's structure-building
+    tool) wants the :class:`ValueError` raised at the molecule it names.
+
+    ``random_seed`` seeds RDKit's conformer embedding (which is otherwise
+    non-deterministic), so repeated calls regenerate identical 3D geometries.
+    """
+    from rdkit import Chem
+
+    # Imported from the modules that define them rather than from ``rdkit.Chem.AllChem``,
+    # which collects them with ``import *`` — a star import re-exports nothing, so reading
+    # them off ``AllChem`` means reaching for names its stubs do not carry.
+    from rdkit.Chem.rdDistGeom import EmbedMolecule
+    from rdkit.Chem.rdForceFieldHelpers import UFFOptimizeMolecule
+
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        raise ValueError(f"invalid SMILES: {smiles}")
+    mol = Chem.AddHs(mol)
+    if EmbedMolecule(mol, maxAttempts=max_attempts, randomSeed=random_seed) != 0:
+        raise ValueError(f"failed 3D embedding for SMILES: {smiles}")
+    UFFOptimizeMolecule(mol)
+    return _conformer_rows(mol)
+
+
 def smiles_to_xyz(
     csv_file: str | Path,
     output_dir: str | Path,
@@ -237,19 +362,9 @@ def smiles_to_xyz(
 
     Each successful conversion writes ``output_dir/structure_{row}.xyz``.
     Invalid SMILES are logged and skipped — they do not abort the run.
-
-    ``random_seed`` seeds RDKit's conformer embedding (which is otherwise
-    non-deterministic), so repeated runs — and ``resume``, which
-    re-bootstraps the seeds — regenerate identical 3D geometries.
+    Embedding itself is :func:`embed_smiles`, per row.
     """
     import pandas as pd
-    from rdkit import Chem
-
-    # Imported from the modules that define them rather than from ``rdkit.Chem.AllChem``,
-    # which collects them with ``import *`` — a star import re-exports nothing, so reading
-    # them off ``AllChem`` means reaching for names its stubs do not carry.
-    from rdkit.Chem.rdDistGeom import EmbedMolecule
-    from rdkit.Chem.rdForceFieldHelpers import UFFOptimizeMolecule
 
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -262,20 +377,13 @@ def smiles_to_xyz(
     for idx, raw in enumerate(df[smiles_column]):
         if not isinstance(raw, str) or not raw.strip():
             continue
-        mol = Chem.MolFromSmiles(raw)
-        if mol is None:
-            logger.warning("invalid SMILES at row %d: %s", idx, raw)
+        try:
+            rows = embed_smiles(raw, max_attempts=max_attempts, random_seed=random_seed)
+        except ValueError as e:
+            logger.warning("row %d: %s", idx, e)
             continue
-        mol = Chem.AddHs(mol)
-        if EmbedMolecule(mol, maxAttempts=max_attempts, randomSeed=random_seed) != 0:
-            logger.warning("failed 3D embedding for SMILES: %s", raw)
-            continue
-        UFFOptimizeMolecule(mol)
-
         written.append(
-            write_single_xyz(
-                _conformer_rows(mol), out / f"structure_{idx}.xyz", comment=f"SMILES: {raw}"
-            )
+            write_single_xyz(rows, out / f"structure_{idx}.xyz", comment=f"SMILES: {raw}")
         )
     return written
 
@@ -312,8 +420,8 @@ def save_step_csv(
 ) -> Path:
     """Append a per-structure summary row for ``step_number`` to a cumulative CSV.
 
-    Columns: ``Step, Conformer, Energy (Hartree), Energy (kcal/mol),
-    dE (kcal/mol), Boltzmann Weight, % Total, % Cumulative, Energy type``.
+    Columns are :data:`STEPS_CSV_COLUMNS`, in that order — selected by it just before the
+    write, so this function cannot quietly emit a shape the constant does not describe.
     Sorted by energy ascending. Step 1 writes the header; later steps
     append without a header.
 
@@ -372,6 +480,11 @@ def save_step_csv(
     )
     # Last column, so the leading header columns stay stable for existing tooling.
     df["Energy type"] = energy_type
+
+    # Order and completeness in one line: a column this function forgot to build raises
+    # KeyError here rather than shipping a report missing it, and the write order is the
+    # documented one by construction instead of by the order the frame happened to grow.
+    df = df[list(STEPS_CSV_COLUMNS)]
 
     # The header follows the *file*, not the step number. Keyed off `step_number == 1`, a
     # step 1 that summarises nothing (every energy None — which `on_failure: best` produces

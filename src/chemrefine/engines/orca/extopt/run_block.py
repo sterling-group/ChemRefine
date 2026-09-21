@@ -1,7 +1,7 @@
 """Bash that orchestrates the ExtOpt HTTP server alongside ORCA in one SLURM job.
 
-The two engines that drive ORCA through an external optimizer (MLIP and
-PySCF) emit a SLURM ``run_block`` that spins up the shared
+Every engine that drives ORCA through an external optimizer emits a SLURM
+``run_block`` that spins up the shared
 :mod:`chemrefine.engines._backend_server.server`, polls ``/healthz`` until it is
 ready, runs ORCA, and tears the server down on exit. This module owns
 that bash so neither engine ends up importing helpers from the other.
@@ -11,10 +11,30 @@ from __future__ import annotations
 
 import shlex
 
-from chemrefine.engines._backend_server.base import DEFAULT_BIND_HOST, SERVER_URL_FILENAME
+from chemrefine.engines._backend_server.base import (
+    DEFAULT_BIND_HOST,
+    SERVER_LOADING_FILENAME,
+    SERVER_URL_FILENAME,
+)
 from chemrefine.state import RunBlock
 
 _SERVER_READY_TIMEOUT_SECONDS: int = 120
+"""Seconds the server may spend doing nothing observable before the job gives it up.
+
+Counted only while the server is not loading its backend (:data:`_SERVER_LOAD_TIMEOUT_SECONDS`
+bounds that separately): the interpreter starting, and the gap between the URL sidecar
+appearing and ``/healthz`` answering."""
+
+_SERVER_LOAD_TIMEOUT_SECONDS: int = 3600
+"""Seconds the server may spend loading its backend — the model load, and on a cold cache
+its download — before the job gives it up.
+
+Its own ceiling, and a long one, because the load is the one startup phase whose length
+is not the server's to control: a foundation checkpoint is a gigabyte, and a compute
+node's link to the model hub is whatever the site provides. The readiness budget above
+used to cover it, and a first run on a cold cache died as "did not become ready" at two
+minutes for a download that would have finished. A stuck download still ends here rather
+than at the partition's wall-time."""
 
 
 def server_command(
@@ -45,19 +65,30 @@ def server_command(
     return " ".join(parts)
 
 
-def _build_extopt_run_block(
+def build_extopt_run_block(
     *,
     server_cmd: str,
     orca_command: str,
     pal: int,
+    interpreter: str = "python",
 ) -> RunBlock:
     """Return the :class:`~chemrefine.engines.api.RunBlock` orchestrating the ExtOpt server + ORCA.
 
     The ``body``:
 
     * Binds the server on a kernel-assigned port (sidecar URL file).
-    * Loops up to ``_SERVER_READY_TIMEOUT_SECONDS`` polling ``/healthz``,
-      exiting fast if the server process dies during startup.
+    * Polls ``/healthz`` until the server answers, exiting fast if the server process
+      dies during startup. Idle seconds count against ``_SERVER_READY_TIMEOUT_SECONDS``;
+      seconds the server reports loading its backend (the marker sidecar) count against
+      ``_SERVER_LOAD_TIMEOUT_SECONDS`` instead.
+
+    ``interpreter`` is the Python that hosts the server — the same one
+    :func:`server_command` was given — and it is what polls ``/healthz``: a stdlib
+    ``urllib`` one-liner, so the probe needs nothing the job does not already have.
+    ``curl`` used to do it, and nothing declared or checked for it; on a node image
+    without one every iteration failed with exit 127, the loop ran its full
+    ``SERVER_TIMEOUT`` and the job died with "did not become ready" — the wrong
+    diagnosis for a missing binary.
 
     The ``cleanup`` stops the server — ``kill -TERM`` + ``wait``, which gives it a chance to
     release GPU memory — and :func:`chemrefine.slurm.script._run_body_lines` interpolates it
@@ -77,18 +108,31 @@ def _build_extopt_run_block(
     :meth:`chemrefine.engines.orca.engine.OrcaEngine.orca_command` — the same string the
     plain ORCA path runs — rather than being re-interpolated here from a raw executable,
     which is what keeps the two paths' quoting from diverging.
+
+    Public, not underscored, because its one caller lives in another module:
+    :meth:`~chemrefine.engines.orca.extopt.engine.ExtOptOrcaEngine.run_block` builds
+    every ExtOpt engine's block through it — the MLIP and PySCF engines inherit that
+    method rather than calling here themselves.
     """
+    # Every expansion carries `:-`, not only the guard's: the trap is armed before the
+    # body runs under `set -u`, so a cleanup entered in that window must be nounset-proof
+    # in every reference — the rule `test_every_cleanup_survives_the_armed_trap_window`
+    # holds for all engines. Redundant inside the `-n` guard, and deliberately so: the
+    # guard keeps the *actions* from firing on nothing, the `:-` keeps the *expansion*
+    # from aborting the handler.
     cleanup = (
         'if [ -n "${SERVER_PID:-}" ]; then\n'
-        '  kill -TERM "$SERVER_PID" 2>/dev/null || true\n'
-        '  wait "$SERVER_PID" 2>/dev/null || true\n'
+        '  kill -TERM "${SERVER_PID:-}" 2>/dev/null || true\n'
+        '  wait "${SERVER_PID:-}" 2>/dev/null || true\n'
         "fi"
     )
     body = (
         "# ExtOpt server lifecycle (generated by ChemRefine MLIP/PySCF engine)\n"
         f'LOG_FILE="$OUTPUT_DIR/server_${{SLURM_JOB_ID:-$$}}.log"\n'
         f'URL_FILE="$WORK_DIR/{SERVER_URL_FILENAME}"\n'
+        f'LOADING_FILE="$WORK_DIR/{SERVER_LOADING_FILENAME}"\n'
         f"SERVER_TIMEOUT={_SERVER_READY_TIMEOUT_SECONDS}\n"
+        f"LOAD_TIMEOUT={_SERVER_LOAD_TIMEOUT_SECONDS}\n"
         # The server is the compute half of this job, and it inherits its thread count from
         # this environment at launch: exported before the `&`, so torch/MKL see the step's
         # own budget. Left uncapped they take every core on the node while the throttler
@@ -99,14 +143,18 @@ def _build_extopt_run_block(
         f"{server_cmd} &\n"
         "SERVER_PID=$!\n"
         "\n"
-        "# Wait for /healthz; bail out fast if the server crashed during startup.\n"
-        "ready=\n"
-        'for i in $(seq 1 "$SERVER_TIMEOUT"); do\n'
+        "# Wait for /healthz; bail out fast if the server crashed during startup. Seconds\n"
+        "# the server spends loading its backend (the marker file) count against their own\n"
+        "# ceiling, not the readiness budget: a model download is progress, not a hang.\n"
+        "idle=0\n"
+        "loading=0\n"
+        "while :; do\n"
         '  if [ -s "$URL_FILE" ] \\\n'
         '     && SERVER_URL=$(cat "$URL_FILE") \\\n'
-        '     && curl -fsS --max-time 2 "http://${SERVER_URL}/healthz" >/dev/null; then\n'
-        '    echo "ExtOpt server ready at $SERVER_URL after ${i}s"\n'
-        "    ready=1\n"
+        f'     && {shlex.quote(interpreter)} -c "import sys, urllib.request; '
+        'urllib.request.urlopen(sys.argv[1], timeout=2)" "http://${SERVER_URL}/healthz" '
+        ">/dev/null 2>&1; then\n"
+        '    echo "ExtOpt server ready at $SERVER_URL after $((idle + loading))s"\n'
         "    break\n"
         "  fi\n"
         '  if ! ps -p "$SERVER_PID" >/dev/null; then\n'
@@ -114,13 +162,25 @@ def _build_extopt_run_block(
         '    cat "$LOG_FILE" >&2 || true\n'
         "    exit 1\n"
         "  fi\n"
+        '  if [ -e "$LOADING_FILE" ]; then\n'
+        "    loading=$((loading + 1))\n"
+        "  else\n"
+        "    idle=$((idle + 1))\n"
+        "  fi\n"
+        '  if [ "$idle" -ge "$SERVER_TIMEOUT" ]; then\n'
+        '    echo "ExtOpt server did not become ready within ${SERVER_TIMEOUT}s; '
+        'log follows:" >&2\n'
+        '    cat "$LOG_FILE" >&2 || true\n'
+        "    exit 1\n"
+        "  fi\n"
+        '  if [ "$loading" -ge "$LOAD_TIMEOUT" ]; then\n'
+        '    echo "ExtOpt server was still loading its backend after ${LOAD_TIMEOUT}s; '
+        'log follows:" >&2\n'
+        '    cat "$LOG_FILE" >&2 || true\n'
+        "    exit 1\n"
+        "  fi\n"
         "  sleep 1\n"
         "done\n"
-        '[ -n "$ready" ] || {\n'
-        '  echo "ExtOpt server did not become ready within ${SERVER_TIMEOUT}s; log follows:" >&2\n'
-        '  cat "$LOG_FILE" >&2 || true\n'
-        "  exit 1\n"
-        "}\n"
         "\n"
         # Re-exported down to 1 for ORCA only: in ExtOpt mode ORCA is a stepper whose math
         # is done by the server, and the server keeps the threads it inherited above.

@@ -18,16 +18,14 @@ ion against the wrong species with nothing said in any log.
 
 from __future__ import annotations
 
-import shlex
 from pathlib import Path
 from typing import Any, ClassVar
 
 import numpy as np
 from ase import Atoms
-from ase.io import write as ase_write
 
-from chemrefine.engines.mlip.registry import LEGACY_MACE_TASK, MlipLibrary
-from chemrefine.engines.mlip.training import DatasetFiles, DatasetSplit, TrainingPlan
+from chemrefine.engines.mlip.registry import CalculatorSpec, MlipLibrary
+from chemrefine.engines.mlip.train.base import DatasetFiles, TrainerBase, TrainingPlan
 from chemrefine.errors import ConfigError
 from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import Structure
@@ -47,16 +45,19 @@ FAMILIES = ("mace_off", "mace_mp", "mace_omol")
 One list, used by both capabilities below, so a family cannot be runnable and not trainable by
 an oversight in one decorator."""
 
+LEGACY_MACE_TASK = "custom_mace"
+"""A back-compat alias for MACE, kept only so configs written against v1 still resolve.
+
+It is **not** a mechanism, and there is deliberately no ``custom_fairchem`` beside it. A local
+checkpoint is ``model_path``, which every library's builder honours itself — see the registry
+module's docstring. Configs naming this should say which MACE family they mean
+(:data:`FAMILIES`) instead; it is registered here on the MACE library so that saying nothing
+still works. MACE policy, so it lives in MACE's module — the shared registry houses no
+library's aliases."""
+
 
 @MACE.calculator(*FAMILIES, LEGACY_MACE_TASK)
-def _build_mace(
-    *,
-    task_name: str,
-    model_name: str = "",
-    device: str = "cuda",
-    model_path: str | Path | None = None,
-    **_: Any,
-) -> Any:
+def _build_mace(spec: CalculatorSpec) -> Any:
     """A MACE calculator: ``task_name`` is the family, the weights come from name or path.
 
     One builder for all of them, because MACE's own loaders already are one:
@@ -64,19 +65,11 @@ def _build_mace(
     its ``model in mace_off_urls or str(model).startswith("https:")`` test falls through to
     loading a local file for anything else. So a fine-tuned checkpoint needs no separate task
     key — which is why there is no ``custom_fairchem`` either, and why
-    :data:`~chemrefine.engines.mlip.registry.LEGACY_MACE_TASK` is an alias rather than a rule.
-
-    The selection is resolved **before** the library is imported, so a missing checkpoint or an
-    unusable alias is reported as the configuration mistake it is rather than as whichever
-    ``ImportError`` or ``torch.load`` traceback the backend would have raised first — neither
-    of which names the step or the option the value came from.
+    :data:`LEGACY_MACE_TASK` is an alias rather than a rule. An unusable alias — the legacy
+    task with nothing to load — is reported before the library is imported, naming the
+    families to write instead.
     """
-    weights: str | Path | None = model_name or None
-    if model_path is not None:
-        weights = Path(model_path)
-        if not weights.is_file():
-            raise FileNotFoundError(f"MACE checkpoint not found: {weights}")
-    elif task_name == LEGACY_MACE_TASK:
+    if spec.weights is None and spec.task_name == LEGACY_MACE_TASK:
         raise ConfigError(
             f"task_name={LEGACY_MACE_TASK!r} names no MACE family and no `model_path` was "
             f"given, so there is nothing to load. Name the family you mean "
@@ -86,9 +79,12 @@ def _build_mace(
     from mace.calculators import mace_mp, mace_off, mace_omol
 
     builders = {"mace_off": mace_off, "mace_mp": mace_mp, "mace_omol": mace_omol}
+    weights: str | Path | None = (
+        spec.weights if spec.weights is not None else (spec.model_name or None)
+    )
     # The alias names no family, and none is needed to load a checkpoint: the file carries
     # its own architecture, so MACE-OFF's loader reads a MACE-MP model perfectly well.
-    return builders.get(task_name, mace_off)(model=weights, device=device)
+    return builders.get(spec.task_name, mace_off)(model=weights, device=spec.device)
 
 
 # ---------------------------------------------------------------------------
@@ -132,16 +128,29 @@ def _to_atoms(struct: Structure, plan: TrainingPlan) -> Atoms:
 
 
 @MACE.trainer(*FAMILIES, LEGACY_MACE_TASK)
-class MaceTrainer:
+class MaceTrainer(TrainerBase):
     """Train or fine-tune a MACE model on a step's labelled structures."""
 
+    label = "MACE"
+    charge_spin_aware = True
+    """The dataset speaks ``total_charge`` / ``total_spin`` (:func:`_to_atoms`), so an ion
+    or an open-shell species is fitted as itself — no warning to raise."""
+
     required_placeholders: ClassVar[frozenset[str]] = frozenset(
-        {"TRAIN_SET", "RUN_NAME", "RUN_DIR"}
+        {"TRAIN_SET", "RUN_NAME", "RUN_DIR", "DEVICE", "SEED"}
     )
     """``$RUN_NAME`` and ``$RUN_DIR`` are required alongside the dataset because
     :meth:`artifact` is derived from them: MACE names the model ``{name}.model`` inside
     ``model_dir``, which defaults to ``work_dir``. A template that hardcoded either would
-    train perfectly well and then be reported as having produced nothing."""
+    train perfectly well and then be reported as having produced nothing.
+
+    ``$DEVICE`` and ``$SEED`` are required because they are **plan facts** and MACE reads
+    both from the config this template becomes (``device:`` falls back to ``cpu``,
+    ``seed:`` to MACE's own ``123``). For a CLI trainer the template is the only channel
+    the library's program reads, so the gate is the closure the driver-run trainers get
+    from their argv: a template that does not reference them would run a ``device: cuda``
+    step on CPU with the GPU booked, and seed torch differently from the ``seed`` the
+    step's cache fingerprint records."""
 
     output_globs: ClassVar[tuple[str, ...]] = ("*.model", "*.log")
     output_dirs: ClassVar[tuple[str, ...]] = ("logs", "checkpoints", "results")
@@ -151,31 +160,23 @@ class MaceTrainer:
     that leaves ``work_dir`` at MACE's default writes into the job's scratch instead, and
     these are what stop the model disappearing with it."""
 
-    def write_dataset(self, plan: TrainingPlan, split: DatasetSplit) -> DatasetFiles:
-        """Write train / valid / test extxyz files under the run directory."""
-        plan.run_dir.mkdir(parents=True, exist_ok=True)
-        written: dict[str, Path | None] = {"train": None, "valid": None, "test": None}
-        for name, structures in (
-            ("train", split.train),
-            ("valid", split.valid),
-            ("test", split.test),
-        ):
-            if not structures:
-                # An empty split gets no file at all. ase refuses to read a zero-byte extxyz
-                # ("Empty file"), so naming one would turn "no test set" into a crash.
-                continue
-            path = plan.run_dir / f"{name}.xyz"
-            ase_write(str(path), [_to_atoms(s, plan) for s in structures], format="extxyz")
-            written[name] = path
-        assert written["train"] is not None  # noqa: S101 - split_structures guarantees one
-        return DatasetFiles(train=written["train"], valid=written["valid"], test=written["test"])
+    def write_split(self, plan: TrainingPlan, name: str, structures: tuple[Structure, ...]) -> Path:
+        """One split as extxyz with MACE's own ``REF_*`` label keys.
+
+        ``ase.io`` is imported here, when a split is written: this module is loaded with
+        every other plugin by any process that imports the engine package, and the ExtOpt
+        wrapper is one of those, once per ORCA optimizer step.
+        """
+        from ase.io import write as ase_write
+
+        path = plan.run_dir / f"{name}.xyz"
+        ase_write(str(path), [_to_atoms(s, plan) for s in structures], format="extxyz")
+        return path
 
     def placeholders(self, plan: TrainingPlan, data: DatasetFiles) -> dict[str, str]:
-        """MACE's dataset knobs, plus the label keys for a template that wants them explicit."""
+        """The dataset triple, plus the label keys for a template that wants them explicit."""
         return {
-            "TRAIN_SET": str(data.train),
-            "VALID_SET": str(data.valid) if data.valid else "",
-            "TEST_SET": str(data.test) if data.test else "",
+            **super().placeholders(plan, data),
             "ENERGY_KEY": ENERGY_KEY,
             "FORCES_KEY": FORCES_KEY,
         }
@@ -201,14 +202,11 @@ class MaceTrainer:
         :data:`~chemrefine.ids.TRAINING_ID`, both minted in :mod:`chemrefine.ids`. The launcher
         is a real filesystem path and stays quoted.
         """
-        python = shlex.quote(str(plan.launcher))
         if plan.gpus > 1:
-            return (
-                f"{python} -m torch.distributed.run --standalone --nnodes=1 "
-                f"--nproc_per_node={plan.gpus} -m mace.cli.run_train "
-                f"--config {config.name} --distributed"
+            return self.torchrun(
+                plan, "-m", "mace.cli.run_train", "--config", config.name, "--distributed"
             )
-        return f"{python} -m mace.cli.run_train --config {config.name}"
+        return f"{self.quoted_launcher(plan)} -m mace.cli.run_train --config {config.name}"
 
     def artifact(self, run_dir: Path, run_name: str) -> Path:
         """The trained model MACE leaves in ``model_dir`` — which defaults to ``work_dir``.

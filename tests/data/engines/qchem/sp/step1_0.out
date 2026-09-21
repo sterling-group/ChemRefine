@@ -1,0 +1,27 @@
+Trimmed from IQmol3 samples/L-cysteine-Opt.out — the blocks the parsers read:
+the penultimate energy, then the last Standard Nuclear Orientation + final energy.
+
+ Total energy in the final basis set = -721.7792406363
+
+       Standard Nuclear Orientation (Angstroms)
+    I     Atom         X            Y            Z
+ ----------------------------------------------------
+    1      H       0.188516    -0.046667    -1.502188
+    2      C       0.262364    -0.315856    -0.440891
+    3      N      -0.097228    -1.718423    -0.301398
+    4      H       0.207445    -2.119697     0.581284
+    5      H       0.173052    -2.303571    -1.082959
+    6      C      -0.722590     0.575454     0.354321
+    7      H      -0.693377     0.310405     1.414470
+    8      C       1.695449    -0.030274     0.047576
+    9      O       2.343352    -0.799451     0.748389
+   10      O       2.230171     1.195385    -0.306454
+   11      H       1.650639     1.722367    -0.893724
+   12      S      -2.491791     0.369845    -0.285122
+   13      H      -0.487322     1.637765     0.254331
+   14      H      -2.357485    -1.004024    -0.372520
+ ----------------------------------------------------
+ Molecular Point Group                 C1    NOp =  1
+ Largest Abelian Subgroup              C1    NOp =  1
+
+ Total energy in the final basis set = -721.7792413729

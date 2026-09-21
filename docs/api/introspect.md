@@ -1,0 +1,3 @@
+# Introspection
+
+::: chemrefine.introspect

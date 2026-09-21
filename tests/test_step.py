@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from pathlib import Path
 from typing import cast
 from unittest.mock import patch
@@ -212,17 +211,28 @@ def test_cache_load_after_run_returns_results(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
+FAIL_ENGINE_DRIFT = 0.25
+"""How far the fail engine's ``"unconverged"`` parse moves each coordinate off the seed.
+
+The geometry a failed run *reached* must be distinguishable from the geometry it was
+*given*, or a test of ``on_failure: best`` cannot tell "backfilled the best obtained"
+from "backfilled the submitted input" — the preference `apply_failure_policy` exists
+to make."""
+
+
 def _register_fail_engine():
     """Register a fake engine whose ``fail`` ClassVar marks per-sid failures.
 
     ``fail[sid] == "missing"`` produces no output; ``"unconverged"`` produces an
-    output that parses but with ``terminated_normally=False``; anything else succeeds.
+    output that parses but with ``terminated_normally=False`` and a geometry moved
+    :data:`FAIL_ENGINE_DRIFT` off the seed (the point the failed run reached); anything
+    else succeeds.
     """
     from typing import ClassVar
 
     from chemrefine.engines.api import register
     from chemrefine.ids import structure_artifact_path
-    from chemrefine.state import JobBatch, StepInputs, StepResults, Structure
+    from chemrefine.state import JobBatch, StepInputs, Structure
 
     @register("fake-fail")
     class _FailEngine:
@@ -251,10 +261,17 @@ def _register_fail_engine():
             out = []
             for _inp, _o, sid in inputs.files:
                 seed = seeds[sid]
+                atoms = seed.atoms
+                if self.fail.get(sid) == "unconverged":
+                    # The geometry the failed run reached — off the seed by a fixed
+                    # drift, so a test can tell the best-obtained backfill from the
+                    # submitted input.
+                    atoms = seed.atoms.copy()
+                    atoms.set_positions(atoms.get_positions() + FAIL_ENGINE_DRIFT)
                 out.append(
                     Structure(
                         id=sid,
-                        atoms=seed.atoms,
+                        atoms=atoms,
                         parent_id=seed.parent_id,
                         energy_hartree=-1.0 - int(sid) * 1e-3,
                         terminated_normally=self.fail.get(sid) != "unconverged",
@@ -316,6 +333,40 @@ def test_on_failure_stop_caches_successes_then_halts(tmp_path: Path):
         ENGINES.pop("fake-fail", None)
 
 
+def test_on_failure_best_backfills_the_best_geometry_not_the_seed(tmp_path: Path):
+    """``best`` carries the geometry the failed run *reached*, not the input it was given.
+
+    ``apply_failure_policy``'s preference — ``f.best if f.best is not None else`` the
+    submitted seed — is the whole difference between ``best`` and a re-labelled ``skip``
+    for a structure that produced anything at all. Both arms live on one line, which
+    branch coverage cannot see, and every other exerciser asserts ids or counts — so
+    dropping the preference (always backfilling the seed) survived the suite. The
+    positions are the only witness, and the fail engine's ``"unconverged"`` parse moves
+    them :data:`FAIL_ENGINE_DRIFT` off the seed precisely so this can fail.
+    """
+    from chemrefine.engines.api import ENGINES
+
+    seeds = PipelineState(
+        structures=(Structure(id="1", atoms=Atoms("H", positions=[[0.0, 0.0, 0.0]])),)
+    )
+    eng = _register_fail_engine()
+    try:
+        eng.fail = {"1": "unconverged"}
+        cfg = _config(tmp_path, engine="fake-fail", on_failure="best")
+        outcome = run_step(cfg, cfg.steps[0], seeds)
+        [survivor] = outcome.state.structures
+        assert survivor.id == "1"
+        assert survivor.atoms.get_positions()[0] == pytest.approx(
+            [FAIL_ENGINE_DRIFT, FAIL_ENGINE_DRIFT, FAIL_ENGINE_DRIFT]
+        ), "the backfill must be the best geometry obtained, not the submitted seed"
+        # Still ledgered — best keeps going without hiding the failure.
+        step_dir = cfg.output_dir.resolve() / "step1"
+        assert [f.structure_id for f in cache.load_failure_records(step_dir)] == ["1"]
+    finally:
+        eng.fail = {}
+        ENGINES.pop("fake-fail", None)
+
+
 def test_on_failure_best_backfills_all(tmp_path: Path):
     from chemrefine import cache
     from chemrefine.engines.api import ENGINES
@@ -336,6 +387,55 @@ def test_on_failure_best_backfills_all(tmp_path: Path):
         # best keeps going, but the failures are still visible in the ledger.
         step_dir = cfg.output_dir.resolve() / "step1"
         assert {f.structure_id for f in cache.load_failure_records(step_dir)} == {"1", "2"}
+    finally:
+        eng.fail = {}
+        ENGINES.pop("fake-fail", None)
+
+
+def test_on_failure_best_backfills_the_submitted_input_as_a_geometry_alone(tmp_path: Path):
+    """A step-N backfill of the submitted input carries no energy from step N-1.
+
+    The structures a step is given are the previous step's results, energies and
+    thermochemistry included. Carried whole, a missing-output backfill handed this step
+    the previous level of theory's energy — ranked by this step's filter against this
+    step's energies, and printed in ``steps.csv`` under this step. The geometry and the
+    lineage are the input; every field only this step's calculation could fill stays
+    unfilled. The best-obtained backfill is different: its values are this step's own.
+    """
+    from chemrefine.engines.api import ENGINES
+
+    given = tuple(
+        Structure(
+            id=i,
+            atoms=Atoms("H", positions=[[float(i), 0.0, 0.0]]),
+            parent_id="seed",
+            energy_hartree=-40.0 - int(i),
+            gibbs_hartree=-39.0 - int(i),
+            converged=True,
+            terminated_normally=True,
+            resolved_from=f"{i}_m6_pos",
+        )
+        for i in ["0", "1", "2"]
+    )
+    eng = _register_fail_engine()
+    try:
+        eng.fail = {"1": "unconverged", "2": "missing"}
+        cfg = _config(tmp_path, engine="fake-fail", on_failure="best")
+        outcome = run_step(cfg, cfg.steps[0], PipelineState(structures=given))
+        by_id = {s.id: s for s in outcome.state.structures}
+        assert set(by_id) == {"0", "1", "2"}
+        backfilled = by_id["2"]
+        assert backfilled.atoms.get_positions()[0] == pytest.approx([2.0, 0.0, 0.0])
+        assert backfilled.parent_id == "seed"
+        assert (
+            backfilled.energy_hartree,
+            backfilled.gibbs_hartree,
+            backfilled.converged,
+            backfilled.terminated_normally,
+            backfilled.resolved_from,
+        ) == (None, None, None, None, None), "the submitted input is a geometry, not a result"
+        # The best geometry obtained keeps this step's own parse.
+        assert by_id["1"].energy_hartree == pytest.approx(-1.0 - 1e-3)
     finally:
         eng.fail = {}
         ENGINES.pop("fake-fail", None)
@@ -463,6 +563,31 @@ def test_policy_change_over_a_legacy_cache_stays_a_hit(tmp_path: Path):
         ENGINES.pop("fake-fail", None)
 
 
+def test_policy_change_over_a_cache_of_unknown_policy_reattempts(tmp_path: Path):
+    """A document naming a policy this version does not know is not served.
+
+    ``skip`` over ``stop`` is a free hit — both persist the successes alone — but a stored
+    policy nobody here can classify has a shape nobody can judge, so the failure is
+    re-attempted instead of the document's survivor set being trusted.
+    """
+    outcome, step_dir = _run_policy_change(tmp_path, "stop", "stop")
+    document = json.loads((step_dir / "_cache" / "step.json").read_text(encoding="utf-8"))
+    document["on_failure"] = "later"
+    (step_dir / "_cache" / "step.json").write_text(json.dumps(document), encoding="utf-8")
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_fail_engine()
+    try:
+        eng.fail = {"1": "missing"}
+        cfg = _config(tmp_path, engine="fake-fail", on_failure="skip")
+        outcome = run_step(cfg, cfg.steps[0], _seed_state(["0", "1", "2"]), mode=StepMode.RESUME)
+        assert outcome.cache_hit is False
+        assert {s.id for s in outcome.state.structures} == {"0", "2"}
+    finally:
+        eng.fail = {}
+        ENGINES.pop("fake-fail", None)
+
+
 # ---------------------------------------------------------------------------
 # Auto-retry-once on convergence failure
 # ---------------------------------------------------------------------------
@@ -477,7 +602,7 @@ def _register_conv_engine():
 
     from chemrefine.engines.api import register
     from chemrefine.ids import structure_artifact_path
-    from chemrefine.state import JobBatch, StepInputs, StepResults, Structure
+    from chemrefine.state import JobBatch, StepInputs, Structure
 
     @register("conv-retry")
     class _ConvEngine:
@@ -665,13 +790,67 @@ def test_check_nms_freq_gate_not_bypassed_by_explicit_operation(tmp_path: Path):
         _check_nms_freq_gate(_NoFreqEngine(), ctx, cfg.steps[0])
 
 
+def test_invalid_nms_options_are_refused_when_the_key_is_derived(tmp_path: Path):
+    """A bad NMS knob fails as a ConfigError naming the step, not a bare ValidationError.
+
+    ``derive_step_key`` is the first reader of the validated NMS options on every route —
+    before any cache is consulted and before anything submits — so this is where a
+    ``displacement_value`` that is not a number must become the documented exit code
+    rather than a pydantic traceback three layers from the YAML that caused it.
+    """
+    from chemrefine.errors import ConfigError
+    from chemrefine.step import derive_step_key
+
+    cfg = _config(tmp_path, engine="orca", nms=True, options={"displacement_value": "banana"})
+    ctx = build_context(cfg, cfg.steps[0], _seed_state([]), get_engine(cfg.steps[0].engine))
+    with pytest.raises(ConfigError, match="invalid NMS options"):
+        derive_step_key(ctx, cfg.steps[0], get_engine(cfg.steps[0].engine))
+
+
+def test_a_model_path_is_keyed_by_basename_so_a_relocated_tree_derives_the_same_key(
+    tmp_path: Path,
+):
+    """The same config over the same model bytes keys identically wherever the tree sits.
+
+    The loader resolves ``model_path`` to an absolute path so the job can open it, and the
+    whole options dump rode into the row key — so a tree copied to another directory or
+    machine derived a different key for the step that ran the model: ``resume`` recomputed
+    it and ``rebuild-cache`` refused it as a different configuration, for a run nothing
+    about had changed. The bytes are pinned by ``option_file_digests`` under the same
+    option name; the string contributes its basename and nothing that names a machine.
+    Both halves are held: identical bytes at two roots agree, and a retrained file or a
+    differently named one still moves the key.
+    """
+    from chemrefine.step import derive_step_key
+
+    def key_for(root: Path, *, name: str = "train.model", weights: bytes = b"weights"):
+        model = root / "outputs" / "step2" / "train" / name
+        model.parent.mkdir(parents=True)
+        model.write_bytes(weights)
+        cfg = _config(
+            root, engine="mlip", options={"task_name": "mace_off", "model_path": str(model)}
+        )
+        engine = get_engine("mlip")
+        ctx = build_context(cfg, cfg.steps[0], _seed_state(["0"]), engine)
+        return derive_step_key(ctx, cfg.steps[0], engine)
+
+    here, there = key_for(tmp_path / "cluster"), key_for(tmp_path / "laptop")
+    assert here.row_keys == there.row_keys, "the absolute path leaked into the row key"
+    assert here.fingerprint == there.fingerprint
+
+    retrained = key_for(tmp_path / "retrained", weights=b"other weights")
+    assert retrained.row_keys != here.row_keys, "the bytes must still pin the key"
+    renamed = key_for(tmp_path / "renamed", name="other.model")
+    assert renamed.row_keys != here.row_keys, "two same-byte files stay distinguishable"
+
+
 def test_run_step_nms_branch_routes_through_coordinator(tmp_path: Path, monkeypatch):
     """run_step routes an `nms: true` step through the generic coordinator (nms.run_nms),
     then applies the on_failure policy to its survivors/failures."""
     from chemrefine import nms as nms_mod
     from chemrefine.engines.api import ENGINES, NmsInputInfo, register
     from chemrefine.nms import NmsResolution
-    from chemrefine.state import JobBatch, StepInputs, StepResults
+    from chemrefine.state import JobBatch, StepInputs
 
     calls: list[int] = []
 
@@ -741,7 +920,7 @@ def test_run_step_writes_canonical_result_records(tmp_path: Path):
     for sid in ("0", "1"):
         record_path = step_dir / sid / f"step1_{sid}.result.json"
         assert record_path.is_file()
-        record = json.loads(record_path.read_text())
+        record = json.loads(record_path.read_text(encoding="utf-8"))
         assert record["result_format"] == cache.RESULT_FORMAT_VERSION
         assert record["id"] == sid
         assert record["energy_hartree"] is not None
@@ -979,6 +1158,60 @@ def test_rebuild_cache_step_refuses_outputs_from_another_configuration(tmp_path:
         step.rebuild_cache_step(cfg_b, cfg_b.steps[0], seeds)
 
 
+def test_rebuild_cache_step_refuses_a_parent_the_rows_do_not_cover(tmp_path: Path):
+    """A grown parent set is the other half of "produced for a different configuration".
+
+    Every stored row can match the current key and the tree still be the wrong one: an
+    upstream filter loosened, a parent joined, and its output was never computed. Adopting
+    the rows that exist would cache a survivor set one short, and the next `resume` would
+    serve it. `foreign` cannot see this — the refusal is `unproven`'s alone, and dropping
+    that half survived the whole suite until this test.
+    """
+    from chemrefine import step
+
+    cfg = _config(tmp_path)
+    seeds = _seed_state(["0", "1"])
+    run_step(
+        cfg, cfg.steps[0], PipelineState(structures=seeds.structures[:1]), mode=StepMode.EXECUTE
+    )
+    with pytest.raises(CacheError, match=r"0 row\(s\) disagree.*1 current parent\(s\) have no row"):
+        step.rebuild_cache_step(cfg, cfg.steps[0], seeds)
+
+
+def test_rebuild_adopts_an_unprovenanced_tree(tmp_path: Path):
+    """A manifest without row provenance is unprovable, not wrong — the explicit command adopts.
+
+    That is every pre-provenance tree (and the documented v1 adoption's hand-written
+    manifests): its bare stamp was written under rules that no longer exist, so nothing
+    can prove it right — and nothing proves it wrong. `rebuild-cache` re-parses under the
+    current rules and writes the manifest back *with* provenance, so the adoption is
+    recorded and the next question is answered per row.
+    """
+    import json
+
+    from chemrefine import step
+
+    cfg = _config(tmp_path)
+    seeds = _seed_state(["0", "1"])
+    run_step(cfg, cfg.steps[0], seeds, mode=StepMode.EXECUTE)
+    step_dir = step_dir_for(cfg, cfg.steps[0])
+    cache.invalidate(step_dir)
+
+    # Strip the manifest to the pre-provenance shape: a bare, alien stamp and no rows.
+    manifest_file = cache.manifest_path(step_dir)
+    data = json.loads(manifest_file.read_text(encoding="utf-8"))
+    data["fingerprint"] = "feedfacefeedface"
+    for row in data["files"]:
+        row.pop("row_key", None)
+        row.pop("parent_digest", None)
+    manifest_file.write_text(json.dumps(data), encoding="utf-8")
+
+    outcome = step.rebuild_cache_step(cfg, cfg.steps[0], seeds)
+    assert {s.id for s in outcome.state.structures} == {"0", "1"}
+    provenance = cache.load_manifest_provenance(step_dir)
+    assert set(provenance.rows) == {"0", "1"}, "the adoption must be recorded per row"
+
+
 def test_rebuild_cache_step_accepts_outputs_from_this_configuration(tmp_path: Path):
     """The ordinary case — re-parsing after a parser change — still works."""
     from chemrefine import step
@@ -1037,10 +1270,14 @@ def test_rebuild_cache_step_nms_branch(tmp_path: Path):
     out = structure_artifact_path(step_dir, 1, "0", "out")
     inp = structure_artifact_path(step_dir, 1, "0", "inp")
     out.parent.mkdir(parents=True, exist_ok=True)
-    # A frequency table with NO imaginary modes ⇒ already at the minimum ⇒ resolved.
+    # A frequency table with NO imaginary modes ⇒ already at the minimum ⇒ resolved. The
+    # scaling line is what the row scan anchors on, as in every real ORCA output; a banner
+    # with no row under it is "no data", not a minimum.
     out.write_text(
         synthetic_dft_output([-1.0], [("H", 0, 0, 0), ("H", 0.74, 0, 0)])
-        + "VIBRATIONAL FREQUENCIES\n-----------------------\n     6:    100.00 cm**-1\n"
+        + "VIBRATIONAL FREQUENCIES\n-----------------------\n"
+        + "Scaling factor for frequencies =  1.000000000  (already applied!)\n\n"
+        + "     6:    100.00 cm**-1\n"
         + "\n****ORCA TERMINATED NORMALLY****\n",
         encoding="utf-8",
     )
@@ -1054,143 +1291,241 @@ def test_rebuild_cache_step_nms_branch(tmp_path: Path):
     assert {s.id for s in outcome.state.structures} == {"0"}  # resolved, id kept
 
 
-# --- _nms_reuse_outcome (NMS reuse-fingerprint path) ------------------------
+def _nms_rebuild_tree(tmp_path: Path, **options) -> tuple[Config, Path, cache.StepKey]:
+    """The `test_rebuild_cache_step_nms_branch` tree, plus the step's derived key."""
+    from synthetic import synthetic_dft_output
+
+    from chemrefine import cache, step
+    from chemrefine.engines.api import get_engine
+    from chemrefine.ids import structure_artifact_path
+
+    template_dir = tmp_path / "templates"
+    template_dir.mkdir(parents=True, exist_ok=True)
+    cfg = Config(
+        output_dir=tmp_path / "outputs",
+        template_dir=template_dir,
+        steps=[
+            StepConfig(
+                step=1,
+                engine="orca",
+                operation="freq",
+                nms=True,
+                options={"target": "minimum", **options},
+            ),
+        ],
+    )
+    step_cfg = cfg.steps[0]
+    step_dir = (cfg.output_dir / step_cfg.dir_name()).resolve()
+    out = structure_artifact_path(step_dir, 1, "0", "out")
+    inp = structure_artifact_path(step_dir, 1, "0", "inp")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        synthetic_dft_output([-1.0], [("H", 0, 0, 0), ("H", 0.74, 0, 0)])
+        + "VIBRATIONAL FREQUENCIES\n-----------------------\n     6:    100.00 cm**-1\n"
+        + "\n****ORCA TERMINATED NORMALLY****\n",
+        encoding="utf-8",
+    )
+    inp.write_text("! Opt Freq\n", encoding="utf-8")
+    (template_dir / "step1.inp").write_text("! Opt Freq\n", encoding="utf-8")
+    engine = get_engine("orca")
+    seed = Structure(id="0", atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]))
+    ctx = step.build_context(cfg, step_cfg, PipelineState(structures=(seed,)), engine)
+    key = step.derive_step_key(ctx, step_cfg, engine)
+    cache.save_manifest(
+        StepInputs(files=((inp, out, "0"),)),
+        step_dir,
+        operation="freq",
+        engine="orca",
+        **key.manifest_stamp(),
+    )
+    return cfg, step_dir, key
 
 
-def _reuse_key(ctx, fp: str = "FP"):
-    """This step's key, with the NMS reuse fingerprint pinned to ``fp``.
+def test_rebuild_refuses_an_attempt_from_another_search_specification(tmp_path: Path):
+    """A search retune must not adopt: same child ids, different displaced geometries.
 
-    The orchestrator is handed the key rather than deriving it, so these tests build the one
-    the caller would pass instead of monkeypatching a derivation.
+    Row keys exclude the NMS resolution by design, so the row check cannot see a retune —
+    and the re-derived children's ids coincide with the old attempt's, so a rebuild would
+    parse outputs answering displacements this configuration never asked for and cache
+    them under the new resolution's fingerprint. Resume already refuses to reuse such an
+    attempt; the explicit command must not adopt what resume refuses.
     """
-    from chemrefine import cache
+    from chemrefine import step
 
-    return replace(cache.StepKey.of(ctx.step_cfg, (), ctx.template), reuse_fingerprint=fp)
+    cfg, _step_dir, _key = _nms_rebuild_tree(tmp_path, displacement_value=1.0)
+    retuned = Config(
+        output_dir=cfg.output_dir,
+        template_dir=cfg.template_dir,
+        steps=[
+            StepConfig(
+                step=1,
+                engine="orca",
+                operation="freq",
+                nms=True,
+                options={"target": "minimum", "displacement_value": 0.25},
+            ),
+        ],
+    )
+    seed = Structure(id="0", atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]))
+    with pytest.raises(CacheError, match="different search settings"):
+        step.rebuild_cache_step(retuned, retuned.steps[0], PipelineState(structures=(seed,)))
 
 
-def _pin_nms(monkeypatch) -> None:
-    """Pin the NMS re-attempt result for these tests.
+def test_rebuild_still_adopts_across_a_criterion_retune(tmp_path: Path):
+    """Re-reading an attempt under a new *target* is the very thing rebuild-nms offers.
 
-    ``step.py`` calls through the :mod:`chemrefine.nms` module object, so patching the
-    module attribute redirects the orchestrator without touching its code.
+    A criterion retune never moves a child's geometry — the displacement depends on the
+    search knobs and the mode, not on what counts as resolved — so the attempt on disk
+    stays a sound answer and the adoption must keep working. Only the search half refuses.
+    """
+    from chemrefine import step
+
+    cfg, step_dir, _key = _nms_rebuild_tree(tmp_path)
+    retuned = Config(
+        output_dir=cfg.output_dir,
+        template_dir=cfg.template_dir,
+        steps=[
+            StepConfig(
+                step=1,
+                engine="orca",
+                operation="freq",
+                nms=True,
+                options={"target": "ts", "ts_mode_index": 6},
+            ),
+        ],
+    )
+    seed = Structure(id="0", atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]))
+    outcome = step.rebuild_cache_step(retuned, retuned.steps[0], PipelineState(structures=(seed,)))
+    # Under `ts` the structure (zero imaginary modes) is no longer at its target and its
+    # only children would need submitting — rebuild submits nothing, so it lands in the
+    # ledger as unresolved rather than being refused outright: the adoption path ran.
+    # `cache_hit is False` alone was true of the refusal too; the ledger row is the proof.
+    assert outcome.cache_hit is False
+    assert outcome.state.structures == ()
+    assert [(r.structure_id, r.kind) for r in cache.load_failure_records(step_dir)] == [
+        ("0", FailureKind.UNRESOLVED_NMS)
+    ]
+
+
+def _retuned(cfg: Config, **options) -> Config:
+    """The `_nms_rebuild_tree` config with its NMS options replaced."""
+    return Config(
+        output_dir=cfg.output_dir,
+        template_dir=cfg.template_dir,
+        steps=[StepConfig(step=1, engine="orca", operation="freq", nms=True, options=options)],
+    )
+
+
+_H2_SEED = PipelineState(
+    structures=(Structure(id="0", atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])),)
+)
+
+
+def test_the_resolution_stamp_waits_for_the_resolution(tmp_path: Path):
+    """The resolution half of the stamp is written once the resolution it describes exists.
+
+    The row half already waits for the archive; this is the same discipline one grain
+    up. Stamped current before `resume_nms`, a driver killed in the hours that pass
+    would leave the previous search's attempts under the current search's stamp. So the
+    first stamp carries the stored halves forward and the current ones land after
+    finalize — completed runs end with exactly the manifest they always had.
+    """
+    from chemrefine import step
+
+    cfg, step_dir, stored = _nms_rebuild_tree(tmp_path, displacement_value=1.0)
+    retuned = _retuned(cfg, target="minimum", displacement_value=0.25)
+    stamps: list[dict[str, str]] = []
+    real = cache.save_manifest
+
+    def _spying(inputs, sd, **kwargs):
+        if kwargs.get("rows"):
+            stamps.append({k: kwargs[k] for k in ("criterion_key", "search_key")})
+        return real(inputs, sd, **kwargs)
+
+    with patch.object(cache, "save_manifest", _spying):
+        run_step(retuned, retuned.steps[0], _H2_SEED, mode=StepMode.RESUME)
+
+    current = step.derive_step_key(
+        step.build_context(retuned, retuned.steps[0], _H2_SEED, get_engine("orca")),
+        retuned.steps[0],
+        get_engine("orca"),
+    )
+    assert stored.search_key != current.search_key, "precondition: a search retune"
+    assert stamps[0] == {"criterion_key": stored.criterion_key, "search_key": stored.search_key}
+    provenance = cache.load_manifest_provenance(step_dir)
+    assert (provenance.criterion_key, provenance.search_key) == (
+        current.criterion_key,
+        current.search_key,
+    )
+
+
+def _crash_before_the_resolution(tmp_path: Path, **options) -> tuple[Config, Path, cache.StepKey]:
+    """A resume over `_nms_rebuild_tree` under new NMS options, killed at its resolution pass."""
+    cfg, step_dir, stored = _nms_rebuild_tree(tmp_path, displacement_value=1.0)
+    retuned = _retuned(cfg, **options)
+    with (
+        patch("chemrefine.nms.resume_nms", side_effect=SystemExit(143)),
+        pytest.raises(SystemExit),
+    ):
+        run_step(retuned, retuned.steps[0], _H2_SEED, mode=StepMode.RESUME)
+    return retuned, step_dir, stored
+
+
+def test_a_crash_before_the_resolution_leaves_the_old_search_key(tmp_path: Path):
+    """Killed between the stamp and the resolution, the tree still refuses the old attempts.
+
+    The attempts on disk were displaced under the previous search; the manifest must say
+    so until the new ones exist, so that `rebuild-cache` refuses them — the guard added
+    with the search key, in the very crash it exists for.
+    """
+    from chemrefine import step
+
+    retuned, step_dir, stored = _crash_before_the_resolution(
+        tmp_path, target="minimum", displacement_value=0.25
+    )
+    assert cache.load_manifest_provenance(step_dir).search_key == stored.search_key
+    with pytest.raises(CacheError, match="different search settings"):
+        step.rebuild_cache_step(retuned, retuned.steps[0], _H2_SEED)
+
+
+def test_a_crash_before_the_resolution_keeps_the_labels_untrusted(tmp_path: Path):
+    """After a criterion retune crashes mid-resume, the next resume still distrusts labels.
+
+    The stored criterion is the one the attempts' labels were written under; stamped
+    current before the resolution ran, the next resume would have worn them.
     """
     from chemrefine import nms
 
-    monkeypatch.setattr(
-        nms,
-        "reattempt_nms",
-        lambda engine, ctx, step_cfg, cached, key: StepResults(
-            structures=(
-                Structure(id="re", atoms=Atoms("H", positions=[[0, 0, 0]]), energy_hartree=-1.0),
-            )
-        ),
+    retuned, _step_dir, _stored = _crash_before_the_resolution(
+        tmp_path, target="ts", ts_mode_index=6
     )
+    seen: list[bool] = []
+    real = nms.resume_nms
+
+    def _spying(*args, **kwargs):
+        seen.append(kwargs["trust_resolutions"])
+        return real(*args, **kwargs)
+
+    with patch("chemrefine.nms.resume_nms", _spying):
+        run_step(retuned, retuned.steps[0], _H2_SEED, mode=StepMode.RESUME)
+    assert seen == [False]
 
 
-def _save_reuse_cache(ctx, reuse_fp: str):
-    """Write a cache carrying a chosen reuse fingerprint.
+def test_the_scoped_action_advice_never_names_a_rebuild_that_refuses(tmp_path: Path):
+    """In the crash window the fingerprint matches; the attempts do not. Advise honestly.
 
-    The reuse key is derived, not passed, so this replaces it on the derived key rather
-    than handing `save` a loose string — which is the drift `StepKey` closes.
+    A scoped action reaching this step cannot submit and says which command can. The
+    fingerprint alone would name `rebuild-cache` — which then refuses the foreign
+    attempts — so the advice asks the rebuild guard's own question first.
     """
-    from chemrefine import cache
+    from chemrefine.step import NoUsableCacheError
 
-    ctx.step_dir.mkdir(parents=True, exist_ok=True)
-    key = replace(cache.StepKey.of(ctx.step_cfg, (), ctx.template), reuse_fingerprint=reuse_fp)
-    cache.save(
-        step_cfg=ctx.step_cfg,
-        key=key,
-        results=StepResults(
-            structures=(Structure(id="c", atoms=Atoms("H", positions=[[0, 0, 0]])),)
-        ),
-        step_dir=ctx.step_dir,
-        chemrefine_version="v",
+    retuned, _step_dir, _stored = _crash_before_the_resolution(
+        tmp_path, target="minimum", displacement_value=0.25
     )
-
-
-def test_nms_reuse_outcome_none_without_cache(tmp_path: Path, monkeypatch):
-    from chemrefine import step
-    from chemrefine.engines.api import get_engine
-
-    _pin_nms(monkeypatch)
-    ctx = _branch_ctx(tmp_path, nms=True, engine="orca")
-    ctx.step_dir.mkdir(parents=True, exist_ok=True)
-    assert (
-        step._nms_reuse_outcome(
-            ctx, ctx.step_cfg, _reuse_key(ctx), get_engine("orca"), may_submit=True
-        )
-        is None
-    )
-
-
-def test_nms_reuse_outcome_none_on_corrupt_cache(tmp_path: Path, monkeypatch):
-    from chemrefine import cache, step
-    from chemrefine.engines.api import get_engine
-
-    _pin_nms(monkeypatch)
-    ctx = _branch_ctx(tmp_path, nms=True, engine="orca")
-    cache_path = cache._cache_path(ctx.step_dir)
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_bytes(b"not json")
-    assert (
-        step._nms_reuse_outcome(
-            ctx, ctx.step_cfg, _reuse_key(ctx), get_engine("orca"), may_submit=True
-        )
-        is None
-    )
-
-
-def test_nms_reuse_outcome_restamps_when_all_resolved(tmp_path: Path, monkeypatch):
-    from chemrefine import step
-    from chemrefine.engines.api import get_engine
-
-    _pin_nms(monkeypatch)
-    ctx = _branch_ctx(tmp_path, nms=True, engine="orca")
-    _save_reuse_cache(ctx, "FP")  # matching reuse fingerprint, no failed ledger
-    out = step._nms_reuse_outcome(
-        ctx, ctx.step_cfg, _reuse_key(ctx), get_engine("orca"), may_submit=True
-    )
-    assert out is not None and out.cache_hit is False
-
-
-def test_nms_reuse_outcome_reattempts_when_ledger_present(tmp_path: Path, monkeypatch):
-    from chemrefine import cache, step
-    from chemrefine.engines.api import get_engine
-
-    _pin_nms(monkeypatch)
-    ctx = _branch_ctx(tmp_path, nms=True, engine="orca")
-    _save_reuse_cache(ctx, "FP")
-    cache.save_failure_records(
-        ctx.step_dir, [FailureRecord(structure_id="0", kind=FailureKind.FAILED, reason="x")]
-    )
-    out = step._nms_reuse_outcome(
-        ctx, ctx.step_cfg, _reuse_key(ctx), get_engine("orca"), may_submit=True
-    )
-    assert out is not None and any(s.id == "re" for s in out.state.structures)
-
-
-def test_nms_reuse_outcome_declines_to_reattempt_when_the_step_may_not_submit(
-    tmp_path: Path, monkeypatch
-):
-    """Re-attempting the unresolved parents runs round-2 jobs, so it needs permission.
-
-    This branch fires whenever the *reuse* fingerprint matches — the ordinary state after
-    tuning a search parameter — so it is the likeliest way for a step nobody targeted to
-    start computing under `rebuild-cache` or `rerun-errors`.
-    """
-    from chemrefine import cache, step
-    from chemrefine.engines.api import get_engine
-
-    _pin_nms(monkeypatch)
-    ctx = _branch_ctx(tmp_path, nms=True, engine="orca")
-    _save_reuse_cache(ctx, "FP")
-    cache.save_failure_records(
-        ctx.step_dir, [FailureRecord(structure_id="0", kind=FailureKind.FAILED, reason="x")]
-    )
-    out = step._nms_reuse_outcome(
-        ctx, ctx.step_cfg, _reuse_key(ctx), get_engine("orca"), may_submit=False
-    )
-    assert out is None
+    with pytest.raises(NoUsableCacheError, match="chemrefine resume") as info:
+        run_step(retuned, retuned.steps[0], _H2_SEED, mode=StepMode.CACHE_ONLY)
+    assert "rebuild-cache" not in str(info.value)
 
 
 # ---------------------------------------------------------------------------
@@ -1268,34 +1603,201 @@ def test_run_still_redoes_everything_even_when_outputs_are_present(tmp_path: Pat
     assert list((step_dir / "0").glob("attempt*")), "EXECUTE must archive and re-run"
 
 
-def test_resume_refuses_a_manifest_from_a_different_config(tmp_path: Path):
-    """A manifest whose fingerprint does not match must fall back to the full re-run.
+def test_resume_recomputes_rows_whose_key_the_config_change_moved(tmp_path: Path):
+    """A config edit that reaches jobs re-runs their rows — stale outputs archived, never read.
 
-    This is what keeps the optimisation honest: outputs on disk are only reusable if they
-    were produced for *this* step config and *these* parents.
+    This is what keeps the optimisation honest: a row is adopted only under proof its
+    output is the one this configuration would compute, and a changed effective charge
+    breaks that proof for every row.
     """
     cfg = _config(tmp_path)
     seeds = _seed_state(["0", "1"])
     step_dir = _interrupt_after(cfg, seeds, keep={"0", "1"})
 
-    changed = _config(tmp_path, options={"basis": "other"})
+    # The change must be one that provably reaches jobs — the effective charge. (An
+    # *undeclared* option like a stray `basis:` now moves no key by design: nothing
+    # reads it, so nothing it could invalidate exists.)
+    changed = _config(tmp_path, charge=-1)
     run_step(changed, changed.steps[0], seeds, mode=StepMode.RESUME)
 
     assert list((step_dir / "0").glob("attempt*")), "a stale manifest must not be trusted"
 
 
+class _CountingEngine(FakeEngine):
+    """The fake engine, with a record of which structures each submit carried."""
+
+    def __init__(self) -> None:
+        self.submitted: list[list[str]] = []
+
+    def submit(self, inputs, ctx):
+        """Record the batch's structure ids, then run the fake calculation."""
+        self.submitted.append([sid for _inp, _out, sid in inputs.files])
+        return super().submit(inputs, ctx)
+
+
+def test_a_partially_changed_parent_set_computes_exactly_the_changed_rows(tmp_path: Path):
+    """{A, B, C} → {A, B, C'} runs C' alone; A and B are adopted from disk.
+
+    The row keys are the proof: A's and B's stored keys match the ones this
+    configuration derives, so their outputs are re-parsed; C's parent content changed,
+    so its row is condemned sight-unseen and recomputed — and nothing else is.
+    """
+    cfg = _config(tmp_path)
+    seeds = _seed_state(["0", "1", "2"])
+    run_step(cfg, cfg.steps[0], seeds, mode=StepMode.EXECUTE)
+    cache.invalidate(step_dir_for(cfg, cfg.steps[0]))
+
+    moved = Atoms("H")
+    moved.positions[0] = (0.0, 0.0, 0.5)
+    changed = PipelineState(
+        structures=(
+            seeds.structures[0],
+            seeds.structures[1],
+            Structure(id="2", atoms=moved),
+        )
+    )
+    engine = _CountingEngine()
+    outcome = run_step(cfg, cfg.steps[0], changed, mode=StepMode.RESUME, engine=engine)
+
+    assert engine.submitted == [["2"]], "exactly the changed row computes"
+    assert [s.id for s in outcome.state.structures] == ["0", "1", "2"]
+
+
+def _partially_changed(tmp_path: Path) -> tuple[Config, PipelineState, Path]:
+    """The {A, B, C'} shape: a finished step, its cache gone, parent 2's geometry moved."""
+    cfg = _config(tmp_path)
+    seeds = _seed_state(["0", "1", "2"])
+    run_step(cfg, cfg.steps[0], seeds, mode=StepMode.EXECUTE)
+    step_dir = step_dir_for(cfg, cfg.steps[0])
+    cache.invalidate(step_dir)
+    moved = Atoms("H")
+    moved.positions[0] = (0.0, 0.0, 0.5)
+    changed = PipelineState(
+        structures=(
+            seeds.structures[0],
+            seeds.structures[1],
+            Structure(id="2", atoms=moved),
+        )
+    )
+    return cfg, changed, step_dir
+
+
+def test_the_manifest_is_stamped_only_after_condemned_outputs_are_archived(tmp_path: Path):
+    """The ordering that closes the stamp-then-crash window, pinned at the stamp itself.
+
+    Stamped first, a driver killed during the resubmission pass left the new row
+    provenance vouching for the condemned row's old output still at canonical — and the
+    next resume computed `changed = {}` and adopted it: a parse-usable answer to the
+    *previous* parent's geometry, served as the new parent's result. So at the moment
+    `save_manifest` runs on the incremental path, the condemned output must already be
+    in an attempt directory, where a crash re-reads as MISSING_OUTPUT instead.
+    """
+    cfg, changed, step_dir = _partially_changed(tmp_path)
+    stale_out = step_dir / "2" / "step1_2.out"
+    assert stale_out.is_file(), "precondition: the old output sits at canonical"
+
+    at_stamp: dict[str, bool] = {}
+    real = cache.save_manifest
+
+    def _spying(inputs, sd, **kwargs):
+        # The first stamp is the one under test; the resolution stamp after finalize
+        # lands once the condemned row has been recomputed at canonical.
+        if kwargs.get("rows") and not at_stamp:
+            at_stamp["canonical"] = stale_out.is_file()
+            at_stamp["archived"] = any((step_dir / "2").glob("attempt*/step1_2.out"))
+        return real(inputs, sd, **kwargs)
+
+    with patch.object(cache, "save_manifest", _spying):
+        run_step(cfg, cfg.steps[0], changed, mode=StepMode.RESUME)
+
+    assert at_stamp == {"canonical": False, "archived": True}
+
+
+def test_a_crash_after_the_stamp_still_recomputes_the_condemned_row(tmp_path: Path):
+    """The window itself, end to end: stamp → die → resume must resubmit, never adopt.
+
+    The first resume is killed right after the manifest carries the new row keys (the
+    resubmission pass never runs — a walltime kill lands exactly there on a large step,
+    since the pass opens with a parse of every output). The second resume then faces a
+    manifest whose rows all match its own; the proof that the condemned row was archived
+    rather than left for adoption is that it goes back to the scheduler.
+    """
+    cfg, changed, _step_dir = _partially_changed(tmp_path)
+
+    with (
+        patch("chemrefine.lifecycle.resubmit_unusable", side_effect=SystemExit(143)),
+        pytest.raises(SystemExit),
+    ):
+        run_step(cfg, cfg.steps[0], changed, mode=StepMode.RESUME)
+
+    engine = _CountingEngine()
+    outcome = run_step(cfg, cfg.steps[0], changed, mode=StepMode.RESUME, engine=engine)
+
+    assert engine.submitted == [["2"]], "the stale output must not be adopted"
+    assert [s.id for s in outcome.state.structures] == ["0", "1", "2"]
+
+
+def test_a_key_nothing_reads_resumes_without_computing_anything(tmp_path: Path):
+    """An undeclared option cannot reach a job, so every row is adopted — zero submissions.
+
+    The row key holds options only as the engine's declared model reads them; a stray
+    YAML key reaches no engine and no template, and re-running 1000 finished jobs over
+    it would be pure waste. validate already warns about the key itself.
+    """
+    cfg = _config(tmp_path)
+    seeds = _seed_state(["0", "1"])
+    run_step(cfg, cfg.steps[0], seeds, mode=StepMode.EXECUTE)
+    cache.invalidate(step_dir_for(cfg, cfg.steps[0]))
+
+    edited = _config(tmp_path, options={"stray_knob": 7})
+    engine = _CountingEngine()
+    outcome = run_step(edited, edited.steps[0], seeds, mode=StepMode.RESUME, engine=engine)
+
+    assert engine.submitted == [], "nothing may run — no job could read the edit"
+    assert [s.id for s in outcome.state.structures] == ["0", "1"]
+
+
+def test_resume_refuses_an_unprovenanced_manifest_by_name(tmp_path: Path):
+    """A pre-provenance tree gets the fix spelled out, not a silent archive-and-recompute.
+
+    The bare stamp was written under rules that no longer exist: resume can neither
+    prove the outputs right (adopt) nor wrong (recompute honestly says so) — and the
+    one command that may adopt the unprovable, because the user explicitly asks, is
+    `rebuild-cache`. Refusing loudly is what turns the old footgun — days of finished
+    compute silently swept into attemptK/ — into a one-command recovery.
+    """
+    import json
+
+    cfg = _config(tmp_path)
+    seeds = _seed_state(["0", "1"])
+    run_step(cfg, cfg.steps[0], seeds, mode=StepMode.EXECUTE)
+    step_dir = step_dir_for(cfg, cfg.steps[0])
+    cache.invalidate(step_dir)
+
+    manifest_file = cache.manifest_path(step_dir)
+    data = json.loads(manifest_file.read_text(encoding="utf-8"))
+    data["fingerprint"] = "feedfacefeedface"
+    for row in data["files"]:
+        row.pop("row_key", None)
+        row.pop("parent_digest", None)
+    manifest_file.write_text(json.dumps(data), encoding="utf-8")
+
+    with pytest.raises(CacheError, match="rebuild-cache"):
+        run_step(cfg, cfg.steps[0], seeds, mode=StepMode.RESUME)
+
+
 def test_a_step_derives_its_cache_key_exactly_once(tmp_path: Path, monkeypatch):
     """The key is a value computed once, not a recipe each route re-follows.
 
-    Derived per route instead, a cold step hashes its parents and its template once for each
-    of `_cached_outcome`, `_nms_reuse_outcome`, the manifest stamp and the write. That is
-    wasted work on a 10^4-structure step, but the reason it matters is drift: a route that
-    omits the reuse fingerprint writes a cache the NMS reuse path can never match, and one
-    that reads `ctx.prev_state` gets a *subset* of the parents on the retry paths.
+    Derived per route instead, a cold step hashes its parents and its template once for
+    each of `_cached_outcome`, the incremental route, the manifest stamp and the write.
+    That is wasted work on a 10^4-structure step, but the reason it matters is drift: a
+    route deriving its own key can disagree with the one the cache was written under, and
+    one that reads `ctx.prev_state` gets a *subset* of the parents on the retry paths.
     """
     from chemrefine import cache
 
-    calls: dict[str, int] = {"parents_digest": 0, "template_digest": 0, "fingerprint": 0}
+    calls: dict[str, int] = {"structure_digest": 0, "template_digest": 0, "row_key": 0}
 
     def counting(name):
         original = getattr(cache, name)
@@ -1312,7 +1814,8 @@ def test_a_step_derives_its_cache_key_exactly_once(tmp_path: Path, monkeypatch):
     cfg = _config(tmp_path)
     state = _seed_state(["0", "1"])
     run_step(cfg, cfg.steps[0], state, mode=StepMode.RESUME)  # cold: nothing on disk
-    assert calls == {"parents_digest": 1, "template_digest": 1, "fingerprint": 1}
+    # One derivation: each parent digested once, the template once, one row key per parent.
+    assert calls == {"structure_digest": 2, "template_digest": 1, "row_key": 2}
 
 
 # ---------------------------------------------------------------------------
@@ -1334,7 +1837,7 @@ def _register_streaming_conv_engine():
 
     from chemrefine.engines.api import register
     from chemrefine.ids import structure_artifact_path
-    from chemrefine.state import JobBatch, StepInputs, StepResults, Structure
+    from chemrefine.state import JobBatch, StepInputs, Structure
 
     @register("conv-stream")
     class _StreamEngine:
@@ -1454,7 +1957,7 @@ def _register_interruptible_engine():
 
     from chemrefine.engines.api import register
     from chemrefine.ids import structure_artifact_path
-    from chemrefine.state import JobBatch, StepInputs, StepResults, Structure
+    from chemrefine.state import JobBatch, StepInputs, Structure
 
     @register("interrupt-stream")
     class _InterruptEngine:
@@ -1616,8 +2119,9 @@ def test_run_step_writes_results_and_survivors_ensembles(tmp_path: Path):
     step_dir = cfg.output_dir.resolve() / "step1"
     assert len(io.read_xyz_frames(step_dir / "step1_ensemble.xyz")) == 3
     survivors = (step_dir / "step1_survivors.xyz").read_text(encoding="utf-8")
-    # The fake engine's energy is monotonic in the id, so "2" is the one min keeps —
-    # and the caption ties the frame back to its structure directory.
+    # The fake engine's energy is ordered within single-digit ids (its documented safe
+    # range), so "2" is the one min keeps — and the caption ties the frame back to its
+    # structure directory.
     assert survivors.splitlines()[1].startswith("step1 id=2 E=-1.000")
     assert len(io.read_xyz_frames(step_dir / "step1_survivors.xyz")) == 1
 
@@ -1682,3 +2186,44 @@ def test_rebuild_cache_step_regenerates_the_ensemble_files(tmp_path: Path):
 
     assert len(io.read_xyz_frames(step_dir / "step1_ensemble.xyz")) == 2
     assert len(io.read_xyz_frames(step_dir / "step1_survivors.xyz")) == 2
+
+
+# ---------------------------------------------------------------------------
+# derive_step_key — template-referenced aux files reach the identity
+# ---------------------------------------------------------------------------
+
+
+def test_the_orca_engines_template_aux_files_reach_the_step_key(tmp_path: Path):
+    """Editing a file the template references moves the key — that is the resume re-run.
+
+    The whole chain with the real engine: ``OrcaEngine`` enumerates the quoted
+    reference (``AuxFileConsuming``), ``derive_step_key`` hands the files to
+    ``StepKey.of``, and an in-place edit to the guest moves fingerprint and row keys —
+    which is exactly what makes ``resume`` re-run the docking step instead of serving
+    results computed from the old geometry against a fingerprint that stood still.
+    """
+    from chemrefine import step
+
+    template_dir = tmp_path / "templates"
+    template_dir.mkdir()
+    guest = template_dir / "cl.xyz"
+    guest.write_text("1\nchloride\nCl 0.0 0.0 0.0\n", encoding="utf-8")
+    (template_dir / "step1.inp").write_text(
+        '! XTB\n%DOCKER\n\tGUEST "cl.xyz"\nEND\n', encoding="utf-8"
+    )
+    cfg = Config(
+        output_dir=tmp_path / "outputs",
+        template_dir=template_dir,
+        steps=[StepConfig(step=1, engine="orca", operation="opt_sp")],
+    )
+    engine = get_engine("orca")
+    seed = Structure(id="0", atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]))
+    ctx = build_context(cfg, cfg.steps[0], PipelineState(structures=(seed,)), engine)
+
+    before = step.derive_step_key(ctx, cfg.steps[0], engine)
+    assert before == step.derive_step_key(ctx, cfg.steps[0], engine)
+
+    guest.write_text("1\nchloride moved\nCl 0.5 0.0 0.0\n", encoding="utf-8")
+    after = step.derive_step_key(ctx, cfg.steps[0], engine)
+    assert before.fingerprint != after.fingerprint
+    assert before.row_keys != after.row_keys

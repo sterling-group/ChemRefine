@@ -30,10 +30,24 @@ def _write(tmp_path: Path, body: str) -> Path:
         ("! B3LYP def2-SVP OptTS\n", "opt_sp"),
         ("! PBE def2-SVP Freq\n", "sp"),  # frequency-only: a single point + Hessian
         ("! HF def2-SVP\n", "sp"),  # no run-type keyword → ORCA's SP fallback
+        ("! B3LYP def2-SVP IRC\n%irc MaxIter 50 end\n", "irc"),
+        ("! B3LYP def2-SVP OptTS Freq IRC\n", "irc"),  # the path is the product
+        ('! XTB NEB-TS\n%neb NEB_End_XYZFile "product.xyz" end\n', "neb"),
+        ("! XTB ZOOM-NEB-CI\n", "neb"),
+        ("! XTB Opt NEB-IDPP\n", "neb"),  # the band wins over the optimisation beside it
+        ("! XTB\n%md\n  timestep 0.5_fs\n  run 100\nend\n", "md"),
+        ("! B3LYP def2-SVP Opt\n%md timestep 0.5_fs end\n", "md"),
     ],
 )
 def test_inspect_picks_parser_from_keywords(tmp_path: Path, body: str, operation: str):
     assert inspect_template(_write(tmp_path, body)).operation == operation
+
+
+def test_a_keyword_that_merely_contains_a_run_kind_does_not_name_it(tmp_path: Path):
+    """Whole tokens only, as for ``opt`` and ``freq``: ``NEBULA`` is not a band, ``MDCI`` no MD."""
+    assert inspect_template(_write(tmp_path, "! NEBULA def2-SVP\n")).operation == "sp"
+    assert inspect_template(_write(tmp_path, "! MDCI def2-SVP\n")).operation == "sp"
+    assert inspect_template(_write(tmp_path, "# ! IRC later\n! HF def2-SVP\n")).operation == "sp"
 
 
 def test_inspect_is_case_insensitive(tmp_path: Path):
@@ -122,6 +136,50 @@ def test_inspect_ignores_commented_out_scan_block(tmp_path: Path):
     assert inspect_template(_write(tmp_path, body)).operation == "opt_sp"
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        # The word in a later block's quoted path.
+        '! B3LYP def2-SVP Opt Freq\n%geom MaxIter 300 end\n%pointcharges "/data/scan/q.pc"\n'
+        "%pal nprocs 8 end\n",
+        # The word as a later block's value.
+        '! B3LYP def2-SVP Opt Freq\n%geom\n  MaxIter 300\nend\n%base "scan"\n',
+        # The word on the coordinate line that follows the block.
+        "! B3LYP def2-SVP Opt Freq\n%geom MaxIter 300 end\n* xyzfile 0 1 scan.xyz\n",
+        # The word on a keyword line that follows the block.
+        "%geom MaxIter 300 end\n! B3LYP def2-SVP Opt Freq scan\n",
+    ],
+    ids=["later-block-path", "later-block-value", "coordinate-line", "keyword-line"],
+)
+def test_scan_outside_the_geom_block_body_is_not_a_scan(tmp_path: Path, body: str):
+    """``scan`` names a relaxed scan only inside the ``%geom`` block that declares it.
+
+    An ``Opt Freq`` step read as ``pes`` is parsed by the scan reader, which reports no
+    frequency table — so the run keeps its energies and silently loses its thermochemistry
+    and every imaginary mode NMS would act on.
+    """
+    run = inspect_template(_write(tmp_path, body))
+    assert run.operation == "opt_sp"
+    assert run.has_freq is True
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        # The sub-block on its own lines, its ``end`` before the block's own.
+        "! B3LYP def2-SVP Opt\n%geom\n  Scan\n    B 0 1 = 1.0, 2.0, 10\n  end\nend\n",
+        # A second sub-block after the scan, then another block and the coordinates.
+        "! B3LYP def2-SVP Opt\n%geom Scan B 0 1 = 1.0, 2.0, 10 end\n"
+        "  Constraints { B 2 3 C } end\nend\n%pal nprocs 4 end\n* xyzfile 0 1 geom.xyz\n",
+        # The scan block after another block.
+        "! B3LYP def2-SVP Opt\n%pal nprocs 4 end\n%GEOM SCAN D 0 1 2 3 = 0, 180, 19 END END\n",
+    ],
+    ids=["multi-line", "with-constraints", "after-another-block"],
+)
+def test_a_scan_sub_block_anywhere_in_the_geom_body_is_a_scan(tmp_path: Path, body: str):
+    assert inspect_template(_write(tmp_path, body)).operation == "pes"
+
+
 def test_inspect_keeps_a_hash_inside_a_quoted_filename(tmp_path: Path):
     """A ``#`` in a quoted path is part of the filename, not the start of a comment.
 
@@ -157,7 +215,7 @@ def test_extopt_is_an_optimisation():
     keyword line without allowing for it reclassified all of them as single points.
     """
     template = REPO_ROOT / "examples/tutorials/redox/amines/templates/step2.inp"
-    assert "!ExtOpt" in template.read_text()
+    assert "!ExtOpt" in template.read_text(encoding="utf-8")
     assert inspect_template(template).operation == "opt_sp"
 
 
@@ -182,3 +240,25 @@ def test_a_keyword_merely_containing_opt_is_not_an_optimisation(tmp_path: Path):
     template = tmp_path / "step1.inp"
     template.write_text("! B3LYP def2-SVP Optimizer-Is-Not-A-Keyword\n", encoding="utf-8")
     assert inspect_template(template).operation == "sp"
+
+
+# ---------------------------------------------------------------------------
+# %maxcore — the memory declaration the SLURM request is derived from
+# ---------------------------------------------------------------------------
+
+
+def test_inspect_reads_maxcore(tmp_path: Path):
+    """``%maxcore`` is per-core MB, read with qorca's grammar, case-insensitively."""
+    info = inspect_template(_write(tmp_path, "! B3LYP Opt\n%MaxCore 3000\n%pal nprocs 4 end\n"))
+    assert info.maxcore == 3000
+    assert info.pal == 4
+
+
+def test_a_template_without_maxcore_declares_no_memory(tmp_path: Path):
+    """Absence is ``None``, not a default: no declaration means the header's policy stands."""
+    assert inspect_template(_write(tmp_path, "! B3LYP Opt\n")).maxcore is None
+
+
+def test_a_commented_maxcore_is_not_a_declaration(tmp_path: Path):
+    """The same comment-stripping the keywords get: ``# %maxcore 9000`` declares nothing."""
+    assert inspect_template(_write(tmp_path, "! B3LYP Opt\n# %maxcore 9000\n")).maxcore is None

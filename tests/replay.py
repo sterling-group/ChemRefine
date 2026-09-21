@@ -14,24 +14,35 @@ two modes:
   run with :func:`forbid_run_batch`, asserting the cache fingerprints (and
   the ``rebuild-cache`` path) survive a move to a different machine/path.
 
-``@OUTPUT_DIR@`` tokens in the archived ``_cache`` documents are rewritten
-to the extraction-specific output dir, mirroring what :func:`pack_case` did.
+An archive extracts and runs wherever it lands: nothing under ``_cache/``
+names an absolute path any more, manifests included (they spell their files
+relative to the step directory). Recordings packed before that spelling
+carried an ``@OUTPUT_DIR@`` token that :func:`extract_case` re-anchored on the
+way out; every shipped archive has since been re-packed, so the fixtures
+relocate by the same rule a user's tree does rather than by a rewrite only
+this harness knows about.
 """
 
 from __future__ import annotations
 
 import fnmatch
+import json
 import shutil
 import tarfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from chemrefine import cache
 from chemrefine.engines import api
 from chemrefine.engines.api import CompletionSink
 from chemrefine.state import JobBatch, StepContext, StepInputs
 
 DATA_DIR = Path(__file__).resolve().parent / "data" / "e2e" / "recordings"
-OUTPUT_DIR_TOKEN = "@OUTPUT_DIR@"
+
+
+def recorded_cases() -> list[str]:
+    """Every recording on disk, by case name — what the drift detector has to cover."""
+    return sorted(path.name.removesuffix(".tar.xz") for path in DATA_DIR.glob("*.tar.xz"))
 
 
 @dataclass(frozen=True)
@@ -59,10 +70,7 @@ def extract_case(name: str, dest: Path) -> ReplayCase:
     """Extract ``tests/data/e2e/recordings/<name>.tar.xz`` into ``dest``."""
     with tarfile.open(DATA_DIR / f"{name}.tar.xz") as tar:
         tar.extractall(dest, filter="data")
-    case = ReplayCase(root=dest, captured=dest / "captured_outputs")
-    for doc in case.captured.rglob("_cache/*.json"):
-        doc.write_text(doc.read_text().replace(OUTPUT_DIR_TOKEN, str(case.output_dir)))
-    return case
+    return ReplayCase(root=dest, captured=dest / "captured_outputs")
 
 
 @dataclass
@@ -145,6 +153,30 @@ def relocate(case: ReplayCase) -> None:
     shutil.copytree(case.captured, case.output_dir)
 
 
+def forget_provenance(case: ReplayCase) -> None:
+    """Strip the cache-key provenance from every manifest in the staged output dir.
+
+    The one legitimate use is regenerating a recording after a deliberate key move — an
+    options default, a digest input — which is what ``--update-recordings`` is for. A
+    rebuild refuses rows keyed under a different configuration, and an archive whose keys
+    moved is exactly that; without its provenance the same manifest is *unprovable rather
+    than wrong* (``rebuild_cache_step``'s own distinction), so the rebuild proceeds and
+    writes the provenance back under the current key. The re-packed archive then carries
+    the keys today's code derives, with every archived output untouched.
+    """
+    for step_dir in sorted(p for p in case.output_dir.iterdir() if p.is_dir()):
+        manifest = cache.manifest_path(step_dir)
+        if not manifest.is_file():
+            continue
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        for key in ("fingerprint", "criterion_key", "search_key"):
+            data.pop(key, None)
+        for record in data.get("files") or []:
+            for key in ("row_key", "parent_digest"):
+                record.pop(key, None)
+        manifest.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
 # ---------------------------------------------------------------------------
 # Recording (tier 3 → tier 2): pack a finished live run into an archive
 # ---------------------------------------------------------------------------
@@ -180,33 +212,53 @@ KEEP_PATTERNS = (
 # the generic *.json keep-pattern must not swallow them into the archive.
 DROP_SUFFIXES = (".result.json", ".property.json")
 
+VERIFIABLE_STEPS: dict[str, int] = {"mlip_train": 1}
+"""Recordings a parse-only rebuild can verify only up to a step; every other one, whole.
 
-def _kept(path: Path) -> bool:
-    if path.name.endswith(DROP_SUFFIXES):
+`mlip_train` stops at step 1: step 2 adopts a trained model whose 4.7 MB cannot live in a
+1 MB recording, and step 3's fingerprint covers that model's **bytes**
+(`option_file_digests`) — no stub can hash like the original. :func:`pack_case` archives
+no cache document past the prefix, since a document nothing can verify is a fossil by
+construction, and the drift detector (``test_e2e_relocate``) rebuilds the prefix and
+asserts the rest is absent. The steps past it are covered by
+``test_e2e_replay.test_mlip_train_full_pipeline``, a fresh replay that computes its
+fingerprints from a stubbed model self-consistently."""
+
+
+def _step_number(dir_name: str) -> int:
+    """The step a ``stepN`` / ``stepN_name`` output directory belongs to."""
+    return int(dir_name.removeprefix("step").split("_", 1)[0])
+
+
+def _kept(rel: Path, verifiable: int | None) -> bool:
+    """Whether the file at ``rel`` (under the output dir) belongs in the archive."""
+    if rel.name.endswith(DROP_SUFFIXES):
         return False
-    if path.parent.name == "_cache":
+    if rel.parent.name == "_cache":
+        if verifiable is not None and _step_number(rel.parts[0]) > verifiable:
+            return False  # past what a rebuild can verify: a fossil by construction
         # `.npz` is the step cache's coordinate sidecar. Dropping it would archive a
         # `step.json` whose arrays are gone, and since `cache.load` fails closed on a missing
         # sidecar, every replay would resubmit instead of hitting the cache.
-        return path.suffix in (".json", ".npz")
-    return any(fnmatch.fnmatch(path.name, pattern) for pattern in KEEP_PATTERNS)
+        return rel.suffix in (".json", ".npz")
+    return any(fnmatch.fnmatch(rel.name, pattern) for pattern in KEEP_PATTERNS)
 
 
 def pack_case(run_dir: Path, name: str, dest_dir: Path = DATA_DIR) -> Path:
     """Pack a finished live run into ``dest_dir/<name>.tar.xz`` (the recording).
 
-    Trims ``run_dir/outputs`` to what the parsers read (see ``KEEP_PATTERNS``),
-    tokenizes the absolute output prefix in the ``_cache`` documents, and
-    stages ``input.yaml`` + ``templates/`` + the seed alongside the trimmed
-    ``captured_outputs/`` tree. Fails when the archive would exceed
-    ``MAX_ARCHIVE_BYTES`` — recordings stay light by construction.
+    Trims ``run_dir/outputs`` to what the parsers read (see ``KEEP_PATTERNS``) and a
+    parse-only rebuild can verify (``VERIFIABLE_STEPS``), refuses a ``_cache`` document
+    that names the machine it was made on, and stages ``input.yaml`` + ``templates/`` +
+    the seed alongside the trimmed ``captured_outputs/`` tree. Fails when the archive
+    would exceed ``MAX_ARCHIVE_BYTES`` — recordings stay light by construction.
     """
     import tempfile
 
     import yaml
 
     run_dir = run_dir.resolve()
-    config = yaml.safe_load((run_dir / "input.yaml").read_text())
+    config = yaml.safe_load((run_dir / "input.yaml").read_text(encoding="utf-8"))
     outputs = (run_dir / config.get("output_dir", "outputs")).resolve()
     if not outputs.is_dir():
         raise AssertionError(f"no outputs to pack in {run_dir}")
@@ -226,19 +278,33 @@ def pack_case(run_dir: Path, name: str, dest_dir: Path = DATA_DIR) -> Path:
 
         captured = staging / "captured_outputs"
         kept = 0
+        verifiable = VERIFIABLE_STEPS.get(name)
         for path in sorted(outputs.rglob("*")):
-            if not path.is_file() or not _kept(path):
+            rel = path.relative_to(outputs)
+            if not path.is_file() or not _kept(rel, verifiable):
                 continue
-            target = captured / path.relative_to(outputs)
+            target = captured / rel
             target.parent.mkdir(parents=True, exist_ok=True)
-            if path.parent.name == "_cache" and path.suffix == ".json":
-                target.write_text(path.read_text().replace(str(outputs), OUTPUT_DIR_TOKEN))
-            else:
-                # The `.npz` sidecar holds no paths to tokenize, and is binary — running the
-                # text substitution over it would fail to decode.
-                shutil.copy2(path, target)
+            shutil.copy2(path, target)
             kept += 1
         assert kept, f"nothing matched the keep patterns under {outputs}"
+
+        # The cache documents are what the harness *resolves*, so they are the ones that
+        # must name no machine. They used to, and extraction rewrote a token back into an
+        # absolute path; manifests are relative now, so the token is gone and this asserts
+        # the property it was compensating for — loudly, at record time, rather than as a
+        # relocated replay reading paths that are not there. Captured engine output is
+        # exempt on purpose: an ORCA log names the scratch dir it really ran in, and that
+        # is a record of the run, not an address anything follows.
+        machine_bound = sorted(
+            str(doc.relative_to(captured))
+            for doc in captured.rglob("_cache/*.json")
+            if str(outputs) in doc.read_text(encoding="utf-8")
+        )
+        assert not machine_bound, (
+            f"{machine_bound} name absolute paths under {outputs} — a recording that "
+            f"carries the machine it was made on cannot replay anywhere else"
+        )
 
         # Restore the pre-promotion view (see the module comment above): round 1's own
         # outputs back at the canonical paths, so a replayed round-1 submission returns the
@@ -252,7 +318,14 @@ def pack_case(run_dir: Path, name: str, dest_dir: Path = DATA_DIR) -> Path:
         archive = dest_dir / f"{name}.tar.xz"
         with tarfile.open(archive, "w:xz") as tar:
             for path in sorted(staging.rglob("*")):
-                tar.add(path, arcname=str(path.relative_to(staging)))
+                # `recursive=False` because `rglob` already yields every descendant:
+                # left at its default, `add` walked each directory's whole subtree, so a
+                # file was archived once per ancestor directory as well as for itself —
+                # six copies of a round-2 output. Extraction hid it (each copy overwrote
+                # the last with identical bytes) and `xz` squeezed the repeats to a couple
+                # of percent, so what it really cost was the archive's honesty: its own
+                # member list said a recording held three times what it holds.
+                tar.add(path, arcname=str(path.relative_to(staging)), recursive=False)
 
     size = archive.stat().st_size
     assert size <= MAX_ARCHIVE_BYTES, f"{archive} exceeds {MAX_ARCHIVE_BYTES} bytes — trim the case"

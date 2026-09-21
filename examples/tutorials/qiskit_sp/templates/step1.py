@@ -6,7 +6,7 @@ result = run_job(
     "$XYZ_PATH",
     charge=int("$CHARGE"),
     multiplicity=int("$MULTIPLICITY"),
-    options=json.loads("$QISKIT_OPTIONS_JSON"),
+    options=json.loads("$OPTIONS_JSON"),
 )
 
 energy_hartree = result.energy_hartree

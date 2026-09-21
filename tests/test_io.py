@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import subprocess
 import sys
 from pathlib import Path
@@ -31,6 +32,7 @@ def test_importing_io_does_not_pull_pandas():
         capture_output=True,
         text=True,
         check=True,
+        timeout=120,
     )
     assert out.stdout.strip() == "False"
 
@@ -47,6 +49,18 @@ def test_natural_key_orders_step10_after_step2():
 
 def test_natural_key_handles_paths():
     assert natural_key("step1_structure_0.out") < natural_key("step1_structure_10.out")
+
+
+def test_natural_key_survives_a_superscript_digit():
+    """``"²".isdigit()`` is True and ``int("²")`` raises — the guard must be isdecimal.
+
+    The class was already fixed at ``StepConfig.matches`` and the GUI's step selector;
+    this was the third ``int(isdigit)`` site, reachable from a seed directory holding a
+    file with a superscript between decimal digits — which ended the run in a bare
+    ``ValueError`` from the sort instead of anything naming the file.
+    """
+    assert natural_key("v2²3.xyz") == ["v", 2, "²", 3, ".xyz"]
+    assert sorted(["v2²3.xyz", "v2²2.xyz"], key=natural_key) == ["v2²2.xyz", "v2²3.xyz"]
 
 
 def test_natural_key_orders_three_digit_ids_numerically():
@@ -117,7 +131,9 @@ def test_write_xyz_accepts_tuple_form(tmp_path: Path):
 
 
 def test_write_xyz_length_mismatch_raises(tmp_path: Path):
-    with pytest.raises(ValueError):
+    # The explicit refusal's wording; `zip(strict=True)` below it raises the same type,
+    # so an unmatched raise let the documented message be deleted unnoticed.
+    with pytest.raises(ValueError, match="same length"):
         write_xyz([_h2o()], ["0", "1"], step_number=1, output_dir=tmp_path)
 
 
@@ -176,7 +192,11 @@ def test_write_ensemble_xyz_orders_by_energy_with_energyless_last(tmp_path: Path
     )
     path = write_ensemble_xyz(structures, tmp_path / "step1_ensemble.xyz", step=1)
 
-    ids = [line.split()[1] for line in path.read_text().splitlines() if line.startswith("step1 ")]
+    ids = [
+        line.split()[1]
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.startswith("step1 ")
+    ]
 
     assert ids == ["id=low", "id=high", "id=no-e-first", "id=no-e-second"]
 
@@ -188,7 +208,7 @@ def test_write_ensemble_xyz_comment_carries_step_id_and_energy(tmp_path: Path):
         tmp_path / "step1_ensemble.xyz",
         step=1,
     )
-    assert path.read_text().splitlines()[1] == "step1 id=0-3 E=-153.12345679 Eh"
+    assert path.read_text(encoding="utf-8").splitlines()[1] == "step1 id=0-3 E=-153.12345679 Eh"
 
 
 def test_write_ensemble_xyz_captions_the_steps_own_ranking_energy(tmp_path: Path):
@@ -209,7 +229,9 @@ def test_write_ensemble_xyz_captions_the_steps_own_ranking_energy(tmp_path: Path
         energy_attr="gibbs_hartree",
         energy_label="G",
     )
-    comments = [line for line in path.read_text().splitlines() if line.startswith("step2 ")]
+    comments = [
+        line for line in path.read_text(encoding="utf-8").splitlines() if line.startswith("step2 ")
+    ]
     assert comments == ["step2 id=1 G=-2.00000000 Eh", "step2 id=0 G=-1.00000000 Eh"]
 
 
@@ -218,7 +240,7 @@ def test_write_ensemble_xyz_marks_a_missing_energy_as_na(tmp_path: Path):
     path = write_ensemble_xyz(
         (_ensemble_structure("0", energy=None),), tmp_path / "step1_ensemble.xyz", step=1
     )
-    assert path.read_text().splitlines()[1] == "step1 id=0 E=n/a"
+    assert path.read_text(encoding="utf-8").splitlines()[1] == "step1 id=0 E=n/a"
 
 
 def test_write_ensemble_xyz_empty_input_removes_a_stale_file(tmp_path: Path):
@@ -274,7 +296,7 @@ def test_gather_output_files_missing_dir_returns_empty(tmp_path: Path):
 
 def test_save_step_csv_writes_header_on_step_one(tmp_path: Path):
     path = save_step_csv([-1.0, -1.001], ["0", "1"], step_number=1, output_dir=tmp_path)
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     assert "Step,Conformer,Energy (Hartree)" in text.splitlines()[0]
     assert "% Cumulative" in text.splitlines()[0]
 
@@ -282,16 +304,45 @@ def test_save_step_csv_writes_header_on_step_one(tmp_path: Path):
 def test_save_step_csv_appends_without_header_on_later_steps(tmp_path: Path):
     save_step_csv([-1.0], ["0"], step_number=1, output_dir=tmp_path)
     save_step_csv([-2.0], ["1"], step_number=2, output_dir=tmp_path)
-    text = (tmp_path / "steps.csv").read_text()
+    text = (tmp_path / "steps.csv").read_text(encoding="utf-8")
     # header appears exactly once
     assert text.count("Step,Conformer,Energy (Hartree)") == 1
 
 
 def test_save_step_csv_sorts_by_energy(tmp_path: Path):
     path = save_step_csv([-1.0, -2.0, -0.5], ["a", "b", "c"], step_number=1, output_dir=tmp_path)
-    rows = path.read_text().strip().splitlines()[1:]  # drop header
+    rows = path.read_text(encoding="utf-8").strip().splitlines()[1:]  # drop header
     conformers = [row.split(",")[1] for row in rows]
     assert conformers == ["b", "a", "c"]  # ascending by absolute energy
+
+
+def test_save_step_csv_derived_columns_carry_the_right_numbers(tmp_path: Path):
+    """The report's numbers are pinned by literals, not by shape.
+
+    Every other assertion on this file checks headers, order or truncation — all of
+    which survive a wrong unit factor or a wrong percentage scale, because both are
+    order-preserving. This is the user-facing artifact of the whole run, so the values
+    are held to independently computed literals: two energies exactly 1 kcal/mol apart
+    (the second is ``-1 Eh + 1/627.5094740629``), whose Boltzmann split at the default
+    298.15 K is 84.39/15.61 — numbers a mutation of ``HARTREE_TO_KCALMOL``'s use, the
+    ``* 100.0`` percentage scale, or the default temperature cannot reproduce.
+    """
+    path = save_step_csv(
+        [-1.0, -1.0 + 1.0 / 627.5094740629], ["low", "high"], step_number=1, output_dir=tmp_path
+    )
+    with path.open(encoding="utf-8", newline="") as handle:
+        low, high = list(csv.DictReader(handle))
+    assert low["Conformer"] == "low" and high["Conformer"] == "high"
+    assert float(low["Energy (kcal/mol)"]) == pytest.approx(-627.50947406, abs=1e-6)
+    assert float(high["Energy (kcal/mol)"]) == pytest.approx(-626.50947406, abs=1e-6)
+    assert float(low["dE (kcal/mol)"]) == 0.0
+    assert float(high["dE (kcal/mol)"]) == pytest.approx(1.0, abs=1e-8)
+    assert float(low["Boltzmann Weight"]) == pytest.approx(0.84393549, abs=1e-6)
+    assert float(high["Boltzmann Weight"]) == pytest.approx(0.15606451, abs=1e-6)
+    assert float(low["% Total"]) == pytest.approx(84.39354867, abs=1e-4)
+    assert float(high["% Total"]) == pytest.approx(15.60645133, abs=1e-4)
+    assert float(low["% Cumulative"]) == pytest.approx(84.39354867, abs=1e-4)
+    assert float(high["% Cumulative"]) == pytest.approx(100.0, abs=1e-6)
 
 
 def test_save_step_csv_all_nan_energies_skips_write(tmp_path: Path):
@@ -353,9 +404,11 @@ def test_smiles_to_xyz_skips_blank_and_invalid_smiles(tmp_path: Path):
     from chemrefine.io import smiles_to_xyz
 
     csv = tmp_path / "mixed.csv"
-    # Row 0: blank string  → skipped (line 144 branch)
-    # Row 1: invalid SMILES → skipped (line 147-148 branch)
-    # Row 2: valid SMILES   → produces a file
+    # The blank line never reaches the loop: pandas' default skip_blank_lines=True drops
+    # it at read time, so this file exercises the invalid-SMILES skip and the valid row
+    # only. The blank/NaN skip branch is covered by the next test, which patches the
+    # DataFrame in precisely because a CSV cannot deliver those rows — do not delete it
+    # on the strength of this file's shape.
     csv.write_text("smiles\n\n!!!nonsense!!!\nC\n", encoding="utf-8")
     written = smiles_to_xyz(csv, tmp_path / "out")
     assert len(written) == 1  # only the valid one
@@ -397,6 +450,26 @@ def test_smiles_to_xyz_logs_when_embed_fails(tmp_path: Path):
     assert written == []
 
 
+def test_embed_smiles_raises_at_the_molecule_that_would_not_embed():
+    """The single-molecule seam raises where the CSV sweep above logs and skips.
+
+    That opposite failure behaviour is why :func:`embed_smiles` is public: the agent's
+    structure-building tool embeds one explicit SMILES and wants the refusal at the
+    molecule it names, not a warning in a log it is not reading.
+    """
+    from rdkit.Chem import rdDistGeom
+
+    from chemrefine.io import embed_smiles
+
+    with pytest.raises(ValueError, match="invalid SMILES: not-a-molecule"):
+        embed_smiles("not-a-molecule")
+    with (
+        patch.object(rdDistGeom, "EmbedMolecule", return_value=1),
+        pytest.raises(ValueError, match="failed 3D embedding for SMILES: CCO"),
+    ):
+        embed_smiles("CCO")
+
+
 def test_smiles_to_xyz_is_reproducible(tmp_path: Path):
     """Two conversions of the same CSV must produce identical 3D geometries.
 
@@ -411,4 +484,6 @@ def test_smiles_to_xyz_is_reproducible(tmp_path: Path):
     csv.write_text("smiles\nCCO\nc1ccccc1\n", encoding="utf-8")
     first = smiles_to_xyz(csv, tmp_path / "out_a")
     second = smiles_to_xyz(csv, tmp_path / "out_b")
-    assert [p.read_text() for p in first] == [p.read_text() for p in second]
+    assert [p.read_text(encoding="utf-8") for p in first] == [
+        p.read_text(encoding="utf-8") for p in second
+    ]

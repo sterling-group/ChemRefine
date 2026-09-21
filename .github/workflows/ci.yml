@@ -23,6 +23,12 @@ concurrency:
 
 env:
   FORCE_COLOR: "1"
+  # The seven tests that execute the GUI's JavaScript skip without a Node, and a skip
+  # exits 0 — so they can stop testing anything without a red build. This catches a runner
+  # image dropping Node, not a regression in our own lookup: runners ship one, so every
+  # job here takes the PATH branch. The step that exercises the *other* branch is in the
+  # `test` job below.
+  CHEMREFINE_REQUIRE_NODE: "1"
 
 # Every `uses:` is pinned to a full commit SHA with the release tag in a trailing
 # comment. Tags are mutable — a compromised maintainer account can re-point `v1`
@@ -53,7 +59,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -80,6 +86,16 @@ jobs:
           path: coverage.xml
           if-no-files-found: error
 
+      # The bundled Node is the branch every machine *without* one depends on, and nothing
+      # above executes it: `shutil.which("node")` always wins on a runner. Reducing PATH to
+      # the interpreter's own bin directory hides the system Node, and the wheel installs
+      # no console script, so nothing puts one back. Without this step
+      # CHEMREFINE_REQUIRE_NODE is decorative — it could only fire if the image lost Node.
+      - name: The bundled Node stands in when PATH has none
+        run: |
+          PY="$(command -v python)"
+          PATH="$(dirname "$PY")" "$PY" -m pytest tests/test_gui_assets.py -q
+
   # Every extra is a promise the resolver has to be able to keep. The test job only
   # installs [test], so a broken extra — a bad pin, a missing marker — reached users
   # rather than CI. Resolution only: the heavy backends are never downloaded.
@@ -88,7 +104,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -136,6 +152,96 @@ jobs:
           print("marker holds: orb-models excluded on 3.11")
           PY
 
+      # A `python_version` ceiling on a backend extra is a claim about wheels, and the way it
+      # rots is by being *fixed upstream*: the wheel that was missing is published, and the
+      # cap goes on excluding a Python that works, silently, forever. Nobody re-checks a pin
+      # that is not failing. So the cap is asked, on every matrix Python above it, whether it
+      # is still buying anything.
+      #
+      # Which extras are capped, and what each cap holds back, come out of pyproject —
+      # nothing is named here. A backend added or re-capped later is covered on the commit
+      # that changes the marker, with no matching edit to this file.
+      #
+      # `--only-binary` names the held-back packages, never `:all:`: resolution is
+      # transitive, and a wheels-only rule over the whole tree failed on mace's
+      # `python-hostlist` and chgnet's `nvidia-ml-py3` — sdist-only pure-Python
+      # packages that build in a second anywhere — *regardless* of whether the capped
+      # package gained wheels, so the reminder could never fire for those two extras.
+      # Scoped to the names, the sdist-only bystanders resolve as themselves while the
+      # capped package still has to answer with a wheel. It is the *native* build this
+      # catches — dm-tree compiling a vendored abseil for an hour, or torch from
+      # source — and the step above cannot: `--dry-run` prepares metadata, and an sdist
+      # yields metadata without compiling anything, which is how `[mlip-orb]` stayed
+      # green here for a Python `backends install` could never finish on.
+      #
+      # Ceilings only. A floor is policy rather than a wheel fact — orb-models resolves fine
+      # below its floor, to a release from two years ago, which is what the floor refuses —
+      # and the step above holds that one.
+      - name: No capped extra has outlived its cap
+        run: |
+          pip install --quiet packaging
+          python - <<'PY'
+          import subprocess, sys, tomllib
+          from packaging.requirements import Requirement
+
+          here = f"{sys.version_info.major}.{sys.version_info.minor}"
+
+          def minor(version):
+              return int(version.split(".")[1])
+
+          project = tomllib.load(open("pyproject.toml", "rb"))["project"]
+          candidates = sorted(
+              {c.rsplit(" ", 1)[1] for c in project["classifiers"]
+               if c.startswith("Programming Language :: Python :: 3.")},
+              key=minor,
+          )
+          extras = project["optional-dependencies"]
+
+          def applicable(extra, version):
+              """This extra's own requirements on that Python — self-references dropped."""
+              env = {"extra": extra, "python_version": version,
+                     "python_full_version": f"{version}.0"}
+              return [
+                  r for raw in extras[extra]
+                  if (r := Requirement(raw)).name != "chemrefine"
+                  and (r.marker is None or r.marker.evaluate(env))
+              ]
+
+          problems = []
+          for extra in sorted(extras):
+              named = {v: {r.name for r in applicable(extra, v)} for v in candidates}
+              full = set().union(*named.values())
+              claimed = [v for v in candidates if named[v] == full]
+              if not claimed:
+                  problems.append(f"[{extra}] installs on no supported Python at all")
+                  continue
+              if len(claimed) == len(candidates) or minor(here) <= minor(claimed[-1]):
+                  continue          # uncapped, or this Python is inside what it claims
+              held_back = [
+                  str(r).split(";")[0].strip()
+                  for r in applicable(extra, claimed[-1])
+                  if r.name not in named[here]
+              ]
+              wheels_only = ",".join(Requirement(spec).name for spec in held_back)
+              print(f"::group::[{extra}] claims {claimed}; on {here} it holds back {held_back}")
+              done = subprocess.run(
+                  [sys.executable, "-m", "pip", "install", "--dry-run",
+                   "--only-binary", wheels_only, *held_back],
+                  capture_output=True, text=True,
+              )
+              print(done.stdout or done.stderr)
+              print("::endgroup::")
+              if done.returncode == 0:
+                  problems.append(
+                      f"[{extra}] excludes Python {here}, but {' '.join(held_back)} now "
+                      f"installs there from wheels — the cap has outlived its reason. Lift "
+                      f"it in pyproject.toml (and check the comment that explains it)."
+                  )
+          if problems:
+              sys.exit("\n".join(problems))
+          print(f"every cap still binds on {here}")
+          PY
+
   # extras-resolve proves the declared versions *resolve*; nothing proved the floors
   # *run*. Every other job tests whatever pip picks today — always the newest allowed —
   # so a floor could sit years behind the first version the code actually needs and the
@@ -159,13 +265,25 @@ jobs:
         # does — a hand-written pin list here would drift the moment a floor moved.
         # Runtime deps only: the test tools float, because the promise under test is
         # what `pip install chemrefine` guarantees users, not what pytest needs.
+        # Parsed with the requirement grammar rather than a regex: a `,<3` or a marker is
+        # read for what it is, and an entry with no `>=` floor fails the job here instead of
+        # vanishing from the pin list while the job stays green.
         run: |
+          python -m pip install --quiet packaging
           python - <<'PY'
-          import re, tomllib
+          import sys, tomllib
+          from packaging.requirements import Requirement
           deps = tomllib.load(open("pyproject.toml", "rb"))["project"]["dependencies"]
-          pins = [f"{m.group(1)}=={m.group(2)}"
-                  for dep in deps
-                  if (m := re.match(r"^([A-Za-z0-9_.-]+)\s*>=\s*([^,;]+?)\s*$", dep))]
+          pins, floorless = [], []
+          for dep in deps:
+              req = Requirement(dep)
+              floors = [s.version for s in req.specifier if s.operator == ">="]
+              if len(floors) != 1:
+                  floorless.append(dep)
+                  continue
+              pins.append(f"{req.name}=={floors[0]}")
+          if floorless:
+              sys.exit(f"every runtime dependency needs exactly one >= floor to pin: {floorless}")
           open("floors.txt", "w").write("\n".join(pins) + "\n")
           print(*pins, sep="\n")
           PY
@@ -192,8 +310,8 @@ jobs:
   # Coverage proves every line ran; it does not prove an assertion looked at the result.
   # This breaks each predicate whose inversion would be a wrong scientific answer rather
   # than a crash, and requires a red test — so those predicates are checked, not merely
-  # executed. Its own job because it runs the suite once per mutation (~3 min; only a
-  # survivor costs the full time, since a caught one stops at the first failure).
+  # executed. Its own job because it runs a suite per mutation (~1.5 min: each runs the one
+  # test file it names, and only a fall-back or a survivor pays for the whole suite).
   mutation-gate:
     name: Critical predicates are checked, not just covered
     runs-on: ubuntu-latest
@@ -209,39 +327,6 @@ jobs:
         run: pip install -e ".[test]"
       - name: Break each critical predicate and require a red test
         run: python scripts/mutation_gate.py
-
-  # The suite must not depend on which backend environments the machine happens to have
-  # provisioned. Runners are bare, so the default matrix only ever exercises the
-  # not-provisioned half — while a developer who has run `chemrefine backends install` is
-  # in the other. A fake managed env is enough to tell them apart: `resolve_launcher` only
-  # probes for `<env>/bin/python`, so this reaches the same branch a real 3 GB torch
-  # install would, in a second.
-  provisioned-backend:
-    name: Suite is independent of provisioned backends
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
-        with:
-          python-version: "3.13"
-          cache: pip
-      - name: Install package
-        run: pip install -e ".[test]"
-      - name: Fake a provisioned managed env for every backend extra
-        run: |
-          # `known_backend_extras()` is the registry the code itself asks, so a new backend
-          # is covered by existing rather than by remembering to edit this file. A literal
-          # list here goes stale by staying green while testing one env fewer than it says.
-          for extra in $(python -c "from chemrefine.engines._provision import known_backend_extras as k; print(' '.join(sorted(k())))"); do
-            mkdir -p "$HOME/fake-crh/backends/$extra/bin"
-            ln -s "$(command -v python)" "$HOME/fake-crh/backends/$extra/bin/python"
-          done
-      - name: The suite must still pass
-        env:
-          CHEMREFINE_HOME: /home/runner/fake-crh
-        run: pytest -q
 
   docs-check:
     runs-on: ubuntu-latest
@@ -286,6 +371,13 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-package
     steps:
+      # The tree is here for one thing: the shipped quickstart the installed CLI validates
+      # below. The package under test is the downloaded artifact, never this checkout —
+      # the src layout keeps the tree off sys.path.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.13"
@@ -296,11 +388,18 @@ jobs:
           name: Packages
           path: dist
 
+      # `--help` proves the entry point imports; the three after it prove the package
+      # works. `validate` loads the shipped quickstart through the engine registry and its
+      # templates (its ORCA path is a placeholder, so it warns and exits 0), `schema`
+      # prints the packaged introspection document, `engines --json` the registry.
       - name: Install the wheel and exercise the entry point
         run: |
           pip install dist/*.whl
           chemrefine --version
           chemrefine --help > /dev/null
+          chemrefine validate examples/first_run/input.yaml
+          chemrefine schema > /dev/null
+          chemrefine engines --json > /dev/null
 
       # The sdist is the second artifact PyPI serves, and a distro packager builds from
       # it — so it needs the same proof the wheel gets. `--no-binary` forces a real build
@@ -311,6 +410,9 @@ jobs:
           pip install --no-binary chemrefine dist/*.tar.gz
           chemrefine --version
           chemrefine --help > /dev/null
+          chemrefine validate examples/first_run/input.yaml
+          chemrefine schema > /dev/null
+          chemrefine engines --json > /dev/null
 
       - name: The package must advertise its types
         run: |
@@ -323,6 +425,19 @@ jobs:
           print(f"py.typed present at {marker}")
           PY
 
+      # The sdist ships tests and examples precisely so the suite can be run from it —
+      # and nothing else executes that suite, which is exactly how docs/ and examples/
+      # silently fell out of it (16 tests failed from the tarball while every other job
+      # stayed green). Unpack the artifact, install it with the same extras the test job
+      # uses, and run the suite inside the unpacked tree; the repo-only guards skip
+      # themselves there with named reasons.
+      - name: The suite must pass from the unpacked sdist
+        run: |
+          tar -xzf dist/*.tar.gz -C "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP"/chemrefine-*/
+          pip install ".[test]"
+          python -m pytest -q -p no:cacheprovider
+
   required-checks-pass:
     if: always()
     needs:
@@ -332,7 +447,6 @@ jobs:
       - floors
       - type-check
       - mutation-gate
-      - provisioned-backend
       - docs-check
       - build-package
       - install-smoke-test

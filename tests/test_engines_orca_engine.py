@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 from collections.abc import Collection
 from pathlib import Path
@@ -111,7 +112,7 @@ def test_prepare_input_contains_charge_and_multiplicity(tmp_path: Path):
         executables=ctx.executables,
     )
     inputs = engine.prepare(ctx)
-    text = inputs.files[0][0].read_text()
+    text = inputs.files[0][0].read_text(encoding="utf-8")
     assert "* xyzfile -2 3" in text
 
 
@@ -123,7 +124,7 @@ def test_prepare_clamps_template_pal_to_max_cores(tmp_path: Path):
         "! B3LYP def2-SVP\n%pal\n  nprocs 16\nend\n", encoding="utf-8"
     )
     inputs = engine.prepare(ctx)
-    text = inputs.files[0][0].read_text()
+    text = inputs.files[0][0].read_text(encoding="utf-8")
     assert "nprocs 4" in text  # ctx.max_cores
     assert "nprocs 16" not in text
 
@@ -165,7 +166,7 @@ def test_prepare_uses_step_specific_template_when_given(tmp_path: Path):
     ctx = _ctx(tmp_path, structures=(_seed_structure(),), step_cfg=step_cfg)
     (ctx.template_dir / "custom.inp").write_text("! HF\n", encoding="utf-8")
     inputs = engine.prepare(ctx)
-    text = inputs.files[0][0].read_text()
+    text = inputs.files[0][0].read_text(encoding="utf-8")
     assert "! HF" in text
 
 
@@ -198,7 +199,7 @@ def test_submit_script_contains_orca_executable_invocation(_submit, _finished_jo
     ctx = _ctx(tmp_path, structures=(_seed_structure(),))
     inputs = engine.prepare(ctx)
     engine.submit(inputs, ctx)
-    script_text = inputs.files[0][0].with_suffix(".slurm").read_text()
+    script_text = inputs.files[0][0].with_suffix(".slurm").read_text(encoding="utf-8")
     assert "orca step1_0.inp" in script_text
     assert "$OUTPUT_DIR/step1_0.out" in script_text
     # ORCA's output_globs ClassVar flows through chemrefine.engines._execution.run_batch.
@@ -258,7 +259,7 @@ def test_submit_uses_one_array_when_slurm_array_set(
     assert set(batch.jobs.values()) == {"777"}
     script = ctx.step_dir / "step1_array.slurm"
     assert script.is_file()
-    assert "$INP_NAME" in script.read_text()
+    assert "$INP_NAME" in script.read_text(encoding="utf-8")
     manifest = kwargs["manifest"]
     assert manifest.read_text(encoding="utf-8").count("\n") == 2
 
@@ -356,6 +357,100 @@ def test_parse_unknown_operation_raises(tmp_path: Path):
         engine.parse(inputs, ctx)
 
 
+def test_an_inferred_operation_without_a_reader_still_runs_and_reads_the_final_structure(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+):
+    """A reaction path runs today, read as its final structure with a warning; it fans out
+    once the dispatch has a reader for ``irc`` — with no edit to the engine.
+
+    A run kind is never refused for want of a reader: the template names a feature the
+    program has, and the step has to run. The inferred ``operation`` used to fall through
+    to ``sp`` for every run kind the inspector did not know, so nothing said the output was
+    a path; now the word is inferred, the log says the final structure is all that was
+    read, and the same step fans out the day the reader joins the dispatch. An explicit
+    ``operation:`` is still held to the readers' vocabulary.
+    """
+    from chemrefine.engines.orca.output import coordinator
+
+    engine = get_engine("orca")
+    inferred = StepConfig(step=1, engine="orca")
+    ctx = _ctx(tmp_path, structures=(_seed_structure(),), step_cfg=inferred)
+    assert ctx.template is not None
+    ctx.template.write_text("! B3LYP def2-SVP IRC\n%pal\n  nprocs 2\nend\n", encoding="utf-8")
+    inputs = engine.prepare(ctx)  # not refused
+    out = inputs.files[0][1]
+    shutil.copy(FIXTURE, out)
+
+    with caplog.at_level(logging.WARNING, logger="chemrefine.engines.orca.engine"):
+        parsed = engine.parse_one(out, "0", ctx)
+    assert len(parsed) == 1 and parsed[0].positions.shape == (77, 3)
+    assert "'irc'" in caplog.text and "final structure" in caplog.text
+
+    explicit = StepConfig(step=1, engine="orca", operation="irc")
+    with pytest.raises(ConfigError, match="irc"):  # explicit: held to the vocabulary
+        engine.check_step(explicit, charge=0, multiplicity=1)
+
+    caplog.clear()
+    monkeypatch.setattr(coordinator, "_DFT_OPERATIONS", coordinator._DFT_OPERATIONS | {"irc"})
+    monkeypatch.setattr(
+        coordinator, "TEXT_BASED_OPERATIONS", coordinator.TEXT_BASED_OPERATIONS | {"irc"}
+    )
+    with caplog.at_level(logging.WARNING, logger="chemrefine.engines.orca.engine"):
+        assert len(engine.parse_one(out, "0", ctx)) == 1
+    assert "final structure" not in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# check_step — the parser's operation refusal, before any job is paid for
+# ---------------------------------------------------------------------------
+
+
+def test_check_step_refuses_an_operation_the_parser_cannot_dispatch():
+    """A typo'd ``operation:`` must be refused from the config alone, naming the vocabulary.
+
+    Unchecked, it is first refused by the *parser* — after every job in the step has run
+    at full cost — and because the operation is part of every row key, correcting the typo
+    re-keys the rows so no recovery command adopts the paid outputs. The refusal has to
+    fire where the other config-decidable ones do: at preflight, and in ``validate``.
+    """
+    engine = get_engine("orca")
+    with pytest.raises(ConfigError, match="opt-sp") as excinfo:
+        engine.check_step(
+            StepConfig(step=1, engine="orca", operation="opt-sp"), charge=0, multiplicity=1
+        )
+    assert "opt_sp" in str(excinfo.value), "the vocabulary the parser dispatches is named"
+
+
+def test_check_step_accepts_everything_the_parser_dispatches():
+    """The accepted set is the parser's own — offered names, the legacy ``dft``, any case.
+
+    ``GOAT`` covers the normalisation branch: the legacy YAML rewriter lowercases an
+    operation, but a :class:`StepConfig` built directly (tests, the GUI's form state)
+    arrives unrewritten, and the parser normalises at dispatch — so the check must too.
+    ``None`` is the inferred-from-template case and is not this check's business.
+    """
+    from chemrefine.engines.orca.output import known_operations
+
+    engine = get_engine("orca")
+    for operation in (*sorted(known_operations()), "dft", "GOAT", None):
+        engine.check_step(
+            StepConfig(step=1, engine="orca", operation=operation), charge=0, multiplicity=1
+        )
+
+
+def test_the_operation_refusal_fires_at_the_runs_preflight_walk():
+    """The same refusal at t=0 — before any upstream step is paid for.
+
+    The hook rides :class:`~chemrefine.engines.api.PreflightChecking`, so
+    ``pipeline.run``'s walk and ``chemrefine validate`` both make it; this holds the walk.
+    """
+    from chemrefine.engines.api import preflight_steps
+
+    step_cfg = StepConfig(step=2, engine="orca", operation="opt-sp")
+    with pytest.raises(ConfigError, match="opt-sp"):
+        preflight_steps([step_cfg], charge=0, multiplicity=1)
+
+
 # ---------------------------------------------------------------------------
 # operation is optional: explicit value wins, else the template is inspected
 # ---------------------------------------------------------------------------
@@ -372,8 +467,9 @@ def test_parse_without_operation_infers_parser_from_template(tmp_path: Path):
     inputs = engine.prepare(ctx)
     shutil.copy(FIXTURE, inputs.files[0][1])
     # The default template (`! B3LYP def2-SVP`, no Opt) inspects to sp → parse_dft.
+    assert engine._resolve_operation(ctx) == "sp"
     results = engine.parse(inputs, ctx)
-    assert results.structures[0].energy_hartree is not None
+    assert results.structures[0].energy_hartree == pytest.approx(-6044.555726221861)
 
 
 def test_effective_operation_explicit_wins_over_template(tmp_path: Path):
@@ -512,3 +608,35 @@ def test_plain_executable_name_is_not_needlessly_quoted(tmp_path: Path):
         "orca step1_0.inp"
         in engine.run_block(ctx, tmp_path / "step1_0.inp", tmp_path / "step1_0.out").body
     )
+
+
+# ---------------------------------------------------------------------------
+# memory_mb — the SLURM request %maxcore implies
+# ---------------------------------------------------------------------------
+
+
+def test_memory_mb_inverts_the_75_percent_rule(tmp_path: Path):
+    """The request sizes the allocation so the declared maxcore is 75% of it.
+
+    %maxcore is a promise ORCA routinely overshoots per process, which is why qorca holds
+    it to at most 75% of the granted memory; ceil(3000 x 2 / 0.75) = 8000.
+    """
+    ctx = _ctx(tmp_path, (_seed_structure("0"),))
+    ctx.template.write_text(
+        "! B3LYP def2-SVP\n%maxcore 3000\n%pal\n  nprocs 2\nend\n", encoding="utf-8"
+    )
+    assert get_engine("orca").memory_mb(ctx) == 8000
+
+
+def test_memory_mb_uses_the_granted_core_count(tmp_path: Path):
+    """The multiplier is the clamped PAL — the cores the job actually gets, not the ask."""
+    ctx = _ctx(tmp_path, (_seed_structure("0"),))  # max_cores=4
+    ctx.template.write_text(
+        "! B3LYP def2-SVP\n%maxcore 1000\n%pal\n  nprocs 16\nend\n", encoding="utf-8"
+    )
+    assert get_engine("orca").memory_mb(ctx) == -(-(1000 * 4 * 4) // 3)  # ceil(1000*4/0.75)
+
+
+def test_memory_mb_is_none_without_a_maxcore(tmp_path: Path):
+    """No %maxcore, no request: the header's memory policy stands, as it always has."""
+    assert get_engine("orca").memory_mb(_ctx(tmp_path, (_seed_structure("0"),))) is None

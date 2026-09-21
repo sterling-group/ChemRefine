@@ -47,8 +47,9 @@ def test_thermochemistry_parses_absolute_values_and_zpe():
     assert thermo is not None
     assert thermo.gibbs_hartree == -76.41
     assert thermo.enthalpy_hartree == -76.38
-    # electronic + ZPE correction (-76.40 + 0.02)
-    assert thermo.energy_zpe_hartree == pytest.approx(-76.38)
+    # electronic + ZPE correction (-76.40 + 0.03) — distinct from the enthalpy on
+    # purpose, so computing this *as* the enthalpy cannot pass.
+    assert thermo.energy_zpe_hartree == pytest.approx(-76.37)
 
 
 def test_thermochemistry_missing_lines_yield_none():

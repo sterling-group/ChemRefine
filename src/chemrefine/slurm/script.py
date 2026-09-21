@@ -17,19 +17,58 @@ from __future__ import annotations
 
 import logging
 import re
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from chemrefine import job_log
+from chemrefine import io, job_log
+from chemrefine.config import reject_shell_unsafe
 from chemrefine.errors import ConfigError
 from chemrefine.state import JobTriple, RunBlock
 
 logger = logging.getLogger(__name__)
 
-# The lookahead requires `=`, whitespace, or end-of-line after the flag name so
-# only the exact directives we re-add are dropped — `--ntasks` must not swallow
-# a cluster header's `--ntasks-per-node` / `--ntasks-per-core`.
-_SBATCH_OVERRIDE_RE = re.compile(r"--(?:ntasks|cpus-per-task|job-name|output|error)(?=[=\s]|$)")
+# The five directives this builder re-adds, matched WITH their value, so an owned option
+# is stripped out of a header line without taking its neighbours: sbatch accepts several
+# options per `#SBATCH` line, and dropping the whole line silently discarded whatever
+# shared it (`#SBATCH --time=… --output=…` lost its `--time`). The value alternatives
+# cover `=v`, `="a b"`, and the space-separated `--flag v` / `--flag "a b"` forms; the
+# trailing lookahead is the prefix guard, so `--ntasks-per-node` / `--ntasks-per-core`
+# never match — after `--ntasks` the empty value alternative still demands whitespace or
+# end-of-line, which a `-` is not.
+_SBATCH_OWNED_OPTION_RE = re.compile(
+    r"[ \t]*--(?:ntasks|cpus-per-task|job-name|output|error)"
+    r'(?:=(?:"[^"]*"|\S*)|[ \t]+(?:"[^"]*"|(?!--)\S+))?(?=\s|$)'
+)
+
+
+def _refuse_shell_unsafe(*named: tuple[str, Path | None]) -> None:
+    """The bash-safety rule, asked where a path becomes bash — on the string bash receives.
+
+    :func:`chemrefine.config.reject_shell_unsafe` is asked twice at load: on each directory
+    as written, and again after a relative one is anchored to the config file's directory.
+    Both passes see the path with its symlinks intact, and the step directory that reaches
+    ``export OUTPUT_DIR="…"`` here is the resolved one — so a symlink whose *target* carries
+    a refused character passed both and landed in the script, where bash substitutes inside
+    double quotes. The runlog rows are held to the rule at the moment they become bash
+    (:func:`chemrefine.job_log.bash_header`); this is the same placement for the paths, and
+    for the same reason: asked on the exact value interpolated, no route around the load-time
+    passes reaches the script. Those passes stay for what they are — the earliest point a
+    user can be told, from both loaders.
+
+    A :class:`~chemrefine.errors.ConfigError` rather than the rule's bare ``ValueError``:
+    the path originates in the user's YAML (or in what it points at), and a ``ValueError``
+    out of script assembly would leave the exit-code contract as a traceback.
+    """
+    for what, path in named:
+        if path is None:
+            continue
+        try:
+            reject_shell_unsafe(
+                str(path), what=f"resolved {what}", fix="rename the directory it sits in"
+            )
+        except ValueError as e:
+            raise ConfigError(str(e)) from e
 
 
 def _compute_work_dir_expr(output_dir: Path | str, scratch_dir: Path | None) -> str:
@@ -49,27 +88,166 @@ def _compute_work_dir_expr(output_dir: Path | str, scratch_dir: Path | None) -> 
 def _read_header(template_path: Path) -> tuple[list[str], list[str]]:
     """Split a SLURM header template into ``(#SBATCH lines we keep, body lines)``.
 
-    Drops any ``#SBATCH`` directive we override later (``--ntasks`` /
+    Drops any ``#SBATCH`` *option* we override later (``--ntasks`` /
     ``--cpus-per-task`` / ``--job-name`` / ``--output`` / ``--error``) so PAL and
     log paths stay consistent regardless of what the cluster header declares.
     Longer flags that merely share a prefix (``--ntasks-per-node``) are kept.
+
+    The option, not its line: sbatch accepts several options on one ``#SBATCH`` line,
+    and dropping the whole line whenever one of ours appeared on it silently discarded
+    the co-resident directives — a ``#SBATCH --time=24:00:00 --output=x.log`` lost its
+    time limit with nothing said. Owned options are stripped in place and the line kept
+    whenever any other directive survives on it.
     """
     if not template_path.is_file():
         raise ConfigError(f"SLURM header template {template_path} not found")
     sbatch_lines: list[str] = []
     body_lines: list[str] = []
-    for raw in template_path.read_text(encoding="utf-8").splitlines():
+    for raw in io.read_utf8(template_path, what="SLURM header template").splitlines():
         stripped = raw.strip()
         if stripped.startswith("#SBATCH"):
-            if not _SBATCH_OVERRIDE_RE.search(stripped):
-                sbatch_lines.append(raw.rstrip())
+            kept = _SBATCH_OWNED_OPTION_RE.sub("", raw.rstrip())
+            if kept.strip() != "#SBATCH":
+                sbatch_lines.append(kept)
         else:
             body_lines.append(raw.rstrip())
     return sbatch_lines, body_lines
 
 
 _SCRATCH_CLEANUP = 'scratch_kept=false; cd "$OUTPUT_DIR" && rm -rf "$WORK_DIR"'
-"""On-exit scratch removal shared by the per-job and array scripts."""
+"""On-exit scratch removal shared by the per-job and array scripts.
+
+Unconditional on both paths. :func:`build_script` once took a ``save_scratch`` flag that
+swapped this for a keep-and-announce line, but it was a v1 concept carried into the
+rewrite's signature and never wired to anything — no config knob, no caller — so it was
+removed rather than left as a knob nobody could reach. The engine-owned equivalents are the
+ones that work, and there are two of them: an engine copies a directory home by naming it in
+``output_dirs`` (``pyscf-extopt``'s ``tensors/``), or runs its own teardown by returning it as
+:attr:`~chemrefine.state.RunBlock.cleanup` (``qchem``'s ``options.save``, which copies
+``$QCSCRATCH/$QCSAVE``; the ExtOpt server stop). Both are honoured on the array path as well
+— where a builder flag would have had to be added twice.
+
+``scratch_kept`` stays in the runlog: the footer is a published artifact, the field still
+reports truthfully, and changing that format is a decision of its own."""
+
+# ``--mem`` and ``--mem-per-cpu`` in either ``=`` or space form. ``--mem-per-gpu`` cannot
+# match: after ``--mem`` the optional group rejects ``-per-gpu`` and the mandatory ``[=\s]``
+# rejects the ``-`` that follows, so a GPU memory directive is neither read nor stripped.
+_MEM_DIRECTIVE_RE = re.compile(r"--mem(?:-per-cpu)?[=\s]+(\d+)([KkMmGgTt]?)")
+
+# The same directive with its leading whitespace, for stripping it out of a shared line
+# without taking its neighbours — the `_SBATCH_OWNED_OPTION_RE` rule, applied to the one
+# directive `_apply_memory` replaces.
+_MEM_STRIP_RE = re.compile(r"[ \t]*--mem(?:-per-cpu)?[=\s]+\d+[KkMmGgTt]?(?=\s|$)")
+
+
+def _directive_mb(value: int, unit: str) -> int:
+    """One SLURM memory value in MB. Bare numbers are MB (SLURM's default unit).
+
+    ``K`` floors to MB — understating the header's grant errs toward extending it, which
+    only ever raises an allocation, never starves one.
+    """
+    unit = unit.upper()
+    if unit == "K":
+        return value // 1024
+    return value * {"": 1, "M": 1, "G": 1024, "T": 1024 * 1024}[unit]
+
+
+def _header_memory_mb(sbatch_lines: list[str], *, ntasks: int, cpus_per_task: int) -> int | None:
+    """Per-job MB the header's own memory directives grant; ``None`` when it has none.
+
+    ``--mem-per-cpu`` multiplies by the layout; ``--mem`` is the per-node total, which for
+    the single-node jobs this builder emits is the job's. ``--mem=0`` is SLURM's "all the
+    node's memory" — granted as unbounded rather than nothing. With several directives the
+    most generous wins, mirroring how sbatch resolves duplicates (last wins) closely enough
+    for a sufficiency test that only decides whether to extend.
+    """
+    granted: int | None = None
+    for line in sbatch_lines:
+        m = _MEM_DIRECTIVE_RE.search(line)
+        if not m:
+            continue
+        value = _directive_mb(int(m.group(1)), m.group(2))
+        if "per-cpu" in m.group(0):
+            total = value * ntasks * cpus_per_task
+        elif int(m.group(1)) == 0:
+            total = sys.maxsize
+        else:
+            total = value
+        granted = max(granted or 0, total)
+    return granted
+
+
+def _apply_memory(
+    sbatch_lines: list[str],
+    memory_mb: int | None,
+    *,
+    ntasks: int,
+    cpus_per_task: int,
+    job_name: str,
+) -> list[str]:
+    """Honour a header allocation that covers ``memory_mb``; extend one that falls short.
+
+    ``None`` — the engine declares nothing — leaves the header byte-untouched, which is
+    what every job got before engines could declare memory. With a requirement, a header
+    whose own ``--mem``/``--mem-per-cpu`` already covers it stands as written: the cluster's
+    policy wins whenever it is adequate. Only a short or absent allocation is replaced, with
+    the derived ``--mem-per-cpu`` and one log line naming both numbers, so an override never
+    happens silently.
+    """
+    if memory_mb is None:
+        return sbatch_lines
+    granted = _header_memory_mb(sbatch_lines, ntasks=ntasks, cpus_per_task=cpus_per_task)
+    if granted is not None and granted >= memory_mb:
+        return sbatch_lines
+    per_cpu = -(-memory_mb // (ntasks * cpus_per_task))  # ceil
+    logger.info(
+        "%s: the input declares %d MB; the header grants %s — requesting --mem-per-cpu=%d",
+        job_name,
+        memory_mb,
+        f"{granted} MB" if granted is not None else "no memory",
+        per_cpu,
+    )
+    # Strip the memory directive, not its line: a directive sharing a line with others
+    # (`#SBATCH --mem=2G --time=…`) must lose only the memory half — the `_read_header`
+    # rule, applied to the one directive this function replaces.
+    kept = []
+    for line in sbatch_lines:
+        if not _MEM_DIRECTIVE_RE.search(line):
+            kept.append(line)
+            continue
+        remainder = _MEM_STRIP_RE.sub("", line)
+        if remainder.strip() != "#SBATCH":
+            kept.append(remainder)
+    return [*kept, f"#SBATCH --mem-per-cpu={per_cpu}"]
+
+
+# A header's own node count, in either spelling, for stripping the directive (not its
+# line) when the engine pins the node — the `_SBATCH_OWNED_OPTION_RE` rule. `--nodes` and
+# `-N` only; `--nodelist` / `--ntasks-per-node` share a prefix and are kept.
+_NODES_STRIP_RE = re.compile(r"[ \t]*(?:--nodes|-N)(?:=|[ \t]+)\S+(?=\s|$)")
+
+
+def _apply_single_node(sbatch_lines: list[str], single_node: bool) -> list[str]:
+    """Pin the job to one node when the engine says its processes must share one.
+
+    ``False`` leaves the header byte-untouched, which is what every job gets whose shape
+    already decides the matter — one task with N CPUs cannot be split, and MPI ranks may
+    span. ``True`` is the ExtOpt case (:meth:`~chemrefine.engines.api.JobExecutable.
+    single_node`): N tasks for ORCA's ranks *and* one process threading N, which is only
+    right on one machine. The directive is written by the script rather than asked of
+    every header, because a header that forgot it produced a job that was wrong only on
+    the partitions that split it — the failure that is never reproduced on a laptop. A
+    header's own ``--nodes`` is stripped in place so the two cannot disagree.
+    """
+    if not single_node:
+        return sbatch_lines
+    kept = []
+    for line in sbatch_lines:
+        remainder = _NODES_STRIP_RE.sub("", line)
+        if remainder.strip() != "#SBATCH":
+            kept.append(remainder)
+    return [*kept, "#SBATCH --nodes=1"]
 
 
 def _run_body_lines(
@@ -161,7 +339,10 @@ def _run_body_lines(
 def build_script(
     *,
     job_name: str,
-    pal: int,
+    ntasks: int,
+    cpus_per_task: int = 1,
+    memory_mb: int | None = None,
+    single_node: bool = False,
     template_path: Path,
     script_path: Path,
     input_path: Path,
@@ -176,18 +357,27 @@ def build_script(
     output_globs: Sequence[str],
     output_dirs: Sequence[str] = (),
     extra_header_fields: Sequence[tuple[str, object]] = (),
-    save_scratch: bool = False,
 ) -> Path:
     """Assemble a SLURM script at ``script_path`` from a header template + a run block.
 
     Reads ``template_path`` (a cluster header), strips any ``#SBATCH``
     directives we own (``--ntasks``/``--cpus-per-task``/``--job-name``/
-    ``--output``/``--error``) and re-adds them so PAL + log paths stay
+    ``--output``/``--error``) and re-adds them so the core layout + log paths stay
     consistent, then appends a scratch-setup + on-exit trap that runs the
     engine's ``run_block`` in a fresh ``$WORK_DIR`` and copies ``output_globs``
     back to ``output_dir``. Notable args:
 
-    * ``pal`` → ``#SBATCH --ntasks`` (``--cpus-per-task`` pinned to 1).
+    * ``ntasks`` / ``cpus_per_task`` → the SBATCH pair, straight through. The pair is the
+      engine's :meth:`~chemrefine.engines.api.JobExecutable.slurm_layout`: MPI ranks are
+      ``(pal, 1)``, one threaded process is ``(1, threads)`` — the same core count, spelled
+      the way the program will actually use it.
+    * ``memory_mb`` → the engine's declared requirement
+      (:meth:`~chemrefine.engines.api.JobExecutable.memory_mb`). A header allocation that
+      covers it stands untouched; a short or absent one is replaced by the derived
+      ``--mem-per-cpu`` — see :func:`_apply_memory`. ``None`` never touches the header.
+    * ``single_node`` → ``#SBATCH --nodes=1`` when the engine's processes must share a
+      node (:meth:`~chemrefine.engines.api.JobExecutable.single_node`); ``False`` never
+      touches the header — see :func:`_apply_single_node`.
     * ``scratch_dir`` → base for the per-calc ``$WORK_DIR``; ``None`` auto-derives
       ``_work_<jobid>_<ts>_<rand>`` under ``output_dir`` (see :class:`Config`).
     * ``run_block`` → engine bash run after ``cd $WORK_DIR`` (may use
@@ -197,20 +387,24 @@ def build_script(
       ``extra_header_fields`` → forwarded to :mod:`chemrefine.job_log` for the
       runlog header/footer.
     """
+    _refuse_shell_unsafe(
+        ("output_dir", output_dir), ("input_path", input_path), ("scratch_dir", scratch_dir)
+    )
     sbatch_lines, body_lines = _read_header(template_path)
+    sbatch_lines = _apply_memory(
+        sbatch_lines, memory_mb, ntasks=ntasks, cpus_per_task=cpus_per_task, job_name=job_name
+    )
+    sbatch_lines = _apply_single_node(sbatch_lines, single_node)
     runlog_path = output_dir / f"{job_name}.runlog"
     err_path = output_dir / f"{job_name}.err"
     sbatch_lines += [
         f"#SBATCH --job-name={job_name}",
         f'#SBATCH --output="{runlog_path}"',
         f'#SBATCH --error="{err_path}"',
-        f"#SBATCH --ntasks={pal}",
-        "#SBATCH --cpus-per-task=1",
+        f"#SBATCH --ntasks={ntasks}",
+        f"#SBATCH --cpus-per-task={cpus_per_task}",
     ]
 
-    cleanup = (
-        'scratch_kept=true; echo "scratch kept at $WORK_DIR"' if save_scratch else _SCRATCH_CLEANUP
-    )
     header = job_log.bash_header(
         engine=engine,
         operation=operation,
@@ -218,7 +412,7 @@ def build_script(
         structure_id=structure_id,
         step_label=step_label,
         step_dir=output_dir,
-        cores=pal,
+        cores=ntasks * cpus_per_task,
         extra_fields=extra_header_fields,
     )
     footer = job_log.bash_footer(engine=engine, step_label=step_label)
@@ -237,7 +431,7 @@ def build_script(
             header=header,
             footer=footer,
             globs_expr=" ".join(output_globs),
-            cleanup=cleanup,
+            cleanup=_SCRATCH_CLEANUP,
             run_block=run_block,
             output_dirs=output_dirs,
         ),
@@ -255,8 +449,8 @@ def build_script(
 _MAX_ARRAY_SIZE = 1000
 """Tasks per array chunk. Clusters commonly cap ``MaxArraySize`` at 1001
 (highest index 1000), so a larger step submits several arrays — indices
-restart at 0 per chunk and each chunk gets its own manifest, with the one
-shared script pointed at it via ``--export=ALL,CR_MANIFEST=...``."""
+restart at 0 per chunk and each chunk gets its own manifest, handed to the
+one shared script as its first argument (``sbatch … script.slurm <manifest>``)."""
 
 
 def write_array_manifests(
@@ -287,7 +481,10 @@ def write_array_manifests(
 def build_array_script(
     *,
     step_label: str,
-    pal: int,
+    ntasks: int,
+    cpus_per_task: int = 1,
+    memory_mb: int | None = None,
+    single_node: bool = False,
     template_path: Path,
     script_path: Path,
     output_dir: Path,
@@ -313,15 +510,32 @@ def build_array_script(
     renders it against sentinel paths named ``$INP_NAME`` / ``$OUT_NAME``.
     Failures before the redirect land in the SBATCH fallback log
     ``array_%A_%a.log`` (under the step dir).
+
+    The manifest path arrives as the script's first argument, captured into
+    ``$CR_MANIFEST`` at the very top — ahead of the user's template body, which
+    may ``set`` or ``shift`` the positional parameters — and loudly (``${1:?}``)
+    when missing. An argument rather than ``--export=…,CR_MANIFEST=<path>``
+    because sbatch splits ``--export`` on commas: a legal comma anywhere in the
+    output path truncated the variable, and every task of the array read a
+    manifest that did not exist. The argument channel has no such character.
     """
+    _refuse_shell_unsafe(("output_dir", output_dir), ("scratch_dir", scratch_dir))
     sbatch_lines, body_lines = _read_header(template_path)
+    sbatch_lines = _apply_memory(
+        sbatch_lines,
+        memory_mb,
+        ntasks=ntasks,
+        cpus_per_task=cpus_per_task,
+        job_name=f"{step_label}_array",
+    )
+    sbatch_lines = _apply_single_node(sbatch_lines, single_node)
     fallback_log = output_dir / "array_%A_%a.log"
     sbatch_lines += [
         f"#SBATCH --job-name={step_label}_array",
         f'#SBATCH --output="{fallback_log}"',
         f'#SBATCH --error="{fallback_log}"',
-        f"#SBATCH --ntasks={pal}",
-        "#SBATCH --cpus-per-task=1",
+        f"#SBATCH --ntasks={ntasks}",
+        f"#SBATCH --cpus-per-task={cpus_per_task}",
     ]
     # ``$SID`` expands inside the runlog heredoc at runtime, like $(hostname).
     header = job_log.bash_header(
@@ -331,7 +545,7 @@ def build_array_script(
         structure_id="$SID",
         step_label=step_label,
         step_dir=output_dir,
-        cores=pal,
+        cores=ntasks * cpus_per_task,
         extra_fields=extra_header_fields,
     )
     footer = job_log.bash_footer(engine=engine, step_label=step_label)
@@ -355,6 +569,10 @@ def build_array_script(
         "#!/bin/bash",
         "",
         *sbatch_lines,
+        "",
+        "# Array manifest (generated by ChemRefine): the first argument, taken before",
+        "# the template body can touch the positional parameters.",
+        'CR_MANIFEST="${1:?array manifest path missing}"',
         "",
         *body_lines,
         "",

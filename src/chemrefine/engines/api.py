@@ -12,7 +12,7 @@ chemrefine **declares** a small contract; an engine **provides** it. Reusable bu
 (underscored, never edited to add an engine) live in the subsystem: :class:`._job.JobEngine`
 (the per-structure lifecycle), :mod:`._execution` (the scheduler), :class:`._script.ScriptEngine`
 (the user-Python-script kind), :mod:`._backend_server` (the ExtOpt server). Plugins are the
-bare-named packages (``orca`` / ``mlip`` / ``pyscf``).
+bare-named packages under ``engines/``.
 
 Adding a new engine — pick a *kind* and provide the requested pieces
 ---------------------------------------------------------------------
@@ -37,7 +37,9 @@ One job, one product          :class:`CalculationEngine` +    ``prepare`` / ``su
   is :mod:`chemrefine.nms`). Managed backend envs: implement :class:`ProvisionableEngine`'s
   ``backend_requirement`` (the generic provisioner is :mod:`chemrefine.engines._provision`).
 * **YAML knobs** — a Pydantic model in ``engines/<name>/options.py`` subclassing
-  :class:`~chemrefine.engines._options.EngineOptions`; read it in the primitives.
+  :class:`~chemrefine.engines._options.EngineOptions`; read it in the primitives and declare
+  it as ``options_cls`` (the :class:`OptionsDeclaring` capability), so second readers —
+  provisioning, schema introspection — resolve the knobs through the engine's own model.
 * **Register** — import the class in ``engines/<name>/__init__.py``; the bare-named package is
   **auto-discovered** when :mod:`chemrefine.engines` loads (registration is a side effect), so
   nothing outside the new package changes. Legacy YAML spellings map to the canonical name in
@@ -51,7 +53,7 @@ One job, one product          :class:`CalculationEngine` +    ``prepare`` / ``su
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar, Protocol, runtime_checkable
@@ -59,6 +61,8 @@ from typing import Any, ClassVar, Protocol, runtime_checkable
 import numpy as np
 from numpy.typing import NDArray
 
+from chemrefine.config import StepConfig
+from chemrefine.engines._options import EngineOptions
 from chemrefine.errors import EngineNotFoundError
 from chemrefine.state import JobBatch, StepContext, StepInputs, StepResults
 
@@ -66,7 +70,7 @@ from chemrefine.state import JobBatch, StepContext, StepInputs, StepResults
 # returns one from `run_block`, so it reads the type from the same place it reads the
 # Protocol. The redundant alias is how a re-export is spelled explicitly, which
 # `no_implicit_reexport` requires — importing it for our own annotations would not say that
-# the three engines importing it from here are meant to.
+# the engines importing it from here are meant to.
 from chemrefine.state import JobTriple as JobTriple
 from chemrefine.state import RunBlock as RunBlock
 
@@ -88,7 +92,17 @@ class CalculationEngine(Protocol):
     :class:`chemrefine.engines._job.JobEngine` and supply only primitives.
     """
 
-    name: str
+    name: ClassVar[str]
+    """The canonical YAML ``engine:`` spelling, on the class.
+
+    A ``ClassVar``, not an instance attribute, because that is what every engine declares and
+    what :func:`register` requires: the gate runs on the class without constructing anything,
+    so an engine's ``__init__`` never runs at import of the package that defines it. Declared
+    as a plain ``name: str``, the Protocol said an *instance* variable — which no engine has,
+    so ``type[Engine]`` did not satisfy it and any function annotating this Protocol had to
+    take ``object`` instead. That is a typing lie in the load-bearing direction: it is the
+    contract every consumer narrows from.
+    """
 
     def prepare(self, ctx: StepContext) -> StepInputs:
         """Write engine-specific input files for this step's seed structures."""
@@ -201,6 +215,127 @@ class TemplateDriven(CalculationEngine, Protocol):
     """Human name for this engine's inputs, used in "…​ template not found" errors."""
 
 
+@runtime_checkable
+class StarterProviding(Protocol):
+    """An engine that ships the starter ``chemrefine scaffold`` writes for its template.
+
+    **Declarations only**, like :class:`TemplateDriven`: one ClassVar holding the text a
+    first ``templates/stepN.<suffix>`` should contain — a minimal echo of the engine's
+    shipped example, with ``$OUTPUT_CONTRACT`` where a script engine's harvest comment goes
+    (:mod:`chemrefine.scaffold` fills it from the engine's own output contract). Declared on
+    the engine rather than keyed by name in the scaffold module, so the starter travels with
+    the engine and no central list is edited to add one; an engine that declares none gets
+    the scaffold's suffix-shaped fallback, and the ExtOpt engines get ORCA's by inheriting
+    ORCA.
+    """
+
+    template_starter: ClassVar[str]
+    """The starter text; ``$OUTPUT_CONTRACT`` is replaced by the engine's contract comment."""
+
+
+@runtime_checkable
+class WhitespacePathIntolerant(Protocol):
+    """An engine whose generated input cannot express a path containing whitespace.
+
+    **Declarations only**, like :class:`TemplateDriven` — one ClassVar carrying the reason,
+    so a caller can say *why* without importing the engine that knows. It exists because the
+    constraint is real for exactly one family and invisible everywhere else: ORCA reads each
+    geometry through ``* xyzfile <path>``, a whitespace-delimited field it does not treat as
+    quotable, and execs an ExtOpt wrapper through ``sh``. Every other shipped engine is
+    unaffected — Q-Chem inlines the geometry into ``$molecule``, the script engines
+    substitute a path the template quotes, and the generated bash quotes everything it
+    interpolates.
+
+    A capability rather than a rule in :mod:`chemrefine.config`, and that placement is the
+    whole point. Held at config load it made *validity depend on where a project sits on
+    disk*: a relative ``output_dir`` inherits the config file's directory, so an mlip-only
+    workflow under ``~/My Drive`` — which runs perfectly well — was refused, and this
+    repository's own example suite went red whenever the checkout path contained a space.
+    The engine that cannot express the path is the one that should refuse it, and it refuses
+    the *resolved* path it is about to write, which is also what closes the symlinked-parent
+    case that a check on the configured value cannot see.
+
+    :mod:`chemrefine.validate` detects this with ``isinstance`` to warn early — a warning,
+    not an error, because the config is well-formed and only this engine family cannot run
+    under that path.
+    """
+
+    whitespace_path_reason: ClassVar[str]
+    """Why this engine cannot take a path with whitespace — quoted verbatim in the refusal."""
+
+
+@runtime_checkable
+class AuxFileConsuming(Protocol):
+    """An engine whose templates can name auxiliary input files the jobs then read.
+
+    An ORCA template can quote a file beside the method blocks — a docking guest
+    (``%DOCKER GUEST "../templates/cl.xyz"``), a point-charge file — and the job's
+    result then depends on that file's *bytes* exactly as it depends on the template
+    text. The template digest covers only the path string, so without this hook an
+    edit to the referenced file changed every job's answer while every fingerprint
+    stood still, and ``resume`` served results computed from the old file.
+
+    A capability rather than a rule in :mod:`chemrefine.cache` because only the engine
+    knows its template grammar: what counts as a reference in an ORCA ``.inp`` is not a
+    question a ``.py`` script template answers the same way, and the cache module keys
+    values it does not interpret. :func:`chemrefine.step.derive_step_key` asks with
+    ``isinstance``, the way it asks :class:`OptionsDeclaring` for the options reading,
+    and folds the named files' digests into :meth:`chemrefine.cache.StepKey.of`.
+    """
+
+    def template_aux_files(self, template: Path) -> Mapping[str, Path]:
+        """``template``'s references: as the template writes them → the file jobs read.
+
+        Keyed by the written reference rather than the resolved path so the cache key
+        derived from it survives a relocated tree — the resolved path is absolute and
+        moves; the written spelling travels with the template.
+        """
+        ...
+
+
+@runtime_checkable
+class OptionsDeclaring(Protocol):
+    """An engine that declares the Pydantic model validating its ``step.options``.
+
+    Declarations only, like :class:`TemplateDriven` — one ClassVar naming the
+    :class:`~chemrefine.engines._options.EngineOptions` subclass the engine itself reads
+    its knobs through. A *second* reader of those knobs — provisioning's
+    ``backend_python`` (:func:`chemrefine.engines._provision._backend_python`), the GPU
+    demand (:attr:`~chemrefine.engines._options.EngineOptions.gpu_demand`), schema
+    introspection — resolves aliases and defaults through the same model the engine
+    will, so two readers of one knob cannot disagree.
+
+    A capability and a **claim**, not boilerplate: declaring a model asserts the engine
+    reads its fields, and the cross-engine invariants hold every declaring engine's
+    ``gpus()`` to its model's ``device``. That is why ORCA declares nothing — its knobs
+    live in the step template, its ``options:`` dict is read only by NMS, and a model
+    here would advertise a ``device`` knob the engine ignores. A consumer meeting a
+    non-declaring engine reports "no engine options" (introspection) or falls back to
+    the base :class:`~chemrefine.engines._options.EngineOptions` for the shared knobs
+    (provisioning), rather than inventing a schema the engine does not honour.
+    """
+
+    options_cls: ClassVar[type[EngineOptions]]
+    """The model validating this engine's ``step.options`` — the engine's one reader."""
+
+
+@runtime_checkable
+class OperationsDeclaring(Protocol):
+    """An engine that declares which ``operation:`` values it interprets.
+
+    Declarations only, like :class:`TemplateDriven`. The config schema keeps
+    ``operation`` a free string because engines interpret it themselves; this ClassVar
+    is how an engine *publishes* its vocabulary so introspection (and the GUI's
+    dropdown) can offer exactly the values that engine will act on — the ORCA family
+    declares its parser dispatch's own set, a script engine that treats the field as a
+    label declares nothing, and a future engine with operations of its own declares
+    them here without touching any consumer.
+    """
+
+    operations: ClassVar[tuple[str, ...]]
+    """The ``operation:`` spellings this engine interprets, canonical only."""
+
+
 @dataclass(frozen=True)
 class NmsInputInfo:
     """What an engine's configured input does, for the generic NMS coordinator.
@@ -228,6 +363,12 @@ class ParsedResult:
     its frequency (cm⁻¹) — ``None`` = no frequency table at all (distinct from ``{}`` = a
     table with zero imaginary modes) — and ``normal_modes`` is the displacement tensor NMS
     displaces along.
+
+    ``frequencies`` is the whole mode table in the same index space, of which
+    ``imaginary_freqs`` is a subset. NMS only ever needed the imaginary ones, so for a long
+    time only those were kept and every real mode's frequency was thrown away at the parse
+    boundary — leaving anything that named a mode afterwards (a viewer's mode list,
+    :func:`chemrefine.agent_tools.analyze_mode`) with an index and no cm⁻¹ to put beside it.
     """
 
     symbols: tuple[str, ...]
@@ -240,6 +381,7 @@ class ParsedResult:
     enthalpy_hartree: float | None = None
     energy_zpe_hartree: float | None = None
     imaginary_freqs: dict[int, float] | None = None
+    frequencies: dict[int, float] | None = None
     normal_modes: NDArray[np.float64] | None = None
 
 
@@ -249,11 +391,24 @@ class JobExecutable(Protocol):
 
     The narrow provision surface a :class:`~chemrefine.engines._job.JobEngine` exposes so
     the flat scheduler can run one job per structure without knowing the engine's type —
-    Interface Segregation: ``run_batch`` depends on these six members, not the whole
-    engine. ``JobEngine`` satisfies it structurally.
+    Interface Segregation: ``run_batch`` depends on the members below and not the whole
+    engine. ``JobEngine`` satisfies it structurally. The members are listed rather than
+    counted, so a new one does not date the sentence above it.
     """
 
-    output_globs: ClassVar[tuple[str, ...]]
+    @property
+    def output_globs(self) -> tuple[str, ...]:
+        """Loose files to copy back out of the job's scratch directory.
+
+        A read-only property declaration rather than a ``ClassVar``, so an engine may
+        *compute* the answer at read time — ``mlip-train`` derives it from its trainer
+        registry, which is only populated after the engine's class body has run. A plain
+        class attribute satisfies it just the same, and that is what every other engine
+        declares. Read on instances only, without a :class:`~chemrefine.state.
+        StepContext` — which is why it cannot be exact per step the way
+        :meth:`output_dirs` can.
+        """
+        ...
 
     def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> RunBlock:
         """The bash that runs one job inside ``$WORK_DIR``, plus any teardown it needs."""
@@ -263,8 +418,42 @@ class JobExecutable(Protocol):
         """Per-job core count (PAL) before the scheduler clamps it to ``max_cores``."""
         ...
 
+    def slurm_layout(self, ctx: StepContext) -> tuple[int, int]:
+        """How this job's cores are spelled to SLURM: ``(ntasks, cpus_per_task)``.
+
+        The same core count means different directives to different programs: MPI ranks
+        (ORCA) are ``(pal, 1)``, one threaded process (Q-Chem's ``-nt``) is ``(1, pal)``,
+        and a hybrid MPI+OpenMP job is ``(ranks, threads)``. The scheduler charges the
+        product against ``max_cores`` and writes both directives, so the allocation and
+        the program's own idea of its parallelism cannot disagree.
+        """
+        ...
+
+    def single_node(self, ctx: StepContext) -> bool:
+        """Whether this job's processes must share one node, whatever its task count.
+
+        ``False`` for almost everything: a threaded program is one task with N CPUs,
+        which cannot be split, and an MPI program's ranks may land anywhere. ``True`` for
+        a job that is both at once — ORCA driven by an ExtOpt server runs its ``%pal``
+        MPI processes *and* a gradient server threading the same count in one process,
+        so the ranks need the tasks and the server needs them on one machine. The script
+        then carries ``#SBATCH --nodes=1`` itself, so no header has to remember it.
+        """
+        ...
+
     def gpus(self, ctx: StepContext) -> int:
         """GPUs one job needs (``0`` = CPU)."""
+        ...
+
+    def memory_mb(self, ctx: StepContext) -> int | None:
+        """Total MB one job requires, or ``None`` when the engine declares nothing.
+
+        Read from the step's own input where the program reads it — ORCA's ``%maxcore``,
+        Q-Chem's ``mem_total`` — and already carrying the engine's headroom rule, so the
+        script builder can compare it against the header's allocation whole. ``None``
+        leaves the header's memory policy untouched, which is what every engine did before
+        this existed.
+        """
         ...
 
     def output_dirs(self, ctx: StepContext) -> tuple[str, ...]:
@@ -320,6 +509,28 @@ class NmsCapableEngine(CalculationEngine, StructureArtifacts, Protocol):
 
 
 @runtime_checkable
+class FrequencyOutputParsing(Protocol):
+    """An engine whose native output re-parses into frequency frames without a step context.
+
+    The mode-viewer tools (``analyze_mode``, ``get_structure(mode_index=...)``) work on a
+    *finished* step: the normal-mode tensor is deliberately not cached (see
+    :mod:`chemrefine.cache`), so they re-read the output file on demand. ``parse_one``
+    cannot serve them — it needs the live run's :class:`~chemrefine.state.StepContext` —
+    so this hook is the ctx-free entry: one output path in, the parsed frames out.
+
+    Every :class:`NmsCapableEngine` must also declare this capability — its ``parse_one``
+    already populates ``imaginary_freqs``/``normal_modes``, so an output it produced is
+    viewable by definition; the invariant suite holds the two together. An engine whose
+    outputs carry no frequency section simply declares nothing, and mode analysis
+    refuses it by name.
+    """
+
+    def parse_frequency_output(self, output_path: Path) -> list[ParsedResult]:
+        """Re-parse one finished output file into its frames, no step context needed."""
+        ...
+
+
+@runtime_checkable
 class ArtifactEngine(CalculationEngine, Protocol):
     """An engine whose product is one **artifact**, and whose structures pass straight through.
 
@@ -343,12 +554,34 @@ class ArtifactEngine(CalculationEngine, Protocol):
     never produced.
     """
 
+    def run_dir(self, ctx: StepContext) -> Path:
+        """The directory this step's single job runs in, under ``ctx.step_dir``.
+
+        Declared rather than assumed, because the orchestrator needs it and cannot derive it.
+        :func:`chemrefine.step._run_artifact_step` moves the previous run aside before
+        re-executing, and that archive is what makes :meth:`artifact` a usable success test:
+        ``artifact.exists()`` cannot tell this run's product from the last one's, so a re-run
+        whose job dies having written nothing would otherwise find the *previous* model,
+        digest it into the sidecar, and cache it under the **new** fingerprint — a run that is
+        internally consistent and describes a training that never happened.
+
+        A constant named in ``step.py`` would answer for whichever engine happens to use that
+        directory and be silently wrong for any other: its run directory would go unarchived,
+        and the guard would pass while protecting nothing. A capability the orchestrator acts
+        on belongs in the contract, like every other one here.
+        """
+        ...
+
     def artifact(self, ctx: StepContext) -> Path:
         """Where this step's product lives once its job has run.
 
         Called both to decide success and — by ``rebuild-cache`` — to adopt a product whose
         run finished before the driver died, so it must be derivable from ``ctx`` alone
         rather than from anything the submission returned.
+
+        May sit *inside* :meth:`run_dir` rather than directly in it — FAIRChem's is at
+        ``checkpoints/final/inference_ckpt.pt`` under a directory it names itself — which is
+        why the two are separate questions.
         """
         ...
 
@@ -357,10 +590,11 @@ class ArtifactEngine(CalculationEngine, Protocol):
 class BackendRequirement:
     """The environment a step's compute backend needs, for the provisioner.
 
-    ``extra`` is the pip extra (= the managed-env name) that provides the backend —
-    ``chemrefine[<extra>]`` installs it; ``import_name`` is the backend's top-level module,
-    probed cheaply (:func:`importlib.util.find_spec`) to detect the single-env case where the
-    backend is already importable alongside the orchestrator.
+    ``extra`` is the pip extra that provides the backend — ``chemrefine[<extra>]`` installs
+    it; ``import_name`` is the backend's top-level module, probed to decide whether the
+    backend is usable at all. Which *directory* the extra installs into is
+    :func:`chemrefine.engines._provision.backend_env_path`'s to decide, not a field here:
+    the CLI provisions from a bare extra name and has no requirement object to read.
     """
 
     extra: str
@@ -380,12 +614,54 @@ class ProvisionableEngine(CalculationEngine, Protocol):
     Both methods are required for the capability to be detected.
     """
 
-    def backend_requirement(self, options: dict[str, Any] | None) -> BackendRequirement:
+    def backend_requirement(self, options: Mapping[str, Any] | None) -> BackendRequirement:
         """The backend env this step needs, derived from its ``step.options``."""
         ...
 
     def backend_extras(self) -> frozenset[str]:
         """Every extra this engine can require (drives ``chemrefine backends`` listing)."""
+        ...
+
+
+@runtime_checkable
+class PreflightChecking(Protocol):
+    """An engine that can vet a step's configuration before the run starts.
+
+    The refusals an engine would otherwise make in ``prepare`` — a required knob left
+    unset, an option combination its backend cannot serve — fire there only when the
+    step's own turn comes, which for a late step is after every earlier one has been
+    computed and paid for. This hook is the sanctioned earlier moment:
+    :func:`preflight_steps` calls it for every submittable step before anything runs
+    (the walk that already checks backend envs), and ``chemrefine validate`` reports
+    the same refusals without running anything. An engine keeps making its own checks
+    in ``prepare`` too — the recovery paths that skip the preflight still deserve them.
+
+    A capability detected via ``isinstance`` like every other one here, and an opt-in
+    deliberately, never a generic strict pass over every options model: the direct
+    script engines read their options leniently by documented design (a ``step{N}.py``
+    template may carry knobs no model declares), so only an engine that *owns* a
+    fail-fast refusal declares the hook.
+    """
+
+    preflight_refuses: ClassVar[str]
+    """One sentence naming the config-decidable mistake ``check_step`` refuses.
+
+    The claim that the hook is a *targeted* refusal and not boilerplate, carried by the
+    engine itself — in the declarations-only style of :class:`WhitespacePathIntolerant` —
+    rather than by a list of engine names pinned in a test. :func:`register` refuses a class
+    that defines ``check_step`` without it, because a Protocol member left unset would not
+    fail loudly: ``isinstance`` would answer no and the engine would silently leave the
+    preflight walk. The invariants hold it non-empty and unrepeated across engines, and
+    :func:`chemrefine.introspect.describe_engines` exposes it."""
+
+    def check_step(self, step_cfg: StepConfig, *, charge: int, multiplicity: int) -> None:
+        """Raise :class:`~chemrefine.errors.ConfigError` if this step cannot run as configured.
+
+        ``charge`` and ``multiplicity`` are the step's **effective** values — the
+        config defaults with any per-step override applied — because a refusal may
+        hinge on them: an open-shell step asking for a closed-shell-only extraction is
+        decidable from the config alone, but only from the resolved species.
+        """
         ...
 
 
@@ -399,12 +675,92 @@ legacy vocabulary — before any lookup, so the registry stays alias-free.
 """
 
 
-def register(name: str) -> Callable[[type], type]:
-    """Decorator: register ``cls`` under ``name`` in :data:`ENGINES`."""
+def contract_members(protocol: type) -> frozenset[str]:
+    """Every member a Protocol declares — its methods plus its annotated attributes.
 
-    def decorator(cls: type) -> type:
+    Derived rather than restated, so the gate below cannot come to disagree with the contract
+    it enforces. Written out by hand instead of read from ``__protocol_attrs__`` because that
+    is a 3.12 addition and ``requires-python`` is ``>=3.11``; the two are asserted equal by
+    ``test_engines_base.py`` wherever the interpreter offers both.
+    """
+    return frozenset(n for n in dir(protocol) if not n.startswith("_")) | frozenset(
+        getattr(protocol, "__annotations__", {})
+    )
+
+
+_CONTRACT_MEMBERS = contract_members(CalculationEngine)
+
+
+def register(name: str) -> Callable[[type[CalculationEngine]], type[CalculationEngine]]:
+    """Decorator: register ``cls`` under ``name`` in :data:`ENGINES`, if it qualifies.
+
+    **The decorator is the gate**, in the shape
+    :meth:`chemrefine.engines.mlip.registry.MlipLibrary.trainer` already sets one subsystem
+    over: a class that cannot serve as an engine is refused *here*, at its own decorator line
+    during discovery, naming what is missing — rather than at the first step that submits, by
+    which time ``run_step`` has built a context, derived a cache key and created a directory.
+    Four ways a class can fail to qualify, each with its own reason:
+
+    * **It does not satisfy the contract.** ``ENGINES`` is annotated
+      ``dict[str, type[CalculationEngine]]`` and :func:`get_engine` hands what it holds to the
+      pipeline as one. The signature above is what makes that claim checkable statically —
+      typed over ``type``, the decorator would accept anything, since ``type`` is ``type[Any]``
+      and mypy has nothing to compare a decorated class against. The runtime check below is the
+      other half, for a plugin whose author does not run the type checker.
+    * **It inherits the Protocol.** :class:`CalculationEngine` is ``runtime_checkable``, and a
+      subclass of it inherits every method as an ellipsis body returning ``None`` — so
+      ``isinstance`` says yes, ``prepare`` returns ``None``, and every structural check in the
+      codebase passes. A structural contract used as a base defeats the checks that stand in
+      for this gate, which is why it is refused rather than merely discouraged.
+    * **It leaves a declaration the machinery reads unset.** The engine bases declare ClassVars
+      with no default, and no ``ABCMeta`` machinery watches those: ``abstractmethod`` covers the
+      *methods* only. A base names its own in ``required_declarations``, which is the
+      ``required = [...]`` list ``@trainer`` checks, one subsystem over. Unset, ``output_suffix``
+      surfaces as a bare ``AttributeError`` inside ``prepare``, and ``template_suffix`` is
+      worse: the engine simply stops satisfying :class:`TemplateDriven`, and the user is told
+      their template does not exist while it sits on disk.
+    * **It takes the preflight hook without saying why.** ``check_step`` claims the engine owns
+      a fail-fast refusal, and :class:`PreflightChecking` asks for that claim in one sentence
+      (``preflight_refuses``). Left unset, the omission would not fail: a Protocol member
+      that is missing makes ``isinstance`` answer no, and the engine would silently drop out
+      of the preflight walk it meant to join.
+
+    The check runs on the class, never on an instance: constructing one to interrogate it would
+    make an engine's ``__init__`` run at import of the package that defines it.
+    """
+
+    def decorator(cls: type[CalculationEngine]) -> type[CalculationEngine]:
         if name in ENGINES and ENGINES[name] is not cls:
             raise ValueError(f"engine {name!r} is already registered to {ENGINES[name]!r}")
+        if CalculationEngine in getattr(cls, "__mro__", ()):
+            raise TypeError(
+                f"engine {name!r}: {cls.__name__} inherits CalculationEngine, which is a "
+                f"structural contract — inheriting it supplies every method as a no-op "
+                f"returning None, so isinstance would pass a class that does nothing. "
+                f"Satisfy it structurally, or subclass a base such as JobEngine."
+            )
+        missing = sorted(m for m in _CONTRACT_MEMBERS if not hasattr(cls, m))
+        if missing:
+            raise TypeError(
+                f"engine {name!r}: {cls.__name__} does not satisfy CalculationEngine — "
+                f"missing {missing}. Members are looked for on the class, so declare them "
+                f"there: an attribute bound in __init__ is not visible to this check, which "
+                f"runs without constructing anything. See chemrefine.engines.api."
+            )
+        undeclared = sorted(
+            d for d in getattr(cls, "required_declarations", ()) if not hasattr(cls, d)
+        )
+        if undeclared:
+            raise TypeError(
+                f"engine {name!r}: {cls.__name__} is missing declaration(s) {undeclared} — "
+                f"the machinery reads them; see the base it inherits from."
+            )
+        if hasattr(cls, "check_step") and not hasattr(cls, "preflight_refuses"):
+            raise TypeError(
+                f"engine {name!r}: {cls.__name__} defines check_step without preflight_refuses "
+                f"— a preflight hook says in one sentence what it refuses (see "
+                f"PreflightChecking); without the declaration the capability is not detected."
+            )
         ENGINES[name] = cls
         return cls
 
@@ -422,3 +778,28 @@ def get_engine(name: str) -> CalculationEngine:
     if engine_cls is None:
         raise EngineNotFoundError(f"unknown engine {name!r}; registered: {sorted(ENGINES)}")
     return engine_cls()
+
+
+def preflight_steps(steps: Sequence[StepConfig], *, charge: int, multiplicity: int) -> None:
+    """Ask every step's engine to vet its configuration before anything runs.
+
+    Called from :func:`chemrefine.pipeline.run` beside ``preflight_backends``, over the
+    same submittable steps and for the same reason: a refusal decidable from the config
+    alone must not wait for the failing step's own turn — in a pipeline that spends
+    days computing labels before a training step, that is the difference between a
+    typo caught in seconds and one caught on Thursday. Engines without the capability
+    have nothing to check and are not asked.
+
+    ``charge`` / ``multiplicity`` are the config-wide defaults; each step's own
+    override is applied here (:meth:`~chemrefine.config.StepConfig.effective_charge`),
+    so a hook always sees the effective values its step would run with — the same
+    resolution :func:`chemrefine.step.build_context` performs for the run itself.
+    """
+    for step_cfg in steps:
+        engine = get_engine(step_cfg.engine)
+        if isinstance(engine, PreflightChecking):
+            engine.check_step(
+                step_cfg,
+                charge=step_cfg.effective_charge(charge),
+                multiplicity=step_cfg.effective_multiplicity(multiplicity),
+            )

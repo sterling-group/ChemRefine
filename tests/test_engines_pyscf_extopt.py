@@ -9,6 +9,7 @@ call). The template-driven direct engine has its own test file
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -16,7 +17,7 @@ from ase import Atoms
 
 from chemrefine.config import StepConfig
 from chemrefine.engines.api import ENGINES, NmsCapableEngine, get_engine
-from chemrefine.engines.pyscf.options import PyscfOptions
+from chemrefine.engines.pyscf.options import PyscfExtOptOptions
 from chemrefine.errors import ConfigError
 from chemrefine.state import PipelineState, StepContext, Structure
 
@@ -93,7 +94,7 @@ def test_pyscf_wrapper_carries_no_per_call_flags(tmp_path: Path):
     engine.prepare(ctx)
     wrapper = engine._wrapper_path(ctx)
     assert os.access(wrapper, os.X_OK)
-    text = wrapper.read_text()
+    text = wrapper.read_text(encoding="utf-8")
     assert "--df" not in text
     assert "--gpu" not in text
     # ... they reach the backend via the server construction instead.
@@ -152,7 +153,7 @@ def test_pyscf_save_tensors_reaches_server_cmd(tmp_path: Path):
     assert "--tensor_folder td" in run_block
 
     engine.prepare(ctx)
-    wrapper_text = engine._wrapper_path(ctx).read_text()
+    wrapper_text = engine._wrapper_path(ctx).read_text(encoding="utf-8")
     assert os.access(engine._wrapper_path(ctx), os.X_OK)
     assert "--save_tensors" not in wrapper_text
     assert "--tensor_folder" not in wrapper_text
@@ -168,6 +169,49 @@ def test_pyscf_extopt_output_dirs_copies_relative_tensor_folder(tmp_path: Path):
         engine.output_dirs(_pyscf_ctx(tmp_path, save_tensors=True, tensor_folder="/abs/keep")) == ()
     )
     assert engine.output_dirs(_pyscf_ctx(tmp_path, save_tensors=False)) == ()
+
+
+def test_save_tensors_on_an_open_shell_step_is_refused_before_submission(tmp_path: Path):
+    """``save_tensors`` + multiplicity > 1 fails at prepare, naming the knob and the spin.
+
+    The tensor transform is restricted-only. Left to run, the SCF and the gradient both
+    *succeed* and the dump then dies inside the server — a 500 whose actionable half lands
+    in the server log, while the ledger says only "backend calculation failed". At prepare
+    the effective multiplicity is in hand and nothing has been spent.
+    """
+    import dataclasses
+
+    engine = get_engine("pyscf-extopt")
+    ctx = dataclasses.replace(_pyscf_ctx(tmp_path, save_tensors=True), multiplicity=3)
+    with pytest.raises(ConfigError, match=r"closed-shell.*multiplicity is 3"):
+        engine.prepare(ctx)
+
+
+def test_save_tensors_on_a_closed_shell_step_prepares_normally(tmp_path: Path):
+    """The guard refuses only the open-shell combination — the supported case is untouched."""
+    engine = get_engine("pyscf-extopt")
+    inputs = engine.prepare(_pyscf_ctx(tmp_path, save_tensors=True))
+    assert len(inputs.files) == 1
+
+
+def test_the_open_shell_refusal_also_fires_at_the_runs_preflight_walk():
+    """The same refusal, at t=0 — before any upstream step is paid for.
+
+    The prepare-time test above holds the recovery paths; this one holds the
+    ``PreflightChecking`` route ``pipeline.run`` walks before anything submits. The
+    step's own ``multiplicity: 3`` override is applied over the config default passed
+    to the walk, so the hook judges the species the step would actually run.
+    """
+    from chemrefine.engines.api import preflight_steps
+
+    step_cfg = StepConfig(
+        step=3,
+        engine="pyscf-extopt",
+        multiplicity=3,
+        options={"basis": "def2-svp", "xc": "pbe", "save_tensors": True},
+    )
+    with pytest.raises(ConfigError, match=r"closed-shell.*multiplicity is 3"):
+        preflight_steps([step_cfg], charge=0, multiplicity=1)
 
 
 def test_pyscf_run_block_omits_bool_flags_when_unset(tmp_path: Path):
@@ -190,7 +234,7 @@ def test_pyscf_unknown_option_fails_fast(tmp_path: Path):
     """A typoed knob (``basis_set:`` for ``basis:``) raises instead of silently
     running the calculation with the default basis.
 
-    The raw options dict must not bypass :class:`PyscfOptions`, or
+    The raw options dict must not bypass :class:`PyscfExtOptOptions`, or
     unknown keys were dropped and the run proceeded with wrong settings.
 
     ConfigError rather than pydantic's ValidationError — a bad knob is a config error
@@ -227,7 +271,7 @@ def test_pyscf_prepare_writes_inp_with_method_block(tmp_path: Path):
     engine = get_engine("pyscf-extopt")
     ctx = _pyscf_ctx(tmp_path)
     inputs = engine.prepare(ctx)
-    inp_text = inputs.files[0][0].read_text()
+    inp_text = inputs.files[0][0].read_text(encoding="utf-8")
     assert "%method" in inp_text
     assert "ProgExt" in inp_text
     assert "pyscf_extopt.sh" in inp_text
@@ -245,7 +289,7 @@ def test_pyscf_prepare_materializes_executable_wrapper(tmp_path: Path):
     assert wrapper.is_file()
     assert os.access(wrapper, os.X_OK)
 
-    text = wrapper.read_text()
+    text = wrapper.read_text(encoding="utf-8")
     assert "chemrefine.engines.orca.extopt.bridge" in text
     assert "--backend pyscf" in text
     # Single channel: the SCF knobs live on the server, never baked into the wrapper.
@@ -302,12 +346,46 @@ def test_tensor_folder_with_shell_metacharacters_rejected(bad: str):
     fields some report happens to name.
     """
     with pytest.raises(ConfigError):
-        PyscfOptions.from_raw({"basis": "def2-svp", "xc": "pbe", "tensor_folder": bad})
+        PyscfExtOptOptions.from_raw({"basis": "def2-svp", "xc": "pbe", "tensor_folder": bad})
 
 
 def test_tensor_folder_allows_ordinary_names():
     """Only metacharacters are refused; a plain or nested folder name stays legal."""
-    opts = PyscfOptions.from_raw(
+    opts = PyscfExtOptOptions.from_raw(
         {"basis": "def2-svp", "xc": "pbe", "tensor_folder": "run1/tensors"}
     )
     assert opts.tensor_folder == "run1/tensors"
+
+
+def test_pyscf_extopt_nms_knobs_share_the_options_with_the_strict_server_read(tmp_path: Path):
+    """The PySCF ExtOpt engine's own strict reads take the engine's share too.
+
+    It reads its options strictly four times — the base's preflight and server command,
+    its own ``save_tensors`` refusal and ``output_dirs`` — so the partition between the
+    engine's knobs and the NMS knobs has to be the config's, not one call site's.
+    """
+    engine = get_engine("pyscf-extopt")
+    ctx = _pyscf_ctx(tmp_path, target="ts", displacement_value=0.5, save_tensors=True)
+    sampled = replace(ctx, step_cfg=ctx.step_cfg.model_copy(update={"nms": True}))
+
+    engine.check_step(sampled.step_cfg, charge=0, multiplicity=1)  # no raise
+    assert engine.output_dirs(sampled) == ("tensors",)
+    body = engine.run_block(
+        sampled,
+        inp_path=sampled.step_dir / "step1_structure_0.inp",
+        out_path=sampled.step_dir / "step1_structure_0.out",
+    ).body
+    assert "--backend pyscf" in body
+
+    with pytest.raises(ConfigError, match="target"):  # nms off: the knob is a stranger
+        engine.check_step(ctx.step_cfg, charge=0, multiplicity=1)
+
+
+def test_the_gradient_timeout_reaches_the_pyscf_wrapper(tmp_path: Path):
+    """The ExtOpt family's knob, on the model this engine declares: a DFT gradient on a
+    large system is the case the default was too tight for."""
+    engine = get_engine("pyscf-extopt")
+    ctx = _pyscf_ctx(tmp_path, gradient_timeout_seconds=1800)
+    engine.prepare(ctx)
+    assert "--timeout 1800 " in engine._wrapper_path(ctx).read_text(encoding="utf-8")
+    assert engine.options_cls.from_raw(ctx.step_cfg.options).gradient_timeout_seconds == 1800

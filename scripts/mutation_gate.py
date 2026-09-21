@@ -29,25 +29,38 @@ checkout. ``PYTHONPATH`` puts the copy's ``src`` ahead of the editable install's
 entry, and :func:`_assert_isolated` proves the copy is what got imported — a harness that
 quietly tested the unmutated source would report everything caught, which is worse than
 no gate at all.
+
+Each mutation then runs the one test file it names (``Mutation.tests``) before it runs the
+whole suite. That is an optimisation with no verdict attached: the baseline proves every
+file green *before* any mutation, so a red target afterwards can only be the mutation's
+doing — and a target that stays green always falls back to the full suite, so nothing is
+called a survivor on a narrow run. Whole-suite-per-mutation cost 7m54s here; naming the
+test costs 73s, because ``-x`` otherwise walks every alphabetically-earlier file first.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-#: How long one mutated run may take before it is assumed hung. A mutation that turns a
-#: budget comparison into a strictly-smaller one makes a wait loop spin forever rather than
-#: fail, so a timeout counts as *caught*: the suite did not complete, which is a red build.
+#: How long one run may take before it is assumed hung. A mutation that turns a budget
+#: comparison into a strictly-smaller one makes a wait loop spin forever rather than fail,
+#: so a timeout on the *named test file* counts as caught: that file did not complete,
+#: which is a red build. The whole-suite fallback is a different case — it runs only after
+#: the named file stayed green, and its timeout is as likely the suite outgrowing this
+#: budget on a slow runner as a hang. Reported as caught, that was a false green from the
+#: one gate whose job is to refuse them; it is reported as *inconclusive* instead, and
+#: fails the gate (see :class:`Verdict`).
 TIMEOUT_SECONDS = 300
 
 
@@ -59,16 +72,26 @@ class Mutation:
     path: str
     old: str
     new: str
+    tests: str
+    """The test file whose red is the proof — run before the whole suite.
+
+    Named rather than derived from ``path``: the file that checks a predicate is often not
+    the one named after the module holding it. ``boltzmann-cutoff`` mutates ``filtering.py``
+    and a whole-suite run reports ``test_e2e_replay.py``, which merely sorts earlier under
+    ``-x``. A wrong entry cannot hide — a fast path that stays green is re-run against the
+    whole suite before anything is called a survivor — so it costs time, never a verdict.
+    """
     breaks: str
     """What a user would get if this shipped — the reason the entry is on the list."""
 
 
-MUTATIONS = (
+_BUNDLED: tuple[Mutation, ...] = (
     Mutation(
         id="nms-is-resolved",
         path="src/chemrefine/nms.py",
         old="len(child.imaginary_freqs) == target",
         new="len(child.imaginary_freqs) <= target",
+        tests="tests/test_nms.py",
         breaks="a `ts` step accepts a child that fell into a minimum and promotes it to "
         "the parent's id — the transition state replaced by the wrong stationary point",
     ),
@@ -77,14 +100,140 @@ MUTATIONS = (
         path="src/chemrefine/nms.py",
         old="len(structure.imaginary_freqs) == target",
         new="len(structure.imaginary_freqs) <= target",
+        tests="tests/test_nms.py",
         breaks="a minimum passes through a `ts` step as though already resolved, so it is "
         "never displaced and never reaches the saddle point",
+    ),
+    Mutation(
+        id="nms-no-frequency-evidence",
+        path="src/chemrefine/nms.py",
+        old="return child.imaginary_freqs is not None and len(child.imaginary_freqs) == target",
+        new="return child.imaginary_freqs is None or len(child.imaginary_freqs) == target",
+        tests="tests/test_nms.py",
+        breaks="a child whose parse found no frequency table is promoted as a verified "
+        "stationary point — a minimum claimed with no evidence that it is one",
+    ),
+    Mutation(
+        id="nms-already-at-target-no-evidence",
+        path="src/chemrefine/nms.py",
+        old="        and structure.imaginary_freqs is not None\n"
+        "        and len(structure.imaginary_freqs) == target",
+        new="        and (structure.imaginary_freqs is None or "
+        "len(structure.imaginary_freqs) == target)",
+        tests="tests/test_nms.py",
+        breaks="a structure with no frequency table passes through a `minimum` step as though "
+        "already resolved, so it is never displaced and never verified",
+    ),
+    Mutation(
+        id="nms-best-child",
+        path="src/chemrefine/nms.py",
+        old="    return min(\n        structures,\n"
+        "        key=lambda s: (getattr(s, energy_attr) is None, getattr(s, energy_attr) or 0.0),",
+        new="    return max(\n        structures,\n"
+        "        key=lambda s: (getattr(s, energy_attr) is None, getattr(s, energy_attr) or 0.0),",
+        tests="tests/test_nms.py",
+        breaks="the highest-energy resolved child is promoted to the parent's canonical id — "
+        "retry-best-frame's inversion, on the resolution side",
+    ),
+    Mutation(
+        id="resubmit-skips-unconverged",
+        path="src/chemrefine/lifecycle.py",
+        old=(
+            "    unusable = {f.sid for f in failures if f.kind is not FailureKind.NOT_CONVERGED}"
+            " | condemned"
+        ),
+        new="    unusable = {f.sid for f in failures} | condemned",
+        tests="tests/test_recovery.py",
+        breaks="every resume re-runs each unconverged structure twice — once from the seed, "
+        "discarding the geometry it had reached, and once more from best — so a structure "
+        "that needs one more step costs two jobs per resume and converges a resume late",
+    ),
+    Mutation(
+        id="convert-direction",
+        path="src/chemrefine/quantities.py",
+        old='    ("hartree", "ev"): HARTREE_TO_EV,\n    ("ev", "hartree"): 1.0 / HARTREE_TO_EV,',
+        new='    ("hartree", "ev"): 1.0 / HARTREE_TO_EV,\n    ("ev", "hartree"): HARTREE_TO_EV,',
+        tests="tests/test_quantities.py",
+        breaks="every eV a caller converts is wrong by 27.2 squared while the round trip still "
+        "passes — each direction is its own constant, so swapping both is invisible to it",
+    ),
+    Mutation(
+        id="boltzmann-sign",
+        path="src/chemrefine/quantities.py",
+        old="    weights = np.exp(-arr / (R_KCALMOL_K * temperature_k))",
+        new="    weights = np.exp(arr / (R_KCALMOL_K * temperature_k))",
+        tests="tests/test_quantities.py",
+        breaks="every Boltzmann weight, filter and steps.csv column prefers the higher-energy "
+        "conformer",
+    ),
+    Mutation(
+        id="boltzmann-shift",
+        path="src/chemrefine/quantities.py",
+        old="        arr = arr - arr.min()",
+        new="        arr = arr - 0.0",
+        tests="tests/test_quantities.py",
+        breaks="raw absolute energies underflow every exponential to zero, so a step's weights "
+        "are all 0 and its cumulative filter keeps nothing",
+    ),
+    Mutation(
+        id="ranking-energy-fallback",
+        path="src/chemrefine/filtering.py",
+        old='    energy_type = "electronic" if sample is None else sample.energy_type',
+        new='    energy_type = "electronic"',
+        tests="tests/test_filtering.py",
+        breaks="a step sampling on gibbs ranks, promotes, captions and reports on the "
+        "electronic energy — four readers wrong at once",
+    ),
+    Mutation(
+        id="min-count-zero-keeps-all",
+        path="src/chemrefine/filtering.py",
+        old="return list(sorted_structures) if sample.count <= 0 else",
+        new="return list(sorted_structures) if sample.count < 0 else",
+        tests="tests/test_filtering.py",
+        breaks="`count: 0`, documented as keep everything, keeps nothing",
+    ),
+    Mutation(
+        id="max-keeps-the-high-end",
+        path="src/chemrefine/filtering.py",
+        old="    high_first = list(reversed(sorted_structures))",
+        new="    high_first = list(sorted_structures)",
+        tests="tests/test_filtering.py",
+        breaks="`method: max` keeps the lowest-energy structures — PES-style sampling inverted",
+    ),
+    Mutation(
+        id="ts-reaction-coordinate",
+        path="src/chemrefine/nms.py",
+        old="        return max(imag_freqs, key=lambda i: abs(imag_freqs[i]))",
+        new="        return min(imag_freqs, key=lambda i: abs(imag_freqs[i]))",
+        tests="tests/test_nms.py",
+        breaks="a `ts` step keeps the least imaginary mode and displaces along the reaction "
+        "coordinate itself, destroying the saddle it was asked to keep",
+    ),
+    Mutation(
+        id="nms-crashed-child-not-resolved",
+        path="src/chemrefine/nms.py",
+        old="    if child.terminated_normally is False:\n        return False\n"
+        "    if target is None:",
+        new="    if target is None:",
+        tests="tests/test_nms.py",
+        breaks="a child whose program died is promoted as resolved on whatever frequency "
+        "table its truncated output still carried",
+    ),
+    Mutation(
+        id="random-skips-trivial-modes",
+        path="src/chemrefine/nms.py",
+        old="        candidates = list(range(_TRIVIAL_MODES, n_modes))",
+        new="        candidates = list(range(n_modes))",
+        tests="tests/test_nms.py",
+        breaks="`random` sampling spends jobs displacing along translations and rotations — "
+        "the same molecule moved, re-computed, and reported as an exploration",
     ),
     Mutation(
         id="boltzmann-cutoff",
         path="src/chemrefine/filtering.py",
         old="sorted_structures[: n_below + 1]",
         new="sorted_structures[:n_below]",
+        tests="tests/test_filtering.py",
         breaks="the structure that crosses the cumulative-weight threshold is dropped, so "
         "a 99% filter silently keeps less than it promises",
     ),
@@ -93,6 +242,7 @@ MUTATIONS = (
         path="src/chemrefine/filtering.py",
         old="if cast(float, getattr(s, energy_attr)) <= min_e + window_h",
         new="if cast(float, getattr(s, energy_attr)) < min_e + window_h",
+        tests="tests/test_filtering.py",
         breaks="a structure exactly on the window edge is silently dropped, so the filter "
         "keeps less than it promises",
     ),
@@ -101,14 +251,36 @@ MUTATIONS = (
         path="src/chemrefine/filtering.py",
         old=">= max_e - window_h]",
         new="> max_e - window_h]",
+        tests="tests/test_filtering.py",
         breaks="a structure exactly on the window edge is silently dropped, so the filter "
         "keeps less than it promises — the high-energy mirror of min-window-boundary",
+    ),
+    Mutation(
+        id="report-kcal-conversion",
+        path="src/chemrefine/io.py",
+        old='df["Energy (Hartree)"] * HARTREE_TO_KCALMOL',
+        new='df["Energy (Hartree)"] / HARTREE_TO_KCALMOL',
+        tests="tests/test_io.py",
+        breaks="every kcal/mol column in steps.csv is wrong by a factor of ~627.5^2 while "
+        "row order, headers and dE=0 all still hold — the user-facing report ships wrong "
+        "numbers with nothing else red",
+    ),
+    Mutation(
+        id="best-backfills-best-not-seed",
+        path="src/chemrefine/lifecycle.py",
+        old="    if failure.best is not None:\n        return failure.best\n",
+        new="    if failure.best is not None:\n        return prev_by_id.get(failure.sid)\n",
+        tests="tests/test_step.py",
+        breaks="`on_failure: best` silently carries the submitted seed geometry downstream "
+        "instead of the best geometry the failed run reached — ids and counts unchanged, "
+        "so only a positions assertion can see it",
     ),
     Mutation(
         id="retry-best-frame",
         path="src/chemrefine/lifecycle.py",
         old="best = min(bad, key=lambda s: (s.energy_hartree is None, s.energy_hartree or 0.0))",
         new="best = max(bad, key=lambda s: (s.energy_hartree is None, s.energy_hartree or 0.0))",
+        tests="tests/test_lifecycle.py",
         breaks="a fan-out job's retry restarts from the worst unconverged frame, and "
         "`on_failure: best` backfills the worst geometry obtained",
     ),
@@ -117,22 +289,25 @@ MUTATIONS = (
         path="src/chemrefine/lifecycle.py",
         old="return s.terminated_normally is not False and s.converged is not False",
         new="return s.terminated_normally is not False",
+        tests="tests/test_lifecycle.py",
         breaks="an unconverged structure counts as a success, so it is never retried, "
         "never ledgered, and ranks against converged siblings",
     ),
     Mutation(
-        id="parents-digest-ignores-geometry",
+        id="structure-digest-ignores-geometry",
         path="src/chemrefine/cache.py",
         old="h.update(np.asarray(s.atoms.get_positions(), dtype=np.float64).tobytes())",
         new="pass",
-        breaks="editing the seed geometry no longer invalidates the cache, so `resume` "
-        "serves results computed from the old coordinates",
+        tests="tests/test_cache.py",
+        breaks="a structure's coordinates leave its digest, so editing the seed geometry "
+        "moves no row key and `resume` serves results computed from the old coordinates",
     ),
     Mutation(
         id="cache-pair-is-checked",
         path="src/chemrefine/cache.py",
         old='if found != document["arrays_digest"]:',
         new="if False:",
+        tests="tests/test_cache.py",
         breaks="a `step.json` left by one save is read with the `arrays.npz` of another, so "
         "each structure keeps its own energy and adopts a different structure's geometry",
     ),
@@ -141,6 +316,7 @@ MUTATIONS = (
         path="src/chemrefine/slurm/dispatch.py",
         old='mine = {line for line in running if line == jid or line.startswith(f"{jid}_")}',
         new="mine = {line for line in running if line == jid}",
+        tests="tests/test_slurm.py",
         breaks="a running array job reports finished — squeue prints its tasks as "
         "`12345_0`, never the bare parent id — so its outputs are parsed while it writes",
     ),
@@ -149,22 +325,55 @@ MUTATIONS = (
         path="src/chemrefine/step.py",
         old="case StepMode.CACHE_ONLY | StepMode.REBUILD:\n                return False",
         new="case StepMode.CACHE_ONLY | StepMode.REBUILD:\n                return True",
+        tests="tests/test_e2e_relocate.py",
         breaks="`rebuild-cache` and `rerun-errors` submit work for steps they were not "
         "pointed at, archiving the very outputs they were asked to read",
     ),
     Mutation(
+        id="resume-row-adoption",
+        path="src/chemrefine/step.py",
+        old="if sid not in provenance.rows or provenance.rows[sid][0] != current[sid][0]",
+        new="if False",
+        tests="tests/test_step.py",
+        breaks="resume adopts every row on disk whatever its provenance says, so a changed "
+        "parent's stale output is served as current and the changed row never computes",
+    ),
+    Mutation(
         id="rebuild-cache-provenance",
         path="src/chemrefine/step.py",
-        old="if stamped and stamped != key.fingerprint:",
+        old="if foreign or unproven:",
         new="if False:",
-        breaks="`rebuild-cache` caches results under a configuration that never produced "
-        "them, and the next `resume` serves that instead of computing what was asked for",
+        tests="tests/test_step.py",
+        breaks="`rebuild-cache` adopts rows whose provenance disagrees with the current "
+        "key, caching results this configuration never produced — and the next `resume` "
+        "serves that instead of computing what was asked for",
+    ),
+    Mutation(
+        id="rebuild-cache-unproven-rows",
+        path="src/chemrefine/step.py",
+        old="if foreign or unproven:",
+        new="if foreign:",
+        tests="tests/test_step.py",
+        breaks="`rebuild-cache` adopts a tree whose rows do not cover a grown parent set, "
+        "caching a survivor set one parent short — and the next `resume` serves it "
+        "(this exact mutant survived the whole suite before its test existed)",
+    ),
+    Mutation(
+        id="resume-resolution-stamp-waits",
+        path="src/chemrefine/step.py",
+        old='stamp["search_key"] = provenance.search_key',
+        new='stamp["search_key"] = key.search_key',
+        tests="tests/test_step.py",
+        breaks="the incremental resume stamps the current search key before the "
+        "resolution that earns it exists, so a driver killed mid-resume leaves the "
+        "previous search's attempts adoptable by `rebuild-cache`",
     ),
     Mutation(
         id="policy-change-over-cache",
         path="src/chemrefine/step.py",
-        old='return (stored == "best") != (current == "best")',
+        old="return policy_stores_backfills(stored) != current.stores_backfills",
         new="return False",
+        tests="tests/test_step.py",
         breaks="editing on_failure over a cached step silently serves the previous "
         "policy's survivor set — a step switched to `best` quietly behaves as `skip`, "
         "and one switched away from `best` keeps carrying its backfills",
@@ -174,50 +383,167 @@ MUTATIONS = (
         path="src/chemrefine/engines/orca/output/coordinator.py",
         old="if status.parse_terminated_normally(text):\n        return OutputParseError",
         new="if True:\n        return OutputParseError",
+        tests="tests/test_engines_orca_output.py",
         breaks="a job that died is ledgered as an unreadable file, sending a reader to the "
         "parser for a cluster or input problem",
     ),
     Mutation(
-        id="qiskit-particle-sector-filter",
-        path="src/chemrefine/engines/qiskit/components/algorithms.py",
-        old="not np.isclose(particle_number[0], expected_particles)",
-        new="np.isclose(particle_number[0], expected_particles)",
-        breaks="the exact solver discards eigenstates with the requested electron count and "
-        "can report a plausible eigenvalue from the wrong particle-number sector",
-    ),
-    Mutation(
-        id="qiskit-spin-sector-filter",
-        path="src/chemrefine/engines/qiskit/components/algorithms.py",
-        old="np.isclose(angular_momentum[0], expected_angular_momentum)",
-        new="not np.isclose(angular_momentum[0], expected_angular_momentum)",
-        breaks="the exact solver rejects the requested spin sector and can report a state "
-        "with the wrong multiplicity",
-    ),
-    Mutation(
-        id="qiskit-aer-noise-is-applied",
-        path="src/chemrefine/engines/qiskit/components/estimators.py",
-        old="if noise_model is not None:",
-        new="if noise_model is None:",
-        breaks="an explicitly requested Aer noise model is silently ignored, producing an "
-        "ideal-simulator energy that looks valid but models a different experiment",
+        id="mlip-optimize-verdict",
+        path="src/chemrefine/engines/mlip/calculator.py",
+        old="converged = bool(LBFGS(atoms, logfile=os.devnull).run(fmax=fmax, steps=steps))",
+        new="converged = bool(LBFGS(atoms, logfile=os.devnull).run(fmax=fmax, steps=steps))"
+        " or True",
+        tests="tests/test_engines_mlip_calculator.py",
+        breaks="an optimiser that ran out of steps reports its last geometry as converged, and "
+        "a non-stationary point ranks as a survivor against converged siblings",
     ),
     Mutation(
         id="finite-energy-guard",
         path="src/chemrefine/engines/_script/output.py",
         old="if not np.isfinite(number):",
         new="if False:",
+        tests="tests/test_properties.py",
         breaks="a diverged calculation's NaN energy ranks as a real result and, because "
         "every NaN comparison is false, displaces a genuine survivor by list position",
     ),
+    Mutation(
+        id="finite-geometry-guard",
+        path="src/chemrefine/cache.py",
+        old="if array is not None and not np.isfinite(np.asarray(array, dtype=np.float64)).all():",
+        new="if False:",
+        tests="tests/test_cache.py",
+        breaks="a NaN geometry is written to arrays.npz — the half of a record `write_json`'s "
+        "`allow_nan=False` never sees — and served to every downstream step; it round-trips "
+        "the cache and `structure_digest` hashes it to a stable key, so a run reports results "
+        "computed from coordinates that are not numbers, and nothing anywhere says so",
+    ),
+    Mutation(
+        id="pyscf-mol-unit",
+        path="src/chemrefine/engines/pyscf/_runtime.py",
+        old='mol.atom = atom\n    mol.unit = "Bohr"',
+        new="mol.atom = atom",
+        tests="tests/test_engines_pyscf_extopt_calc.py",
+        breaks="PySCF's default unit is Angstrom, so the coordinates — already converted "
+        "to Bohr — are read 1.889x too large: silently wrong energies and gradients on "
+        "every PySCF job",
+    ),
+    Mutation(
+        id="pyscf-df-applied",
+        path="src/chemrefine/engines/pyscf/_runtime.py",
+        old="mf = mf.density_fit()",
+        new="pass",
+        tests="tests/test_engines_pyscf_extopt_calc.py",
+        breaks="density fitting silently never applied on the shipped-default path — the "
+        "RI approximation the user configured, priced, and did not get, with a different "
+        "energy and a much longer runtime",
+    ),
+    Mutation(
+        id="boltzmann-temperature",
+        path="src/chemrefine/filtering.py",
+        old="sorted_structures, sample.percent_cumulative, sample.temperature_k, energy_attr",
+        new="sorted_structures, sample.percent_cumulative, 298.15, energy_attr",
+        tests="tests/test_filtering.py",
+        breaks="a `temperature_k: 77` step filters at room temperature — a different "
+        "survivor set at every non-default temperature, with nothing anywhere saying so "
+        "(this exact mutant survived the full suite before the temperature test existed)",
+    ),
+    Mutation(
+        id="report-temperature",
+        path="src/chemrefine/pipeline.py",
+        old="temperature_k = sample.temperature_k if sample is not None else DEFAULT_TEMPERATURE_K",
+        new="temperature_k = DEFAULT_TEMPERATURE_K",
+        tests="tests/test_pipeline.py",
+        breaks="steps.csv's Boltzmann columns are computed at the default temperature "
+        "whatever the step configured — a report that silently contradicts the survivor "
+        "set the filter produced (this exact mutant survived the full suite)",
+    ),
+    Mutation(
+        id="wait-for-jobs-full-drain",
+        path="src/chemrefine/slurm/dispatch.py",
+        old="remaining = pending - state.finished",
+        new="remaining = set()",
+        tests="tests/test_slurm.py",
+        breaks="the array-path wait declares victory after its first poll while every "
+        "task still runs — outputs are parsed mid-write and structures ledgered "
+        "MISSING_OUTPUT while the jobs finish into an archived tree (this exact mutant "
+        "survived while the partial-drain tests held no assertions)",
+    ),
+    Mutation(
+        id="pes-atom-count",
+        path="src/chemrefine/engines/orca/output/ensembles.py",
+        old="        elif len(atoms) != n_atoms:",
+        new="        elif False:",
+        tests="tests/test_engines_orca_output.py",
+        breaks="a scan point that lost a coordinate row ships as a smaller molecule "
+        "carrying the whole molecule's energy — the next step optimises the wrong species",
+    ),
+    Mutation(
+        id="best-backfill-is-a-geometry",
+        path="src/chemrefine/lifecycle.py",
+        old="    return replace(\n        submitted,\n        energy_hartree=None,",
+        new=(
+            "    return submitted\n    return replace(\n        submitted,\n"
+            "        energy_hartree=None,"
+        ),
+        tests="tests/test_step.py",
+        breaks="an `on_failure: best` backfill carries the previous step's energy into this "
+        "step's filter and steps.csv — ranked and reported on a number this step never "
+        "computed",
+    ),
+    Mutation(
+        id="orca-scan-block-bound",
+        path="src/chemrefine/engines/orca/inspect.py",
+        old='_GEOM_BLOCK_RE = re.compile(r"%geom\\b([^%*!]*)", re.IGNORECASE)',
+        new='_GEOM_BLOCK_RE = re.compile(r"%geom\\b([\\s\\S]*)", re.IGNORECASE)',
+        tests="tests/test_engines_orca_inspect.py",
+        breaks="an `Opt Freq` template naming `scan` anywhere after its `%geom` block is read "
+        "by the scan parser — the step keeps its energies and silently loses its frequency "
+        "table and every imaginary mode",
+    ),
 )
+
+#: What an engine files beside its contract fixture — ``tests/data/engines/<name>/`` — to
+#: put its own guards on the list: a JSON array of objects with :class:`Mutation`'s fields.
+#: Read here so an engine ships its mutations without an edit to this script.
+ENGINE_MUTATIONS_NAME = "mutations.json"
+
+
+def engine_mutations(root: Path) -> tuple[Mutation, ...]:
+    """Every mutation an engine files beside its fixture under ``root``, in path order."""
+    found: list[Mutation] = []
+    fixtures = root / "tests" / "data" / "engines"
+    for path in sorted(fixtures.glob(f"*/{ENGINE_MUTATIONS_NAME}")):
+        entries = json.loads(path.read_text(encoding="utf-8"))
+        found.extend(Mutation(**entry) for entry in entries)
+    return tuple(found)
+
+
+MUTATIONS: tuple[Mutation, ...] = (*_BUNDLED, *engine_mutations(REPO))
+"""Every mutation the gate runs: the bundled ones above, then each engine's own."""
 
 
 #: Everything a pytest run reads. ``examples`` belongs here because the shipped tutorials
 #: are living documentation and several tests resolve their templates; ``README.md`` and
 #: ``docs`` because ``test_docs_examples`` validates every full config their prose shows.
+#: The last four are ``test_docs_urls``'s: it reads the canonical ``site_url``/``repo_url``
+#: out of ``mkdocs.yml`` at *import* time — so that one's absence was a collection error
+#: rather than a failing test, and the whole gate refused to run — and it resolves every
+#: self-referential ``blob/main/…`` URL against the tree, which is what names the three
+#: top-level files the prose links to.
 #: An incomplete copy fails on its own, which :func:`_assert_baseline_is_green` catches
-#: whatever the missing input turns out to be — it is how these two earned their entries.
-_INPUTS = ("src", "tests", "examples", "docs", "README.md", "pyproject.toml")
+#: whatever the missing input turns out to be — it is how each of these earned its entry.
+_INPUTS = (
+    "src",
+    "tests",
+    "examples",
+    "docs",
+    "README.md",
+    "pyproject.toml",
+    "mkdocs.yml",
+    "CITATION.cff",
+    "CONTRIBUTING.md",
+    "LICENSE",
+)
 
 
 def _copy_tree(dest: Path) -> None:
@@ -259,17 +585,17 @@ def _assert_baseline_is_green(work: Path, env: dict[str, str]) -> None:
     suite" and the gate reports all-caught while testing nothing. A gate whose failure mode
     is a false green has to prove it can be green for the right reason first.
     """
-    caught, why = _run_suite(work, env)
-    if caught:
+    verdict = _run_suite(work, env)
+    if verdict.caught or verdict.inconclusive:
         raise SystemExit(
-            f"mutation gate baseline is not green: {why}\n"
+            f"mutation gate baseline is not green: {verdict.why}\n"
             f"The unmutated copy at {work} already fails, so every mutation would look\n"
             f"'caught' regardless. Fix the copy (see _INPUTS) before trusting a verdict."
         )
 
 
 def stale_anchors(root: Path, mutations: Sequence[Mutation]) -> list[str]:
-    """One report line per mutation whose ``old`` is not unique under ``root``.
+    """One report line per mutation whose ``old`` is not unique, or whose ``tests`` is gone.
 
     Every anchor is checked before any is applied, and every stale one is reported
     together. Failing on the first made a single moved line hide the state of the whole
@@ -283,13 +609,40 @@ def stale_anchors(root: Path, mutations: Sequence[Mutation]) -> list[str]:
     """
     problems: list[str] = []
     for mutation in mutations:
-        found = (root / mutation.path).read_text(encoding="utf-8").count(mutation.old)
-        if found != 1:
+        source = root / mutation.path
+        if not source.is_file():
+            # The same report line the tests half gets: a `git mv` of a mutated source
+            # file otherwise raised FileNotFoundError out of main() — the one moved file
+            # hiding the state of the whole gate, which is the failure this function's
+            # aggregate report exists to prevent.
             problems.append(
-                f"[{mutation.id}] expected exactly one occurrence of\n    {mutation.old}\n"
-                f"in {mutation.path}, found {found}."
+                f"[{mutation.id}] names {mutation.path}, which is not a file; "
+                f"the code moved or was renamed."
+            )
+        else:
+            found = source.read_text(encoding="utf-8").count(mutation.old)
+            if found != 1:
+                problems.append(
+                    f"[{mutation.id}] expected exactly one occurrence of\n    {mutation.old}\n"
+                    f"in {mutation.path}, found {found}."
+                )
+        if not (root / mutation.tests).is_file():
+            problems.append(
+                f"[{mutation.id}] names {mutation.tests}, which is not a file; "
+                f"the test moved or was renamed."
             )
     return problems
+
+
+def _prepended_path(environ: Mapping[str, str], first: Path) -> str:
+    """``PYTHONPATH`` with *first* ahead of whatever the caller already had on it.
+
+    Replacing the variable outright dropped a developer's own entries — on a login node
+    whose dependencies arrive through ``PYTHONPATH`` the baseline then failed to import
+    them, and the gate reported its copy "not green" with a message pointing at the copy.
+    """
+    existing = environ.get("PYTHONPATH", "")
+    return os.pathsep.join([str(first), existing]) if existing else str(first)
 
 
 def _apply(work: Path, mutation: Mutation) -> None:
@@ -300,18 +653,51 @@ def _apply(work: Path, mutation: Mutation) -> None:
     """
     target = work / mutation.path
     text = target.read_text(encoding="utf-8")
-    target.write_text(text.replace(mutation.old, mutation.new), encoding="utf-8")
+    mutated = text.replace(mutation.old, mutation.new)
+    if text.count(mutation.old) != 1 or mutated == text:
+        # A copy that drifted from the checked tree, or an entry whose `new` is its `old`:
+        # either way the suite would run over unmutated code and every verdict from here
+        # would be about nothing. Stop rather than report a survivor that does not exist.
+        raise SystemExit(
+            f"[{mutation.id}] would not change {mutation.path}: the anchor occurs "
+            f"{text.count(mutation.old)} time(s) and the replacement "
+            f"{'is identical' if mutation.new == mutation.old else 'differs'}."
+        )
+    target.write_text(mutated, encoding="utf-8")
 
 
-def _run_suite(work: Path, env: dict[str, str]) -> tuple[bool, str]:
-    """Return ``(caught, why)`` for the suite as it stands in ``work``.
+@dataclass(frozen=True)
+class Verdict:
+    """What one run of the suite said about a mutation.
 
-    ``-x`` so a caught mutation stops at the first red test: the healthy case is fast, and
-    only a survivor pays for the whole suite.
+    ``caught`` is the suite going red. ``inconclusive`` is the suite proving nothing either
+    way — not finishing at all on a run whose timeout cannot be read as a catch (the
+    whole-suite fallback, see :data:`TIMEOUT_SECONDS`), or collecting no tests at all; it
+    never comes with ``caught``. Neither set is a survivor: the suite finished green with
+    the mutation in.
     """
+
+    caught: bool
+    why: str
+    inconclusive: bool = False
+
+
+def _run_suite(work: Path, env: dict[str, str], target: str | None = None) -> Verdict:
+    """The :class:`Verdict` of the suite — or of one file of it — as it stands in ``work``.
+
+    ``-x`` so a caught mutation stops at the first red test. ``target`` narrows the run to
+    the file a mutation names: a red file is a red suite, so the verdict is the one the
+    whole suite would give, reached in seconds instead of after ``-x`` has walked every
+    alphabetically-earlier file first.
+    """
+    argv = [sys.executable, "-m", "pytest", "-x", "-q", "-p", "no:cacheprovider"]
+    if target is not None:
+        argv.append(target)
     try:
-        completed = subprocess.run(
-            [sys.executable, "-m", "pytest", "-x", "-q", "-p", "no:cacheprovider"],
+        # The only non-literal entry is `target`, which comes from this file's own
+        # MUTATIONS table and is proven to name a real file by `stale_anchors`.
+        completed = subprocess.run(  # noqa: S603
+            argv,
             capture_output=True,
             text=True,
             cwd=work,
@@ -319,14 +705,32 @@ def _run_suite(work: Path, env: dict[str, str]) -> tuple[bool, str]:
             timeout=TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired:
-        return True, f"suite hung (>{TIMEOUT_SECONDS}s) — a red build either way"
+        if target is not None:
+            return Verdict(True, f"{target} hung (>{TIMEOUT_SECONDS}s) — a red build either way")
+        return Verdict(
+            False,
+            f"the whole suite did not finish within {TIMEOUT_SECONDS}s — a hang or a slow "
+            "runner, and the gate cannot tell which",
+            inconclusive=True,
+        )
+    if completed.returncode == 5:
+        # pytest's "no tests collected": the named file was emptied, or everything in it
+        # is deselected by the default addopts. Nothing ran, so nothing was caught — and
+        # "non-zero means red" reported it caught, the false green this gate exists to
+        # refuse. `stale_anchors` cannot see it: `is_file()` is true of a 0-byte file.
+        # A named file that ran nothing is simply not a catch, and `main` then asks the
+        # whole suite, which is where the verdict really comes from; the whole suite
+        # collecting nothing is the same "nothing proven" as its timeout.
+        if target is not None:
+            return Verdict(False, f"{target} collected no tests — nothing ran")
+        return Verdict(False, "the whole suite collected no tests — nothing ran", inconclusive=True)
     if completed.returncode != 0:
         first = next(
             (ln for ln in completed.stdout.splitlines() if ln.startswith("FAILED")),
             "suite failed",
         )
-        return True, first
-    return False, "suite passed unchanged"
+        return Verdict(True, first)
+    return Verdict(False, "suite passed unchanged")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -339,7 +743,11 @@ def main(argv: list[str] | None = None) -> int:
     selected = [m for m in MUTATIONS if args.pattern in m.id]
     if args.list:
         for mutation in selected:
-            print(f"{mutation.id:32} {mutation.path}\n{'':32} if it survived: {mutation.breaks}")
+            print(
+                f"{mutation.id:32} {mutation.path}\n"
+                f"{'':32} checked by: {mutation.tests}\n"
+                f"{'':32} if it survived: {mutation.breaks}"
+            )
         return 0
     if not selected:
         raise SystemExit(f"no mutation id contains {args.pattern!r}")
@@ -347,30 +755,51 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("\n".join([*stale, "The code moved; update the mutation(s)."]))
 
     survivors: list[Mutation] = []
+    inconclusive: list[tuple[Mutation, str]] = []
     with tempfile.TemporaryDirectory(prefix="chemrefine-mutation-") as tmp:
         work = Path(tmp)
         _copy_tree(work)
-        env = {**os.environ, "PYTHONPATH": str(work / "src")}
+        env = {**os.environ, "PYTHONPATH": _prepended_path(os.environ, work / "src")}
         _assert_isolated(work, env)
         _assert_baseline_is_green(work, env)
-        print(f"baseline green; {len(selected)} mutation(s) to check\n")
+        print(f"baseline green; {len(selected)} mutation(s) to check\n", flush=True)
 
         for mutation in selected:
             pristine = (work / mutation.path).read_text(encoding="utf-8")
             _apply(work, mutation)
             try:
-                caught, why = _run_suite(work, env)
+                verdict = _run_suite(work, env, mutation.tests)
+                if not verdict.caught:
+                    # The named file missed it. Before calling anything a survivor, ask the
+                    # whole suite — the entry may simply name the wrong file, and `why` then
+                    # reports the test that did catch it.
+                    verdict = _run_suite(work, env)
             finally:
                 (work / mutation.path).write_text(pristine, encoding="utf-8")
-            print(f"{'caught ' if caught else 'SURVIVED'}  {mutation.id:32} {why}")
-            if not caught:
+            if verdict.inconclusive:
+                label = "INCONCLUSIVE"
+                inconclusive.append((mutation, verdict.why))
+            elif verdict.caught:
+                label = "caught"
+            else:
+                label = "SURVIVED"
                 survivors.append(mutation)
+            print(f"{label:12} {mutation.id:32} {verdict.why}", flush=True)
 
+    if inconclusive:
+        print(
+            f"\n{len(inconclusive)} mutation(s) inconclusive — the suite did not finish, so "
+            "nothing is proven about these:"
+        )
+        for mutation, why in inconclusive:
+            print(f"  {mutation.id} ({mutation.path})\n    {why}")
     if survivors:
         print(f"\n{len(survivors)} mutation(s) survived — the suite does not check these:")
         for mutation in survivors:
             print(f"  {mutation.id} ({mutation.path})\n    if it shipped: {mutation.breaks}")
         return 1
+    if inconclusive:
+        return 2
     print(f"\nall {len(selected)} mutation(s) caught")
     return 0
 

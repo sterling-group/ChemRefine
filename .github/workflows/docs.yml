@@ -5,19 +5,19 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Least privilege for the GitHub Actions Pages deployment: read the repo, write
-# the Pages artifact, and mint the OIDC token `deploy-pages` needs. This replaces
-# `mkdocs gh-deploy --force`, which needed `contents: write` — an over-broad grant
-# here, because the docs build runs mkdocstrings, which imports chemrefine and its
-# dependencies. That executed repo + dependency code under a token allowed to push
-# to any branch.
+# Least privilege for the GitHub Actions Pages deployment: read the repo here, and
+# only the deploy job may write the Pages artifact and mint the OIDC token
+# `deploy-pages` needs. This replaces `mkdocs gh-deploy --force`, which needed
+# `contents: write` — an over-broad grant here, because the docs build runs
+# mkdocstrings, which imports chemrefine and its dependencies. That executed repo +
+# dependency code under a token allowed to push to any branch. The same reasoning
+# scopes the remaining two grants to the job that uses them: the build job runs
+# that same code, and had no use for a token that can publish the site.
 #
 # Requires the repository's Pages source to be set to "GitHub Actions"
 # (Settings → Pages), not the legacy gh-pages branch.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 # Allow one concurrent deployment; don't cancel an in-progress one mid-publish.
 concurrency:
@@ -55,6 +55,9 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

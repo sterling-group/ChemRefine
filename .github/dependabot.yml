@@ -13,6 +13,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    commit-message:
+      prefix: "build(deps)"
     groups:
       python-deps:
         patterns: ["*"]
@@ -21,6 +23,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    commit-message:
+      prefix: "ci"
     groups:
       actions:
         patterns: ["*"]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from chemrefine.engines.api import BackendRequirement
@@ -15,7 +16,7 @@ _QISKIT = BackendRequirement(
 class QiskitBackend:
     """Mixin declaring the managed environment required by Qiskit engines."""
 
-    def backend_requirement(self, options: dict[str, Any] | None) -> BackendRequirement:
+    def backend_requirement(self, options: Mapping[str, Any] | None) -> BackendRequirement:
         """Validate the graph and probe Aer when the selected algorithm will use it."""
         from chemrefine.engines.qiskit.options import QiskitOptions
         from chemrefine.engines.qiskit.registry import ALGORITHMS, ESTIMATORS

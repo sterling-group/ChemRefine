@@ -1,0 +1,185 @@
+"""What a rendered ``step{N}.py`` may report back — declared once, derived by every reader.
+
+Each consumer derives its own view from :data:`SCRIPT_OUTPUT` rather than restating the roster:
+the harvest loop inside the generated footer (:mod:`chemrefine.engines._script.render`), the
+finiteness sweep and the :class:`~chemrefine.engines.api.ParsedResult` mapping
+(:mod:`chemrefine.engines._script.output`), and the starter comment
+:mod:`chemrefine.scaffold` writes. A roster spelled once per reader agrees only by discipline,
+and it fails silently in the direction that matters: a quantity the footer harvests but the
+sweep does not know about is written by the script, read onto the structure, and skips the
+guard that stops a diverged calculation being cached as a result.
+
+The same shape :data:`chemrefine.engines.mlip.options.CALCULATOR_KNOBS` gives the MLIP knob
+list, for the reason it gives: spelled once, beside the thing that defines it.
+
+Because the contract is a *value*, an engine can extend it:
+:attr:`chemrefine.engines._script.engine.ScriptEngine.output_fields` is a ClassVar a subclass
+overrides — the mirror of ``_vars_from`` on the input side. A script engine that reports
+anything beyond the shared set declares it in its own module, and the footer, the finiteness
+guard, the JSON mapping and the scaffold comment all follow. No building block is edited, which
+is what ``docs/developer/adding-an-engine.md`` promises and what this makes true for the script
+kind.
+
+The conversions live here rather than in the reader because they *are* the contract: what
+``gradient_hartree_per_bohr`` means is "Hartree/Bohr, one row per atom, and forces are its
+negative in eV/Å", and that sentence belongs beside the name it defines.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+
+import numpy as np
+from ase import Atoms
+from numpy.typing import NDArray
+
+from chemrefine.errors import OutputParseError
+from chemrefine.quantities import HARTREE_PER_BOHR_TO_EV_PER_A
+
+
+@dataclass(frozen=True)
+class OutputField:
+    """One quantity a ``step{N}.py`` may assign, and how it becomes a ``ParsedResult`` field."""
+
+    name: str
+    """The template-local name the footer harvests, and the JSON key it writes."""
+
+    field: str | None
+    """The :class:`~chemrefine.engines.api.ParsedResult` field it lands in.
+
+    ``None`` for a quantity the record has no home for and should not grow one — a solver's
+    iteration history, the components a run resolved. Such a field is harvested into the raw
+    ``stepN_<id>.json`` (the engine's own sidecar), held to ``finite`` as declared, and read
+    onto nothing: the declaration stays on the engine, and the footer hard-codes no name."""
+
+    required: bool = False
+    """Whether a script that never assigns it has failed.
+
+    A required name is emitted into the footer's result dict directly, so the generated script
+    raises ``NameError`` at the point of omission rather than writing a document the driver
+    then has to reject. Optional names go through the harvest loop, which skips whatever the
+    template never defined."""
+
+    finite: bool = True
+    """Whether every scalar in the value is held to the finiteness rule.
+
+    ``True`` for anything numeric, which is nearly everything: a diverged calculation reports
+    ``nan``/``inf`` rather than failing, and nothing downstream reads that as a failure — see
+    :func:`chemrefine.engines._script.output._require_finite` for the whole argument. ``False``
+    is for a value the question does not apply to, such as a flag."""
+
+    convert: Callable[[Any, Atoms], Any] | None = None
+    """``(value, seed) -> ParsedResult value``; ``None`` passes the JSON value through.
+
+    Takes the seed geometry because the two conversions that are not pass-throughs both need
+    it — the geometry for its shape, the gradient for its atom count."""
+
+
+def _as_float(value: Any, _seed: Atoms) -> float:
+    """The energy: one number, already vetted finite by the sweep.
+
+    Shape is the converter's business — the sweep yields every scalar of whatever arrived, so
+    a one-element list passes it finite — and this is the shape guard the two array
+    converters below carry for the same reason. Without it ``float([-1.0])`` raised a bare
+    ``TypeError`` past :func:`chemrefine.lifecycle._parse_job`, and a template that handed
+    back ``energies.tolist()`` ended the whole run over one structure instead of ledgering
+    it. ``bool`` is refused by the sweep for every numeric field; the shape is this field's.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise OutputParseError(
+            f"'energy_hartree' must be one number, got {value!r} ({type(value).__name__}); "
+            f"assign the scalar, not a list or an array around it"
+        )
+    return float(value)
+
+
+def _as_flag(value: Any, _seed: Atoms) -> bool | None:
+    """A verdict flag: ``True``, ``False`` or ``None`` (not reported), nothing else.
+
+    The flag is exempt from the finiteness sweep and had no converter, so whatever the
+    template assigned landed on the structure as it was — and
+    :func:`chemrefine.lifecycle.succeeded` reads only a literal ``False`` as a failure. A
+    template writing ``converged = 0``, ``"false"`` or ``"no"`` therefore ranked its
+    structure as a converged survivor, the exact verdict the field exists to refuse. The
+    numeric fields have a shape guard at this boundary; this is the flag's.
+    """
+    if value is None or isinstance(value, bool):
+        return value
+    raise OutputParseError(
+        f"'converged' must be true or false, got {value!r} ({type(value).__name__}); "
+        f"assign a bool, or leave it unassigned when the run has nothing to converge"
+    )
+
+
+def positions_from(value: Any, seed: Atoms) -> NDArray[np.float64]:
+    """The optimised geometry, on the seed's atom count.
+
+    A block of the wrong *shape* is refused here rather than left to ASE. ``set_positions``
+    raises a bare :class:`ValueError`, which is outside this package's hierarchy: it would
+    pass straight through :func:`chemrefine.lifecycle._parse_job` (which contains only
+    :class:`~chemrefine.errors.OutputParseError`) and out of ``cli._dispatch``, ending the
+    whole run in a traceback over one structure — and discarding the successes of the same
+    step, which are about to be cached. The flat ``3N`` list is the natural mistake, since a
+    backend that hands back ``coords.ravel()`` produces one.
+
+    ASE stays the shape oracle: a scratch copy of the seed is what judges the array, so the
+    rule enforced here is the one ASE would have enforced anyway — only as an
+    ``OutputParseError``, at the boundary, instead of as a bare ``ValueError`` three frames on.
+    """
+    scratch: Atoms = seed.copy()
+    try:
+        scratch.set_positions(np.asarray(value, dtype=float))
+    except ValueError as e:
+        raise OutputParseError(
+            f"malformed 'positions_angstrom' for a {len(scratch)}-atom structure: {e}"
+        ) from e
+    # `asarray` is a no-copy pass-through on the float64 array ASE actually returns; it is
+    # here to reach the typed surface rather than to convert anything.
+    return np.asarray(scratch.get_positions(), dtype=np.float64)
+
+
+def forces_from_gradient(value: Any, seed: Atoms) -> NDArray[np.float64] | None:
+    """Convert a template gradient (Hartree/Bohr) to ASE forces (eV/Å).
+
+    Held to the same rule as the coordinates above, and by the same two checks: a ragged
+    gradient makes ``np.asarray`` raise a bare :class:`ValueError`, which would leave the
+    exit-code contract the same way — and a well-formed array of the wrong *shape* would leave
+    it silently. The positions path has ``set_positions`` as its shape oracle; a gradient has
+    none, so the flat ``3N`` list the positions guard names as "the natural mistake"
+    (``grad.ravel()``) reads here as a perfectly valid ``(3N,)`` array. Unrefused it becomes
+    :attr:`~chemrefine.state.Structure.forces_ev_per_a`, which declares no shape, and
+    round-trips the cache into any downstream ``mlip-train`` dataset. Nothing between this line
+    and the trainer re-checks, so this is the one place the contract can be held.
+    """
+    if not value:
+        return None
+    n_atoms = len(seed)
+    try:
+        rows = np.asarray(value, dtype=float)
+    except ValueError as e:
+        raise OutputParseError(f"malformed 'gradient_hartree_per_bohr': {e}") from e
+    if rows.shape != (n_atoms, 3):
+        raise OutputParseError(
+            f"malformed 'gradient_hartree_per_bohr' for a {n_atoms}-atom structure: "
+            f"expected shape ({n_atoms}, 3), got {rows.shape} — a flat 3N list is the "
+            f"usual cause (return rows, not gradient.ravel())"
+        )
+    return rows * (-HARTREE_PER_BOHR_TO_EV_PER_A)
+
+
+SCRIPT_OUTPUT: tuple[OutputField, ...] = (
+    OutputField("energy_hartree", "energy_hartree", required=True, convert=_as_float),
+    OutputField("positions_angstrom", "positions", convert=positions_from),
+    OutputField("gradient_hartree_per_bohr", "forces_ev_per_a", convert=forces_from_gradient),
+    # A flag, so the finiteness question does not apply. Optional because a single point has
+    # nothing to converge; a template that ran an optimiser or an SCF assigns it, and `False`
+    # is what makes an exhausted run a NOT_CONVERGED failure — ledgered, and retried from its
+    # best geometry by `lifecycle.retry_unconverged` — instead of a survivor ranked against
+    # converged siblings. Never assigned, it stays `None`, which `lifecycle.succeeded` reads
+    # as "not reported": the shape every non-reporting engine has always had. `_as_flag`
+    # is what keeps `0` and `"false"` from passing as anything but a parse failure.
+    OutputField("converged", "converged", finite=False, convert=_as_flag),
+)
+"""The quantities every script engine shares, whatever its backend."""

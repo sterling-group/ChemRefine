@@ -5,22 +5,20 @@ FAIRChem is *one family with many checkpoints and a fixed set of task heads*.
 ``pretrained_mlip.available_models``); ``task_name`` *is* the head and keys the
 registry, so it is passed straight through to
 :class:`~fairchem.core.FAIRChemCalculator`. The one builder is registered under
-each of the 7 heads, so ``task_name: omat`` builds the materials head — not a
-hardcoded ``omol``.
+every head in :data:`HEADS`, so ``task_name: omat`` builds the materials head — not
+a hardcoded ``omol``.
 """
 
 from __future__ import annotations
 
-import shlex
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, ClassVar
 
 import numpy as np
 
-from chemrefine.engines.mlip.registry import MlipLibrary
-from chemrefine.engines.mlip.training import DatasetFiles, DatasetSplit, TrainingPlan
-from chemrefine.errors import ConfigError
+from chemrefine.engines.mlip.registry import CalculatorSpec, MlipLibrary
+from chemrefine.engines.mlip.train.base import DatasetFiles, TrainerBase, TrainingPlan
 from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import Structure
 
@@ -103,14 +101,7 @@ def _write_ase_db(
 
 
 @FAIRCHEM.calculator(*HEADS)
-def _build_fairchem(
-    *,
-    task_name: str,
-    model_name: str = "",
-    device: str = "cuda",
-    model_path: str | Path | None = None,
-    **_: Any,
-) -> Any:
+def _build_fairchem(spec: CalculatorSpec) -> Any:
     """FAIRChem (UMA/eSEN): ``task_name`` is the head; the weights come from name or path.
 
     Two different loaders, because FAIRChem has two. ``pretrained_mlip.get_predict_unit``
@@ -119,25 +110,24 @@ def _build_fairchem(
     ``load_predict_unit`` is the same thing one level down and takes a path.
 
     Without this branch a fine-tuned FAIRChem model could be trained and never run, which is
-    most of the point of being able to train one.
+    most of the point of being able to train one. The unset-``model_name`` default —
+    ``uma-s-1p2`` — lives here, with the library that owns the name, not on the shared
+    options model where every other library's steps would inherit it too.
     """
     from fairchem.core import FAIRChemCalculator, pretrained_mlip
 
-    if model_path is not None:
+    if spec.weights is not None:
         # Imported in the branch that uses it, not beside the others: the two loaders live in
         # different submodules, and a caller running a *named* release should not need the
         # one it will not call to be importable.
         from fairchem.core.units.mlip_unit import load_predict_unit
 
-        path = Path(model_path)
-        if not path.is_file():
-            raise FileNotFoundError(f"FAIRChem checkpoint not found: {path}")
-        predictor = load_predict_unit(str(path), device=device)
+        predictor = load_predict_unit(str(spec.weights), device=spec.device)
     else:
         predictor = pretrained_mlip.get_predict_unit(
-            model_name=model_name or _DEFAULT_MODEL, device=device
+            model_name=spec.model_name or _DEFAULT_MODEL, device=spec.device
         )
-    return FAIRChemCalculator(predictor, task_name=task_name)
+    return FAIRChemCalculator(predictor, task_name=spec.task_name)
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +136,7 @@ def _build_fairchem(
 
 
 @FAIRCHEM.trainer(*HEADS)
-class FairchemTrainer:
+class FairchemTrainer(TrainerBase):
     """Fine-tune a FAIRChem model on a step's labelled structures.
 
     Registered over the same ``HEADS`` the calculator uses, so the head list is written once
@@ -175,13 +165,28 @@ class FairchemTrainer:
     * ``a2g_args: {r_data_keys: [charge, spin]}`` — see :func:`_write_ase_db`.
     """
 
+    label = "FAIRChem"
+    needs_validation = True
+    validation_reason = "its runner takes a train *and* an eval dataloader, with no train-only mode"
+    charge_spin_aware = True
+    """Charge and spin ride each row's ``data=`` mapping (:func:`_write_ase_db`), so an
+    ion is fitted as itself — no warning to raise."""
+
     required_placeholders: ClassVar[frozenset[str]] = frozenset(
-        {"TRAIN_SET", "VAL_SET", "RUN_DIR", "RUN_NAME"}
+        {"TRAIN_SET", "VAL_SET", "RUN_DIR", "RUN_NAME", "DEVICE", "SEED"}
     )
     """``RUN_DIR`` and ``RUN_NAME`` join the datasets because :meth:`artifact` is derived from
     them: FAIRChem writes under ``run_dir/<timestamp_id>/checkpoints``, and the template is
     what pins ``timestamp_id``. Left to its default it is a fresh timestamp, and the step
-    would train correctly and then report having produced nothing."""
+    would train correctly and then report having produced nothing.
+
+    ``DEVICE`` and ``SEED`` are plan facts FAIRChem reads from this config
+    (``device_type`` — whose spelling :meth:`placeholders` specialises — and the ``seed``
+    keys the shipped example threads through ``job`` and the dataset stanzas). For a CLI
+    trainer the template is the only channel the library reads, so requiring the
+    placeholders is the closure the driver-run trainers get from their argv: unset, the
+    device falls to FAIRChem's own default and torch seeds diverge from the ``seed`` the
+    step's cache fingerprint records."""
 
     output_globs: ClassVar[tuple[str, ...]] = ("*.pt", "*.yaml", "*.log")
     output_dirs: ClassVar[tuple[str, ...]] = ()
@@ -199,8 +204,8 @@ class FairchemTrainer:
     model, and the honest thing is to say so rather than to declare a net that does not catch
     it."""
 
-    def write_dataset(self, plan: TrainingPlan, split: DatasetSplit) -> DatasetFiles:
-        """Write one ASE database per split, each with the metadata its sampler demands.
+    def write_split(self, plan: TrainingPlan, name: str, structures: tuple[Structure, ...]) -> Path:
+        """One split as an ASE database in a directory of its own, with its metadata.
 
         **A directory per split, not a file per split.** Without an explicit
         ``metadata_path`` FAIRChem looks for ``metadata.npz`` in the database file's *parent*,
@@ -215,28 +220,13 @@ class FairchemTrainer:
         has core ``ase`` but not ``ase_db_backends``. `AseDBDataset` connects with a plain
         ``ase.db.connect``, so any format ase can write is one it can read.
         """
-        if not split.valid:
-            raise ConfigError(
-                "FAIRChem training needs a validation set — its runner takes a train *and* an "
-                "eval dataloader, with no train-only mode. Raise `valid_fraction` above 0."
-            )
-        written: dict[str, Path | None] = {"train": None, "valid": None, "test": None}
-        for name, structures in (
-            ("train", split.train),
-            ("valid", split.valid),
-            ("test", split.test),
-        ):
-            if not structures:
-                continue
-            written[name] = _write_ase_db(
-                plan.run_dir / _DATA_DIR / name,
-                name,
-                structures,
-                charge=plan.charge,
-                spin=plan.multiplicity,
-            )
-        assert written["train"] is not None  # noqa: S101 - split_structures guarantees one
-        return DatasetFiles(train=written["train"], valid=written["valid"], test=written["test"])
+        return _write_ase_db(
+            plan.run_dir / _DATA_DIR / name,
+            name,
+            structures,
+            charge=plan.charge,
+            spin=plan.multiplicity,
+        )
 
     def placeholders(self, plan: TrainingPlan, data: DatasetFiles) -> dict[str, str]:
         """FAIRChem's dataset paths, their metadata, and its own spellings of the shared knobs.
@@ -245,7 +235,7 @@ class FairchemTrainer:
         ``scheduler.mode`` are omegaconf-validated enums that reject their own lowercase
         *values* — ``'cpu'`` raises ``Invalid value 'cpu', expected one of [CPU, CUDA]`` — and
         accept only the member names. A trainer specialising a shared placeholder is what
-        :func:`~chemrefine.engines.mlip.training.placeholders_for` allows, and this is the
+        :func:`~chemrefine.engines.mlip.train.base.placeholders_for` allows, and this is the
         case it is for: the same word, the spelling this library insists on.
 
         ``$RANKS_PER_NODE`` exists because ``$NGPUS`` cannot serve FAIRChem's
@@ -279,7 +269,7 @@ class FairchemTrainer:
         ``slurm_array: true`` it is a ``$INP_NAME`` sentinel the array script expands, and
         single quotes would stop it expanding.
         """
-        return f"{shlex.quote(str(plan.bindir / 'fairchem'))} -c {config.name}"
+        return f"{self.console_script(plan, 'fairchem')} -c {config.name}"
 
     def artifact(self, run_dir: Path, run_name: str) -> Path:
         """The inference checkpoint FAIRChem writes when training ends.

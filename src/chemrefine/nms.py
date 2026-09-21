@@ -34,15 +34,14 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Protocol
 
 import numpy as np
 from ase import Atoms
 from numpy.typing import NDArray
-from pydantic import BaseModel, ConfigDict, Field
 
 from chemrefine import attempts, cache, filtering, io, lifecycle
-from chemrefine.config import StepConfig
+from chemrefine.config import NmsKnobs, StepConfig
 from chemrefine.engines.api import NmsCapableEngine
 from chemrefine.errors import CacheError, ConfigError
 from chemrefine.ids import (
@@ -81,34 +80,35 @@ they displace along the modes the parse flagged imaginary, whatever their index.
 # ---------------------------------------------------------------------------
 
 
-class NmsOptions(BaseModel):
-    """Validated normal-mode-sampling knobs (from ``step.options``)."""
+_CRITERION_FIELDS = ("target", "ts_mode_index")
+"""What decides whether a child counts as resolved — an ``attemptK/`` survives its retune."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+_SEARCH_FIELDS = ("displacement_value", "num_random_displacements", "seed")
+"""What decides where the children are displaced to — an ``attemptK/`` does not survive it."""
 
-    target: Literal["minimum", "ts", "random"] = "minimum"
-    """``minimum`` removes all imaginary modes; ``ts`` keeps the reaction coordinate
-    and removes the rest; ``random`` displaces along random modes (exploration)."""
 
-    displacement_value: float = 1.0
-    """Magnitude (Å) of the ± displacement along each selected mode."""
+class NmsOptions(NmsKnobs):
+    """The NMS knobs with their behaviour: how a validated reading splits into the cache key.
 
-    num_random_displacements: int = Field(1, ge=1)
-    """``random`` only: how many modes to draw."""
+    The fields are :class:`chemrefine.config.NmsKnobs`' — the schema, kept where the config
+    can partition a step's ``options`` between its two readers; this subclass adds what only
+    the coordinator knows.
+    """
 
-    ts_mode_index: int | None = None
-    """``ts`` only: explicit reaction-coordinate mode index. ``None`` ⇒ the
-    largest-magnitude imaginary mode."""
+    def resolution_spec(self) -> cache.ResolutionSpec:
+        """This reading split the way the cache keys it: criterion and search.
 
-    seed: int = 42
-    """Deterministic seed for ``random`` mode selection."""
-
-    @classmethod
-    def from_raw(cls, raw: dict[str, Any] | None) -> NmsOptions:
-        """Validate the NMS subset of a ``step.options`` dict (ignoring other keys)."""
-        raw = raw or {}
-        known = {k: raw[k] for k in cls.model_fields if k in raw}
-        return cls(**known)
+        The split lives on the model that owns the fields, because every field here
+        must belong to exactly one half: one that joined neither would steer the
+        resolution at run time while moving no key — cache-invisible, the class of
+        drift :func:`chemrefine.cache.aux_file_digests` closed for template files.
+        ``tests/test_nms.py`` holds the two halves to partition ``model_fields``.
+        """
+        dump = self.model_dump(mode="json")
+        return cache.ResolutionSpec(
+            criterion={k: dump[k] for k in _CRITERION_FIELDS},
+            search={k: dump[k] for k in _SEARCH_FIELDS},
+        )
 
 
 def target_imaginary_count(opts: NmsOptions) -> int | None:
@@ -551,6 +551,20 @@ def _read_resolution(structure_dir: Path) -> str | None:
         ) from e
 
 
+def _disown_resolution(structure_dir: Path) -> None:
+    """Remove the label a structure's most recent attempt wears, if any.
+
+    The counterpart of :func:`_read_resolution` for a label that must not be worn again:
+    it was written under a criterion this configuration no longer runs. Clearing it only
+    in memory would leave the file to be re-read by the next resume — which, once the
+    manifest carries the current criterion, trusts what it finds. Deleting the file is the
+    same escape :func:`_read_resolution` names for a corrupt one.
+    """
+    attempt = latest_attempt_dir(structure_dir)
+    if attempt is not None:
+        (attempt / _RESOLUTION_FILE).unlink(missing_ok=True)
+
+
 def _select_survivors(
     resolved: list[Structure],
     round2: list[Structure],
@@ -670,6 +684,8 @@ def _resolve_all(
     round1_failures: list[Failure] | tuple[Failure, ...],
     ctx: StepContext,
     mode: _AttemptMode,
+    *,
+    read_resolutions: bool = True,
 ) -> NmsResolution:
     """Resolve every round-1 survivor through ``mode``. The one NMS loop.
 
@@ -692,7 +708,18 @@ def _resolve_all(
     failures: list[Failure] = list(round1_failures)
     for s in round1.structures:
         if _already_at_target(s, target):
-            survivors.append(_passthrough(s, ctx.step_dir))
+            # `read_resolutions=False` is the resume-over-adopted-rows case: any
+            # `resolution.json` on disk was written under some earlier submission's
+            # criterion, so its label must not be re-worn — the structure passes through
+            # with its provenance cleared rather than borrowed. Cleared on disk too: the
+            # resume that disowns it goes on to stamp the manifest with the criterion it
+            # ran under, and the next resume would trust — and resurrect — a sidecar
+            # left behind.
+            if read_resolutions:
+                survivors.append(_passthrough(s, ctx.step_dir))
+            else:
+                _disown_resolution(ctx.step_dir / s.id)
+                survivors.append(replace(s, converged=True, resolved_from=None))
             continue
         children = _children_for(s, opts)
         attempt = mode.attempt_dir(s, ctx)
@@ -748,6 +775,37 @@ def run_nms(
     return _resolve_all(engine, round1, round1_failures, ctx, round2)
 
 
+def resume_nms(
+    engine: NmsCapableEngine,
+    round1: StepResults,
+    round1_failures: list[Failure] | tuple[Failure, ...],
+    ctx: StepContext,
+    *,
+    trust_resolutions: bool,
+) -> NmsResolution:
+    """Resolve a round-1 set the incremental resume assembled from adopted rows.
+
+    The same loop as :func:`run_nms` with the fan-out started here (no round 1 ran in
+    this process), plus one verdict the caller supplies: ``trust_resolutions`` says
+    whether the ``attemptK/resolution.json`` labels on disk were written under this
+    configuration's *criterion* (the manifest's stored ``criterion_key`` against the
+    current one). Trusted, a passthrough keeps its ``resolved_from`` exactly as a
+    rebuild would; untrusted — the nms flip, a criterion change, a pre-provenance
+    tree — the label is cleared and its sidecar removed, because wearing another
+    criterion's provenance is the one lie a passthrough could tell, and a sidecar left
+    behind would be re-read once the manifest carries the criterion this resume ran
+    under. Either way a parent *not* at the target fans out
+    **fresh** children: an attempt on disk predates the submission this configuration
+    would have made, and a child found there was displaced from a round this run never
+    produced.
+    """
+    round2 = child_round(engine, ctx)
+    lifecycle.run_child_rounds(engine, ctx, round1.structures, round2)
+    return _resolve_all(
+        engine, round1, round1_failures, ctx, round2, read_resolutions=trust_resolutions
+    )
+
+
 def rebuild_nms(
     engine: NmsCapableEngine,
     round1: StepResults,
@@ -770,23 +828,33 @@ def reattempt_nms(
     cached: cache.StepCache,
     key: cache.StepKey,
 ) -> StepResults:
-    """Re-attempt only the ledgered-unresolved NMS parents, reusing round-1.
+    """Re-attempt only the ledgered-failed NMS parents, reusing round-1 wherever it can.
 
     The still-valid resolved survivors from the old cache are kept; the failed parents'
-    round-1 outputs are re-parsed (missing ones resubmitted, unconverged ones retried),
-    NMS round-2 is re-run for them, and the merged result is re-cached.
+    round-1 outputs are re-parsed once, and what that parse cannot stand behind is re-run
+    by the rule the non-NMS resume applies (:func:`chemrefine.lifecycle.resubmit_unusable`):
+    a parent with no output, an unreadable one, or one whose engine says the program did
+    not terminate is archived and resubmitted from a regenerated input; an unconverged one
+    is retried from its best geometry; an unresolved parent — whose round-1 frequency
+    output is the expensive artifact this path exists to keep — is not resubmitted at all.
+    NMS round-2 is then re-run for them and the merged result is re-cached.
 
-    **Why it archives and regenerates nothing on entry**, where
-    :func:`chemrefine.step._resubmit_failed` does both before resubmitting. Reusing round 1 is
-    the point of this path, and archiving it up front would defeat that. Two facts make the
-    omission safe rather than lucky:
+    Resubmitting only the ``MISSING_OUTPUT`` parents and re-parsing everyone else's round-1
+    file left a truncated or crashed round 1 failing the same way on every ``resume`` —
+    the one outcome ``rerun-errors`` is documented to repair.
 
-    * Only ``MISSING_OUTPUT`` ids are resubmitted. Archiving exists to stop a re-executed job
-      re-reading the previous run's output as if it were its own, and a structure with no
-      output has nothing to re-read.
-    * :func:`chemrefine.cache.reuse_fingerprint` covers ``template_digest``, so an edited
-      template changes the key gating this path — a stale input can never be resubmitted from
-      the manifest.
+    **Why only the re-run parents are archived**, where
+    :func:`chemrefine.step._resubmit_failed` archives everything it re-runs. Reusing round 1
+    is the point of this path, and archiving a parent whose output parsed would defeat it.
+    Archiving the re-run ones is what stops a resubmitted job that dies before writing from
+    re-reading the truncated output it is replacing. Two facts keep the reused ones safe:
+
+    * A reused round-1 output is read, never re-executed, so nothing can mistake it for a
+      fresh result.
+    * This path is gated on an exact step-fingerprint match (:func:`chemrefine.step.run_step`'s
+      cached route), and the fingerprint is composed from row keys that cover the template
+      digest — so an edited template changes the key and a stale input can never be
+      reused from the manifest.
 
     Round 1 *is* archived later, for a resolved parent, by
     :func:`_install_winner` sealing it into the attempt its children ran in. That is the
@@ -796,23 +864,10 @@ def reattempt_nms(
     manifest = cache.load_manifest(ctx.step_dir)
     if manifest is None:
         raise CacheError(f"step {step_cfg.step}: cannot re-attempt NMS — no manifest on disk")
-    failed = cache.load_failure_records(ctx.step_dir)
-    failed_ids = {f.structure_id for f in failed}
-    missing_ids = {f.structure_id for f in failed if f.kind is FailureKind.MISSING_OUTPUT}
-
+    failed_ids = {f.structure_id for f in cache.load_failure_records(ctx.step_dir)}
     failed_manifest = StepInputs(files=tuple(f for f in manifest.files if f[2] in failed_ids))
-    missing_inputs = StepInputs(
-        files=tuple(f for f in failed_manifest.files if f[2] in missing_ids)
-    )
-    if missing_inputs.files:
-        logger.info(
-            "step %d: NMS re-attempt resubmitting %d missing round-1 job(s)",
-            step_cfg.step,
-            len(missing_inputs.files),
-        )
-        engine.submit(missing_inputs, ctx)
 
-    r1_succ, r1_fail = lifecycle.parse_and_record(engine, failed_manifest, ctx)
+    r1_succ, r1_fail = lifecycle.resubmit_unusable(engine, ctx, failed_manifest)
     r1_succ, r1_fail = lifecycle.retry_unconverged(engine, ctx, r1_succ, r1_fail)
     reattempt = run_nms(engine, StepResults(structures=tuple(r1_succ)), r1_fail, ctx)
     kept = tuple(

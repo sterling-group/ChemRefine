@@ -7,13 +7,14 @@ it went unrun, and it stayed that way for as long as nobody read past the exit c
 
 The check belongs here rather than behind a flag on the script because ``pytest`` is what
 the developer who moves the line actually runs — pre-commit runs only ruff and interrogate,
-and the gate itself is a separate three-minute CI job. This fires in the edit loop, at the
+and the gate itself is a separate CI job of its own. This fires in the edit loop, at the
 commit that moves the code.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -32,7 +33,8 @@ _GATE = REPO / "scripts" / "mutation_gate.py"
 # green for the wrong reason is worse than no gate, so the condition is "am I looking at a
 # real checkout", and the answer is whether the script is here at all.
 pytestmark = pytest.mark.skipif(
-    not _GATE.is_file(), reason="no scripts/ — this is the mutation gate's own scratch copy"
+    not _GATE.is_file(),
+    reason="no scripts/ — neither the sdist nor the gate's own scratch copy carries it",
 )
 
 
@@ -53,9 +55,33 @@ def _load_gate() -> ModuleType:
 
 
 def test_every_mutation_anchor_matches_the_source_exactly_once():
-    """A moved line must fail here, not three minutes into a CI job that stops early."""
+    """A moved line must fail here, not partway into a CI job that stops early."""
     gate = _load_gate()
     assert gate.stale_anchors(REPO, gate.MUTATIONS) == []
+
+
+def test_an_engine_files_its_own_mutations_beside_its_fixture(tmp_path: Path):
+    """``tests/data/engines/<name>/mutations.json`` joins the gate with no edit to the script.
+
+    The bundled list is one more central roster an engine would otherwise have to be added
+    to; read from the fixture folder, an engine's guards travel with the engine, and the
+    anchor check above covers them like any other entry.
+    """
+    gate = _load_gate()
+    folder = tmp_path / "tests" / "data" / "engines" / "probe"
+    folder.mkdir(parents=True)
+    entry = {
+        "id": "probe-guard",
+        "path": "src/chemrefine/probe.py",
+        "old": "if converged:",
+        "new": "if True:",
+        "tests": "tests/test_engines_probe.py",
+        "breaks": "an unconverged probe run ranks as a result",
+    }
+    (folder / gate.ENGINE_MUTATIONS_NAME).write_text(json.dumps([entry]), encoding="utf-8")
+
+    assert gate.engine_mutations(tmp_path) == (gate.Mutation(**entry),)
+    assert gate.engine_mutations(tmp_path / "nowhere") == ()
 
 
 def test_a_moved_anchor_is_reported_by_id():
@@ -70,9 +96,170 @@ def test_a_moved_anchor_is_reported_by_id():
         path="src/chemrefine/throttle.py",
         old="a line that is not in throttle.py",
         new="irrelevant",
+        tests="tests/test_throttle.py",
         breaks="nothing — this mutation exists only to be missing",
     )
     report = gate.stale_anchors(REPO, [moved, *gate.MUTATIONS])
     assert len(report) == 1
     assert "[gone]" in report[0]
     assert "found 0" in report[0]
+
+
+def test_a_renamed_test_file_is_reported_by_id():
+    """The named test file is checked here too, for the reason the anchor is.
+
+    A ``tests`` entry that no longer names a file costs only time — the run falls back to
+    the whole suite and the verdict is unchanged — but silently paying 47s instead of 2s
+    per mutation is how the gate drifts back to what it was. This is where a rename is
+    cheap to notice.
+    """
+    gate = _load_gate()
+    renamed = gate.Mutation(
+        id="orphan",
+        path="src/chemrefine/throttle.py",
+        old="def has_room",
+        new="irrelevant",
+        tests="tests/test_a_file_that_was_renamed.py",
+        breaks="nothing — this mutation exists only to name a missing test",
+    )
+    report = gate.stale_anchors(REPO, [renamed, *gate.MUTATIONS])
+    assert len(report) == 1
+    assert "[orphan]" in report[0]
+    assert "tests/test_a_file_that_was_renamed.py" in report[0]
+
+
+def test_a_renamed_source_file_is_reported_by_id():
+    """A missing ``path`` is a report line like the other two, never a traceback.
+
+    A ``git mv`` of a mutated source file made ``stale_anchors`` raise
+    ``FileNotFoundError`` out of ``main()`` — one moved file hiding the state of the whole
+    gate, the exact failure the aggregate report was built to prevent, arriving by the one
+    read the function never guarded.
+    """
+    gate = _load_gate()
+    moved = gate.Mutation(
+        id="vanished",
+        path="src/chemrefine/a_file_that_was_renamed.py",
+        old="def has_room",
+        new="irrelevant",
+        tests="tests/test_throttle.py",
+        breaks="nothing — this mutation exists only to name a missing source file",
+    )
+    report = gate.stale_anchors(REPO, [moved, *gate.MUTATIONS])
+    assert len(report) == 1
+    assert "[vanished]" in report[0]
+    assert "src/chemrefine/a_file_that_was_renamed.py" in report[0]
+    assert "the code moved" in report[0]
+
+
+def test_a_timeout_is_a_catch_for_the_named_file_and_inconclusive_for_the_whole_suite(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The two timeouts mean different things, and only one of them is a red build.
+
+    A mutation that makes a wait loop spin forever hangs the file that drives it — caught.
+    The whole-suite fallback runs only after that file stayed green, so its timeout is as
+    likely the suite outgrowing the budget on a slow runner as a hang; reported as caught,
+    that was a false green from the one gate whose job is to refuse them.
+    """
+    gate = _load_gate()
+
+    def hang(argv: list[str], **_: object) -> None:
+        raise gate.subprocess.TimeoutExpired(argv, gate.TIMEOUT_SECONDS)
+
+    monkeypatch.setattr(gate.subprocess, "run", hang)
+    named = gate._run_suite(REPO, {}, "tests/test_throttle.py")
+    assert named.caught and not named.inconclusive
+    whole = gate._run_suite(REPO, {})
+    assert whole.inconclusive and not whole.caught
+    assert str(gate.TIMEOUT_SECONDS) in whole.why
+
+
+def test_a_run_that_collects_no_tests_is_never_a_catch(monkeypatch: pytest.MonkeyPatch):
+    """pytest exits 5 when nothing was collected, and "non-zero means red" read that as caught.
+
+    An emptied test file, or one whose tests are all deselected by the default addopts,
+    made every mutation naming it report `caught` while nothing ran — and `stale_anchors`
+    cannot see it, because `is_file()` is true of a 0-byte file. Split the way the timeout
+    is: a named file that ran nothing is not a catch (the whole-suite fallback then decides),
+    and the whole suite collecting nothing proves nothing either way.
+    """
+    gate = _load_gate()
+
+    def nothing_collected(argv: list[str], **_: object) -> object:
+        return gate.subprocess.CompletedProcess(argv, 5, stdout="", stderr="")
+
+    monkeypatch.setattr(gate.subprocess, "run", nothing_collected)
+    named = gate._run_suite(REPO, {}, "tests/test_throttle.py")
+    assert not named.caught and not named.inconclusive
+    assert "collected no tests" in named.why
+    whole = gate._run_suite(REPO, {})
+    assert whole.inconclusive and not whole.caught
+    assert "collected no tests" in whole.why
+
+
+def test_a_mutation_that_changes_nothing_stops_the_gate(tmp_path: Path):
+    """An entry whose replacement is its anchor must not be reported as a survivor.
+
+    ``stale_anchors`` proves the anchor is unique in the checked tree; it says nothing
+    about ``new``. A copy-paste slip that made them equal ran the suite over unmutated
+    code and printed ``SURVIVED`` with a ``breaks`` sentence about a hole that was never
+    opened.
+    """
+    gate = _load_gate()
+    (tmp_path / "mod.py").write_text("x = 1\n", encoding="utf-8")
+    same = gate.Mutation("noop", "mod.py", "x = 1", "x = 1", "tests/test_x.py", "nothing")
+    with pytest.raises(SystemExit, match=r"\[noop\] would not change mod\.py.*is identical"):
+        gate._apply(tmp_path, same)
+    assert (tmp_path / "mod.py").read_text(encoding="utf-8") == "x = 1\n"
+
+    drifted = gate.Mutation("gone", "mod.py", "y = 2", "y = 3", "tests/test_x.py", "nothing")
+    with pytest.raises(SystemExit, match=r"\[gone\] would not change mod\.py.*0 time"):
+        gate._apply(tmp_path, drifted)
+
+    real = gate.Mutation("real", "mod.py", "x = 1", "x = 2", "tests/test_x.py", "nothing")
+    gate._apply(tmp_path, real)
+    assert (tmp_path / "mod.py").read_text(encoding="utf-8") == "x = 2\n"
+
+
+def test_the_copy_is_put_ahead_of_an_existing_pythonpath_not_in_its_place(tmp_path: Path):
+    """A developer's own ``PYTHONPATH`` entries survive; the copy's ``src`` leads them."""
+    gate = _load_gate()
+    src = tmp_path / "src"
+    assert gate._prepended_path({}, src) == str(src)
+    joined = gate._prepended_path({"PYTHONPATH": "/site/deps"}, src)
+    assert joined.split(gate.os.pathsep) == [str(src), "/site/deps"]
+
+
+def test_an_inconclusive_mutation_fails_the_gate_without_being_called_a_survivor(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    """``main`` exits 2 for an inconclusive run and says so, apart from a survivor's 1.
+
+    The tree copy, the isolation and baseline checks and the suite itself are stood in
+    for: this is about the verdict's bookkeeping, not about running pytest twice more.
+    """
+    gate = _load_gate()
+    # The longest id cannot be a substring of another, so `-k` selects exactly it.
+    mutation = max(gate.MUTATIONS, key=lambda m: len(m.id))
+
+    def copy_one(dest: Path) -> None:
+        target = dest / mutation.path
+        target.parent.mkdir(parents=True)
+        target.write_text((REPO / mutation.path).read_text(encoding="utf-8"), encoding="utf-8")
+
+    def verdicts(work: Path, env: dict[str, str], target: str | None = None) -> object:
+        if target is not None:
+            return gate.Verdict(False, "suite passed unchanged")
+        return gate.Verdict(False, "did not finish", inconclusive=True)
+
+    monkeypatch.setattr(gate, "_copy_tree", copy_one)
+    monkeypatch.setattr(gate, "_assert_isolated", lambda work, env: None)
+    monkeypatch.setattr(gate, "_assert_baseline_is_green", lambda work, env: None)
+    monkeypatch.setattr(gate, "_run_suite", verdicts)
+
+    assert gate.main(["-k", mutation.id]) == 2
+    out = capsys.readouterr().out
+    assert "INCONCLUSIVE" in out
+    assert "did not finish" in out
+    assert "SURVIVED" not in out and "survived" not in out

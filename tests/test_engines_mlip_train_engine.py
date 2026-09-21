@@ -24,7 +24,7 @@ from chemrefine.engines.api import (
     ProvisionableEngine,
     get_engine,
 )
-from chemrefine.engines.mlip.train_engine import SIDECAR_NAME, MlipTrainEngine
+from chemrefine.engines.mlip.train.engine import SIDECAR_NAME, MlipTrainEngine
 from chemrefine.errors import ConfigError
 from chemrefine.state import JobBatch, PipelineState, StepContext, StepInputs, Structure
 
@@ -35,6 +35,7 @@ train_file: $TRAIN_SET
 valid_file: $VALID_SET
 foundation_model: $FOUNDATION_MODEL
 device: $DEVICE
+seed: $SEED
 max_num_epochs: 2
 """
 
@@ -43,14 +44,15 @@ job:
   run_dir: $RUN_DIR
   timestamp_id: $RUN_NAME
   device_type: $DEVICE
+  seed: $SEED
 train_file: $TRAIN_SET
 valid_file: $VAL_SET
 """
 """FAIRChem's own placeholder names, which are not MACE's.
 
-Its required set is ``TRAIN_SET``/``VAL_SET``/``RUN_DIR``/``RUN_NAME`` — note ``VAL_SET``,
-where MACE writes ``VALID_SET``. A shared template would render for one trainer and be
-rejected by the other, which is the point: the placeholders belong to the library's config."""
+Its required set adds ``VAL_SET`` — note the spelling, where MACE writes ``VALID_SET``. A
+shared template would render for one trainer and be rejected by the other, which is the
+point: the placeholders belong to the library's config."""
 
 
 def _ctx(
@@ -143,10 +145,54 @@ def test_an_on_failure_policy_with_nothing_to_act_on_is_refused(policy: str, tmp
         MlipTrainEngine().prepare(ctx)
 
 
+def test_a_negative_seed_is_refused_before_any_label_is_computed(tmp_path: Path):
+    """The split's seed goes to ``numpy.random.default_rng``, which refuses a negative.
+
+    Unbounded, ``seed: -5`` passed the strict read and preflight, and the ``ValueError``
+    came from numpy inside ``split_structures`` — after every labelling step upstream had
+    run. Refused on the field, it is a ``ConfigError`` at the t=0 walk like any other knob.
+    """
+    from chemrefine.engines.api import preflight_steps
+
+    with pytest.raises(ConfigError, match="seed"):
+        MlipTrainEngine().prepare(_ctx(tmp_path, seed=-5))
+    step_cfg = StepConfig(
+        step=4, engine="mlip-train", options={"task_name": "mace_off", "device": "cpu", "seed": -5}
+    )
+    with pytest.raises(ConfigError, match="seed"):
+        preflight_steps([step_cfg], charge=0, multiplicity=1)
+    assert MlipTrainEngine().options_cls.from_raw({**_ctx(tmp_path).step_cfg.options, "seed": 0})
+
+
 def test_a_typoed_knob_fails_the_step_rather_than_being_ignored(tmp_path: Path):
     ctx = _ctx(tmp_path, valid_fractoin=0.2)
     with pytest.raises(ConfigError, match="invalid mliptrain options"):
         MlipTrainEngine().prepare(ctx)
+
+
+def test_the_refusals_fire_at_the_runs_preflight_walk_not_thursday():
+    """The same refusals, at t=0 — a training step usually sits after days of labels.
+
+    ``prepare`` has always made these checks, but a training step's prepare runs only
+    once every upstream step has computed its labels — the docstrings' "typo caught on
+    Thursday". ``check_step`` is the same refusal on the ``PreflightChecking`` hook,
+    which ``pipeline.run`` walks (and ``chemrefine validate`` reports) before anything
+    runs at all. The strict read is part of it: the typoed knob here would pass every
+    lenient pre-run pass.
+    """
+    from chemrefine.engines.api import preflight_steps
+
+    missing_device = StepConfig(step=4, engine="mlip-train", options={"task_name": "mace_off"})
+    with pytest.raises(ConfigError, match="must name a device"):
+        preflight_steps([missing_device], charge=0, multiplicity=1)
+
+    typoed = StepConfig(
+        step=4,
+        engine="mlip-train",
+        options={"task_name": "mace_off", "device": "cpu", "valid_fractoin": 0.2},
+    )
+    with pytest.raises(ConfigError, match="invalid mliptrain options"):
+        preflight_steps([typoed], charge=0, multiplicity=1)
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +255,7 @@ def test_the_fairchem_dataset_does_not_land_inside_its_own_checkpoint_tree(tmp_p
     ctx = _ctx(tmp_path, template=_FAIRCHEM_TEMPLATE, task_name="omol")
     run_dir = ctx.step_dir / "train"
 
-    rendered = MlipTrainEngine().prepare(ctx).files[0][0].read_text()
+    rendered = MlipTrainEngine().prepare(ctx).files[0][0].read_text(encoding="utf-8")
 
     assert f"train_file: {run_dir / 'data' / 'train' / 'train.db'}" in rendered
     assert (run_dir / "data" / "train" / "train.db").is_file()
@@ -221,7 +267,7 @@ def test_prepare_renders_the_template_against_the_dataset_it_wrote(tmp_path: Pat
     ctx = _ctx(tmp_path)
     inputs = MlipTrainEngine().prepare(ctx)
 
-    rendered = inputs.files[0][0].read_text()
+    rendered = inputs.files[0][0].read_text(encoding="utf-8")
     run_dir = ctx.step_dir / "train"
     assert f"train_file: {run_dir / 'train.xyz'}" in rendered
     assert f"valid_file: {run_dir / 'valid.xyz'}" in rendered
@@ -241,7 +287,9 @@ def test_the_split_honours_the_steps_own_fractions(tmp_path: Path):
     MlipTrainEngine().prepare(ctx)
 
     run_dir = ctx.step_dir / "train"
-    counts = {p.stem: p.read_text().count("Properties=") for p in run_dir.glob("*.xyz")}
+    counts = {
+        p.stem: p.read_text(encoding="utf-8").count("Properties=") for p in run_dir.glob("*.xyz")
+    }
     assert counts == {"train": 13, "valid": 5, "test": 2}
 
 
@@ -276,7 +324,7 @@ def test_parse_hands_the_ensemble_on_unchanged_and_records_the_model(tmp_path: P
     results = engine.parse(StepInputs(files=()), ctx)
 
     assert results.structures == ctx.prev_state.structures
-    sidecar = json.loads((ctx.step_dir / "train" / SIDECAR_NAME).read_text())
+    sidecar = json.loads((ctx.step_dir / "train" / SIDECAR_NAME).read_text(encoding="utf-8"))
     assert sidecar["task_name"] == "mace_off"
     assert sidecar["backend"] == "mlip-mace"
     assert sidecar["started_from"] == "small"
@@ -322,6 +370,20 @@ def test_the_run_block_runs_the_trainers_command_with_thread_limits(tmp_path: Pa
     assert block.cleanup == "", "the job script owns the one exit handler"
 
 
+def test_the_plans_cores_are_the_grant_not_the_ask(tmp_path: Path):
+    """A ``cores:`` above ``max_cores`` reaches the plan — and the exports — clamped.
+
+    The plan's ``cores`` feeds the thread exports and the ``$CORES`` placeholder, and
+    :meth:`slurm_layout` clamps what the scheduler grants — so the two must say one number.
+    The raw ``pal()`` let a training step charged 16 cores export 32 threads.
+    """
+    ctx = _ctx(tmp_path, cores=32)  # fixture max_cores=16
+    block = MlipTrainEngine().run_block(ctx, Path("step1_train.yaml"), Path("train.model"))
+    assert "export OMP_NUM_THREADS=16" in block.body
+    assert "export MKL_NUM_THREADS=16" in block.body
+    assert "=32" not in block.body
+
+
 def test_the_copy_back_directories_come_from_the_selected_trainer(tmp_path: Path):
     assert MlipTrainEngine().output_dirs(_ctx(tmp_path)) == ("logs", "checkpoints", "results")
 
@@ -335,3 +397,18 @@ def test_the_runlog_records_what_the_job_asked_for(tmp_path: Path):
 def test_training_from_scratch_says_so_in_the_runlog(tmp_path: Path):
     fields = dict(MlipTrainEngine().extra_header_fields(_ctx(tmp_path, model_name="")))
     assert fields["started_from"] == "scratch"
+
+
+def test_the_training_job_is_one_task_of_many_cpus_and_declares_no_memory(tmp_path: Path):
+    """The explicit JobExecutable members: the threads spelling, no memory ask.
+
+    Declared on the class because it satisfies the protocol directly. One task with N CPUs
+    is the shape SLURM cannot split across nodes; N one-CPU tasks is a shape it can, and a
+    single training process would then thread on one node's share of a budget it was
+    charged in full.
+    """
+    engine = MlipTrainEngine()
+    ctx = _ctx(tmp_path, cores=4)
+    assert engine.slurm_layout(ctx) == (1, 4)
+    assert engine.single_node(ctx) is False  # one task cannot be split; nothing to pin
+    assert engine.memory_mb(ctx) is None

@@ -1,0 +1,787 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Declaring an icon is also what stops the browser probing /favicon.ico at the
+     root, which the server has no route for on purpose. These are served by the
+     static handler, so the log stays as quiet as the old data: no-op kept it. -->
+<link rel="icon" href="static/brand/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="static/brand/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="static/brand/apple-touch-icon.png">
+<link rel="manifest" href="static/brand/site.webmanifest">
+<meta name="theme-color" content="#25567d">
+<title>ChemRefine — workflow builder</title>
+<!-- Relative asset paths on purpose: the same page serves from the local Flask app
+     (at /) and from the docs site's /playground/ copy. -->
+<link rel="stylesheet" href="static/style.css">
+<script src="static/forms.js"></script>
+<script src="static/app.js"></script>
+<script src="static/vendor/js-yaml.min.js"></script>
+<script src="static/vendor/alpine.min.js" defer></script>
+</head>
+<body x-data="builder()" x-init="init()">
+
+<header>
+  <!-- The mark carries no alt text: the h1 beside it already says the name, and a
+       described mark would make a screen reader say it twice.
+
+       80x32 is the drawing's own 2.5:1 box, so 32px tall is 32px of mark. The
+       attributes reserve it before the SVG loads; the sticky header would otherwise
+       reflow the page under the cursor. -->
+  <div class="brand">
+    <img src="static/brand/logo.svg" alt="" width="80" height="32">
+    <h1>ChemRefine</h1>
+  </div>
+  <span class="muted" x-show="!staticMode"
+        x-text="savedPath ? savedPath : 'unsaved workflow'"></span>
+  <span class="muted" x-show="staticMode" style="display:none">
+    online playground — build and copy; validation, saving and templates need
+    <code>chemrefine gui</code> locally
+  </span>
+  <nav>
+    <button type="button" @click="validateNow()" :disabled="staticMode"
+            :title="staticMode ? 'needs the local chemrefine gui' : ''">Validate</button>
+    <!-- Two destinations, not duplicates: Save… writes on the machine the server runs
+         on (the HPC node when port-forwarded — the tooltip names it); Download in the
+         YAML pane goes through the browser to THIS machine. -->
+    <button type="button" x-show="!staticMode" @click="openConfig()"
+            title="Open a workflow already on disk — its run's structures and results come with it">
+      Open…</button>
+    <button type="button" x-show="!staticMode" @click="openSave()"
+            :title="serverHost ? 'writes on ' + serverHost : ''">Save…</button>
+    <button type="button" x-show="!staticMode" :disabled="!savedPath" @click="scaffold()">
+      Scaffold templates</button>
+  </nav>
+</header>
+
+<!-- Fatal boot failures render OUTSIDE the ready gate: a page that cannot start must
+     still be able to say why. -->
+<p id="fatal" x-show="fatal" style="display:none" x-text="fatal"></p>
+
+<main x-show="ready && !fatal" style="display:none">
+
+  <!-- ============ LEFT: the click-through builder ============ -->
+  <section id="left">
+
+    <div class="tabstrip">
+      <button type="button" class="tab" @click="showTab('left', 'builder')"
+              :class="tabs.left === 'builder' ? 'on' : ''">Builder</button>
+      <button type="button" class="tab" @click="showTab('left', 'agent')"
+              :class="tabs.left === 'agent' ? 'on' : ''">Agent</button>
+    </div>
+
+    <div x-show="tabs.left === 'builder'">
+
+    <details open>
+      <summary>Workflow settings</summary>
+      <div class="fields">
+        <template x-for="field in topFields" :key="field.key">
+          <label :title="field.doc">
+            <span x-text="field.key"></span>
+            <template x-if="field.kind === 'select'">
+              <select @change="setTop(field, $event.target.value)">
+                <option value="" :selected="(cfg[field.key] ?? '') === ''"
+                        x-text="'(default: ' + field.fallback + ')'"></option>
+                <template x-for="option in field.options" :key="option">
+                  <option :value="option" :selected="option === cfg[field.key]"
+                          x-text="option"></option>
+                </template>
+              </select>
+            </template>
+            <template x-if="field.kind === 'checkbox'">
+              <input type="checkbox" :checked="cfg[field.key] ?? field.fallback === 'true'"
+                     @change="setTop(field, $event.target.checked)">
+            </template>
+            <template x-if="field.kind === 'number'">
+              <input type="number" step="any" :min="field.min" :max="field.max"
+                     :value="cfg[field.key] ?? field.fallbackNum ?? ''"
+                     :placeholder="field.fallbackNum === null ? '(unset)' : ''"
+                     :class="(cfg[field.key] ?? null) === null && field.fallbackNum !== null
+                             ? 'isdefault' : ''"
+                     @input="setTop(field, $event.target.value)">
+            </template>
+            <template x-if="field.kind === 'text'">
+              <span class="pathrow">
+                <input type="text" :value="cfg[field.key] ?? ''" :placeholder="field.fallback"
+                       @input="setTop(field, $event.target.value)">
+                <button type="button" x-show="field.path && !staticMode" class="mini" title="Browse"
+                        @click="browseField(field.key)">📁</button>
+              </span>
+            </template>
+          </label>
+        </template>
+      </div>
+      <div class="subform">
+        <h3>Executables</h3>
+        <div class="fields execrows">
+          <template x-for="(row, ei) in execRows" :key="'exec-' + ei">
+            <label title="Program name → binary path (e.g. orca, or Q-Chem's qc/qcaux)">
+              <input class="execname" type="text" :value="row.name" placeholder="orca"
+                     list="exec-names" @input="setExecName(ei, $event.target.value)">
+              <span class="pathrow">
+                <input type="text" :value="row.path" placeholder="/opt/orca/orca"
+                       @input="setExecPath(ei, $event.target.value)">
+                <button type="button" class="mini" x-show="!staticMode" title="Browse"
+                        @click="browseExec(ei)">📁</button>
+                <button type="button" class="mini" title="Remove" @click="removeExec(ei)">✕</button>
+              </span>
+            </label>
+          </template>
+        </div>
+        <button type="button" class="mini" @click="addExec()">＋ executable</button>
+        <datalist id="exec-names">
+          <option value="orca"></option>
+          <option value="qc"></option>
+          <option value="qcaux"></option>
+        </datalist>
+      </div>
+    </details>
+
+    <h2>Steps</h2>
+    <template x-for="(step, index) in cfg.steps" :key="stepKeys[index]">
+      <details class="step" open>
+        <summary>
+          <b x-text="'Step ' + step.step"></b>
+          <span class="muted" x-text="(step.name || '') + ' · ' + step.engine"></span>
+          <span class="stepbtns">
+            <button type="button" class="mini" title="Move up" :disabled="index === 0"
+                    @click.prevent="moveStep(index, -1)">↑</button>
+            <button type="button" class="mini" title="Move down" :disabled="index === cfg.steps.length - 1"
+                    @click.prevent="moveStep(index, 1)">↓</button>
+            <button type="button" class="mini" title="Remove" @click.prevent="removeStep(index)">✕</button>
+          </span>
+        </summary>
+
+        <div class="fields">
+          <label><span>name</span>
+            <input type="text" :value="step.name ?? ''" placeholder="(optional)"
+                   @input="setStep(index, 'name', $event.target.value || undefined)">
+          </label>
+          <label><span>engine</span>
+            <!-- :selected per option, not :value on the select: the options render
+                 after the select binds, so a bare :value falls back to the first
+                 option and the display lies about the state. -->
+            <select @change="setEngine(index, $event.target.value)">
+              <template x-for="name in engineNames" :key="name">
+                <option :value="name" :selected="name === step.engine" x-text="name"></option>
+              </template>
+            </select>
+          </label>
+          <label><span>operation</span>
+            <select @change="setStep(index, 'operation', $event.target.value || undefined)">
+              <option value="" :selected="!step.operation"
+                      x-text="operationsFor(step).length ? '(from template)' : '(not used)'">
+              </option>
+              <template x-for="op in operationsFor(step)" :key="op">
+                <option :value="op" :selected="op === step.operation" x-text="op"></option>
+              </template>
+            </select>
+          </label>
+          <label><span>template</span>
+            <input type="text" :value="step.template ?? ''"
+                   :placeholder="templatePlaceholder(step)"
+                   @input="setStep(index, 'template', $event.target.value || undefined)">
+          </label>
+          <label><span>on_failure</span>
+            <select :value="step.on_failure ?? 'stop'"
+                    @change="setStep(index, 'on_failure',
+                             $event.target.value === 'stop' ? undefined : $event.target.value)">
+              <option value="stop">stop (default)</option>
+              <option value="skip">skip</option>
+              <option value="best">best</option>
+            </select>
+          </label>
+          <label><span>charge / mult</span>
+            <span class="pair">
+              <input type="number" :value="step.charge ?? cfg.charge ?? 0"
+                     :class="step.charge === undefined ? 'isdefault' : ''"
+                     title="inherits the workflow charge until changed"
+                     @input="setStepCharge(index, $event.target.value)">
+              <input type="number" min="1" :value="step.multiplicity ?? cfg.multiplicity ?? 1"
+                     :class="step.multiplicity === undefined ? 'isdefault' : ''"
+                     title="inherits the workflow multiplicity until changed"
+                     @input="setStepMult(index, $event.target.value)">
+            </span>
+          </label>
+        </div>
+
+        <div class="subform" x-show="engineFields(step.engine).length">
+          <h3>Engine options</h3>
+          <div class="fields">
+            <template x-for="field in engineFields(step.engine)" :key="field.key">
+              <label :title="field.doc">
+                <span x-text="field.key"></span>
+                <template x-if="field.kind === 'select'">
+                  <select @change="setOption(index, field, $event.target.value)">
+                    <option value="" :selected="((step.options || {})[field.key] ?? '') === ''"
+                            x-text="'(default: ' + field.fallback + ')'"></option>
+                    <template x-for="option in field.options" :key="option">
+                      <option :value="option"
+                              :selected="option === (step.options || {})[field.key]"
+                              x-text="option"></option>
+                    </template>
+                  </select>
+                </template>
+                <template x-if="field.kind === 'checkbox'">
+                  <input type="checkbox"
+                         :checked="(step.options || {})[field.key] ?? (field.fallback === 'true')"
+                         :class="((step.options || {})[field.key] ?? null) === null
+                                 ? 'isdefault' : ''"
+                         @change="setOption(index, field, $event.target.checked)">
+                </template>
+                <template x-if="field.kind === 'number'">
+                  <input type="number" step="any" :min="field.min" :max="field.max"
+                         :value="(step.options || {})[field.key] ?? field.fallbackNum ?? ''"
+                         :placeholder="field.fallbackNum === null ? '(unset)' : ''"
+                         :class="((step.options || {})[field.key] ?? null) === null
+                                 && field.fallbackNum !== null ? 'isdefault' : ''"
+                         @input="setOption(index, field, $event.target.value)">
+                </template>
+                <template x-if="field.kind === 'text'">
+                  <input type="text" :value="(step.options || {})[field.key] ?? ''"
+                         :placeholder="field.fallback"
+                         @input="setOption(index, field, $event.target.value)">
+                </template>
+              </label>
+            </template>
+          </div>
+        </div>
+        <p class="muted" x-show="!engineFields(step.engine).length">
+          This engine is configured through its template file — no options form.
+        </p>
+
+        <div class="fields">
+          <label><span>nms</span>
+            <input type="checkbox" :checked="step.nms ?? false"
+                   @change="setStep(index, 'nms', $event.target.checked || undefined)">
+          </label>
+        </div>
+        <div class="subform" x-show="step.nms">
+          <h3>NMS knobs</h3>
+          <div class="fields">
+            <template x-for="field in nmsFieldsFor(step)" :key="'nms-' + field.key">
+              <label :title="field.doc">
+                <span x-text="field.key"></span>
+                <template x-if="field.kind === 'select'">
+                  <select @change="setOption(index, field, $event.target.value)">
+                    <option value="" :selected="((step.options || {})[field.key] ?? '') === ''"
+                            x-text="'(default: ' + field.fallback + ')'"></option>
+                    <template x-for="option in field.options" :key="option">
+                      <option :value="option"
+                              :selected="option === (step.options || {})[field.key]"
+                              x-text="option"></option>
+                    </template>
+                  </select>
+                </template>
+                <!-- One arm per kind fieldSpec() can return, not "everything that is not a
+                     select". The catch-all renders a number box for a boolean or a string
+                     knob, which silently writes 1 where true was meant — no NMS option is
+                     either today, so this is a trap rather than a live defect. The Sample
+                     block below had the same shape and was missing its `text` arm outright,
+                     while this comment claimed a test that did not exist. It does now:
+                     test_every_option_widget_kind_has_an_arm checks all four blocks. -->
+                <template x-if="field.kind === 'number'">
+                  <input type="number" step="any" :min="field.min" :max="field.max"
+                         :value="(step.options || {})[field.key] ?? field.fallbackNum ?? ''"
+                         :placeholder="field.fallbackNum === null ? '(unset)' : ''"
+                         :class="((step.options || {})[field.key] ?? null) === null
+                                 && field.fallbackNum !== null ? 'isdefault' : ''"
+                         @input="setOption(index, field, $event.target.value)">
+                </template>
+                <template x-if="field.kind === 'checkbox'">
+                  <input type="checkbox"
+                         :checked="(step.options || {})[field.key] ?? field.fallback === 'true'"
+                         @change="setOption(index, field, $event.target.checked)">
+                </template>
+                <template x-if="field.kind === 'text'">
+                  <input type="text" :value="(step.options || {})[field.key] ?? ''"
+                         :placeholder="field.fallback"
+                         @input="setOption(index, field, $event.target.value)">
+                </template>
+              </label>
+            </template>
+          </div>
+        </div>
+
+        <div class="fields">
+          <label><span>sample</span>
+            <select :value="step.sample ? step.sample.method : ''"
+                    @change="setSampleMethod(index, $event.target.value)">
+              <option value="">(keep everything)</option>
+              <option value="boltzmann">boltzmann</option>
+              <option value="min">min (lowest-energy)</option>
+              <option value="max">max (highest-energy)</option>
+            </select>
+          </label>
+        </div>
+        <div class="subform" x-show="step.sample">
+          <h3>Sample knobs</h3>
+          <div class="fields">
+            <template x-for="field in sampleFields(step)" :key="'s-' + field.key">
+              <label :title="field.doc">
+                <span x-text="field.key"></span>
+                <template x-if="field.kind === 'select'">
+                  <select @change="setSample(index, field, $event.target.value)">
+                    <option value="" :selected="(step.sample[field.key] ?? '') === ''"
+                            x-text="'(default: ' + field.fallback + ')'"></option>
+                    <template x-for="option in field.options" :key="option">
+                      <option :value="option" :selected="option === step.sample[field.key]"
+                              x-text="option"></option>
+                    </template>
+                  </select>
+                </template>
+                <template x-if="field.kind === 'checkbox'">
+                  <input type="checkbox" :checked="step.sample[field.key] ?? false"
+                         @change="setSample(index, field, $event.target.checked)">
+                </template>
+                <template x-if="field.kind === 'number'">
+                  <input type="number" step="any" :min="field.min" :max="field.max"
+                         :value="step.sample[field.key] ?? field.fallbackNum ?? ''"
+                         :placeholder="field.fallbackNum === null ? '(unset)' : ''"
+                         :class="(step.sample[field.key] ?? null) === null
+                                 && field.fallbackNum !== null ? 'isdefault' : ''"
+                         @input="setSample(index, field, $event.target.value)">
+                </template>
+                <template x-if="field.kind === 'text'">
+                  <input type="text" :value="step.sample[field.key] ?? ''"
+                         :placeholder="field.fallback"
+                         @input="setSample(index, field, $event.target.value)">
+                </template>
+              </label>
+            </template>
+          </div>
+        </div>
+
+        <p class="muted passthrough" x-show="passthroughKeys(step).length"
+           x-text="'Untouched option keys kept as-is: ' + passthroughKeys(step).join(', ')"></p>
+
+        <button type="button" class="mini" :disabled="!savedPath" @click="openTemplate(step)"
+                x-show="isTemplateDriven(step.engine) && !staticMode">Edit template…</button>
+      </details>
+    </template>
+    <button type="button" id="addstep" @click="addStep()">＋ Add step</button>
+    </div>
+    <!-- ============ Agent chat (local GUI; needs chemrefine[agent]) ============ -->
+    <!-- A div, not a details: the panel is a tab now, and #chat in style.css already
+         restates the whole card look, so it renders identically. The @toggle probe it
+         used to carry moved into showTab(). -->
+    <div id="chat" x-show="tabs.left === 'agent'" style="display:none">
+      <p class="muted" x-text="chat.detail"></p>
+      <p class="muted" x-show="staticMode">
+        The chat runs with the local <code>chemrefine gui</code> — this online playground
+        builds configs only.
+      </p>
+      <div x-show="!staticMode">
+        <!-- Settings first, then the verdict, then the log: the panel reads top-down in
+             the order you have to do things. Every field re-arms the check on @input, not
+             @change — @change fires on blur, so a retyped model could be sent against a
+             verdict earned by the previous one. -->
+        <div class="row">
+          <select x-model="chat.provider" @change="saveChatSettings(); armCheck()">
+            <option value="custom">custom</option>
+            <option value="ollama">ollama</option>
+            <option value="vllm">vllm</option>
+            <option value="openai">openai</option>
+          </select>
+          <input type="text" x-model="chat.model" placeholder="model (e.g. qwen3:4b)"
+                 @input="armCheck()" @change="saveChatSettings()">
+          <button type="button" class="mini" @click="resetChat()"
+                  title="Clear the conversation and reset provider settings to defaults">
+            reset</button>
+        </div>
+        <!-- Only the fields the selected provider can actually use. `custom` is the one
+             with nowhere to go, so it is the one that must be told where; the rest carry a
+             default the server reports, shown as a placeholder and never sent back — an
+             echoed URL would outrank CHEMREFINE_LLM_BASE_URL. -->
+        <div class="row" x-show="needsBaseUrl() || providerShape().default_url">
+          <input type="text" x-model="chat.baseUrl" @input="armCheck()"
+                 @change="saveChatSettings()"
+                 :placeholder="needsBaseUrl() ? 'base URL (required, e.g. https://host/v1)'
+                               : 'base URL — defaults to ' + providerShape().default_url">
+        </div>
+        <div class="row" x-show="needsApiKey()">
+          <input type="password" autocomplete="off" x-model="chat.apiKey" @input="armCheck()"
+                 placeholder="API key — kept in this tab only, never saved">
+        </div>
+        <div class="row">
+          <button type="button" @click="runCheck()" :disabled="chat.check.busy">
+            Check connection</button>
+          <span class="muted" x-show="chat.check.busy">checking…</span>
+          <span class="muted" x-show="chat.check.ok === null && !chat.check.busy">
+            check the connection before chatting</span>
+        </div>
+        <template x-for="(finding, i) in chat.check.findings" :key="'chk' + i">
+          <p :class="chat.check.ok ? 'ok' : 'warn'" x-text="finding"></p>
+        </template>
+        <div id="chatlog">
+          <template x-for="(entry, i) in chat.msgs" :key="'m' + i">
+            <p :class="entry.who"><b x-text="entry.who === 'you' ? 'you' : 'agent'"></b>
+              <span x-text="entry.text"></span></p>
+          </template>
+          <div class="approval" x-show="chat.pending.length">
+            <p class="warn"><b>The agent asks to run:</b></p>
+            <template x-for="req in chat.pending" :key="req.id">
+              <p class="mono">
+                <span x-text="req.tool + '(' + JSON.stringify(req.args) + ')'"></span>
+                <button type="button" class="mini" @click="decide(req.id, true)">allow</button>
+                <button type="button" class="mini" @click="decide(req.id, false)">deny</button>
+              </p>
+            </template>
+          </div>
+          <p class="muted" x-show="chat.busy">thinking…</p>
+        </div>
+        <div class="row">
+          <input type="text" x-model="chat.draft" placeholder="ask the agent…"
+                 :disabled="chat.busy || chat.pending.length > 0 || !chatReady()"
+                 @keydown.enter="sendChat()">
+          <button type="button" @click="sendChat()"
+                  :disabled="chat.busy || chat.pending.length > 0 || !chatReady()">
+            Send</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ RIGHT: the YAML ============ -->
+  <section id="right">
+
+    <div class="tabstrip">
+      <button type="button" class="tab" @click="showTab('right', 'yaml')"
+              :class="tabs.right === 'yaml' ? 'on' : ''">input.yaml</button>
+      <button type="button" class="tab" @click="showTab('right', 'structure')"
+              :class="tabs.right === 'structure' ? 'on' : ''">Structure</button>
+    </div>
+
+    <!-- The YAML pane keeps its own controls rather than hoisting them into the strip:
+         copyYaml()'s clipboard fallback selects #yaml, and x-show leaves the textarea in
+         the DOM but display:none, where select-and-copy does not copy. -->
+    <div x-show="tabs.right === 'yaml'">
+    <div class="paneheader">
+      <h2>input.yaml</h2>
+      <button type="button" class="mini" @click="copyYaml()" title="Copy the YAML to the clipboard">
+        ⧉ Copy
+      </button>
+      <button type="button" class="mini" @click="downloadYaml()"
+              title="Download through the browser — lands on this machine, even when the GUI runs on a cluster">
+        ⬇ Download
+      </button>
+      <label class="muted">
+        <input type="checkbox" x-model="rawEdit" @change="leaveRawEdit()"> edit as text
+      </label>
+      <button type="button" class="mini" x-show="rawEdit" @click="applyRaw()">Apply to form</button>
+    </div>
+    <textarea id="yaml" x-model="yamlText" :readonly="!rawEdit" spellcheck="false"></textarea>
+    </div>
+
+    <!-- Structures come from /api/structure, which reads the step cache; the viewer
+         bundle loads on first open of this tab. -->
+    <div x-show="tabs.right === 'structure'" style="display:none">
+      <p class="muted" x-show="staticMode">
+        The 3D view reads structures from the run tree, so it needs the local
+        <code>chemrefine gui</code>.
+      </p>
+      <!-- A single file, drawn on its own: no workflow, no step, no run tree. Separate
+           from the header's Open…, which loads a workflow and brings its whole tree with
+           it. Offered whether or not a workflow is open, because "what is in this file"
+           is a question that comes before there is a workflow at all. -->
+      <!-- A <button>, not a div with a click handler: the whole zone is the target, and a
+           button is reachable by keyboard and announced as clickable without any of that
+           being re-implemented here. The drag handlers live on it too, so there is one
+           element to hit either way. -->
+      <button type="button" x-show="!staticMode" class="dropzone"
+              :class="viewer.dragging ? 'over' : ''"
+              @dragover.prevent="viewer.dragging = true"
+              @dragleave.prevent="viewer.dragging = false"
+              @drop.prevent="dropStructure($event)"
+              @click="openStructureFile()">
+        Drop a structure file here, or click to open one —
+        <span class="muted">anything ASE reads, periodic cells included</span>
+      </button>
+      <p class="muted" x-show="!staticMode && !savedPath">
+        Steps and seeds come from a saved workflow — save one, or drop a file above.
+      </p>
+      <div x-show="!staticMode && savedPath">
+        <div class="row">
+          <!-- "input" is the default and the first entry: it is the only view that works
+               on a tree nothing has run in yet, and "did I point this at the structure I
+               meant?" is the cheapest question to get wrong. -->
+          <!-- @change, not x-model: choosing a step must also drop the structure id and
+               mode number that belonged to the previous one. -->
+          <select @change="chooseViewerStep($event.target.value)">
+            <option value="input" :selected="viewer.step === 'input'">input (seeds)</option>
+            <template x-for="opt in stepOptions(cfg.steps, viewer.step)" :key="'view' + opt.value">
+              <option :value="opt.value" :selected="opt.selected" x-text="opt.label"></option>
+            </template>
+          </select>
+          <!-- `list=` rather than a <select>: a dropdown of what the step actually holds,
+               still typable for a tree with hundreds of them. Same idiom as the
+               executables row above. -->
+          <input type="text" x-model="viewer.structureId" list="viewer-structures"
+                 placeholder="structure id (first if blank)">
+          <datalist id="viewer-structures">
+            <template x-for="row in viewer.structures" :key="'sid' + row.id">
+              <option :value="row.id" :label="structureHint(row)"></option>
+            </template>
+          </datalist>
+          <input type="text" x-model="viewer.modeIndex" x-show="viewer.step !== 'input'"
+                 list="viewer-modes" placeholder="mode # (animates)">
+          <datalist id="viewer-modes">
+            <template x-for="row in modeChoices()" :key="'mode' + row.index">
+              <option :value="row.index" :label="row.label"></option>
+            </template>
+          </datalist>
+          <button type="button" @click="showStructure()" :disabled="viewer.busy || !viewer.step">
+            Show</button>
+        </div>
+        <p class="muted" x-show="viewer.step !== 'input' && !modeChoices().length">
+          This step has no frequency data, so it offers no modes. A GOAT search or an MLIP
+          screen computes none; a frequency step cached before ChemRefine kept the whole
+          table needs <code>rebuild-cache</code>.
+        </p>
+      </div>
+      <!-- The canvas and the status line sit OUTSIDE the savedPath gate, unlike the step
+           and structure controls above them, which need a workflow to name anything. A
+           dropped file needs neither — and while #viewer lived inside that gate there was
+           no element to mount into with nothing saved, so a dropped file read fine on the
+           server and then drew nowhere. -->
+      <div x-show="!staticMode">
+        <!-- Numbering acts on whatever is drawn, so it lives out here with the canvas
+             rather than behind the saved-workflow gate above: a file opened or dropped with
+             no workflow at all is exactly the case where you want to number the atoms.
+             Redraws what is already on screen and never refetches, so the view angle and a
+             running mode animation both survive a change.
+
+             Blobs rather than a dropdown, after Chemcraft's "Labels on atoms": each button
+             shows the label it produces, so the choice is legible without being read. -->
+        <fieldset class="blobs">
+          <legend>Number the atoms</legend>
+          <button type="button" class="blob"
+                  title="no numbering" aria-label="no numbering"
+                  :class="viewer.labels === 'off' ? 'on' : ''"
+                  :aria-pressed="viewer.labels === 'off'"
+                  @click="chooseLabels('off')"></button>
+          <button type="button" class="blob"
+                  title="file order, from 0 — what analyze_mode reports"
+                  :class="viewer.labels === 'zero' ? 'on' : ''"
+                  :aria-pressed="viewer.labels === 'zero'"
+                  @click="chooseLabels('zero')">0</button>
+          <button type="button" class="blob"
+                  title="numbered from 1, as papers and most GUIs count"
+                  :class="viewer.labels === 'one' ? 'on' : ''"
+                  :aria-pressed="viewer.labels === 'one'"
+                  @click="chooseLabels('one')">1</button>
+          <button type="button" class="blob"
+                  title="element and its own ordinal — C1, H1, H2"
+                  :class="viewer.labels === 'element' ? 'on' : ''"
+                  :aria-pressed="viewer.labels === 'element'"
+                  @click="chooseLabels('element')">C1</button>
+          <button type="button" class="blob"
+                  title="element only — what each atom is, not which one"
+                  :class="viewer.labels === 'symbol' ? 'on' : ''"
+                  :aria-pressed="viewer.labels === 'symbol'"
+                  @click="chooseLabels('symbol')">C</button>
+        </fieldset>
+        <div id="viewer"></div>
+        <p class="muted" x-text="viewer.busy ? 'reading…' : viewer.note"></p>
+      </div>
+    </div>
+
+    <!-- Run dashboard and validation report sit BELOW both panels, not inside either:
+         they are about the run, not about which view is open, and #flash is written from
+         every corner of app.js and has to stay visible on any tab. -->
+    <!-- ============ Run dashboard (local GUI, saved config only) ============ -->
+    <details id="run" x-show="savedPath && !staticMode" style="display:none"
+             @toggle="$event.target.open && refreshStatus()">
+      <summary><b>Run</b>
+        <!-- `holder` is null for a lock that exists but is unreadable — the killed-mid-write
+             residue the backend documents as `running: true, holder: null` — which is exactly
+             the stuck-lock state this summary exists to show, so it must not TypeError on it. -->
+        <span class="muted" x-show="runStatus"
+              x-text="runStatus ? (runStatus.running ? (runStatus.holder ? 'running (pid ' + runStatus.holder.pid + ')' : 'running (unreadable lock)') : 'idle') : ''"></span>
+      </summary>
+      <!-- The whole recovery vocabulary, rendered from the schema document's `actions`
+           rather than written here: a tree whose cache predates a format, or whose NMS
+           resolution needs redoing, was fixable only from a terminal while this panel
+           offered half the vocabulary. Each button's title is the same sentence its
+           confirmation uses, because both come from the one served record. -->
+      <div class="row">
+        <template x-for="action in (schema ? schema.actions : [])" :key="action.name">
+          <button type="button" @click="launch(action.name)"
+                  :disabled="!action.takes_target && !!runTarget"
+                  :title="actionTitle(action)" x-text="action.label"></button>
+        </template>
+        <!-- Optional, and refused by the whole-pipeline actions rather than ignored by
+             them: a control that silently does nothing is the worse of the two. -->
+        <select x-model="runTarget" title="Which step the targeted actions act on">
+          <option value="">all steps</option>
+          <template x-for="opt in stepOptions(cfg.steps, runTarget)" :key="'target' + opt.value">
+            <option :value="opt.value" :selected="opt.selected" x-text="opt.label"></option>
+          </template>
+        </select>
+        <button type="button" class="mini" @click="refreshStatus()">↻ Refresh</button>
+      </div>
+      <p class="muted" x-show="runTarget">
+        Run and Resume drive the whole pipeline and take no step — clear the selection to
+        use them.
+      </p>
+      <table class="runsteps" x-show="runStatus">
+        <thead><tr><th>step</th><th>engine</th><th>survivors</th><th>failures</th>
+                   <th>cached</th></tr></thead>
+        <tbody>
+          <template x-for="row in (runStatus ? runStatus.steps : [])" :key="row.step">
+            <tr>
+              <td x-text="row.step + (row.dir !== 'step' + row.step ? ' · ' + row.dir : '')"></td>
+              <td x-text="row.engine"></td>
+              <td x-text="row.reported_survivors"></td>
+              <td :class="row.failures ? 'err' : ''" x-text="row.failures"></td>
+              <td x-text="row.cached ? '✓' : '—'"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+      <p class="warn" x-show="runFailures && runFailures.failures.length"
+         x-text="runFailures ? (runFailures.failures.length + ' ledgered failure(s); suggested: '
+                 + runFailures.suggested_action) : ''"></p>
+      <details x-show="runStatus && runStatus.log_tail">
+        <summary class="muted">driver log tail</summary>
+        <pre class="logtail"
+             x-text="runStatus && runStatus.log_tail ? runStatus.log_tail.join('\n') : ''"></pre>
+      </details>
+      <div class="row">
+        <label class="muted">results for step
+          <select @change="loadResults($event.target.value)">
+            <option value="" :selected="!resultsStep">—</option>
+            <template x-for="opt in stepOptions(cfg.steps, resultsStep)" :key="'r' + opt.value">
+              <option :value="opt.value" :selected="opt.selected" x-text="opt.label"></option>
+            </template>
+          </select>
+        </label>
+        <span class="muted" x-show="runResults"
+              x-text="runResults ? (runResults.offset + 1) + '–'
+                      + (runResults.offset + runResults.rows.length) + ' of ' + runResults.total : ''"></span>
+        <button type="button" class="mini" x-show="runResults && runResults.offset > 0"
+                @click="pageResults(-1)">‹ prev</button>
+        <button type="button" class="mini"
+                x-show="runResults && runResults.offset + runResults.rows.length < runResults.total"
+                @click="pageResults(1)">next ›</button>
+      </div>
+      <table class="runsteps" x-show="runResults && runResults.rows.length">
+        <thead><tr><th>conformer</th><th>E (kcal/mol)</th><th>ΔE</th><th>weight</th></tr></thead>
+        <tbody>
+          <template x-for="row in (runResults ? runResults.rows : [])" :key="row.Conformer">
+            <tr>
+              <td x-text="row.Conformer"></td>
+              <td x-text="Number(row['Energy (kcal/mol)']).toFixed(2)"></td>
+              <td x-text="Number(row['dE (kcal/mol)']).toFixed(2)"></td>
+              <td x-text="Number(row['Boltzmann Weight']).toFixed(3)"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </details>
+
+    <div id="report" x-show="report">
+      <template x-if="report">
+        <div>
+          <p class="ok" x-show="report.ok && !report.warnings.length">
+            ✓ valid — no findings</p>
+          <p class="ok" x-show="report.ok && report.warnings.length">✓ runnable, with warnings</p>
+          <template x-for="(issue, i) in (report ? report.issues : [])" :key="'e' + i">
+            <p class="err">
+              <b x-text="'[' + issue.kind + '] ' + issue.loc.join('.')"></b>
+              <span x-text="issue.message"></span>
+            </p>
+          </template>
+          <template x-for="(warning, i) in (report ? report.warnings : [])" :key="'w' + i">
+            <p class="warn">
+              <b x-text="'[' + warning.kind + '] ' + warning.loc.join('.')"></b>
+              <span x-text="warning.message"></span>
+            </p>
+          </template>
+        </div>
+      </template>
+    </div>
+
+    <!-- Beside #flash, below both panels: the agent writes from the left column while
+         the right one may be showing a structure, so a notice inside either panel could
+         be raised about a pane the user cannot see. Named methods, not inline state
+         edits, so the handler guard covers them. -->
+    <p class="warn" x-show="pendingReload" style="display:none">
+      <span x-text="pendingReload
+                    ? (pendingReload.reason === 'open' ? 'opening ' : 'the agent wrote ')
+                      + pendingReload.path + ', but the form has unsaved edits'
+                    : ''"></span>
+      <button type="button" class="mini" @click="acceptPendingReload()">
+        load it (discards my edits)</button>
+      <button type="button" class="mini" @click="dismissPendingReload()">keep my edits</button>
+    </p>
+
+    <p id="flash" class="muted" x-text="flash"></p>
+  </section>
+</main>
+
+<!-- ============ Browse / Save modal ============ -->
+<div class="modal" x-show="browse.open" style="display:none" @click.self="browse.open = false">
+  <div class="dialog">
+    <h3 x-text="browse.title"></h3>
+    <!-- Type or paste a path, in every mode. A cluster tree's interesting directory is
+         eight levels down, and this modal was the one path field on the page that could
+         not be typed into. Enter goes; a directory navigates, anything else is taken as
+         the chosen file. -->
+    <div class="row">
+      <input type="text" class="pathbox" x-model="browse.typed"
+             placeholder="/path/to/somewhere — or paste a file"
+             @keydown.enter.prevent="goToTyped()">
+      <button type="button" class="mini" @click="goToTyped()">Go</button>
+    </div>
+    <!-- Paths only, from this browser's own store; opening one is the same click as
+         picking it out of the listing. -->
+    <div class="row recents" x-show="browse.mode === 'open' && recents.length">
+      <span class="muted">recent:</span>
+      <template x-for="path in recents" :key="'recent' + path">
+        <button type="button" class="mini" @click="openConfigFrom(path)"
+                :title="path" x-text="shortPath(path)"></button>
+      </template>
+    </div>
+    <p class="muted" x-text="browse.path"></p>
+    <ul class="listing">
+      <li><button type="button" @click.prevent="navigate(browse.parent)">⬑ ..</button></li>
+      <template x-for="entry in browse.entries" :key="entry.path">
+        <li>
+          <button type="button" x-show="entry.dir" @click.prevent="navigate(entry.path)"
+                  x-text="'📁 ' + entry.name"></button>
+          <button type="button" x-show="!entry.dir" @click.prevent="pickFile(entry)"
+                  x-text="entry.name"></button>
+        </li>
+      </template>
+    </ul>
+    <div class="row" x-show="browse.mode === 'open'" style="display:none">
+      <span class="muted">click a workflow file to open it</span>
+    </div>
+    <div class="row" x-show="browse.mode === 'pick'">
+      <button type="button" @click="pickHere()">Use this folder</button>
+    </div>
+    <div class="row" x-show="browse.mode === 'save'">
+      <input type="text" x-model="browse.filename" placeholder="input.yaml">
+      <button type="button" @click="saveTo()">Save here</button>
+    </div>
+    <button type="button" class="mini" @click="browse.open = false">Close</button>
+  </div>
+</div>
+
+<!-- ============ Template editor modal ============ -->
+<div class="modal" x-show="tmpl.open" style="display:none" @click.self="tmpl.open = false">
+  <div class="dialog wide">
+    <h3 x-text="'Template — step ' + tmpl.step"></h3>
+    <p class="muted" x-text="tmpl.path"></p>
+    <textarea x-model="tmpl.text" spellcheck="false"></textarea>
+    <div class="row">
+      <button type="button" @click="saveTemplate()">Save template</button>
+      <button type="button" class="mini" @click="tmpl.open = false">Close</button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

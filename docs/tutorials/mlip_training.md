@@ -1,7 +1,6 @@
 # MLIP Training Tutorial
 
-!!! note "Schema note"
-    The YAML excerpts on this page are abbreviated for illustration. For the authoritative schema (`sample:`, `input:`, `options:` blocks, …) see the [main schema page](../index.md) and the example in [examples/quickstart/input.yaml](https://github.com/sterling-group/ChemRefine/blob/main/examples/quickstart/input.yaml).
+--8<-- "docs/_includes/schema-note.md"
 
 
 This tutorial demonstrates how to use **ChemRefine** to train a **Machine Learning Interatomic Potential (MLIP)** using DFT data generated during the workflow.
@@ -23,10 +22,13 @@ ChemRefine automates this multi-step process:
 4. **MLIP Training (`mlip-train`)**  
    Fine-tunes a potential on the generated DFT dataset. `task_name` picks which library
    trains — the same word that picks the one that runs — and `model_name` is the foundation
-   model it starts from; both, and `device`, are required. MACE and the FAIRChem heads are
-   trainable (this tutorial trains MACE; see
-   [`examples/fairchem_finetune`](https://github.com/sterling-group/ChemRefine/tree/main/examples/fairchem_finetune)
-   for the FAIRChem counterpart); adding another library is one dropped-in module under
+   model it starts from (unset means training from scratch); `task_name` and `device` are
+   required. Which backends train is the
+   [backends table](../engines/installing.md#available-backends)'s business — it is
+   generated from the registry, so it cannot go stale the way a list here would. This
+   tutorial trains MACE; see
+   [`examples/tutorials/fairchem_finetune`](https://github.com/sterling-group/ChemRefine/tree/main/examples/tutorials/fairchem_finetune)
+   for the FAIRChem counterpart. Adding another library is one dropped-in module under
    `engines/mlip/backends/`, beside that library's calculator and sharing its one
    environment declaration.
    The `step4.yaml` template is MACE's own training config with `$PLACEHOLDERS` where the
@@ -45,7 +47,7 @@ ChemRefine automates this multi-step process:
 
 ## Prerequisites
 
-- Installed **ChemRefine** (see [Installation Guide](../user-guide/installation.md))  
+- Installed **ChemRefine** (see [Installation Guide](../get-started/install.md))  
 - Access to an **ORCA executable** (for DFT reference calculations)  
 - Example molecule and YAML input from the repository  
 
@@ -66,22 +68,7 @@ You can find the ORCA input files [here](https://github.com/sterling-group/ChemR
 
 ### Interactive 3D Viewer
 
-<div id="viewer" style="width: 100%; height: 400px; position: relative;"></div>
-
-<script src="https://3Dmol.org/build/3Dmol-min.js"></script>
-<script>
-  let viewer = $3Dmol.createViewer("viewer", { backgroundColor: "white" });
-
-  fetch("https://raw.githubusercontent.com/sterling-group/ChemRefine/main/examples/tutorials/mlip_training/step1.xyz")
-    .then(r => r.text())
-    .then(data => {
-      viewer.addModel(data, "xyz");   // force XYZ format
-      viewer.setStyle({}, {stick:{radius:0.15}, sphere:{scale:0.25}});
-      viewer.zoomTo();
-      viewer.render();
-    })
-    .catch(err => console.error("Could not load XYZ:", err));
-</script>
+<!-- chemrefine:structure examples/tutorials/mlip_training/step1.xyz -->
 
 
 
@@ -94,55 +81,10 @@ The full YAML input for this MLIP training workflow is included:
 
 Download the template files [here](https://github.com/sterling-group/ChemRefine/tree/main/examples/tutorials/mlip_training/templates)
 
-Example content:
+This is the shipped config, included verbatim — the same file `tests/test_examples.py` validates on every CI run:
 
 ```yaml
-template_dir: ./templates
-scratch_dir: /scratch/
-output_dir: ./outputs
-executables: { orca: /orca/orca_6_1_0_avx2/orca }
-
-charge: 0
-multiplicity: 1
-
-input: ./step1.xyz
-
-steps:
-  - step: 1
-    operation: goat
-    engine: orca
-    sample: { method: min, count: 15 }
-
-  # Augment the dataset with normal-mode-sampled geometries.
-  - step: 2
-    operation: opt_sp
-    engine: orca
-    nms: true
-    options: { target: random, displacement_value: 1.0, num_random_displacements: 1 }
-    sample: { method: min, count: 0 }
-
-  # DFT labels (energies + forces) for training.
-  - step: 3
-    operation: opt_sp
-    engine: orca
-    sample: { method: min, count: 0 }
-
-  # Fine-tune a MACE model on the labelled structures.
-  - step: 4
-    engine: mlip-train
-    options: { task_name: mace_off, model_name: medium, device: cuda }
-    sample: { method: min, count: 0 }
-
-  # Validate the trained model via the MLIP gradient server. `task_name` is step 4's word
-  # again — it names the library; `model_path` says where its weights are.
-  - step: 5
-    operation: opt_sp
-    engine: mlip-extopt
-    options:
-      task_name: mace_off
-      model_path: ./outputs/step4/train/train_stagetwo.model
-      device: cuda
-    sample: { method: min, count: 0 }
+--8<-- "examples/tutorials/mlip_training/input.yaml"
 ```
 
 ---

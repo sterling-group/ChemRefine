@@ -9,26 +9,19 @@ through here, so the direct engine and the gradient server share one selection p
 :mod:`chemrefine.engines.mlip.registry` — one registry shared with training, so ``task_name``
 names one library whether a step runs a model or trains one. This module only builds.
 
-Two axes map the same way across libraries (the mace↔fairchem equivalence):
-``task_name`` is the **method/head** that keys the registry; ``model_name`` is
-the **weights** handed to that builder.
+The knob rules, not a roster (the live roster is the registry's, rendered on the docs'
+generated backends table): ``task_name`` is the **only** knob that selects a library;
+``model_name`` names a released set of its weights, in whatever spelling that library
+uses; ``model_path`` says to take the weights from a local file instead — it selects
+nothing, so a model fine-tuned by an ``mlip-train`` step is run by naming the library
+that trained it, the same word in the same place as for a released one.
 
-==================  ===================  =========================================
-``task_name`` (key) backend              ``model_name`` (weights)
-==================  ===================  =========================================
-``omol`` … ``omc``  ``_build_fairchem``  FAIRChem checkpoint (``uma-s-1``/``esen-…``)
-``mace_off``        ``_build_mace``      MACE-OFF size (``small``/``medium``/``large``)
-``mace_mp``         ``_build_mace``      MACE-MP size / named model
-``mace_omol``       ``_build_mace``      MACE-OMOL size (``extra_large``)
-``sevenn``          ``sevenn``           SevenNet id (``7net-0``)
-``orb``             ``orb``              ORB loader (``orb_v3_…``)
-``chgnet``          ``chgnet``           — (single model)
-==================  ===================  =========================================
-
-``model_path`` is the third knob and appears in no row, because it selects nothing: it is
-handed to whichever builder ``task_name`` chose, and that library loads the file itself. A
-model fine-tuned by an ``mlip-train`` step is therefore run by naming the library that trained
-it — the same word, in the same place, as for a released one.
+The dispatch below is where a selection becomes a vetted :class:`~chemrefine.engines.
+mlip.registry.CalculatorSpec`: the checkpoint's existence is checked **here, once** —
+a missing file names the ``task_name`` the user wrote, before any library imports —
+and the defaults come off :class:`~chemrefine.engines.mlip.options.MlipOptions`'s own
+fields, so a template call and a YAML step cannot disagree about what "unspecified"
+means (the ``device`` default is the model's ``cpu``: the floor that always runs).
 
 Backend imports happen inside each builder so this module imports cleanly even when the
 optional MLIP deps aren't installed; :func:`build_calculator` converts a missing library into
@@ -50,7 +43,7 @@ from typing import Any
 from ase import Atoms
 
 from chemrefine.engines.mlip.options import MlipOptions
-from chemrefine.engines.mlip.registry import backend_spec, calculator_for
+from chemrefine.engines.mlip.registry import CalculatorSpec, backend_spec, calculator_for
 
 logger = logging.getLogger(__name__)
 
@@ -59,47 +52,71 @@ DEFAULT_TASK: str = MlipOptions.model_fields["task_name"].default
 
 This function is public API a user's ``step{N}.py`` may call without going through the YAML at
 all, so it needs a default of its own; taking it from the field means the template and the
-config cannot come to disagree about what "unspecified" runs."""
+config cannot come to disagree about what "unspecified" runs. The other defaults below are
+read the same way, for the same reason — the ``device`` fallback in particular was once a
+``"cuda"`` literal here while the model said ``"cpu"``, the exact two-readers drift the
+model-fields technique exists to prevent."""
+
+_DEFAULT_MODEL_NAME: str = MlipOptions.model_fields["model_name"].default
+_DEFAULT_DEVICE: str = MlipOptions.model_fields["device"].default
 
 
 def build_calculator(
     *,
     task_name: str = DEFAULT_TASK,
-    model_name: str = "",
-    device: str = "cuda",
+    model_name: str = _DEFAULT_MODEL_NAME,
+    device: str = _DEFAULT_DEVICE,
     model_path: str | Path | None = None,
-    **extra: Any,
+    charge: int | None = None,
+    multiplicity: int | None = None,
 ) -> Any:
-    """Dispatch to the builder registered for ``task_name``; return the calculator.
+    """Vet the selection into a :class:`CalculatorSpec` and hand it to the one builder.
 
-    ``task_name`` names the library (a FAIRChem head, ``mace_off``…, ``chgnet``, ``sevenn``,
-    ``orb``) and is the **only** thing that selects one. ``model_name`` is the weights handed
-    to it, and ``model_path`` says to take those weights from a local file instead — both are
-    passed to the builder, which loads whichever it was given with *its own* library.
+    ``task_name`` is the **only** thing that selects a library. ``model_name`` is the
+    weights handed to it, and ``model_path`` says to take those weights from a local file
+    instead — checked for existence *here*, once, so a mistyped checkpoint is refused
+    naming the ``task_name`` the user wrote, before any library imports. Inferring the
+    library from the checkpoint is deliberately impossible: a ``.pt`` file does not say
+    which loader it belongs to, and handing it to the wrong one fails as a tensor-shape
+    error deep inside that library rather than as anything naming the actual mistake.
 
-    So running a fine-tuned model means naming the library that produced it — explicitly.
-    Inferring the library from the checkpoint is not possible: a ``.pt`` file does not say
-    which loader it belongs to, and handing it to the wrong one fails as a tensor-shape error
-    deep inside that library rather than as anything naming the actual mistake.
+    ``charge`` / ``multiplicity`` are optional and reach the spec untouched. The spec
+    fields are the door for a library whose calculator takes a charge at *construction*
+    (AIMNet2's does); no shipped builder reads them, because both shipped charge-aware
+    libraries read charge and spin **per geometry**, off ``atoms.info["charge"]`` /
+    ``["spin"]`` — FAIRChem's ``a2g_args`` names exactly those keys, and MACE's
+    calculator maps them to its ``total_charge``/``total_spin`` model inputs. A bare
+    calculator from here therefore carries no charge of its own; :class:`MlipCalculator`
+    is the wrapper that bridges the two channels by stamping the info keys per call.
+    There is deliberately no ``**extra``: a knob no field names has nowhere to hide,
+    which is the property the spec exists for (a backend-specific knob starts life as a
+    declared option instead).
 
     Raises :class:`~chemrefine.errors.ConfigError` listing known keys if nothing is
-    registered; a missing backend *library* surfaces as an ``ImportError`` naming the extra
-    to install.
+    registered; a missing backend *library* surfaces as an ``ImportError`` naming the
+    extra to install.
     """
-    spec = backend_spec(task_name)
+    registered = backend_spec(task_name)
     builder = calculator_for(task_name)
+    weights: Path | None = None
+    if model_path:
+        weights = Path(model_path)
+        if not weights.is_file():
+            raise FileNotFoundError(f"{task_name} checkpoint not found: {weights}")
+    spec = CalculatorSpec(
+        task_name=task_name,
+        model_name=model_name,
+        device=device,
+        weights=weights,
+        charge=charge,
+        multiplicity=multiplicity,
+    )
     try:
-        return builder(
-            task_name=task_name,
-            model_name=model_name,
-            device=device,
-            model_path=model_path,
-            **extra,
-        )
+        return builder(spec)
     except ImportError as exc:
         raise ImportError(
-            f"this MLIP backend needs '{spec.package}' — install it with "
-            f"`pip install chemrefine[{spec.extra}]` (in its own environment)."
+            f"this MLIP backend needs '{registered.package}' — install it with "
+            f"`pip install chemrefine[{registered.extra}]` (in its own environment)."
         ) from exc
 
 
@@ -121,27 +138,70 @@ class MlipCalculator:
     def __init__(
         self,
         *,
-        model_name: str = "",
+        model_name: str = _DEFAULT_MODEL_NAME,
         task_name: str = DEFAULT_TASK,
-        device: str = "cuda",
+        device: str = _DEFAULT_DEVICE,
         model_path: str | Path | None = None,
+        charge: int | None = None,
+        multiplicity: int | None = None,
     ):
-        """``task_name`` selects the library; ``model_path`` only says where its weights are."""
+        """``task_name`` selects the library; ``model_path`` only says where its weights are.
+
+        ``charge`` / ``multiplicity`` are optional and additive, and this wrapper is
+        where they take effect for the shipped libraries: both charge-aware backends
+        read them per geometry off ``atoms.info`` (see :meth:`_stamp_species`), so the
+        values are kept and stamped at each call rather than only handed to the builder.
+        A charge-blind library never reads the keys. Everything else is the shape the
+        shipped templates have always called.
+        """
         self.model_name = model_name
         self.task_name = task_name
         self.device = device
         self.model_path = Path(model_path) if model_path else None
+        self.charge = charge
+        self.multiplicity = multiplicity
+        self.last_converged: bool | None = None
+        """The verdict of the most recent :meth:`optimize`; ``None`` before the first.
+
+        What a ``step{N}.py`` assigns to ``converged`` so the output contract carries it —
+        the shipped starters do (``converged = mlip.last_converged``)."""
         self.calculator = build_calculator(
             task_name=task_name,
             model_name=model_name,
             device=device,
             model_path=self.model_path,
+            charge=charge,
+            multiplicity=multiplicity,
         )
+
+    def _stamp_species(self, atoms: Atoms) -> None:
+        """Put this wrapper's charge and multiplicity where the libraries read them.
+
+        Both shipped charge-aware backends take the values **per geometry**, off
+        ``atoms.info`` — FAIRChem's calculator asks its atoms-to-graph converter for the
+        ``charge`` and ``spin`` keys, and MACE's maps the same two names onto its
+        ``total_charge``/``total_spin`` model inputs, silently assuming a neutral
+        singlet when they are absent. Stamping here is what connects the constructor
+        arguments to that channel; without it they selected nothing (no builder reads
+        the spec fields — construction-time charge is a door for a library that takes
+        one, which none shipped does). The ExtOpt adapter stamps the same keys from
+        ORCA's per-call values; this is the direct path's half of that pattern.
+
+        ``setdefault``, not assignment: ``atoms.info`` is per-structure state, so a
+        value the template set on the atoms itself is more specific than the step-wide
+        one and must win. Charge-blind libraries never read the keys, so stamping is
+        inert for them.
+        """
+        if self.charge is not None:
+            atoms.info.setdefault("charge", self.charge)
+        if self.multiplicity is not None:
+            atoms.info.setdefault("spin", self.multiplicity)
 
     # -- inference ---------------------------------------------------------
 
     def single_point(self, atoms: Atoms) -> tuple[float, list[list[float]]]:
         """Return ``(energy_eV, gradient_eV_per_A)`` for one geometry."""
+        self._stamp_species(atoms)
         atoms.calc = self.calculator
         energy = atoms.get_potential_energy()
         forces = atoms.get_forces()
@@ -149,12 +209,31 @@ class MlipCalculator:
         return energy, gradient
 
     def optimize(self, atoms: Atoms, *, fmax: float = 0.03, steps: int = 200) -> Atoms:
-        """In-process LBFGS optimisation; returns the relaxed ``atoms``."""
+        """In-process LBFGS optimisation; returns the relaxed ``atoms``.
+
+        ase's ``run`` answers whether ``fmax`` was reached within ``steps``, and that answer
+        is kept — on ``atoms.info["converged"]`` and on :attr:`last_converged` — rather than
+        dropped. Dropped, an optimiser that ran out of steps was indistinguishable from one
+        that converged: the template wrote the last geometry's energy, the parser read no
+        verdict, and a non-stationary point ranked as a survivor against converged siblings.
+        Reported, it is what turns that run into a ``NOT_CONVERGED`` failure, ledgered and
+        retried once from this geometry (:func:`chemrefine.lifecycle.retry_unconverged`).
+        """
         from ase.optimize import LBFGS
 
+        self._stamp_species(atoms)
         atoms.calc = self.calculator
         # Named rather than passed as `None`: ase's own `IOContext.openfile` turns `None`
         # into `open(os.devnull)`, so this is the same file by the shorter route — and it
         # is the `str` the signature asks for.
-        LBFGS(atoms, logfile=os.devnull).run(fmax=fmax, steps=steps)
+        converged = bool(LBFGS(atoms, logfile=os.devnull).run(fmax=fmax, steps=steps))
+        if not converged:
+            logger.warning(
+                "LBFGS stopped after %d steps without reaching fmax=%g eV/Å; the geometry "
+                "is not a stationary point",
+                steps,
+                fmax,
+            )
+        atoms.info["converged"] = converged
+        self.last_converged = converged
         return atoms

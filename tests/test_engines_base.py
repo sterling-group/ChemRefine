@@ -2,22 +2,35 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 # Importing from ``chemrefine.engines.api`` triggers the parent package's
 # ``__init__``, which self-registers every bundled engine into ``ENGINES``.
+from chemrefine.config import StepConfig
+from chemrefine.engines._job import JobEngine
 from chemrefine.engines.api import (
     ENGINES,
     CalculationEngine,
+    contract_members,
     get_engine,
     register,
 )
 from chemrefine.errors import EngineNotFoundError
+from chemrefine.state import RunBlock
 
 
 def test_engines_registry_is_populated_by_side_effect_import():
-    """Importing chemrefine.engines must trigger every bundled engine's registration."""
-    assert "fake" in ENGINES
+    """Importing chemrefine.engines must trigger every bundled engine's registration.
+
+    Asserted on a *bundled* engine: ``fake`` is test scaffolding conftest registers
+    itself, so it stays in the registry with the package's ``_load_plugins()`` deleted —
+    which is exactly the side effect this test is named for. (The full bundled roster is
+    ``test_engines_discovery``'s; one shipped name is enough to prove the mechanism.)
+    """
+    assert "orca" in ENGINES
+    assert "fake" in ENGINES  # and conftest's scaffolding engine is present for the suite
 
 
 def test_get_engine_returns_fresh_instance():
@@ -57,23 +70,89 @@ def test_register_decorator_adds_entry_and_returns_class():
             return None
 
     try:
-        assert ENGINES["temp-test-engine"] is _TempEngine
+        # `is`-compared through `object`: ENGINES is typed `type[CalculationEngine]`,
+        # and mypy calls the identity check non-overlapping against a concrete class.
+        assert ENGINES["temp-test-engine"] is cast("object", _TempEngine)
     finally:
         ENGINES.pop("temp-test-engine", None)
 
 
+def test_preflight_steps_asks_only_the_engines_that_declare_the_capability():
+    """``preflight_steps`` is the run's t=0 walk: opt-in, with the effective species.
+
+    Opt-in via ``PreflightChecking`` because a generic strict pass would refuse valid
+    configs — the direct script engines read leniently by documented design. The hook
+    receives the *effective* charge and multiplicity (config defaults with the step's
+    own override applied), the same resolution ``build_context`` performs for the run
+    itself — resolved in the walk so no hook re-spells the fallback.
+    """
+    from chemrefine.engines.api import preflight_steps
+
+    calls: list[tuple[int, int, int]] = []
+
+    class _Checked:
+        name = "preflight-probe"
+        preflight_refuses = "a probe step; the sentence the registration gate asks of any hook"
+
+        def prepare(self, ctx: object) -> None: ...
+
+        def submit(self, inputs: object, ctx: object) -> None: ...
+
+        def parse(self, inputs: object, ctx: object) -> None: ...
+
+        def check_step(self, step_cfg: StepConfig, *, charge: int, multiplicity: int) -> None:
+            calls.append((step_cfg.step, charge, multiplicity))
+
+    try:
+        register("preflight-probe")(_Checked)
+        steps = [
+            StepConfig(step=1, engine="fake"),  # no capability — not asked
+            StepConfig(step=2, engine="preflight-probe"),  # config defaults apply
+            StepConfig(step=3, engine="preflight-probe", charge=-1, multiplicity=2),
+        ]
+        preflight_steps(steps, charge=0, multiplicity=1)
+    finally:
+        ENGINES.pop("preflight-probe", None)
+
+    assert calls == [(2, 0, 1), (3, -1, 2)]
+
+
+def _conforming(engine_name: str) -> type:
+    """The smallest class ``register`` accepts — the contract and nothing else.
+
+    Both halves matter: it satisfies ``CalculationEngine`` structurally, and it does not
+    inherit it. A test that needs *a registrable engine* and not a particular one uses this,
+    so the gate is exercised rather than worked around.
+    """
+
+    class _Engine:
+        # On the class, not bound in __init__: the gate runs without constructing anything,
+        # which is what stops an engine's __init__ running at import of the package.
+        name = engine_name
+
+        def prepare(self, ctx: object) -> None:
+            return None
+
+        def submit(self, inputs: object, ctx: object) -> None:
+            return None
+
+        def parse(self, inputs: object, ctx: object) -> None:
+            return None
+
+    return _Engine
+
+
 def test_register_rejects_duplicate_with_different_class():
-    @register("dup-test-engine")
-    class _A:
-        pass
-
-    with pytest.raises(ValueError):
-
-        @register("dup-test-engine")
-        class _B:
-            pass
-
-    ENGINES.pop("dup-test-engine", None)
+    # try/finally like the temp-test-engine above: if the duplicate guard under test ever
+    # regressed, a bare pop after the raises-block would leave a stray class in the global
+    # registry, and every wholesale ENGINES read across the suite would fail alongside the
+    # one real regression.
+    try:
+        register("dup-test-engine")(_conforming("dup-test-engine"))
+        with pytest.raises(ValueError):
+            register("dup-test-engine")(_conforming("dup-test-engine"))
+    finally:
+        ENGINES.pop("dup-test-engine", None)
 
 
 def test_registry_holds_only_canonical_engine_names():
@@ -114,3 +193,126 @@ def test_an_incomplete_job_engine_cannot_be_constructed():
 
     with pytest.raises(TypeError, match="parse_one"):
         _MissingParseOne()  # type: ignore[abstract]
+
+
+# ---------------------------------------------------------------------------
+# The registration gate — the decorator refuses what it cannot use
+# ---------------------------------------------------------------------------
+
+
+def test_the_derived_contract_members_match_the_interpreters_own():
+    """``contract_members`` stands in for ``__protocol_attrs__``, which is 3.12+.
+
+    ``requires-python`` is ``>=3.11``, so the members are derived from the Protocol's methods
+    and annotations instead. Where the interpreter offers the real thing, the two must agree —
+    otherwise the gate enforces a contract subtly different from the declared one.
+    """
+    truth = getattr(CalculationEngine, "__protocol_attrs__", None)
+    if truth is None:  # pragma: no cover - only on 3.11, which CI also runs
+        pytest.skip("__protocol_attrs__ is a 3.12 addition")
+    assert contract_members(CalculationEngine) == frozenset(truth)
+
+
+def test_register_refuses_a_class_that_does_not_satisfy_the_contract():
+    """``ENGINES`` is typed ``type[CalculationEngine]``, and this is what makes that true.
+
+    Without the gate a class carrying only a ``name`` registers, and :func:`get_engine` hands
+    it to the pipeline as a ``CalculationEngine``.
+    """
+    with pytest.raises(TypeError, match=r"does not satisfy CalculationEngine — missing"):
+        register("gate-probe")(type("Bare", (), {"name": "gate-probe"}))
+    assert "gate-probe" not in ENGINES
+
+
+def test_register_refuses_a_preflight_hook_without_its_claim():
+    """``check_step`` without ``preflight_refuses`` would silently leave the preflight walk.
+
+    A Protocol member left unset makes ``isinstance(engine, PreflightChecking)`` answer no,
+    so the omission would not fail — the hook would simply never be called. Refused at the
+    decorator line instead, naming the sentence the engine owes.
+    """
+    hooked = type(
+        "Hooked",
+        (),
+        {
+            "name": "gate-probe",
+            "prepare": lambda self, ctx: None,
+            "submit": lambda self, inputs, ctx: None,
+            "parse": lambda self, inputs, ctx: None,
+            "check_step": lambda self, step_cfg, *, charge, multiplicity: None,
+        },
+    )
+    with pytest.raises(TypeError, match="check_step without preflight_refuses"):
+        register("gate-probe")(hooked)
+    assert "gate-probe" not in ENGINES
+
+
+def test_register_refuses_a_class_that_inherits_the_protocol():
+    """Inheriting a ``runtime_checkable`` Protocol manufactures conformance.
+
+    Every method arrives as an ellipsis body returning ``None``, so ``isinstance`` passes and
+    ``prepare`` returns ``None`` — defeating the structural checks that stand in for this gate,
+    including the one at the top of this module.
+    """
+
+    class _Hollow(CalculationEngine):
+        name = "gate-probe"
+
+    # mypy *does* catch this statically — a Protocol subclass leaves its stubs implicitly
+    # abstract, so it refuses to construct one. The runtime does not: `__abstractmethods__`
+    # is empty, the class instantiates, and every method returns None. The ignores below are
+    # the gap between the two checkers, which is exactly what this gate closes.
+    assert isinstance(_Hollow(), CalculationEngine), "the hazard this refuses"  # type: ignore[abstract]
+    assert _Hollow().prepare(None) is None  # type: ignore[abstract]
+    # mypy refuses this call outright now that `register` is typed over the contract, which
+    # is the static half of the same gate; the ignore is what lets the runtime half be
+    # exercised from a test.
+    with pytest.raises(TypeError, match="inherits CalculationEngine"):
+        register("gate-probe")(_Hollow)  # type: ignore[type-abstract]
+    assert "gate-probe" not in ENGINES
+
+
+def test_register_refuses_an_engine_that_leaves_a_declaration_unset():
+    """The ClassVars no ``ABCMeta`` machinery watches — ``abstractmethod`` covers methods only.
+
+    Unrefused here, an unset ``output_suffix`` surfaces as a bare ``AttributeError`` from
+    inside ``prepare`` — after ``run_step`` has built a context, derived a cache key and made
+    a directory.
+    """
+
+    class _NoSuffix(JobEngine):
+        name = "gate-probe"
+        label = "Gate"
+        template_suffix = "inp"
+        output_globs = ()
+
+        def build_input(self, **kwargs: object) -> None: ...
+
+        def parse_one(self, output_path, structure_id, ctx):
+            return []
+
+        def run_block(self, ctx, inp_path, out_path):
+            return RunBlock(body="true")
+
+        def pal(self, ctx) -> int:
+            return 1
+
+    with pytest.raises(TypeError, match=r"missing declaration\(s\) \['output_suffix'\]"):
+        register("gate-probe")(_NoSuffix)
+    assert "gate-probe" not in ENGINES
+
+
+def test_every_shipped_engine_declares_what_its_base_requires():
+    """The gate's positive side, over the real registry.
+
+    ``register`` proves this at import for every bundled engine, so this asserts the
+    requirement itself is non-empty and reachable — a `required_declarations` that silently
+    became `()` would make the gate vacuous without failing anything.
+    """
+    job_engines = [n for n, c in ENGINES.items() if issubclass(c, JobEngine)]
+    assert job_engines, "no JobEngine-based engines registered — has discovery broken?"
+    for name in job_engines:
+        cls = ENGINES[name]
+        required = cls.required_declarations
+        assert required, f"{name}: required_declarations is empty, so the gate checks nothing"
+        assert [d for d in required if not hasattr(cls, d)] == []

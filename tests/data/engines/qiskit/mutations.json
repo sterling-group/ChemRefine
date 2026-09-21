@@ -1,0 +1,26 @@
+[
+  {
+    "id": "qiskit-particle-sector-filter",
+    "path": "src/chemrefine/engines/qiskit/components/algorithms.py",
+    "old": "not np.isclose(particle_number[0], expected_particles)",
+    "new": "np.isclose(particle_number[0], expected_particles)",
+    "tests": "tests/test_engines_qiskit.py",
+    "breaks": "the exact solver discards eigenstates with the requested electron count and can report a plausible eigenvalue from the wrong particle-number sector"
+  },
+  {
+    "id": "qiskit-spin-sector-filter",
+    "path": "src/chemrefine/engines/qiskit/components/algorithms.py",
+    "old": "np.isclose(angular_momentum[0], expected_angular_momentum)",
+    "new": "not np.isclose(angular_momentum[0], expected_angular_momentum)",
+    "tests": "tests/test_engines_qiskit.py",
+    "breaks": "the exact solver rejects the requested spin sector and can report a state with the wrong multiplicity"
+  },
+  {
+    "id": "qiskit-aer-noise-is-applied",
+    "path": "src/chemrefine/engines/qiskit/components/estimators.py",
+    "old": "if noise_model is not None:",
+    "new": "if noise_model is None:",
+    "tests": "tests/test_engines_qiskit.py",
+    "breaks": "an explicitly requested Aer noise model is silently ignored, producing an ideal-simulator energy that looks valid but models a different experiment"
+  }
+]

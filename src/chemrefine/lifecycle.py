@@ -158,7 +158,11 @@ def submit_and_parse(
 
 
 def resubmit_unusable(
-    engine: CalculationEngine, ctx: StepContext, inputs: StepInputs
+    engine: CalculationEngine,
+    ctx: StepContext,
+    inputs: StepInputs,
+    *,
+    stale: Iterable[str] = (),
 ) -> tuple[list[Structure], list[Failure]]:
     """Parse ``inputs``, re-run every job that produced no usable result, report the merged lot.
 
@@ -184,12 +188,24 @@ def resubmit_unusable(
     the old result, and regenerating means a ``rerun-errors`` after a template edit actually
     runs the edited template — the on-disk input would otherwise contradict the fingerprint
     the cache is keyed on.
+
+    ``stale`` names rows condemned by the caller's provenance verdict — an output on disk
+    that was computed for a *different parent* (the incremental resume's row-key diff). A
+    stale output can be perfectly usable and still be the wrong answer, which no parse can
+    see — so whatever its first parse produced is discarded unread by the same
+    :meth:`~_ResultLedger.restart` a resubmission always gets, and the row re-runs
+    unconditionally. Condemned rows arrive **already archived by the caller** — moved
+    aside *before* the manifest was stamped with the keys that condemn them, which is the
+    ordering that closes the stamp-then-crash window (a manifest vouching for outputs
+    still at canonical). Archiving them again here would only seal the freshly rendered
+    input into an attempt of its own, so the archive below skips them.
     """
+    condemned = frozenset(stale)
     ledger = _ResultLedger(inputs)
     ledger.absorb_all(engine, ctx, inputs)
     _successes, failures = ledger.emit()
 
-    unusable = {f.sid for f in failures if f.kind is not FailureKind.NOT_CONVERGED}
+    unusable = {f.sid for f in failures if f.kind is not FailureKind.NOT_CONVERGED} | condemned
     seeds = tuple(s for s in ctx.prev_state.structures if s.id in unusable)
     if not seeds:
         return ledger.emit()
@@ -202,7 +218,7 @@ def resubmit_unusable(
     )
     for s in seeds:
         ledger.restart(s.id)
-    attempts.archive_previous(ctx.step_dir, (s.id for s in seeds))
+    attempts.archive_previous(ctx.step_dir, (s.id for s in seeds if s.id not in condemned))
     retry_ctx = replace(ctx, prev_state=PipelineState(structures=seeds))
     redone = engine.prepare(retry_ctx)
     engine.submit(redone, retry_ctx)
@@ -327,7 +343,7 @@ class _ResultLedger:
 
     Two things it exists to get right, both of which are silent when wrong:
 
-    **Order.** :func:`chemrefine.cache.parents_digest` folds structures into a running SHA-1
+    **Order.** :meth:`chemrefine.cache.StepKey.of` keys the next step over its parents
     *in iteration order*, so results in completion order — which is nondeterministic — would
     give the next step a different fingerprint on every run and invalidate its cache for
     nothing. Manifest order is stable. It is *not* the order a non-streaming run produced
@@ -754,7 +770,8 @@ def apply_failure_policy(
     they're visible regardless of policy) and cleared on a clean step. ``skip``
     drops the failures and keeps the successes; ``best`` keeps every
     structure, backfilling a failure with the best geometry obtained for it
-    (else its submitted input); ``stop`` (the default) keeps the successes too but the run is
+    (else its submitted input, as a geometry alone — :func:`_backfill_for`);
+    ``stop`` (the default) keeps the successes too but the run is
     halted by :func:`chemrefine.step.halt_if_pending` (from the pipeline)
     *after* the cache is written (so ``resume`` / ``rerun-errors`` re-attempt
     only those failed jobs).
@@ -782,21 +799,91 @@ def apply_failure_policy(
     # Unmatched here, the implicit `None` contradicts the return type and mypy says so.
     match step_cfg.on_failure:
         case "best":
-            prev_by_id = {s.id: s for s in ctx.prev_state.structures}
+            prev_by_id = ctx.prev_state.by_id
             # Build a new list rather than appending into the caller's: every other value
             # crossing this module is frozen, and a policy function quietly rewriting its
             # argument is the one aliasing bug this file would not survive.
             backfilled = [
-                fallback
-                for f in failures
-                if (fallback := (f.best if f.best is not None else prev_by_id.get(f.sid)))
-                is not None
+                fallback for f in failures if (fallback := _backfill_for(f, prev_by_id)) is not None
             ]
             return StepResults(structures=(*successes, *backfilled))
         case "skip" | "stop":
             # `stop` keeps the successes too; the run is halted afterwards by
             # `chemrefine.step.halt_if_pending`, once this cache is written.
             return StepResults(structures=tuple(successes))
+
+
+def _backfill_for(failure: Failure, prev_by_id: dict[str, Structure]) -> Structure | None:
+    """What ``best`` carries for one failure: the best geometry obtained, else the input.
+
+    The input is carried as a **geometry with its lineage and nothing else**. The
+    structure the step was given is the previous step's result, energies and
+    thermochemistry included — and a backfill that kept them handed this step a number
+    it never computed: the previous level of theory's energy, ranked by this step's
+    filter against this step's energies and printed in ``steps.csv`` under this step.
+    The docs describe the backfill as "the input it was submitted with", and a submitted
+    input is a geometry; every field that only a calculation of *this* step could have
+    filled is left unfilled, exactly as a step-1 seed arrives. The best geometry obtained
+    is different: it was parsed from this step's own output and its values are this
+    step's.
+    """
+    if failure.best is not None:
+        return failure.best
+    submitted = prev_by_id.get(failure.sid)
+    if submitted is None:
+        return None
+    return replace(
+        submitted,
+        energy_hartree=None,
+        forces_ev_per_a=None,
+        converged=None,
+        terminated_normally=None,
+        gibbs_hartree=None,
+        enthalpy_hartree=None,
+        energy_zpe_hartree=None,
+        imaginary_freqs=None,
+        frequencies=None,
+        normal_modes=None,
+        resolved_from=None,
+    )
+
+
+def _in_parent_order(structures: list[Structure], parents: PipelineState) -> list[Structure]:
+    """``structures`` in the order of the parents they came from — the order a cache holds.
+
+    The next step's key is composed from the row keys *in order*
+    (:meth:`chemrefine.cache.StepKey.of`), so the order a step stores its survivors in is
+    part of every downstream fingerprint. :meth:`_ResultLedger.emit` answers in manifest
+    order for a batch, but the recovery paths — :func:`retry_unconverged` under ``resume``
+    or ``rerun-errors``, :func:`chemrefine.nms.reattempt_nms` — merge what they re-ran
+    *after* the ledger, and a batch's own retried fan-out frame lands after its siblings
+    within its origin. Sorted here, at the one point every path ends, the order is a
+    function of the parent order alone: whether a structure converged first time, was
+    retried mid-queue or was retried by a later command cannot move it, and a
+    ``rebuild-cache`` (manifest order) cannot re-key a tail that nothing changed.
+
+    A structure's origin is the parent it was computed for. A 1:1 result keeps the input's
+    id, a fan-out frame is ``{input}-{i}`` with ``parent_id`` the input
+    (:func:`chemrefine.ids.allocate_child_ids`), an NMS child carries its parent's id and a
+    promoted winner *is* its parent's id — so ``id if id in parents else parent_id`` names
+    the origin for every shape. Within an origin only fan-out frames are ordered, by their
+    ``-{i}``; every other child keeps the order it arrived in, which is what leaves a
+    ``random`` NMS step's displaced children — and every existing tree's fingerprints —
+    where they are. An origin the parents do not contain sorts last, in arrival order,
+    rather than raising: no path mints one today, and the cache has to be written whatever
+    produced it.
+    """
+    index = {s.id: i for i, s in enumerate(parents.structures)}
+
+    def rank(structure: Structure) -> tuple[int, int]:
+        sid = structure.id
+        origin = sid if sid in index else structure.parent_id
+        if origin is None:
+            return (len(index), -1)
+        frame = sid[len(origin) + 1 :] if sid.startswith(f"{origin}-") else ""
+        return (index.get(origin, len(index)), int(frame) if frame.isdecimal() else -1)
+
+    return sorted(structures, key=rank)
 
 
 def finalize(
@@ -809,19 +896,20 @@ def finalize(
 ) -> StepResults:
     """Resolve a step's failures and persist the result — the one way a step ends.
 
-    Every path that finishes a step does the same two things in the same order: apply
-    ``on_failure`` (:func:`apply_failure_policy`), then write the cache
-    (:func:`chemrefine.cache.save`). Four callers need it — the full run, ``rebuild-cache``,
-    the failed-job resubmit, and the NMS re-attempt — and how they *reach* this point differs
-    (some retry unconverged structures first, some run NMS, some filter afterwards and some
-    return the raw results), which is why only the tail is shared and only the tail is
-    extracted.
+    Every path that finishes a step does the same things in the same order: put the
+    survivors in their parents' order (:func:`_in_parent_order`), apply ``on_failure``
+    (:func:`apply_failure_policy`), then write the cache (:func:`chemrefine.cache.save`).
+    Four callers need it — the full run, ``rebuild-cache``, the failed-job resubmit, and the
+    NMS re-attempt — and how they *reach* this point differs (some retry unconverged
+    structures first, some run NMS, some filter afterwards and some return the raw
+    results), which is why only the tail is shared and only the tail is extracted.
 
     One function rather than a convention, because a site that applies the policy and skips
     the write — or writes under a key of its own derivation — produces no crash, just a
     silent re-run or a silent reuse much later. The key is a value
     (:class:`chemrefine.cache.StepKey`), so this takes the one its caller already built.
     """
+    successes = _in_parent_order(successes, ctx.prev_state)
     results = apply_failure_policy(successes, failures, ctx, step_cfg)
     cache.save(
         step_cfg=step_cfg,

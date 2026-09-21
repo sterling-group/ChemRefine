@@ -10,12 +10,18 @@ place:
 - **the reusable building blocks** (underscored — *compose*, never edit to add an engine):
   `_job.py` (`JobEngine`), `_execution.py` (the scheduler), `_script/` (`ScriptEngine`),
   `_backend_server/` (the ExtOpt server).
-- **the plugins** (bare names) — `orca/`, `mlip/`, `pyscf/`.
+- **the plugins** — one bare-named package each, auto-discovered; the
+  [engine table](../engines/index.md) lists what that currently is.
 
-Adding an engine touches exactly **one** thing: a new bare-named `engines/<name>/` package.
-Plugins are auto-discovered — every bare-named subpackage is imported when
-`chemrefine.engines` loads, so the addition is fully self-contained. You never edit a building
-block (or any central list) to make a new engine exist.
+Adding an engine is **the engine's own files and nothing central**: a new bare-named
+`engines/<name>/` package (auto-discovered — every bare-named subpackage is imported when
+`chemrefine.engines` loads), its tests (`tests/test_engines_<name>*.py` and the fixture folder
+`tests/data/engines/<name>/`), and its docs (a page under `docs/engines/` with its nav line, a
+CHANGELOG bullet). You never edit a building block or a central list to make a new engine
+exist, scaffold, document itself, or join the gates: every roster is derived from the registry,
+and every per-engine verdict is read from the engine's own folder. The one file outside those
+an engine may touch is `pyproject.toml`, and only when it needs a pip extra
+([Resources](#resources)).
 
 ## The steps
 
@@ -34,7 +40,8 @@ strings them into one engine you can read top to bottom:
    package itself is auto-discovered.
 5. **Wire resources** — a binary path or an optional `pip` extra ([Resources](#resources)).
 6. **Support NMS** only if the engine computes frequencies ([Supporting NMS](#supporting-nms)).
-7. **Add tests and a contract fixture** ([Tests](#tests)).
+7. **Add tests, a contract fixture and the knob verdict** ([Tests](#tests)).
+8. **Document it on a page of its own** ([Documentation](#documentation)).
 
 The sections that follow are those steps in detail.
 
@@ -45,9 +52,9 @@ Decorate the class with `@register("<name>")` and choose the **kind** that match
 | Kind | Base | You provide |
 |------|------|-------------|
 | Per-structure program (own input format) | [`JobEngine`](../api/engines_job.md) | `build_input`, `run_block`, `parse_one`, `pal`, `gpus` + the ClassVars (`label` / `template_suffix` / `output_suffix` / `output_globs`) |
-| User Python script | [`ScriptEngine`](../api/engines_job.md) (a `JobEngine`) | usually only `_vars_from` (inject `$VAR`s from `step.options`) |
+| User Python script | [`ScriptEngine`](../api/engines_job.md) (a `JobEngine`) | `_vars_from` (inject `$VAR`s from `step.options`), and `output_fields` when the template reports more than the shared set (energy / geometry / gradient / `converged`); a field declared with `field=None` is kept in the raw JSON sidecar only |
 | ORCA optimises using *this* engine's gradients | `ExtOptOrcaEngine` | the ClassVars `backend` / `wrapper_filename` / `options_cls` / `calculator_cls`, plus a `ComputeBackend` in `extopt_calc.py` |
-| Not a per-structure job (e.g. a training step) | `CalculationEngine` directly | `prepare` / `submit` / `parse` |
+| Not a per-structure job (e.g. a training step) | `CalculationEngine` directly | `prepare` / `submit` / `parse`, plus `artifact` + `run_dir` for `ArtifactEngine`, and the `JobExecutable` members to run through the scheduler |
 
 A `JobEngine` provides only **primitives** — the public provision surface chemrefine requests
 (`build_input` / `run_block` / `parse_one` / `pal` / `gpus`, the `JobExecutable` contract). The
@@ -59,14 +66,21 @@ step, not an engine-specific feature.
 ## Declare the metadata ClassVars
 
 `name`, plus the base-required ClassVars (`label`, `template_suffix`, `output_suffix`,
-`output_globs`), as `ClassVar[...]` annotations matching the other engines. There is no
-`supports_nms` flag — NMS is a *capability* (below), detected via `isinstance`.
+`output_globs`), as `ClassVar[...]` annotations matching the other engines. Two more travel
+with the engine rather than with any central list: `template_starter`, the text
+`chemrefine scaffold` writes for a missing template ([`StarterProviding`](../api/engines_api.md);
+an engine that declares none gets a suffix-shaped fallback), and — only if the engine takes the
+`check_step` hook — `preflight_refuses`, one sentence naming what the hook refuses
+([`PreflightChecking`](../api/engines_api.md); `register` refuses a hook without it, and the
+invariants hold the sentence unrepeated across engines). There is no `supports_nms` flag — NMS
+is a *capability* (below), detected via `isinstance`.
 
 ## Validate the YAML knobs
 
 Add a Pydantic model in `engines/<name>/options.py` subclassing
-[`EngineOptions`](../api/engines_api.md) (it carries the shared `device` field + frozen /
-`extra="forbid"` config + `from_raw`); add your own fields and read it in the primitives. This
+[`EngineOptions`](../api/engines_api.md) (it carries the shared `device` / `cores` /
+`backend_python` fields + frozen / `extra="forbid"` config + `from_raw`); add your own
+fields and read it in the primitives. This
 keeps `step.options` a free dict at the orchestrator level while giving the engine typed
 validation.
 
@@ -107,6 +121,15 @@ the extra + pip package + import name at registration so a missing library repor
 install (see `mlip.registry.MlipLibrary` — one declaration per library, shared by its
 calculator and its trainer).
 
+The extra is the one thing an engine declares outside its own files. Add it under
+`[project.optional-dependencies]` in `pyproject.toml` — `test_every_backend_extra_is_declared_in_pyproject`
+fails until you do, because an extra nothing installs provisions an empty environment that then
+dies on the backend import. If the library supports only some Python versions, put a
+`python_version` marker on every requirement of the extra and record the supported versions in
+`test_provision.py`'s `capped` table; if its modules ship no type stubs, list them under mypy's
+`ignore_missing_imports` overrides in the same file. The install page's extras table and the
+backends table are generated from what you declared.
+
 ## The lifecycle
 
 Whatever kind you pick, the engine satisfies the contract the step lifecycle drives in order.
@@ -123,7 +146,7 @@ prepare → submit → parse
 Normal-mode sampling is **engine-independent**: the two-round algorithm lives in
 `chemrefine.nms`. NMS is a capability, not a flag — implement the
 [`NmsCapableEngine`](../api/engines_api.md) Protocol's one hook and populate two structure
-fields; capability is detected with `isinstance` (the ExtOpt engines get it for free from ORCA):
+fields; capability is detected with `isinstance`:
 
 - `nms_input_info(ctx) -> NmsInputInfo` — introspect the step's input (is it a TS search? does it
   compute frequencies?), driving the default target and the freq gate.
@@ -132,6 +155,52 @@ fields; capability is detected with `isinstance` (the ExtOpt engines get it for 
   there is no separate output-reading hook and the file is parsed once.
 
 Everything else — displacement, round-2 submission, resolution, retry — is generic.
+
+An NMS-capable engine also implements the [`FrequencyOutputParsing`](../api/engines_api.md)
+hook (`parse_frequency_output`) — the ctx-free re-parse the mode-viewer tools use on a
+finished step; the invariant suite holds the two capabilities together.
+
+The second bullet is a `JobEngine`'s own `parse_one` to satisfy, which is why ORCA and Q-Chem
+do. A `ScriptEngine` parses through the shared reader instead, so it reports what its
+[output contract](#the-parsed-result-contract) declares: add the two fields to its
+`output_fields` and have the template assign them. Until it does, `nms: true` on a script step
+is ignored with a warning from `chemrefine validate` — the capability is detected, not
+assumed.
+
+## Parsing output that depends on the input
+
+Some programs write different sections depending on what was computed — an `opt` repeats its
+energy every cycle, an ensemble generator emits many geometries, a correlated method prints
+more than one total energy. The shipped reference for handling that is `orca/`, and the shape
+is worth mirroring because it keeps the input→output coupling in one explicit chain instead of
+scattered through the parser:
+
+- **`inspect.py` reads the input, once, into a frozen `InputInfo`** — which keywords ran, is
+  it a TS search, does it compute frequencies. Nothing else re-derives facts from the
+  template.
+- **An explicit `operation:` wins; otherwise the inspection decides** (ORCA:
+  `OrcaEngine._resolve_operation`). If the vocabulary is real, declare `OperationsDeclaring` —
+  `check_step` then refuses an unknown operation at preflight, and the schema document and
+  agent guide serve the vocabulary with no further wiring.
+- **A read-once coordinator hands shared text to per-section extractors** (see
+  `orca/output/`: coordinator / energy / geometry / frequencies / status) — the file is read
+  once, and each section owns its own block grammar.
+- **The disciplines**, held by the contract goldens and the recorded-output sweep: *last
+  match wins* (an `opt`'s repeated prints resolve to the final one); *finite refusal at the
+  boundary* (a value that cannot be read raises `OutputParseError`, an abnormal ending
+  `OutputTerminationError` with the `.err` tail — never a silent `NaN`); and every case ships
+  a *trimmed real* contract fixture.
+
+For **method-dependent scalars** — "the" energy differs between a plain SCF and a correlated
+run that prints both — declare a priority chain over the *output text*: rows tried highest
+level of theory first, the first whose pattern matches wins, each row at its own first/last
+occurrence policy. Selection is by evidence in the output, never by inspecting the input to
+pick a parser: whichever method actually ran left its line.
+
+Parsing stays **per-engine** on purpose: the formats genuinely differ, and the shared ground
+is the [`ParsedResult` contract](#the-parsed-result-contract) with its goldens, plus the
+extracted seams — `NmsInputInfo`, `OperationsDeclaring`, `FrequencyOutputParsing`. A new
+engine mirrors the *shape* above without importing a line of another engine's parser.
 
 ## Tests
 
@@ -162,6 +231,27 @@ pytest tests/test_engines_contract.py --update-goldens
 and review the diff. The suite fails until every registered engine ships a case
 (`test_every_registered_engine_ships_a_contract_case`).
 
+Beside the cases, an engine that declares an options model files its **knob verdict** as
+`tests/data/engines/<name>/knobs.json`: `"model"` names the options class, `"examples"` the
+knobs a shipped example must demonstrate, `"tests_only"` the rest (a `"note"` may say why).
+Every field of the model belongs to exactly one list — `test_knob_universe_is_fully_filed`
+fails until it does — and engines sharing a model (`mlip` / `mlip-extopt`) file it once.
+
+Guards for the mutation gate go beside them too, optionally:
+`tests/data/engines/<name>/mutations.json` is a JSON array of entries with the fields of
+`scripts/mutation_gate.py`'s `Mutation` (`id`, `path`, `old`, `new`, `tests`, `breaks`), run
+after the bundled list and checked for stale anchors like any other entry.
+
+## Documentation
+
+An engine documents itself on a page of its own, `docs/engines/<name>.md`, and adds its nav
+line to `mkdocs.yml` (a page without one fails `mkdocs build --strict`). The drift guard
+(`test_docs_drift`) looks for that page before the shared engines page, so every field of the
+options model must be named on it, and the generated engine table links the engine's row to
+the page the moment the file exists. The engine, backend and extras tables are generated from
+the registry and `pyproject.toml` — nothing to type. What is still yours to write: the page,
+a CHANGELOG bullet, and a row in `examples/README.md` if an example ships.
+
 ## Worked example: a minimal engine
 
 To see the steps as one unit, here is a complete *illustrative* engine — `demoqm`, a fictional
@@ -179,7 +269,7 @@ engines/demoqm/
   options.py      # the YAML knobs
 ```
 
-**Step 1 + 3 — `options.py`** validates `step.options`, reusing the shared `device` field and
+**Step 1 + 3 — `options.py`** validates `step.options`, reusing the shared fields and
 frozen config from `EngineOptions`:
 
 ```python
@@ -207,7 +297,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from chemrefine.engines._job import JobEngine
-from chemrefine.engines.api import ParsedResult, register
+from chemrefine.engines.api import ParsedResult, RunBlock, register
 from chemrefine.engines.demoqm.options import DemoqmOptions
 from chemrefine.state import StepContext
 
@@ -243,17 +333,18 @@ class DemoqmEngine(JobEngine):
         """Cores per job, before the scheduler clamps it to ``max_cores``."""
         return 1
 
-    def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> str:
+    def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> RunBlock:
         """The bash that runs inside the job's work dir."""
         demoqm = ctx.executables.get("demoqm", "demoqm")
-        return f"{demoqm} {inp_path.name} > $OUTPUT_DIR/{out_path.name}"
+        return RunBlock(body=f'{demoqm} {inp_path.name} > "$OUTPUT_DIR/{out_path.name}"')
 
     def parse_one(
         self, output_path: Path, structure_id: str, ctx: StepContext
     ) -> list[ParsedResult]:
         """Parse one ``.out`` into a ``ParsedResult`` (return ≥2 to fan out to an ensemble)."""
         text = output_path.read_text(encoding="utf-8", errors="replace")
-        symbols, positions, energy = _read_demoqm_out(text)  # your regexes; cf. engines/orca/output/
+        # your regexes; cf. engines/orca/output/
+        symbols, positions, energy = _read_demoqm_out(text)
         return [
             ParsedResult(
                 symbols=symbols,
@@ -280,10 +371,76 @@ __all__ = ["DemoqmEngine"]
 That's a working engine: `engine: demoqm` in a step now renders `step{N}.inp` per structure, runs
 `demoqm`, and parses each result back into the pipeline.
 
-For the real, shipped versions to copy: **`orca/`** is the `JobEngine` for an own-input-format
-program; **`pyscf/`** is a `ScriptEngine` (it overrides only `_vars_from`); **`mlip/`** adds a
-backend server. A library-only backend (e.g. a future `tblite` engine) is a `ScriptEngine` or a
-`_backend_server` backend — not a binary wrapper like this one.
+For the real, shipped versions to copy: **`qchem/`** is the closest to the engine above — a
+`JobEngine` wrapping a program with its own input format, and nothing else; **`orca/`** is the
+same kind carrying the ExtOpt and NMS machinery too; **`pyscf/`** is a `ScriptEngine` (it
+overrides only `_vars_from`); **`mlip/`** adds a backend server.
+
+Pick by how the calculation is reached, not by what it computes: a program with its own
+input format is a `JobEngine` like the one above; a Python library is a `ScriptEngine`
+(chemrefine renders a `step{N}.py` that imports it) or a `_backend_server` backend (ORCA
+drives it over the ExtOpt bridge) — never a binary wrapper.
+
+## Adding an MLIP backend
+
+A new MLIP *library* is not a new engine — the `mlip` / `mlip-extopt` / `mlip-train` engines
+drive whichever backends the registry knows. One dropped-in module under
+`engines/mlip/backends/`, auto-discovered like the engine packages, declares the library once
+and hangs its capabilities off it:
+
+```python
+from chemrefine.engines.mlip.registry import CalculatorSpec, MlipLibrary
+
+MY_MLIP = MlipLibrary(extra="mlip-my_mlip", package="my-mlip-lib", import_name="my_mlip_library")
+
+
+@MY_MLIP.calculator("my_task")
+def _build_my_mlip(spec: CalculatorSpec):
+    from my_mlip_library import MyCalculator  # imported lazily, inside the builder
+
+    return MyCalculator(model=spec.weights or spec.model_name, device=spec.device)
+
+
+@MY_MLIP.trainer("my_task")  # optional — omit if the library cannot train
+class MyTrainer(TrainerBase): ...  # or ApiTrainerBase, for API-driven libraries
+```
+
+Two obligations live outside the module, both enforced by the suite:
+
+- **The pyproject extra.** Declare `mlip-my_mlip` under `[project.optional-dependencies]` —
+  `test_every_backend_extra_is_declared_in_pyproject` fails until you do, because an extra
+  nothing installs provisions an empty environment that then dies on the backend import. If
+  the library supports only some Python versions, put a `python_version` marker on every
+  requirement of the extra and record the supported versions in `test_provision.py`'s
+  `capped` table.
+- **Fake-module tests for the builder.** The registry imports every backend module at
+  discovery, so the heavy import must stay inside the builder (an AST scan asserts it); test
+  the builder by planting fake modules in `sys.modules` — the `_install_fake_*` pattern in
+  `tests/test_engines_mlip_calculator.py`.
+
+The registry-derived gates do the rest with no edit: the missing-dependency test tries your
+tasks and expects the install hint naming the package and extra, the trainer-contract
+invariants parametrize over `registered_trainers()`, and `chemrefine backends` lists the new
+environment.
+
+### Adding a calculator knob
+
+The calculator surface is deliberately **closed**: `CalculatorSpec` is frozen with no
+catch-all `**extra`, so a knob no field names has nowhere to hide — the property that ended a
+bug class where builders silently swallowed knobs the dispatch was passing. The price is that
+a new knob is declared in four places, each visible and typed:
+
+1. `mlip/options.py` — the field on `MlipOptions`, and its name appended to
+   `CALCULATOR_KNOBS`.
+2. `mlip/registry.py` — the matching `CalculatorSpec` field (a builder that ignores it
+   ignores it *visibly*).
+3. `mlip/calculator.py` — thread it through `build_calculator` into the spec, and keep it on
+   `MlipCalculator.__init__`.
+4. `mlip/extopt_calc.py` — accept it in `MlipExtOptCalculator.__init__` and forward it.
+
+Everything downstream derives from `CALCULATOR_KNOBS` and the model: the direct engine's
+`$KNOB` template placeholder, the ExtOpt server's `--knob` CLI flag (with the model's own
+default), and the server reading it back off the parsed args — no further edits.
 
 See the [Engine Contract & Registry API](../api/engines_api.md) for the exact signatures, and
-[Architecture & Code Flow](../concepts/architecture.md) for where the lifecycle sits in the run.
+[Architecture & Code Flow](../internals/architecture.md) for where the lifecycle sits in the run.

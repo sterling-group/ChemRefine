@@ -9,13 +9,13 @@ Neither can execute code on load, which is why this is not pickle: JSON
 cannot by construction, and ``.npz`` cannot because :func:`_read_arrays`
 passes ``allow_pickle=False`` and numpy *raises* rather than running an
 object array's reduce. Coordinates round-trip byte-identically either
-way, so :func:`parents_digest` is stable across save → load.
+way, so :func:`structure_digest` is stable across save → load.
 
 The split is what makes the cache scale. Coordinates dominate a record,
 and as decimal text each float64 costs 18 bytes on disk, a ``strtod``
 call to parse and 32 bytes live; in a ``.npy`` member it costs 8 bytes,
 a memcpy and 8 bytes. ``tests/test_perf_cache.py`` measures the
-difference and ``docs/concepts/caching.md`` reports it. Structures in a
+difference and ``docs/running/caching.md`` reports it. Structures in a
 step need not share an atom count, so the arrays are concatenated with
 an offsets index rather than stacked — see :func:`_split_arrays`.
 
@@ -24,12 +24,17 @@ read it with ``jq`` or :func:`json.load`, not by eye. The per-structure
 ``.result.json`` records beside each output stay indented and keep their
 coordinates inline; those are the ones a person opens, and they are a
 few KB each.
-The cache is keyed by a SHA-1 *fingerprint* covering the step's config
-(engine, operation, options, charge, multiplicity, template, NMS flag)
-plus the parent structures that fed into the step — their IDs **and**
-their content (:func:`parents_digest`: symbols, coordinates, energy).
-If the YAML changes, or the seed file / any upstream result changes,
-the fingerprint changes and the next run re-executes the step. The
+The cache is keyed at the grain the work has (:class:`StepKey`). Each
+parent structure's job carries a *row key* (:func:`row_key`): everything
+that reaches that job — engine, operation, the options as the engine's
+declared model reads them, the effective charge and multiplicity, the
+template's and any named file's bytes — plus the parent's own content
+(:func:`structure_digest`: symbols, coordinates, energy). An NMS step
+adds a *resolution key* (:func:`resolution_keys`) that touches no row,
+and the step *fingerprint* composes the ordered rows with it. An exact
+fingerprint match serves the whole step; anything finer is asked of the
+rows, so a change to the YAML, the seed or an upstream result recomputes
+exactly the rows it reaches and adopts the rest from disk. The
 ``sample:`` filter is deliberately **excluded**: the cache stores the
 *pre-filter* results and filtering re-runs on every load, so tuning a
 filter must refilter the cached results, not redo the calculations
@@ -60,6 +65,7 @@ import json
 import logging
 import os
 import tempfile
+import zipfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -70,7 +76,7 @@ from ase import Atoms
 from numpy.typing import NDArray
 
 from chemrefine import ids
-from chemrefine.config import StepConfig
+from chemrefine.config import STEP_OPTION_PATHS, StepConfig
 from chemrefine.errors import CacheError
 from chemrefine.state import (
     FailureRecord,
@@ -118,12 +124,6 @@ class StepCache:
     operation: str | None
     parent_ids: tuple[str, ...]
     results: StepResults
-    reuse_fingerprint: str = ""
-    """Coarser fingerprint (NMS steps only) that's stable across search-param
-    tuning but not across the resolution criterion — lets ``resume`` re-attempt
-    only the unresolved parents and reuse the round-1 freq. ``""`` for steps
-    that don't use it. See :func:`reuse_fingerprint`."""
-
     on_failure: str = ""
     """The ``on_failure`` policy the stored results were finalized under.
 
@@ -143,31 +143,52 @@ class StepCache:
 # ---------------------------------------------------------------------------
 
 
-def parents_digest(structures: Sequence[Structure]) -> str:
-    """Return a 16-char SHA-1 over the parent structures' *content*.
+def _fingerprint_sha1() -> hashlib._Hash:
+    """A SHA-1 marked as a content fingerprint — the constructor form for a streamed hash.
 
-    Covers each parent's ID, chemical symbols, Cartesian coordinates (exact
-    float64 bytes — identical inputs parse to identical floats), and energy.
-    Folding this into :func:`fingerprint` is what makes the cache sensitive to
-    the structures themselves, not just their positional IDs: editing the seed
-    ``input.xyz`` (same path, same count → same IDs) or any upstream change to
-    a parent's geometry/energy must invalidate the step, or ``resume`` would
-    silently reuse results computed from the old geometry.
+    Every other hash in this module says ``usedforsecurity=False`` inline, which is what
+    lets a host whose crypto policy forbids SHA-1 *as a digest* still compute a fingerprint
+    with it. :func:`hashlib.file_digest` cannot say that: handed the name ``"sha1"`` it
+    builds the object through ``hashlib.new(...)`` with the flag left at its default, and
+    the only way to reach the flag is to hand it a constructor instead. This is that
+    constructor.
+
+    The gap it closes was invisible to review for a mechanical reason worth recording:
+    ruff's ``S324`` matches ``hashlib.sha1(...)`` by name and does not match
+    ``file_digest(handle, "sha1")``, so the lint-visible sites acquired the flag and the two
+    streamed ones did not. Nothing chose that asymmetry.
+    """
+    return hashlib.sha1(usedforsecurity=False)
+
+
+def structure_digest(s: Structure) -> str:
+    """Return a 16-char SHA-1 over one structure's *content* — its identity as an input.
+
+    Covers the ID, chemical symbols, Cartesian coordinates (exact float64 bytes —
+    identical inputs parse to identical floats), and energy. This is the geometry half
+    of a :func:`row_key`: a job is keyed to the structure it computes on, so editing a
+    seed or any upstream change to one parent's geometry/energy re-keys exactly the
+    rows that consumed it — and no others.
     """
     h = hashlib.sha1(usedforsecurity=False)  # a content fingerprint, not a digest
-    for s in structures:
-        h.update(s.id.encode())
-        h.update("".join(s.atoms.get_chemical_symbols()).encode())
-        h.update(np.asarray(s.atoms.get_positions(), dtype=np.float64).tobytes())
-        h.update(repr(s.energy_hartree).encode())
+    h.update(s.id.encode())
+    h.update("".join(s.atoms.get_chemical_symbols()).encode())
+    h.update(np.asarray(s.atoms.get_positions(), dtype=np.float64).tobytes())
+    # Through `float` first: `repr` is not a canonical spelling of a float, and a numpy
+    # scalar reprs as `np.float64(-76.4)` where the same value back from the JSON
+    # document reprs as `-76.4`. Hashed as they came, a parser handing the driver a numpy
+    # scalar gave a structure one digest in memory and another after a cache round trip,
+    # re-keying every downstream row on every resume — silently, as a recompute.
+    energy = None if s.energy_hartree is None else float(s.energy_hartree)
+    h.update(repr(energy).encode())
     return h.hexdigest()[:16]
 
 
 def template_digest(path: Path | None) -> str:
     """Return a 16-char SHA-1 over a step template's bytes; ``""`` when there is none.
 
-    The ``template_digest`` half of :func:`fingerprint`, in the module that owns cache keys —
-    the same reason :func:`reuse_fingerprint` lives here. One reader for
+    The ``template_digest`` field of every :func:`row_key`, in the module that owns cache
+    keys — the same reason :meth:`StepKey.of` lives here. One reader for
     :attr:`~chemrefine.state.StepContext.template`, so the format cannot drift between
     engines: two of them hashing the same file to different keys is not a crash, it is a step
     that silently re-runs or silently does not.
@@ -186,100 +207,178 @@ def template_digest(path: Path | None) -> str:
 
 
 def option_file_digests(options: Mapping[str, Any] | None) -> dict[str, str]:
-    """Digest every ``step.options`` value that names a file on disk, keyed by option.
+    """Digest the file each path-valued ``step.options`` knob names, keyed by option.
 
     The counterpart to :func:`template_digest` for the *other* file a step can be pinned to.
-    A step that names a model — ``model_path``, or a ``model_name`` that is a path — depends
-    on that file's contents exactly as it depends on its template, and the raw ``options``
-    dict in :func:`fingerprint` records only the *string*. Without these digests, retraining
-    a model in place would leave every consuming step's key unchanged and ``resume`` would
-    serve results computed with the previous weights — and nothing else moves that key,
-    because a training step passes its structures through untouched.
+    A step that names a model (``model_path``) depends on that file's contents exactly as
+    it depends on its template, and the ``options`` payload of a :func:`row_key` records
+    only the *string*. Without these digests, retraining a model in place would leave every
+    consuming step's key unchanged and ``resume`` would serve results computed with the
+    previous weights — and nothing else moves that key, because a training step passes its
+    structures through untouched.
 
-    Generic rather than a list of known knobs, and that is the point: it needs no
-    engine vocabulary, so a backend that invents a checkpoint knob tomorrow is covered by
-    existing rather than by remembering to edit this. The cost of the generality is bounded
-    — only values that resolve to a real file are read, and a step naming none pays nothing.
+    Which knobs are paths is :data:`chemrefine.config.STEP_OPTION_PATHS`, the one list the
+    loader resolves and :func:`chemrefine.step.derive_step_key` keys by basename; this is
+    its third reader, and the three agree by construction. Guessed from the value instead
+    — every string that happens to name an existing file — the digest pins the wrong
+    things: ``backend_python`` names an interpreter, so patching Python in place re-ran
+    every finished step of a workflow that had merely named it, and a value never meant
+    as a path resolved against the working directory, so a step keyed differently
+    depending on where the driver was launched from. A knob that names a file is declared
+    in that list, and the declaration is what makes it one.
 
-    ``model_path`` — the shipped option this exists for — arrives here already absolute: the
-    config loader resolves it against the config file's directory
-    (:func:`chemrefine.config._resolve_step_option_paths`), exactly as it resolves the
-    config's own paths, so the digest and the engine that later loads the file read the same
-    one. Any *other* value that happens to name a file resolves against the working
-    directory, nothing having declared a better anchor for it. A value that is not an
-    existing file contributes **no entry at all** rather than an empty one: "not a path" and
-    "a path that is missing" are different claims, and only the latter should later change
-    the key when the file appears.
-
-    Each file is **streamed**, not read whole. This runs on every :meth:`StepKey.of` — for
-    every step, on every run, in the driver process — and the files it is here for are model
-    checkpoints: a UMA one is 1-2 GB, and on a cluster the driver is a login node.
+    A declared path whose file is missing or unreadable contributes **no entry at all**
+    rather than an empty one: the file may be produced by an earlier step, and the key
+    should change exactly when it appears. Each file is **streamed**, not read whole. This
+    runs on every :meth:`StepKey.of` — for every step, on every run, in the driver process —
+    and the files it is here for are model checkpoints: a UMA one is 1-2 GB, and on a
+    cluster the driver is a login node.
     """
     digests: dict[str, str] = {}
-    for name, value in sorted((options or {}).items()):
+    for name in STEP_OPTION_PATHS:
+        value = (options or {}).get(name)
         if not isinstance(value, str) or not value:
             continue
         try:
-            path = Path(value)
-            if not path.is_file():
-                continue
-            with path.open("rb") as handle:
-                digests[name] = hashlib.file_digest(handle, "sha1").hexdigest()[:16]
+            with Path(value).open("rb") as handle:
+                digests[name] = hashlib.file_digest(handle, _fingerprint_sha1).hexdigest()[:16]
         except OSError:
-            # A value that merely looks like a path — too long for the filesystem, a
-            # permission wall, a dangling mount. Not a file we can pin to, and not a reason
-            # to fail a run that never asked for one.
             continue
     return digests
 
 
-def fingerprint(
-    step_cfg: StepConfig,
-    parent_ids: tuple[str, ...],
-    *,
-    parents_digest: str = "",
-    template_digest: str = "",
-    option_digests: Mapping[str, str] | None = None,
-) -> str:
-    """Return a 16-char SHA-1 over the inputs that determine a step's output.
+def aux_file_digests(references: Mapping[str, Path]) -> dict[str, str]:
+    """Digest the files a step's template references, keyed by the *written* reference.
 
-    Two runs whose YAML produces identical fingerprints are eligible for
-    cache reuse. ``parents_digest`` (see :func:`parents_digest`) ties the
-    fingerprint to the parent structures' content so a changed seed file or
-    changed upstream result invalidates the step even when the IDs match.
-    ``template_digest`` (of :attr:`~chemrefine.state.StepContext.template`)
-    ties it to the *contents* of the resolved template — editing the template
-    in place (it also drives ORCA's run-type detection when ``operation``
-    is omitted) re-runs the step, where the template basename alone could not.
-    ``option_digests`` (see :func:`option_file_digests`) does for a file an option
-    *names* what ``template_digest`` does for the template — a step consuming a trained
-    model re-runs when that model is retrained, which the path string alone could not say.
-    ``sample:`` is excluded on purpose — the cached results are pre-filter
-    and filtering re-runs on every load, so a filter-only edit is a cache
-    hit, not a re-run.
+    The third member of the file-pinning family, beside :func:`template_digest` and
+    :func:`option_file_digests`, with the latter's rationale applying verbatim: a
+    template that quotes a docking guest or point-charge file makes every job's result
+    depend on that file's bytes, while the template digest covers only the *path
+    string* — so editing the referenced file in place left every fingerprint standing
+    and ``resume`` served results computed from the old file. Which strings reference
+    which files is the engine's reading, not this module's
+    (:class:`chemrefine.engines.api.AuxFileConsuming`); this digests the enumeration it
+    is handed, streamed like :func:`option_file_digests` and with its same escape — a
+    file that cannot be read contributes no entry, and the key moves when it can be.
+
+    The key is the reference as the template writes it, **never** the resolved path:
+    resolved paths are absolute, and an absolute string inside a row key breaks the
+    guarantee a relocated tree depends on — ``rebuild-cache`` re-deriving the same keys
+    from the same bytes wherever the project now sits. The written spelling travels
+    with the template, and it also distinguishes two references whose files happen to
+    carry identical bytes today.
+    """
+    digests: dict[str, str] = {}
+    for written, path in sorted(references.items()):
+        try:
+            with path.open("rb") as handle:
+                digests[written] = hashlib.file_digest(handle, _fingerprint_sha1).hexdigest()[:16]
+        except OSError:
+            continue
+    return digests
+
+
+def _hash_payload(payload: dict[str, Any]) -> str:
+    """A 16-char SHA-1 over a compact, key-sorted JSON encoding of ``payload``.
+
+    The one encoder behind every key in this module, so two keys can never disagree
+    about how a value is spelled into bytes.
+    """
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha1(encoded, usedforsecurity=False).hexdigest()[:16]
+
+
+def row_key(
+    *,
+    engine: str,
+    operation: str | None,
+    template_digest: str,
+    charge: int,
+    multiplicity: int,
+    engine_options: Mapping[str, Any],
+    option_digests: Mapping[str, str],
+    aux_digests: Mapping[str, str],
+    parent_digest: str,
+) -> str:
+    """One structure's job identity — everything that determines *this row's* result.
+
+    The fields are exactly the config surface that can reach a job plus its geometry:
+    the engine and operation select the code, the template digest is the input text,
+    ``charge``/``multiplicity`` are the **effective** (inheritance-resolved) physics
+    inputs, ``engine_options`` is the options mapping *as the engine's own declared
+    model reads it* (``{}`` for an engine that declares none — an undeclared key can
+    reach no job), ``option_digests`` pins the bytes of any file an option names,
+    ``aux_digests`` (:func:`aux_file_digests`) the bytes of any file the template
+    references, and ``parent_digest`` (:func:`structure_digest`) is the geometry the
+    job computes on. The two digest families join the payload only when non-empty, so
+    a step naming no files keys exactly as it always has.
+
+    Deliberately absent: the NMS family (post-round-1 resolution — the resolution key's
+    business), the parent *set* (aggregation — the step fingerprint's business),
+    ``sample``/``on_failure`` (filter and policy re-run on every load), and every
+    location/scheduler knob. A row key that matches is proof the job on disk is the job
+    this configuration would submit for this parent.
     """
     payload: dict[str, Any] = {
         "format": CACHE_FORMAT_VERSION,
-        "step": step_cfg.step,
-        "engine": step_cfg.engine,
-        "operation": step_cfg.operation,
-        "options": step_cfg.options,
-        "charge": step_cfg.charge,
-        "multiplicity": step_cfg.multiplicity,
-        "template": step_cfg.template,
+        "engine": engine,
+        "operation": operation,
         "template_digest": template_digest,
-        "nms": step_cfg.nms,
-        "parent_ids": list(parent_ids),
-        "parents_digest": parents_digest,
+        "charge": charge,
+        "multiplicity": multiplicity,
+        "engine_options": dict(engine_options),
+        "parent_digest": parent_digest,
     }
-    # Added only when the step actually names a file, so a step that names none keys exactly
-    # as it did before this existed. An unconditional key would re-hash every payload in the
-    # world — every cached step invalidated at once, which reads as a bug rather than as the
-    # one narrow change it is, and would strand every recorded e2e archive.
     if option_digests:
         payload["option_digests"] = dict(option_digests)
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    return hashlib.sha1(encoded, usedforsecurity=False).hexdigest()[:16]
+    if aux_digests:
+        payload["aux_digests"] = dict(aux_digests)
+    return _hash_payload(payload)
+
+
+@dataclass(frozen=True)
+class ResolutionSpec:
+    """What an NMS step's resolution reads, split the way the machinery splits it.
+
+    ``criterion`` (``target`` / ``ts_mode_index``) decides what counts as resolved;
+    ``search`` (``displacement_value`` / ``num_random_displacements`` / ``seed``) tunes
+    how children are generated. Both mappings are the *validated* ``NmsOptions``
+    reading, passed in by the caller that owns that model — this module keys it without
+    knowing what it means. The split is load-bearing: an ``attemptK/`` resolution stays
+    honourable across a search retune (same criterion) but never across a criterion
+    change.
+    """
+
+    criterion: Mapping[str, Any]
+    search: Mapping[str, Any]
+
+
+def resolution_keys(resolution: ResolutionSpec | None) -> tuple[str, str, str]:
+    """``(resolution_key, criterion_key, search_key)`` — all ``""`` when nothing resolves.
+
+    The ``nms`` flag is expressed as this key's presence. It appears in no *row* key
+    because round-1 inputs are byte-identical with ``nms`` on or off — which is what
+    makes turning it on over a finished run cost only the displacement children. The
+    search half is what identifies those children: they have no row key of their own,
+    and their geometries follow the search knobs.
+
+    The two halves are keyed separately because they age differently on disk. A
+    *criterion* retune (``target`` / ``ts_mode_index``) changes which children are
+    selected and what counts as resolved, but never a child's geometry — so an
+    ``attemptK/`` on disk stays re-readable across it, which is ``rebuild-nms``'s
+    whole offer. A *search* retune (``displacement_value`` / ``num_random_displacements``
+    / ``seed``) changes the geometries themselves while the child ids stay the same,
+    so the same attempt answers a question this configuration never asked — the one
+    adoption ``rebuild-cache`` must refuse.
+    """
+    if resolution is None:
+        return "", "", ""
+    criterion = _hash_payload({"criterion": dict(resolution.criterion)})
+    search = _hash_payload({"search": dict(resolution.search)})
+    full = _hash_payload(
+        {"criterion": dict(resolution.criterion), "search": dict(resolution.search)}
+    )
+    return full, criterion, search
 
 
 # ---------------------------------------------------------------------------
@@ -383,7 +482,7 @@ def _require_paired(arrays: Any, document: dict[str, Any], path: Path) -> None:
     upstream of this one can see it: the records parse, and the fingerprint still matches the
     configuration, because it covers the step's *inputs* rather than what is on disk. What
     reaches the caller is a structure keeping its old energy and adopting another structure's
-    geometry — the value then feeds :func:`parents_digest`, so the wrong coordinates propagate
+    geometry — the value then feeds :func:`structure_digest`, so the wrong coordinates propagate
     into every step computed from them.
 
     Checked before :func:`_join_arrays` rather than after, because the same mismatch that
@@ -434,14 +533,16 @@ def structure_record(s: Structure) -> dict[str, Any]:
     - ``symbols``, ``positions`` — the geometry [Å]
     - ``forces_ev_per_a`` — forces [eV/Å]
     - ``imaginary_freqs`` — mode index (JSON string) → frequency [cm⁻¹]
+    - ``frequencies`` — the whole mode table, same shape, same index space
     - ``resolved_from`` — the NMS child this structure's artifacts came from
 
-    ``resolved_from`` is additive: :func:`structure_from_record` reads it with ``.get``, so a
-    record written before it existed loads as ``None`` and needs no
-    :data:`RESULT_FORMAT_VERSION` bump.
+    ``resolved_from`` and ``frequencies`` are additive: :func:`structure_from_record` reads
+    them with ``.get``, so a record written before they existed loads as ``None`` and needs
+    no :data:`RESULT_FORMAT_VERSION` bump. A tree cached before ``frequencies`` existed
+    gains it by re-parsing its outputs — that is what ``rebuild-cache`` is for.
 
     Only symbols + positions of the ``Atoms`` are stored — that is all the
-    pipeline ever reads back (and all that :func:`parents_digest` hashes).
+    pipeline ever reads back (and all that :func:`structure_digest` hashes).
     ``normal_modes`` is deliberately excluded: a transient displacement
     tensor used only during an active NMS run, which always re-parses the
     native output.
@@ -462,21 +563,34 @@ def structure_record(s: Structure) -> dict[str, Any]:
             if s.forces_ev_per_a is None
             else np.asarray(s.forces_ev_per_a, dtype=np.float64).tolist()
         ),
-        # Imaginary modes round-trip (small, useful metadata); JSON keys must be strings.
+        # The mode tables round-trip (small, useful metadata); JSON keys must be strings.
         # ``normal_modes`` is deliberately NOT persisted — it's a transient displacement tensor
         # only used during an active NMS run (which always re-parses), so a cache-reloaded
         # structure carries ``None`` (never read).
-        "imaginary_freqs": (
-            None if s.imaginary_freqs is None else {str(k): v for k, v in s.imaginary_freqs.items()}
-        ),
+        "imaginary_freqs": _freq_record(s.imaginary_freqs),
+        "frequencies": _freq_record(s.frequencies),
         "resolved_from": s.resolved_from,
     }
+
+
+def _freq_record(table: dict[int, float] | None) -> dict[str, float] | None:
+    """A mode table on its way to JSON, whose object keys can only be strings.
+
+    ``None`` is carried through rather than flattened to ``{}``: no frequency table at all
+    and a table with nothing in it are different answers, and NMS's resolution rule
+    (``nms._is_resolved``) branches on exactly that difference.
+    """
+    return None if table is None else {str(mode): cm1 for mode, cm1 in table.items()}
+
+
+def _freq_from_record(raw: Any) -> dict[int, float] | None:
+    """The inverse of :func:`_freq_record` — mode indices back to the ints they are."""
+    return None if raw is None else {int(mode): cm1 for mode, cm1 in raw.items()}
 
 
 def structure_from_record(d: dict[str, Any]) -> Structure:
     """Rebuild a :class:`Structure` from its canonical record (inverse of the above)."""
     forces = d["forces_ev_per_a"]
-    imaginary = d.get("imaginary_freqs")
     return Structure(
         id=d["id"],
         atoms=Atoms(symbols=d["symbols"], positions=d["positions"]),
@@ -485,11 +599,12 @@ def structure_from_record(d: dict[str, Any]) -> Structure:
         forces_ev_per_a=None if forces is None else np.asarray(forces, dtype=np.float64),
         converged=d["converged"],
         terminated_normally=d["terminated_normally"],
-        # Thermochemistry + imaginary modes are additive — older caches lack these keys.
+        # Thermochemistry + the mode tables are additive — older caches lack these keys.
         gibbs_hartree=d.get("gibbs_hartree"),
         enthalpy_hartree=d.get("enthalpy_hartree"),
         energy_zpe_hartree=d.get("energy_zpe_hartree"),
-        imaginary_freqs=None if imaginary is None else {int(k): v for k, v in imaginary.items()},
+        imaginary_freqs=_freq_from_record(d.get("imaginary_freqs")),
+        frequencies=_freq_from_record(d.get("frequencies")),
         resolved_from=d.get("resolved_from"),
     )
 
@@ -508,27 +623,71 @@ def save_result_records(structures: Sequence[Structure], job_dir: Path, step: in
         write_json(ids.result_record_path(job_dir, step, s.id), record)
 
 
-def _atomic_write(path: Path, data: bytes) -> None:
+_PROC_STATUS = Path("/proc/self/status")
+"""Where Linux publishes this process's umask — see :func:`_umask`."""
+
+
+def _umask() -> int:
+    """This process's umask, read without writing it.
+
+    ``os.umask`` is the only POSIX way to *read* the umask and it reads by setting it,
+    which is process-global: between the clear and the restore, anything another thread
+    creates is made with no mask at all, so a ``mkdir`` lands 0777. That window is
+    reachable rather than theoretical — the GUI is served by waitress on four threads
+    whose handlers both write through here (``agent_tools.save_config``) and call
+    ``Path.mkdir`` (``/api/save``, ``/api/scaffold``, ``/api/template``, ``/api/run``).
+
+    ``umask(2)`` names the remedy itself: since Linux 4.7 the value is published in
+    ``/proc/self/status``, and reading it changes nothing. CPython was asked for a
+    thread-safe wrapper and declined (bpo-35275, wontfix — the POSIX API has none
+    either), so this is the documented answer rather than a workaround. The probe stays
+    as the fallback for a kernel that does not publish the field; there the window is
+    back, which is the narrower of the two evils.
+    """
+    try:
+        for line in _PROC_STATUS.read_text(encoding="utf-8").splitlines():
+            if line.startswith("Umask:"):
+                return int(line.split()[1], 8)
+    except (OSError, ValueError, IndexError):
+        pass
+    mask = os.umask(0)
+    os.umask(mask)
+    return mask
+
+
+def atomic_write(path: Path, data: bytes) -> None:
     """Write ``data`` to ``path`` via a temp file + fsync + rename.
 
     The ``fsync`` is what makes the atomicity survive more than a process death: a
     rename is ordered against the data only once the data is on the device, so without
     it a machine crash (not a kill) could leave the renamed file truncated or empty —
     exactly the half-baked cache the temp-file dance exists to prevent.
+
+    Public, not underscored, because :func:`chemrefine.agent_tools.save_config` writes the
+    user's config through it: a write that must not be torn has to be able to reach the
+    writer that guarantees it, wherever the caller lives.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp_", suffix=".part")
-    # ``mkstemp`` creates 0600 and the rename preserves it — right for a private temp
-    # file, wrong for the cache document it becomes. Left alone, every ``_cache/`` file on
-    # a shared tree was owner-only: a colleague handed the outputs could read the ``.out``
-    # files but not the cache, the manifest or the failure ledger beside them. Re-moded to
-    # what a plain ``open()`` would have given — 0666 honouring the umask. (The server
-    # *token* sidecar keeps mkstemp's 0600; there the restriction is the point.)
-    mask = os.umask(0)
-    os.umask(mask)
-    os.fchmod(fd, 0o666 & ~mask)
     try:
         with os.fdopen(fd, "wb") as fh:
+            # ``mkstemp`` creates 0600 and the rename preserves it — right for a private temp
+            # file, wrong for the cache document it becomes. Left alone, every ``_cache/``
+            # file on a shared tree was owner-only: a colleague handed the outputs could read
+            # the ``.out`` files but not the cache, the manifest or the failure ledger beside
+            # them. Re-moded to what a plain ``open()`` would have given — 0666 honouring the
+            # umask. (The server *token* sidecar keeps mkstemp's 0600; there the restriction
+            # is the point.)
+            #
+            # Done through the open file rather than the bare descriptor, and inside the
+            # ``with`` rather than before it, because this is the one step here that can
+            # genuinely fail — shared filesystems and FUSE/CIFS mounts do refuse ``fchmod``.
+            # Ahead of the ``fdopen`` its failure stranded both halves: nothing owned the
+            # descriptor yet, so it leaked, and the ``finally`` had not been entered, so the
+            # ``.tmp_*.part`` stayed behind in the user's directory. One failed write in a
+            # long-lived driver is a nuisance; the GUI writes the user's config through here
+            # on four waitress threads, where it would have been one of each per attempt.
+            os.fchmod(fh.fileno(), 0o666 & ~_umask())
             fh.write(data)
             fh.flush()
             os.fsync(fh.fileno())
@@ -540,6 +699,22 @@ def _atomic_write(path: Path, data: bytes) -> None:
 #: ``json.dumps`` separators with no padding: ``{"a":1,"b":2}`` rather than ``{"a": 1, "b": 2}``.
 #: Only worth using where a document is machine-read and large — see :func:`write_json`.
 _COMPACT_SEPARATORS = (",", ":")
+
+
+def _write_cache_file(path: Path, data: bytes) -> None:
+    """:func:`atomic_write` for a ``_cache/`` document, with a failure named as the cache's.
+
+    ``atomic_write`` itself stays raw: the config writers (:func:`chemrefine.agent_tools.
+    save_config`, the GUI's save) call it for the user's own file and answer their own
+    error. Here the file is the cache's, and the docs promise "cache corrupt or unwritable"
+    the cache's exit code and the ``rebuild-cache`` advice — which the bare ``OSError`` from
+    a read-only ``_cache/`` (another account's tree, a full or read-only mount) never
+    reached: it escaped every handler as a traceback with exit 1.
+    """
+    try:
+        atomic_write(path, data)
+    except OSError as e:
+        raise CacheError(f"cannot write {path}: {e}") from e
 
 
 def write_json(path: Path, data: Any, *, indent: int | None = 2) -> None:
@@ -563,7 +738,7 @@ def write_json(path: Path, data: Any, *, indent: int | None = 2) -> None:
     means something upstream let one through.
     """
     separators = None if indent is not None else _COMPACT_SEPARATORS
-    _atomic_write(
+    _write_cache_file(
         path, json.dumps(data, indent=indent, separators=separators, allow_nan=False).encode()
     )
 
@@ -573,12 +748,12 @@ def _npz_bytes(arrays: _SidecarArrays) -> bytes:
 
     Uncompressed on purpose. A ``.npz`` is an ordinary ZIP of ``.npy`` members, and a ``.npy``
     is a short ASCII header plus the array's raw buffer — byte-identical to ``tobytes()``,
-    which is what keeps coordinates exact through save → load and :func:`parents_digest`
+    which is what keeps coordinates exact through save → load and :func:`structure_digest`
     stable. Deflating float64 coordinates buys about 5% and costs roughly twenty times the
     encode; the point of this format is that writing it is a memcpy.
 
     Going through bytes rather than writing the file directly is what lets it reuse
-    :func:`_atomic_write`, so a killed run never leaves a half-written sidecar.
+    :func:`atomic_write`, so a killed run never leaves a half-written sidecar.
     """
     buf = io.BytesIO()
     np.savez(buf, **arrays)
@@ -596,18 +771,36 @@ def _read_arrays(path: Path) -> Any:
     if not path.is_file():
         raise CacheError(f"step cache at {path.parent} has no {path.name}; rebuild the step")
     try:
-        with np.load(path, allow_pickle=False) as loaded:
+        # The handle is opened here rather than left to ``np.load``: handed a path, numpy
+        # opens the file itself and hands it to the archive reader *after* releasing its
+        # own guard on it, so a container it cannot read leaks the descriptor to the
+        # collector — a ``ResourceWarning`` on every torn sidecar. Owned by this ``with``,
+        # the handle closes on every exit below.
+        with path.open("rb") as handle, np.load(handle, allow_pickle=False) as loaded:
             return {key: loaded[key] for key in loaded.files}
-    except (OSError, ValueError) as e:
+    except (OSError, EOFError, ValueError, zipfile.BadZipFile) as e:
+        # The net is the file's layers, not a list of the failures that have been seen. A
+        # sidecar is a filesystem entry holding a ZIP container holding ``.npy`` members,
+        # and each layer refuses in its own type: the filesystem in ``OSError`` (a
+        # directory, a mode-000 file); an empty file in ``EOFError`` (nothing to sniff);
+        # a torn archive or a member whose CRC no longer matches in ``BadZipFile``; a short
+        # or garbled member in ``ValueError``, which is also numpy's refusal of an object
+        # array. Named by layer the list can be checked complete — one test per layer holds
+        # it — where a list grown from surprises let a truncated ``rsync`` reach the user
+        # as a traceback with exit 1, in place of this error and its rebuild advice.
         raise CacheError(f"corrupt coordinate sidecar at {path}: {e}") from e
 
 
 def read_json(path: Path, default: Any, *, label: str) -> Any:
     """Return the JSON parsed from ``path``, or ``default`` if it doesn't exist.
 
-    Raises :class:`CacheError` (naming ``label``) if the file is present but
-    holds malformed JSON, so callers treat a corrupt sidecar as fatal rather
-    than silently continuing from an empty state.
+    Raises :class:`CacheError` (naming ``label``) if the file is present but cannot be
+    read as JSON — malformed, not text, or not readable by this account — so callers
+    treat a corrupt or unreadable sidecar as fatal rather than silently continuing from
+    an empty state. Unreadable is in the net for the reason the lease and sidecar readers
+    give: ``is_file`` is true of a mode-000 document or another user's, and left to the
+    reader the ``PermissionError`` escaped every handler as a traceback with exit 1,
+    where the docs promise the cache's own code and the ``rebuild-cache`` advice.
     """
     if not path.is_file():
         return default
@@ -615,11 +808,49 @@ def read_json(path: Path, default: Any, *, label: str) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         raise CacheError(f"corrupt {label} at {path}: {e}") from e
+    except (OSError, ValueError) as e:
+        raise CacheError(f"unreadable {label} at {path}: {e}") from e
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+
+def _require_finite_arrays(structure: Structure, step_dir: Path) -> None:
+    """Raise :class:`CacheError` unless ``structure``'s coordinates and forces are finite.
+
+    **The half of the no-NaN promise the JSON writer cannot make.** :func:`write_json` passes
+    ``allow_nan=False``, so a non-finite value in the *document* is refused — but the
+    coordinates and forces are the one part of a record that never reaches it: they are moved
+    out by :func:`_split_arrays` and written to the ``arrays.npz`` sidecar, which is a raw
+    buffer with no such check. So the very fields the document protects most carefully were
+    the only ones that could be stored unexamined.
+
+    What that cost is not a crash but a silence. A NaN geometry round-trips ``save`` → ``load``
+    intact, and :func:`structure_digest` hashes it to a perfectly stable key, so the step
+    validates, the fingerprint matches, and every later step is computed from coordinates
+    that are not numbers — with nothing anywhere reporting a problem.
+
+    A backstop, and meant to stay one: the parse boundaries and
+    :func:`chemrefine.pipeline._state_from_frames` refuse these values where a person can act
+    on them, naming the output file or the seed row. Reaching *here* means one of those was
+    bypassed, which is why this raises rather than repairs.
+
+    Forces are held to the same rule for the reason the parse boundary gives: a non-finite
+    force is what an ``mlip-train`` step would go on to fit.
+    """
+    for field, array in (
+        ("coordinates", structure.atoms.get_positions()),
+        ("forces", structure.forces_ev_per_a),
+    ):
+        if array is not None and not np.isfinite(np.asarray(array, dtype=np.float64)).all():
+            raise CacheError(
+                f"structure {structure.id} has non-finite {field} (nan/inf) and will not be "
+                f"cached to {step_dir / '_cache'}: the sidecar would store them and every "
+                f"later step would be computed from them. This should have been refused at "
+                f"the parse boundary — please report it."
+            )
 
 
 def save(
@@ -637,7 +868,13 @@ def save(
     ``StepContext`` a caller happened to pass — and ``prev_state`` is rebound to a subset of
     the parents on the retry paths, which would key the step to a fingerprint nothing can
     match again.
+
+    Refuses a structure whose coordinates or forces are not finite — see
+    :func:`_require_finite_arrays` for why this is the one check the JSON half does not
+    already make.
     """
+    for structure in results.structures:
+        _require_finite_arrays(structure, step_dir)
     records = [structure_record(s) for s in results.structures]
     # Moves the coordinates out of `records`, leaving the metadata document behind.
     arrays = _split_arrays(records)
@@ -645,7 +882,6 @@ def save(
         "cache_format": CACHE_FORMAT_VERSION,
         "chemrefine_version": chemrefine_version,
         "fingerprint": key.fingerprint,
-        "reuse_fingerprint": key.reuse_fingerprint,
         "step": step_cfg.step,
         "name": step_cfg.name,
         "engine": step_cfg.engine,
@@ -664,86 +900,83 @@ def save(
     # `_cache/` atomic, and a step is re-saved whenever `resume` repairs one, which leaves the
     # previous document beside the new sidecar. `arrays_digest` is what makes the pair
     # provable rather than merely likely.
-    _atomic_write(_arrays_path(step_dir), _npz_bytes(arrays))
+    _write_cache_file(_arrays_path(step_dir), _npz_bytes(arrays))
     write_json(_cache_path(step_dir), document, indent=None)
     logger.info("saved step %d cache (fingerprint %s)", step_cfg.step, key.fingerprint)
 
 
-#: ``step.options`` keys that tune an NMS *search* without changing what counts as
-#: resolved. Stripped from :func:`reuse_fingerprint` so raising ``displacement_value``
-#: reuses round-1 instead of re-running it; the resolution criterion (``target`` /
-#: ``ts_mode_index``) stays in, because changing that changes the answer.
-_NMS_SEARCH_KEYS = frozenset({"displacement_value", "num_random_displacements", "seed"})
+class ManifestStamp(TypedDict):
+    """What a manifest records of the :class:`StepKey` it was written under.
 
-
-def reuse_fingerprint(
-    step_cfg: StepConfig,
-    parent_ids: tuple[str, ...],
-    *,
-    parents_digest: str = "",
-    template_digest: str = "",
-    option_digests: Mapping[str, str] | None = None,
-) -> str:
-    """A coarser :func:`fingerprint` that survives NMS search-param tuning.
-
-    Identical to :func:`fingerprint` — same content keys — but with the NMS search
-    parameters stripped from ``options``, so bumping one leaves it unchanged and
-    ``resume`` can reuse the round-1 frequencies plus the already-resolved children and
-    re-attempt only the unresolved parents. Returns ``""`` for non-NMS steps, which
-    never take that path.
-
-    Lives here rather than in :mod:`chemrefine.nms` because it is a cache-validity key,
-    and this module owns those.
-    """
-    if not step_cfg.nms:
-        return ""
-    trimmed = {k: v for k, v in (step_cfg.options or {}).items() if k not in _NMS_SEARCH_KEYS}
-    return fingerprint(
-        step_cfg.model_copy(update={"options": trimmed}),
-        parent_ids,
-        parents_digest=parents_digest,
-        template_digest=template_digest,
-        option_digests=option_digests,
-    )
-
-
-class _KeyDigests(TypedDict):
-    """The content digests both fingerprints are derived from.
-
-    A type rather than a bare dict so the two calls in :meth:`StepKey.of` can keep sharing
-    one ``**`` expansion — which is what stops them disagreeing — while each keyword still
-    type-checks against the signature it lands in.
+    A shape rather than four loose keywords because :func:`save_manifest` defaults every
+    stamp field to ``""`` — the *unprovable, adoptable* value — so a field forgotten at one
+    of its call sites is not an error but a manifest that reads as "never proven wrong"
+    and silently disarms the refusals built on it. Handed to ``save_manifest`` whole
+    (``**key.manifest_stamp()``), the only way to forget is to forget the whole stamp,
+    which is a row-less manifest and fails loud at the next resume.
     """
 
-    parents_digest: str
-    template_digest: str
-    option_digests: dict[str, str]
+    fingerprint: str
+    criterion_key: str
+    search_key: str
+    rows: dict[str, tuple[str, str]]
 
 
 @dataclass(frozen=True)
 class StepKey:
     """A step's cache identity — computed once per step, then passed around as a value.
 
-    Every route through :mod:`chemrefine.step` needs the same answer to "is the cache on
-    disk the one this configuration would write". Computed once and passed as a value, that
-    answer cannot vary between the routes; re-derived per route — hash the parents, digest
-    the template, fold both into :func:`fingerprint`, and for an NMS step
-    :func:`reuse_fingerprint` too — it is four chances to disagree. A cache written under an
-    inconsistent key does not crash: it silently re-runs work that was done, or reuses work
-    it should not have, much later.
+    Every route through :mod:`chemrefine.step` needs the same answer to "is the work on
+    disk the work this configuration would produce". Computed once and passed as a value,
+    that answer cannot vary between the routes; re-derived per route it is that many
+    chances to disagree. A cache written under an inconsistent key does not crash: it
+    silently re-runs work that was done, or reuses work it should not have, much later.
 
-    :meth:`of` takes what it needs and nothing more — no :class:`~chemrefine.state.StepContext`
-    and no engine — so ``parent_ids`` and the parents' digest come from the same argument and
-    cannot disagree, and a test can build one in a line. The component digests are
-    deliberately *not* fields: nothing downstream consumes them (:func:`save` persists the
-    fingerprints and the ids, :func:`load_if_valid` compares the fingerprint), so exposing
-    them would hand callers values they must not use and could pass on inconsistently.
+    The identity is layered the way the domain is layered. ``row_keys`` (one per parent,
+    aligned with ``parent_ids``/``parent_digests``) are the per-structure job identities
+    (:func:`row_key`); ``criterion_key``/``search_key`` are the NMS resolution's
+    identity, kept as two halves because they age differently on disk
+    (:func:`resolution_keys`, both ``""`` for a step that resolves nothing); and
+    ``fingerprint`` composes them with the step number — an exact hit means "the whole
+    step, bit for bit", while every finer question is asked of the rows.
+
+    :meth:`of` is the one place the derivation happens. The effective charge and
+    multiplicity, the engine's own reading of the options, and the resolution spec are
+    *passed in* by the caller that holds the context and the engine
+    (:func:`chemrefine.step.derive_step_key`) — this module keys values it does not
+    interpret, which is what keeps it importable by everything.
     """
 
-    parent_ids: tuple[str, ...]
-    fingerprint: str
-    reuse_fingerprint: str
-    """The NMS reuse key, or ``""`` for a step that is not NMS — see :func:`reuse_fingerprint`."""
+    parent_ids: tuple[str, ...] = ()
+    parent_digests: tuple[str, ...] = ()
+    row_keys: tuple[str, ...] = ()
+    criterion_key: str = ""
+    search_key: str = ""
+    fingerprint: str = ""
+
+    def manifest_rows(self) -> dict[str, tuple[str, str]]:
+        """``id -> (row_key, parent_digest)`` — the per-row provenance a manifest stores."""
+        return {
+            sid: (key, digest)
+            for sid, key, digest in zip(
+                self.parent_ids, self.row_keys, self.parent_digests, strict=True
+            )
+        }
+
+    def manifest_stamp(self) -> ManifestStamp:
+        """The key's projection onto a manifest: ``save_manifest(..., **key.manifest_stamp())``.
+
+        The step stamp (``fingerprint``), the two resolution halves and the row
+        provenance, in one shape, so the four routes that write a manifest cannot each
+        copy the quintet by hand and drift — :func:`save` already takes the key whole,
+        and this is the manifest's equivalent.
+        """
+        return ManifestStamp(
+            fingerprint=self.fingerprint,
+            criterion_key=self.criterion_key,
+            search_key=self.search_key,
+            rows=self.manifest_rows(),
+        )
 
     @classmethod
     def of(
@@ -751,30 +984,62 @@ class StepKey:
         step_cfg: StepConfig,
         parents: Sequence[Structure],
         template: Path | None,
+        *,
+        charge: int = 0,
+        multiplicity: int = 1,
+        engine_options: Mapping[str, Any] | None = None,
+        resolution: ResolutionSpec | None = None,
+        aux_files: Mapping[str, Path] | None = None,
     ) -> StepKey:
         """Derive the key for ``step_cfg`` run over ``parents`` with ``template``.
 
-        The one place the derivation happens. ``template`` is
-        :attr:`~chemrefine.state.StepContext.template`; ``None`` and a missing file both
-        digest to ``""`` (see :func:`template_digest`).
-
-        The files an *option* names are digested here too (:func:`option_file_digests`) and
-        for the same reason the template is: a step's identity includes the contents of every
-        file it was pointed at, not just their names. It is derived here rather than by the
-        engine that understands the knob because :mod:`chemrefine.engines` may not import this
-        module at all — a rule the subsystem is held to by test, and one this generic reader
-        is what makes keepable.
+        ``charge``/``multiplicity`` are the **effective** values (the ones jobs render),
+        not the per-step overrides — hashing the override let a workflow-level edit
+        change every job's physics while every fingerprint stood still. Their defaults
+        are the workflow defaults, so a bare call keys a default config exactly as a run
+        would. ``engine_options`` is the engine's declared model's resolved dump
+        (``None``/``{}`` for a non-declaring engine — an undeclared key can reach no
+        job); ``resolution`` is the validated NMS reading for a step that resolves,
+        else ``None``; ``aux_files`` is the engine's enumeration of the files the
+        template references, written reference → file
+        (:class:`chemrefine.engines.api.AuxFileConsuming` — empty for an engine whose
+        templates name none), digested here beside the option files.
         """
+        template_dig = template_digest(template)
+        option_digs = option_file_digests(step_cfg.options)
+        aux_digs = aux_file_digests(aux_files or {})
         parent_ids = tuple(s.id for s in parents)
-        digests: _KeyDigests = {
-            "parents_digest": parents_digest(parents),
-            "template_digest": template_digest(template),
-            "option_digests": option_file_digests(step_cfg.options),
-        }
+        parent_digs = tuple(structure_digest(s) for s in parents)
+        rows = tuple(
+            row_key(
+                engine=step_cfg.engine,
+                operation=step_cfg.operation,
+                template_digest=template_dig,
+                charge=charge,
+                multiplicity=multiplicity,
+                engine_options=dict(engine_options or {}),
+                option_digests=option_digs,
+                aux_digests=aux_digs,
+                parent_digest=digest,
+            )
+            for digest in parent_digs
+        )
+        res_key, crit_key, search_key = resolution_keys(resolution)
+        step_fingerprint = _hash_payload(
+            {
+                "format": CACHE_FORMAT_VERSION,
+                "step": step_cfg.step,
+                "rows": list(rows),
+                "resolution": res_key,
+            }
+        )
         return cls(
             parent_ids=parent_ids,
-            fingerprint=fingerprint(step_cfg, parent_ids, **digests),
-            reuse_fingerprint=reuse_fingerprint(step_cfg, parent_ids, **digests),
+            parent_digests=parent_digs,
+            row_keys=rows,
+            criterion_key=crit_key,
+            search_key=search_key,
+            fingerprint=step_fingerprint,
         )
 
 
@@ -813,7 +1078,6 @@ def load(step_dir: Path) -> StepCache | None:
             operation=data["operation"],
             parent_ids=tuple(data["parent_ids"]),
             results=StepResults(structures=tuple(structure_from_record(d) for d in records)),
-            reuse_fingerprint=data.get("reuse_fingerprint", ""),
             on_failure=data.get("on_failure", ""),
         )
     except (KeyError, TypeError, ValueError) as e:
@@ -826,8 +1090,8 @@ def load_if_valid(*, key: StepKey, step_dir: Path) -> StepCache | None:
     A single ``load`` + fingerprint compare, so a caller that needs the cached results on a
     hit (e.g. :func:`chemrefine.step._cached_outcome`) reads ``step.json`` **once** instead
     of validating and then re-loading — and there is no window in which the cache could
-    vanish between the two reads. A corrupt or absent cache returns ``None`` (treated as
-    "re-run"), never raises.
+    vanish between the two reads. A corrupt, unreadable or absent cache returns ``None``
+    (treated as "re-run"), never raises.
 
     Takes the key rather than the ingredients to derive one: the whole point of
     :class:`StepKey` is that the comparison and the write cannot use different recipes.
@@ -839,6 +1103,18 @@ def load_if_valid(*, key: StepKey, step_dir: Path) -> StepCache | None:
     if cached is None or cached.fingerprint != key.fingerprint:
         return None
     return cached
+
+
+def has_results(step_dir: Path) -> bool:
+    """Whether ``step_dir`` holds a results document — the question "is this step cached?".
+
+    The document, not the directory: ``_cache/`` also holds the manifest, the failure
+    ledger and the lease ledger, and it outlives :func:`discard_step`. A status read that
+    probed the directory reported a step ``rerun`` had just discarded as cached, and the
+    GUI drew the tick. Existence only — validity against a key is :func:`load_if_valid`'s
+    question, and it needs the key.
+    """
+    return _cache_path(step_dir).is_file()
 
 
 def invalidate(step_dir: Path) -> None:
@@ -861,7 +1137,7 @@ def discard_step(step_dir: Path) -> None:
     The difference from :func:`invalidate` is the manifest, and it is load-bearing. Together
     the two files say "this step already ran with this configuration"; the manifest alone
     says "these outputs on disk belong to this configuration", which is what
-    :func:`chemrefine.step._partial_step_outcome` reads to continue an interrupted step.
+    :func:`chemrefine.step._incremental_step_outcome` reads to continue an interrupted step.
 
     So leaving the manifest behind would make a step the user deliberately invalidated
     indistinguishable from one the driver was killed in the middle of — and ``rerun`` would
@@ -888,6 +1164,9 @@ def save_manifest(
     operation: str | None,
     engine: str,
     fingerprint: str = "",
+    criterion_key: str = "",
+    search_key: str = "",
+    rows: Mapping[str, tuple[str, str]] | None = None,
 ) -> Path:
     """Persist ``inputs`` plus step metadata to ``manifest.json``; return the path.
 
@@ -895,53 +1174,198 @@ def save_manifest(
     is what ``rerun`` / recovery rehydrates via :func:`load_manifest` after a
     restart. Written atomically, like the cache document.
 
-    ``fingerprint`` is the same key :func:`save` would store, written **before** the
-    jobs go out. It is what lets a ``resume`` after an interrupted step prove that the
-    outputs sitting on disk were produced for *this* step config and *these* parents —
-    without it there is no way to tell them from a stale leftover, so the whole step had
-    to be re-run. See :func:`chemrefine.step._partial_step_outcome`.
+    The stamp — ``fingerprint``, the two resolution halves and ``rows`` — arrives whole
+    as :meth:`StepKey.manifest_stamp` from every route that has a key. ``fingerprint``
+    is the step key :func:`save` would store, written **before** the jobs go out;
+    ``rows`` (``id -> (row_key, parent_digest)``) is the same provenance at row grain;
+    ``criterion_key``/``search_key`` are the two halves of the NMS resolution's identity
+    (:func:`resolution_keys`), stamped separately because ``resume`` and
+    ``rebuild-cache`` each ask a different half — the composed key would answer
+    neither. Together they are what lets a later ``resume`` prove, structure by
+    structure, that an output on disk is the one this configuration would compute —
+    the manifest with row provenance *is* the current-format marker
+    (:func:`load_manifest_provenance`); one without is adoptable only by the explicit
+    ``rebuild-cache``, never silently. The ``""`` defaults exist for exactly that
+    manifest: the hand-written v1 adoption record, which has no key to stamp.
     """
     path = manifest_path(step_dir)
+    provenance = rows or {}
     data = {
         "operation": operation,
         "engine": engine,
         "fingerprint": fingerprint,
+        "criterion_key": criterion_key,
+        "search_key": search_key,
         "files": [
-            {"input": str(inp), "output": str(out), "id": sid} for inp, out, sid in inputs.files
+            {
+                "input": _manifest_path_text(inp, step_dir),
+                "output": _manifest_path_text(out, step_dir),
+                "id": sid,
+                **(
+                    {"row_key": provenance[sid][0], "parent_digest": provenance[sid][1]}
+                    if sid in provenance
+                    else {}
+                ),
+            }
+            for inp, out, sid in inputs.files
         ],
     }
     write_json(path, data)
     return path
 
 
-def load_manifest_fingerprint(step_dir: Path) -> str:
-    """The fingerprint recorded alongside a step's manifest, or ``""``.
+def _manifest_path_text(path: Path, step_dir: Path) -> str:
+    """How a manifest spells a file: relative to the step directory when it lives there.
 
-    ``""`` for a manifest written before this key existed, and for a missing manifest —
-    either way it can never equal a real fingerprint, so the caller falls back to the
-    full re-run. Read separately from :func:`load_manifest` so every existing caller,
-    which wants only the file layout, is untouched.
+    Everything else about a tree is addressed relatively — ``Config.step_dir`` derives from
+    ``output_dir``, which resolves against the config file's own directory, and no key holds
+    a path — so a tree copied or moved keeps working everywhere. The manifest was the one
+    exception: spelled absolute, it named the machine the step ran on, and ``rebuild-cache``
+    and a ledgered ``rerun`` on the copy read paths that were not there. Every shipped engine
+    writes its jobs under the step directory, so the relative spelling is the normal one;
+    a file elsewhere stays absolute, and :func:`load_manifest` reads both.
     """
-    data = read_json(manifest_path(step_dir), None, label="manifest")
-    return str(data.get("fingerprint", "")) if isinstance(data, dict) else ""
+    return str(path.relative_to(step_dir)) if path.is_relative_to(step_dir) else str(path)
 
 
-def load_manifest(step_dir: Path) -> StepInputs | None:
-    """Rehydrate :class:`StepInputs` from the persisted manifest, or ``None``.
+@dataclass(frozen=True)
+class ManifestProvenance:
+    """The provable half of a manifest: the step stamp and each row's job identity.
 
-    Raises :class:`CacheError` if the JSON is malformed or is missing the
-    expected ``files`` field — callers should treat a corrupt manifest as fatal
-    rather than silently re-parsing an empty batch.
+    ``rows`` is ``id -> (row_key, parent_digest)`` for exactly the rows that carry
+    provenance; empty means the manifest predates the current rules (a pre-release tree,
+    or a hand-written v1 adoption manifest) and is *unprovable* — never proven wrong,
+    never proven right. Absence of proof routes to the explicit ``rebuild-cache``.
+    """
+
+    fingerprint: str
+    criterion_key: str
+    """The criterion half of the resolution the rows were resolved under — what decides
+    whether a passthrough's ``resolved_from`` label may be worn on *resume*, which fans
+    out fresh children (an attempt on disk predates its submission)."""
+    search_key: str
+    """The search half — what decides whether the ``attemptK/`` children themselves may
+    be re-read at all: a search retune changes the displaced geometries under unchanged
+    child ids, so an attempt from another search key answers a different question.
+    ``""`` for a manifest written before this key existed — unprovable, adoptable only
+    by the explicit ``rebuild-cache``, the row doctrine."""
+    rows: dict[str, tuple[str, str]]
+
+
+@dataclass(frozen=True)
+class _ManifestRecord:
+    """One ``files`` record of a manifest, shape-checked: the job triple and its provenance.
+
+    ``row_key`` is ``None`` for a record written without provenance — a pre-provenance
+    tree, or a hand-written v1 adoption manifest — which is a legal record, not a broken
+    one.
+    """
+
+    input: Path
+    output: Path
+    id: str
+    row_key: str | None
+    parent_digest: str
+
+
+@dataclass(frozen=True)
+class _Manifest:
+    """A manifest document as read from disk: the step stamp and every record."""
+
+    fingerprint: str
+    criterion_key: str
+    search_key: str
+    records: tuple[_ManifestRecord, ...]
+
+
+def _read_manifest(step_dir: Path) -> _Manifest | None:
+    """Read a step's manifest once, for both public readers; ``None`` when there is none.
+
+    **The one reader of the record shape.** :func:`load_manifest` projects the job
+    triples out of this reading and :func:`load_manifest_provenance` the stamp and the
+    provenanced rows, so the two cannot disagree about what a broken manifest is. Each
+    walked ``files`` on its own, each behind its own net, and the nets drifted: a record
+    without an ``id`` was the cache's error to one and a bare ``KeyError`` to the other,
+    and a document that was no object at all was corrupt to one and *unprovenanced* to
+    the other — advice that routed to ``rebuild-cache``, which reads the same file
+    through the first reader and refuses it.
+
+    A document of the wrong shape is the :class:`CacheError` every ``_cache/`` reader
+    raises — exit 7 with the cache's own advice, never a traceback. A relative entry is
+    anchored to ``step_dir`` (the spelling :func:`save_manifest` writes, which is what
+    lets a moved tree find its own outputs); an absolute one is taken verbatim, so every
+    manifest written before that spelling, and every hand-written v1 adoption manifest,
+    reads exactly as it did. ``Path.is_absolute`` tells the two apart without ambiguity.
     """
     path = manifest_path(step_dir)
     data = read_json(path, None, label="manifest")
     if data is None:
         return None
+    if not isinstance(data, dict):
+        raise CacheError(f"corrupt manifest at {path}: not a JSON object")
     try:
-        files = tuple((Path(rec["input"]), Path(rec["output"]), rec["id"]) for rec in data["files"])
+        records = tuple(
+            _ManifestRecord(
+                input=_anchor(rec["input"], step_dir),
+                output=_anchor(rec["output"], step_dir),
+                id=str(rec["id"]),
+                row_key=str(rec["row_key"]) if "row_key" in rec else None,
+                parent_digest=str(rec.get("parent_digest", "")),
+            )
+            for rec in data["files"]
+        )
     except (KeyError, TypeError) as e:
         raise CacheError(f"corrupt manifest at {path}: {e}") from e
-    return StepInputs(files=files)
+    return _Manifest(
+        fingerprint=str(data.get("fingerprint", "")),
+        criterion_key=str(data.get("criterion_key", "")),
+        search_key=str(data.get("search_key", "")),
+        records=records,
+    )
+
+
+def load_manifest_provenance(step_dir: Path) -> ManifestProvenance:
+    """The provenance recorded alongside a step's manifest; all-empty when there is none.
+
+    Read separately from :func:`load_manifest` so callers that want only the file layout
+    are untouched. All-empty covers a missing manifest and one written before these keys
+    existed alike — neither can equal a real stamp, so every reader falls back to the
+    route that recomputes. A manifest of the wrong shape is :func:`_read_manifest`'s
+    :class:`CacheError` — the same one :func:`load_manifest` raises over the same file.
+    """
+    manifest = _read_manifest(step_dir)
+    if manifest is None:
+        return ManifestProvenance(fingerprint="", criterion_key="", search_key="", rows={})
+    return ManifestProvenance(
+        fingerprint=manifest.fingerprint,
+        criterion_key=manifest.criterion_key,
+        search_key=manifest.search_key,
+        rows={
+            rec.id: (rec.row_key, rec.parent_digest)
+            for rec in manifest.records
+            if rec.row_key is not None
+        },
+    )
+
+
+def load_manifest(step_dir: Path) -> StepInputs | None:
+    """Rehydrate :class:`StepInputs` from the persisted manifest, or ``None``.
+
+    The job triples of :func:`_read_manifest`'s reading: its anchoring is what lets a
+    moved tree find its own outputs, and its :class:`CacheError` for a malformed document
+    or a record missing a field is what makes a corrupt manifest fatal rather than
+    silently re-parsed as an empty batch.
+    """
+    manifest = _read_manifest(step_dir)
+    if manifest is None:
+        return None
+    return StepInputs(files=tuple((rec.input, rec.output, rec.id) for rec in manifest.records))
+
+
+def _anchor(text: str, step_dir: Path) -> Path:
+    """A manifest entry as a path: relative ones live under ``step_dir``."""
+    path = Path(text)
+    return path if path.is_absolute() else step_dir / path
 
 
 # ---------------------------------------------------------------------------

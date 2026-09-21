@@ -17,6 +17,7 @@ Coverage:
 from __future__ import annotations
 
 import json
+import re
 import sys
 import types
 from dataclasses import replace
@@ -24,6 +25,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from _pytest.mark.structures import ParameterSet
 from ase import Atoms
 
 from chemrefine.config import StepConfig
@@ -31,7 +33,7 @@ from chemrefine.engines import _execution as submit
 from chemrefine.engines.api import ENGINES, NmsCapableEngine, get_engine
 from chemrefine.engines.mlip import registry as mlip_registry
 from chemrefine.engines.mlip.calculator import MlipCalculator, build_calculator
-from chemrefine.engines.mlip.registry import BackendSpec, MlipLibrary
+from chemrefine.engines.mlip.registry import BackendSpec, CalculatorSpec, MlipLibrary
 from chemrefine.errors import ConfigError, OutputParseError
 from chemrefine.state import PipelineState, StepContext, Structure
 
@@ -49,10 +51,10 @@ def _spec(fn) -> BackendSpec:
 
 
 def _recording_builder(seen, result):
-    """A backend builder that records the kwargs it was called with."""
+    """A backend builder that records the spec it was handed."""
 
-    def build(**kwargs):
-        seen.append(kwargs)
+    def build(spec):
+        seen.append(spec)
         return result
 
     return build
@@ -113,6 +115,25 @@ def test_orca_and_fake_are_not_provisionable():
     assert not isinstance(get_engine("fake"), ProvisionableEngine)
 
 
+def test_a_typoed_extopt_knob_is_refused_at_the_runs_preflight_walk():
+    """The ExtOpt base's strict options read, made at t=0 rather than at submit time.
+
+    ``_server_cmd`` has always validated strictly when the job script is built — this
+    step's own turn. The ``PreflightChecking`` hook on the base makes the same read
+    before any step runs, so a typo in a late ExtOpt step no longer costs the steps
+    before it.
+    """
+    from chemrefine.config import StepConfig
+    from chemrefine.engines.api import preflight_steps
+    from chemrefine.errors import ConfigError
+
+    step_cfg = StepConfig(
+        step=3, engine="mlip-extopt", options={"task_name": "mace_off", "modle": "small"}
+    )
+    with pytest.raises(ConfigError, match="modle"):
+        preflight_steps([step_cfg], charge=0, multiplicity=1)
+
+
 def test_requirement_from_options_maps_the_task_family():
     """task/task_name aliases resolve; the default (omol) is the FAIRChem env."""
     from chemrefine.engines.mlip.registry import requirement_from_options
@@ -166,8 +187,8 @@ def test_build_calculator_dispatches_by_task_name():
     ):
         result = build_calculator(task_name="mace_off", model_name="medium")
     assert result == "MACE_OFF_CALC"
-    assert seen[0]["task_name"] == "mace_off"
-    assert seen[0]["model_name"] == "medium"
+    assert seen[0].task_name == "mace_off"
+    assert seen[0].model_name == "medium"
 
 
 @pytest.mark.parametrize("task", ["mace_off", "omol"])
@@ -188,21 +209,46 @@ def test_the_checkpoint_reaches_the_builder_the_task_name_chose(tmp_path: Path, 
     ):
         result = build_calculator(task_name=task, model_name="", model_path=str(model_file))
     assert result == "CALC"
-    assert seen[0]["task_name"] == task
-    assert seen[0]["model_path"] == str(model_file)
+    assert seen[0].task_name == task
+    assert seen[0].weights == model_file  # vetted into a Path by the dispatch
 
 
-def test_a_selection_that_names_no_library_uses_the_options_default(tmp_path: Path):
-    """`build_calculator`'s default is read off `MlipOptions`, not restated beside it.
+def test_a_selection_that_names_no_library_uses_the_options_default(monkeypatch):
+    """A bare call's *signature defaults* dispatch what `MlipOptions` declares.
 
-    It is public API a user's `step{N}.py` may call without a YAML in sight, so it needs a
-    default of its own — and a second copy of the string is how a template comes to run a
-    different model from the config that describes it.
+    It is public API a user's `step{N}.py` may call without a YAML in sight, so it needs
+    defaults of its own — and a second copy of any string is how a template comes to run
+    a different model from the config that describes it. Asserting
+    `MlipOptions().task_name == DEFAULT_TASK` alone was X == X (`DEFAULT_TASK` is
+    *defined as* that field's default), and every call site in the suite passed
+    `task_name` explicitly — so a stray literal in `build_calculator`'s or
+    `MlipCalculator`'s signature survived everything while a bare template call would
+    silently run the wrong library. The dispatch is faked and the spec it receives is
+    compared to the model's own defaults, which is the property by its real seam.
     """
-    from chemrefine.engines.mlip.calculator import DEFAULT_TASK
+    from chemrefine.engines.mlip import calculator as calc_mod
     from chemrefine.engines.mlip.options import MlipOptions
 
-    assert MlipOptions().task_name == DEFAULT_TASK
+    captured: list[CalculatorSpec] = []
+
+    def fake_builder(spec: CalculatorSpec):
+        captured.append(spec)
+        return "CALC"
+
+    monkeypatch.setattr(
+        calc_mod, "backend_spec", lambda task: BackendSpec(_TEST_LIB, builder=fake_builder)
+    )
+    monkeypatch.setattr(calc_mod, "calculator_for", lambda task: fake_builder)
+
+    defaults = MlipOptions()
+    assert build_calculator() == "CALC"
+    wrapper = MlipCalculator()
+    assert wrapper.calculator == "CALC"
+    for spec in captured:
+        assert spec.task_name == defaults.task_name
+        assert spec.device == defaults.device
+        assert (spec.model_name or "") == defaults.model_name
+        assert spec.weights is None
 
 
 def test_a_trainer_only_task_cannot_be_run():
@@ -224,7 +270,7 @@ def test_a_trainer_only_task_cannot_be_run():
 
 def test_register_backend_appends_to_registry():
     """A newly registered calculator is reachable by its ``task_name`` with its metadata."""
-    _TEST_LIB.calculator("test_new_backend")(lambda **_kw: "NEW")
+    _TEST_LIB.calculator("test_new_backend")(lambda _spec_arg: "NEW")
     try:
         spec = mlip_registry.backend_spec("test_new_backend")
         assert (spec.extra, spec.package, spec.import_name) == (
@@ -241,7 +287,7 @@ def test_mlip_calculator_wrapper_routes_through_build_calculator():
     """``MlipCalculator`` is a thin alias — exercises the registry indirectly."""
     with patch.dict(
         mlip_registry._BACKENDS,
-        {"mace_off": _spec(lambda **_kw: "WRAP_CALC")},
+        {"mace_off": _spec(lambda _spec_arg: "WRAP_CALC")},
         clear=False,
     ):
         calc = MlipCalculator(task_name="mace_off", model_name="small")
@@ -258,6 +304,22 @@ def test_mlip_options_aliases_resolve_to_canonical():
     assert (b.model_name, b.task_name) == ("small", "mace_off")
     dumped = a.model_dump()
     assert dumped["model_name"] == "medium" and dumped["task_name"] == "mace_off"
+
+
+@pytest.mark.parametrize("knob", ["model_name", "model_path"])
+def test_a_model_selection_that_would_run_as_bash_is_refused(knob: str):
+    """The selection strings reach the runlog heredoc, so they obey the shell rule.
+
+    ``mlip-train`` records ``model_path or model_name`` as its ``started_from`` row —
+    the unquoted heredoc channel through which ``model_name: 'x$(…)'`` executed on the
+    compute node. Refused at the model, with the knob named, like ``executables`` and
+    ``operation`` before it; real model names and checkpoint paths carry none of these
+    characters, so the vocabulary is untouched (the alias test above still passes).
+    """
+    from chemrefine.engines.mlip.options import MlipOptions
+
+    with pytest.raises(ConfigError, match="MLIP model selection"):
+        MlipOptions.from_raw({"task_name": "mace_off", knob: "x$(touch pwned)"})
 
 
 # ---------------------------------------------------------------------------
@@ -389,6 +451,18 @@ def test_gpu_step_with_zero_gpu_budget_raises_config_error(tmp_path: Path, monke
         engine.submit(inputs, ctx)
 
 
+def test_mlip_extopt_refuses_an_infinite_gradient_timeout():
+    """`.inf` passed `gt=0` and reached the socket as a timeout Python cannot represent.
+
+    The bridge's `urlopen(timeout=inf)` raised `OverflowError` — none of the four failures it
+    classifies — so every geometry step died in the wrapper with a traceback that named
+    neither the knob nor the value. Refused at the strict read, by the field's name.
+    """
+    engine = get_engine("mlip-extopt")
+    with pytest.raises(ConfigError, match="gradient_timeout_seconds"):
+        engine.options_cls.from_raw({"gradient_timeout_seconds": float("inf")})
+
+
 def test_mlip_extopt_extra_blocks_contains_progext_pointing_to_wrapper(tmp_path: Path):
     engine = get_engine("mlip-extopt")
     ctx = _mlip_extopt_ctx(tmp_path)
@@ -413,6 +487,80 @@ def test_mlip_extopt_run_block_starts_shared_extopt_server(tmp_path: Path):
     assert ctx.executables.get("orca", "orca") in run_block
 
 
+def test_mlip_extopt_run_block_waits_through_a_backend_load(tmp_path: Path):
+    """The readiness loop counts idle seconds and loading seconds against separate ceilings.
+
+    Building the calculator — the model load, and on a cold cache the download — happens
+    before the server binds; counted against the two-minute readiness budget, a first run
+    on a slow link died as "did not become ready" for a download that would have
+    finished. The server holds a marker for the whole load, and the loop reads it.
+    """
+    from chemrefine.engines._backend_server.base import SERVER_LOADING_FILENAME
+    from chemrefine.engines.orca.extopt import run_block as rb
+
+    engine = get_engine("mlip-extopt")
+    ctx = _mlip_extopt_ctx(tmp_path)
+    body = engine.run_block(
+        ctx,
+        inp_path=ctx.step_dir / "step1_structure_0.inp",
+        out_path=ctx.step_dir / "step1_structure_0.out",
+    ).body
+    assert f'LOADING_FILE="$WORK_DIR/{SERVER_LOADING_FILENAME}"' in body
+    assert f"LOAD_TIMEOUT={rb._SERVER_LOAD_TIMEOUT_SECONDS}" in body
+    assert f"SERVER_TIMEOUT={rb._SERVER_READY_TIMEOUT_SECONDS}" in body
+    assert rb._SERVER_LOAD_TIMEOUT_SECONDS > rb._SERVER_READY_TIMEOUT_SECONDS
+    assert 'if [ -e "$LOADING_FILE" ]' in body
+    assert "still loading its backend" in body
+    assert "did not become ready" in body
+
+
+def test_mlip_extopt_nms_knobs_share_the_options_with_the_strict_server_read(tmp_path: Path):
+    """With ``nms: true`` the NMS knobs are the sampler's, not strangers to the server model.
+
+    The strict read (``extra="forbid"``) is right for a server knob — a typo must fail —
+    but the NMS knobs live in the same ``options`` mapping, and reading the whole of it
+    refused ``target: ts`` on every ExtOpt step as "Extra inputs are not permitted": an
+    engine the table marks NMS-capable could sample only with every knob at its default.
+    Both readers now take their own share, at the preflight and when the job script is
+    built; a key neither reader declares is still the strict read's to refuse.
+    """
+    engine = get_engine("mlip-extopt")
+    ctx = _mlip_extopt_ctx(tmp_path, target="ts", seed=7, ts_mode_index=0)
+    sampled = replace(ctx, step_cfg=ctx.step_cfg.model_copy(update={"nms": True}))
+
+    engine.check_step(sampled.step_cfg, charge=0, multiplicity=1)  # no raise
+    body = engine.run_block(
+        sampled,
+        inp_path=sampled.step_dir / "step1_structure_0.inp",
+        out_path=sampled.step_dir / "step1_structure_0.out",
+    ).body
+    assert "--backend mlip" in body
+
+    with pytest.raises(ConfigError, match="target"):  # nms off: the knob is a stranger
+        engine.check_step(ctx.step_cfg, charge=0, multiplicity=1)
+    typo = sampled.step_cfg.model_copy(
+        update={"options": {**sampled.step_cfg.options, "targt": "x"}}
+    )
+    with pytest.raises(ConfigError, match="targt"):
+        engine.check_step(typo, charge=0, multiplicity=1)
+
+
+def test_mlip_extopt_refuses_extra_like_every_engine_that_renders_no_template():
+    """``extra`` is for a ``step{N}.py``; an engine that renders none must not swallow it.
+
+    The docs and the field's own docstring said ``mlip-extopt`` refuses it, but the engine
+    read the direct model, whose ``extra`` is legitimate, and the server command emits
+    only the flags it knows — so the mapping was accepted and read by nothing, the silent
+    no-op the declared-key rule exists to catch. The direct engine keeps accepting it.
+    """
+    knobs = {"task_name": "mace_off", "extra": {"my_knob": 1}}
+    with pytest.raises(ConfigError, match="renders none"):
+        get_engine("mlip-extopt").check_step(
+            StepConfig(step=1, engine="mlip-extopt", options=knobs), charge=0, multiplicity=1
+        )
+    assert get_engine("mlip").options_cls.from_raw(knobs).extra == {"my_knob": 1}
+
+
 def test_mlip_extopt_run_block_has_a_readiness_loop_and_a_cleanup_hook(tmp_path: Path):
     engine = get_engine("mlip-extopt")
     ctx = _mlip_extopt_ctx(tmp_path)
@@ -432,6 +580,30 @@ def test_mlip_extopt_run_block_has_a_readiness_loop_and_a_cleanup_hook(tmp_path:
     assert "trap " not in block.cleanup
 
 
+def test_the_readiness_probe_is_the_launcher_interpreter_not_curl(tmp_path: Path):
+    """The loop polls ``/healthz`` with the Python that hosts the server; no ``curl``.
+
+    ``curl`` was the probe, and nothing declared or checked for it: on a node image without
+    one every iteration failed with exit 127, the loop ran its full 120 s, and the job died
+    with "did not become ready" — the wrong diagnosis for a missing binary. The server's
+    interpreter is resolved for the launch anyway and carries ``urllib`` by definition, so
+    the probe is a stdlib one-liner under it. With no managed env that is this interpreter.
+    """
+    import shlex
+    import sys
+
+    engine = get_engine("mlip-extopt")
+    ctx = _mlip_extopt_ctx(tmp_path)
+    body = engine.run_block(
+        ctx,
+        inp_path=ctx.step_dir / "step1_structure_0.inp",
+        out_path=ctx.step_dir / "step1_structure_0.out",
+    ).body
+    assert "curl" not in body
+    assert f'{shlex.quote(sys.executable)} -c "import sys, urllib.request; ' in body
+    assert 'urllib.request.urlopen(sys.argv[1], timeout=2)" "http://${SERVER_URL}/healthz"' in body
+
+
 def test_the_server_gets_the_steps_threads_and_orca_gets_one(tmp_path: Path):
     """The server is the compute half of an ExtOpt job; ORCA is only the stepper.
 
@@ -443,7 +615,11 @@ def test_the_server_gets_the_steps_threads_and_orca_gets_one(tmp_path: Path):
     """
     engine = get_engine("mlip-extopt")
     ctx = _mlip_extopt_ctx(tmp_path)
-    # A pal that cannot be confused with ORCA's own `OMP_NUM_THREADS=1` re-export.
+    # A pal that cannot be confused with ORCA's own `OMP_NUM_THREADS=1` re-export — and one
+    # *above* the fixture's max_cores=2, so this also pins that the export says the granted
+    # 2, not the template's 3: the `.inp` rewrite and the SLURM directives clamp, and a
+    # server threading past what the throttler charges is the oversubscription the export
+    # order exists to prevent.
     assert ctx.template is not None
     ctx.template.write_text("! B3LYP def2-SVP\n%pal nprocs 3 end\n", encoding="utf-8")
     body = engine.run_block(
@@ -452,18 +628,19 @@ def test_the_server_gets_the_steps_threads_and_orca_gets_one(tmp_path: Path):
         out_path=ctx.step_dir / "step1_structure_0.out",
     ).body
 
-    pal_export = body.index("export OMP_NUM_THREADS=3\n")
+    pal_export = body.index("export OMP_NUM_THREADS=2\n")
     server_start = body.index("SERVER_PID=$!")
     orca_export = body.index("export OMP_NUM_THREADS=1\n")
     assert pal_export < server_start < orca_export
-    assert "export MKL_NUM_THREADS=3\n" in body
+    assert "export MKL_NUM_THREADS=2\n" in body
+    assert "NUM_THREADS=3" not in body
 
 
 def test_mlip_extopt_prepare_writes_inp_with_method_block(tmp_path: Path):
     engine = get_engine("mlip-extopt")
     ctx = _mlip_extopt_ctx(tmp_path)
     inputs = engine.prepare(ctx)
-    inp_text = inputs.files[0][0].read_text()
+    inp_text = inputs.files[0][0].read_text(encoding="utf-8")
     assert "%method" in inp_text
     assert "ProgExt" in inp_text
 
@@ -480,9 +657,34 @@ def test_mlip_extopt_prepare_materializes_executable_wrapper(tmp_path: Path):
     assert wrapper.is_file()
     assert os.access(wrapper, os.X_OK)
 
-    text = wrapper.read_text()
+    text = wrapper.read_text(encoding="utf-8")
     assert "chemrefine.engines.orca.extopt.bridge" in text
     assert "--backend mlip" in text
+
+
+def test_the_gradient_timeout_reaches_the_wrapper_and_zero_is_refused(tmp_path: Path):
+    """``gradient_timeout_seconds`` is the bridge's ``--timeout``, baked into the wrapper.
+
+    The bound used to be a constant in the bridge, so a slow but healthy DFT-sized
+    gradient could only be waited out by editing the package. It is a step knob now, read
+    over the engine's share of the options like every strict read in this family.
+    """
+    engine = get_engine("mlip-extopt")
+    engine.prepare(_mlip_extopt_ctx(tmp_path))
+    assert "--timeout 600 " in engine._wrapper_path(_mlip_extopt_ctx(tmp_path)).read_text(
+        encoding="utf-8"
+    )
+
+    longer = _mlip_extopt_ctx(tmp_path / "longer", gradient_timeout_seconds=900)
+    engine.prepare(longer)
+    assert "--timeout 900 " in engine._wrapper_path(longer).read_text(encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="gradient_timeout_seconds"):
+        engine.check_step(
+            _mlip_extopt_ctx(tmp_path, gradient_timeout_seconds=0).step_cfg,
+            charge=0,
+            multiplicity=1,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -491,18 +693,21 @@ def test_mlip_extopt_prepare_materializes_executable_wrapper(tmp_path: Path):
 
 
 def test_mlip_extopt_calculator_from_args_builds_instance():
-    """``from_args`` should consume the shared server CLI namespace."""
+    """``from_args`` consumes the shared server CLI namespace: its flags reach the builder."""
     from chemrefine.engines._backend_server.server import parse_args
     from chemrefine.engines.mlip.extopt_calc import MlipExtOptCalculator
 
     args = parse_args(["--backend", "mlip", "--model", "small", "--task-name", "mace_off"])
+    seen: list[CalculatorSpec] = []
     with patch.dict(
         mlip_registry._BACKENDS,
-        {"mace_off": _spec(lambda **_kw: "MACE_CALC")},
+        {"mace_off": _spec(_recording_builder(seen, "MACE_CALC"))},
         clear=False,
     ):
         calc = MlipExtOptCalculator.from_args(args)
     assert calc.name == "mlip"
+    [spec] = seen
+    assert (spec.task_name, spec.model_name, spec.weights) == ("mace_off", "small", None)
 
 
 def test_mlip_add_cli_args_registers_mlip_flags_with_pydantic_defaults():
@@ -618,7 +823,7 @@ def test_mlip_extopt_calculator_calc_converts_units():
     with (
         patch.dict(
             mlip_registry._BACKENDS,
-            {"mace_off": _spec(lambda **_kw: object())},  # sentinel calculator
+            {"mace_off": _spec(lambda _spec_arg: object())},  # sentinel calculator
             clear=False,
         ),
         # 1 eV/Å on x (the gradient already in eV/Å)
@@ -648,7 +853,7 @@ def test_mlip_extopt_calculator_calc_stamps_charge_and_spin():
     with (
         patch.dict(
             mlip_registry._BACKENDS,
-            {"omol": _spec(lambda **_kw: object())},
+            {"omol": _spec(lambda _spec_arg: object())},
             clear=False,
         ),
         patch.object(MlipCalculator, "single_point", _capture),
@@ -724,10 +929,10 @@ def test_mlip_direct_prepare_renders_one_py_and_xyz_per_structure(tmp_path: Path
         assert script_path.name == f"step1_{sid}.py"
         assert output_json.name == f"step1_{sid}.json"
         assert (script_path.parent / f"{script_path.stem}_inp.xyz").is_file()
-        rendered = script_path.read_text()
+        rendered = script_path.read_text(encoding="utf-8")
         assert "$XYZ_PATH" not in rendered
         assert "$CHARGE" not in rendered
-        assert f"with open('{output_json.name}', \"w\")" in rendered
+        assert f'with open(\'{output_json.name}\', "w", encoding="utf-8")' in rendered
 
 
 def test_mlip_direct_substitutes_option_placeholders(tmp_path: Path):
@@ -757,7 +962,7 @@ def test_mlip_direct_substitutes_option_placeholders(tmp_path: Path):
         slurm_template="cpu.slurm.header",
         executables={},
     )
-    rendered = get_engine("mlip").prepare(ctx).files[0][0].read_text()
+    rendered = get_engine("mlip").prepare(ctx).files[0][0].read_text(encoding="utf-8")
     assert "model = 'medium'" in rendered
     assert "task = 'mace_off'" in rendered
     assert "device = 'cpu'" in rendered
@@ -790,7 +995,7 @@ def test_mlip_direct_substitutes_option_aliases(tmp_path: Path):
         slurm_template="cpu.slurm.header",
         executables={},
     )
-    rendered = get_engine("mlip").prepare(ctx).files[0][0].read_text()
+    rendered = get_engine("mlip").prepare(ctx).files[0][0].read_text(encoding="utf-8")
     assert "model = 'large'" in rendered
     assert "task = 'mace_mp'" in rendered
 
@@ -816,7 +1021,7 @@ def test_mlip_direct_submit_runs_template_locally_when_no_sbatch(tmp_path: Path)
     assert all(jid.startswith("local-") for jid in batch.jobs.values())
     output_json = inputs.files[0][1]
     assert output_json.is_file()
-    data = json.loads(output_json.read_text())
+    data = json.loads(output_json.read_text(encoding="utf-8"))
     assert data["energy_hartree"] == pytest.approx(-2.0)
 
 
@@ -850,7 +1055,7 @@ def test_mlip_direct_parse_raises_when_output_not_json(tmp_path: Path):
     output_json = inputs.files[0][1]
     output_json.parent.mkdir(parents=True, exist_ok=True)
     output_json.write_text("not json", encoding="utf-8")
-    with pytest.raises(OutputParseError, match="not valid JSON"):
+    with pytest.raises(OutputParseError, match="not a UTF-8 JSON document"):
         engine.parse(inputs, ctx)
 
 
@@ -904,15 +1109,21 @@ def test_mlip_direct_submit_respects_cores_option(tmp_path: Path):
     inputs = engine.prepare(ctx)
     with patch("chemrefine.slurm.dispatch.shutil.which", return_value=None):
         engine.submit(inputs, ctx)
-    script_text = inputs.files[0][0].with_suffix(".slurm").read_text()
-    assert "#SBATCH --ntasks=2" in script_text
+    # One task with the configured CPUs — the threads spelling every script engine uses.
+    script_text = inputs.files[0][0].with_suffix(".slurm").read_text(encoding="utf-8")
+    assert "#SBATCH --ntasks=1" in script_text
+    assert "#SBATCH --cpus-per-task=2" in script_text
+    assert "--ntasks=2" not in script_text
 
 
 # --- orb backend success path (mock the optional library) -------------------
 
 
 def test_build_orb_success_path(monkeypatch):
-    pretrained = types.SimpleNamespace(orb_v2=MagicMock(return_value="ORBFF"))
+    """The v3 layout, whose loaders return ``(model, atoms_adapter)``: the model is what
+    reaches the calculator, and the step's device reaches both the loader and the
+    calculator — asserted on the calls, not on the mock's own return value."""
+    pretrained = types.SimpleNamespace(orb_v2=MagicMock(return_value=("ORBFF", "ADAPTER")))
     forcefield = types.ModuleType("orb_models.forcefield")
     forcefield.pretrained = pretrained
     calc_mod = types.ModuleType("orb_models.forcefield.inference.calculator")
@@ -926,30 +1137,59 @@ def test_build_orb_success_path(monkeypatch):
         monkeypatch.setitem(sys.modules, name, mod)
 
     from chemrefine.engines.mlip.backends.orb import _build_orb
+    from chemrefine.engines.mlip.registry import CalculatorSpec
 
-    assert _build_orb(model_name="orb_v2", device="cpu") == "ORB_CALC"
+    spec = CalculatorSpec(task_name="orb", model_name="orb_v2", device="cuda", weights=None)
+    assert _build_orb(spec) == "ORB_CALC"
+    pretrained.orb_v2.assert_called_once_with(device="cuda")
+    calc_mod.ORBCalculator.assert_called_once_with("ORBFF", device="cuda")
 
 
 # --- orb older-layout fallback ----------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "task, lib, package, extra",
-    [
-        ("mace_off", "mace", "mace-torch", "mlip-mace"),
-        ("omol", "fairchem", "fairchem-core", "mlip-fairchem"),
-        ("sevenn", "sevenn", "sevenn", "mlip-sevenn"),
-        ("chgnet", "chgnet", "chgnet", "mlip-chgnet"),
-        ("orb", "orb_models", "orb-models", "mlip-orb"),
-    ],
-)
-def test_backend_missing_dependency_names_the_extra(task, lib, package, extra, monkeypatch):
-    """A missing backend lib → a helpful ImportError naming the package + extra."""
+def _runnable_libraries() -> list[ParameterSet]:
+    """One row per runnable library: its import name, package, extra, and every task.
+
+    Derived from the registry so a new backend joins this gate by registering — these
+    rosters were spelled by hand before, and a new library was silently untested. Only
+    libraries with a calculator builder appear: a trainer-only registration has no lazy
+    calculator import for this test to break.
+    """
+    by_extra: dict[str, tuple[str, str, list[str]]] = {}
+    for task in sorted(mlip_registry.registered_backends()):
+        spec = mlip_registry.backend_spec(task)
+        if spec.builder is None:
+            continue
+        by_extra.setdefault(spec.extra, (spec.import_name, spec.package, []))[2].append(task)
+    return [
+        pytest.param(lib, package, extra, tasks, id=extra)
+        for extra, (lib, package, tasks) in sorted(by_extra.items())
+    ]
+
+
+@pytest.mark.parametrize("lib, package, extra, tasks", _runnable_libraries())
+def test_backend_missing_dependency_names_the_extra(lib, package, extra, tasks, monkeypatch):
+    """A missing backend lib → a helpful ImportError naming the package + extra.
+
+    Every task of the library is tried: one whose builder refuses before its lazy
+    import (``custom_mace`` with nothing to load) may raise its own ConfigError, but at
+    least one task per library must reach the import and surface the install hint.
+    """
     monkeypatch.setitem(sys.modules, lib, None)  # force the lazy import to fail
     from chemrefine.engines.mlip.calculator import build_calculator
 
-    with pytest.raises(ImportError, match=f"{package}.*{extra}"):
-        build_calculator(task_name=task, model_name="x")
+    hints: list[str] = []
+    for task in tasks:
+        try:
+            build_calculator(task_name=task, model_name="x")
+        except ImportError as exc:
+            hints.append(str(exc))
+        except ConfigError:
+            continue  # a pre-import refusal is that builder's own documented business
+    assert hints, f"no {extra} task reaches its lazy import — the install hint can never fire"
+    for hint in hints:
+        assert re.search(f"{package}.*{extra}", hint), hint
 
 
 def test_build_orb_older_layout(monkeypatch):
@@ -969,5 +1209,9 @@ def test_build_orb_older_layout(monkeypatch):
         monkeypatch.setitem(sys.modules, name, mod)
 
     from chemrefine.engines.mlip.backends.orb import _build_orb
+    from chemrefine.engines.mlip.registry import CalculatorSpec
 
-    assert _build_orb(model_name="orb_v2", device="cpu") == "OLD_CALC"
+    spec = CalculatorSpec(task_name="orb", model_name="orb_v2", device="cpu", weights=None)
+    assert _build_orb(spec) == "OLD_CALC"
+    # A bare-model loader, the older layout: the same device discipline holds.
+    older_calc.ORBCalculator.assert_called_once_with("ORBFF", device=spec.device)

@@ -24,10 +24,11 @@ from pathlib import Path
 from typing import ClassVar
 
 from ase import Atoms
+from ase.data import atomic_numbers
 
 from chemrefine.engines import _execution
-from chemrefine.engines._options import EngineOptions
-from chemrefine.engines.api import CompletionSink, ParsedResult, RunBlock
+from chemrefine.engines.api import CompletionSink, OptionsDeclaring, ParsedResult, RunBlock
+from chemrefine.errors import OutputParseError
 from chemrefine.ids import (
     allocate_child_ids,
     input_geometry_path,
@@ -46,29 +47,6 @@ from chemrefine.state import (
 )
 
 
-def gpus_from_options(
-    options: dict[str, object] | None,
-    options_cls: type[EngineOptions] = EngineOptions,
-) -> int:
-    """1 if the step's **validated** options request a GPU, else 0.
-
-    Reads through ``options_cls`` rather than off the raw dict, because the raw dict and
-    the model disagree about what "unset" means: ``options.get("device", "")`` yielded no
-    GPU while ``EngineOptions.device`` defaulted to ``cuda``, so a step that named no
-    device rendered ``$DEVICE=cuda`` into its script while being scheduled as a CPU job on
-    the CPU header — and it bypassed both the GPU budget and
-    :meth:`~chemrefine.throttle.Throttler.assign_device`, so concurrent local steps piled
-    onto device 0. One reader, one default.
-
-    ``options_cls`` is the engine's own model, so a backend that expresses the request
-    differently is honoured without this helper knowing about it: PySCF's ``gpu`` (try
-    gpu4pyscf) is a :class:`~chemrefine.engines.pyscf.options.PyscfOptions` field derived
-    from ``device``, and ``getattr`` picks it up for engines that declare it.
-    """
-    opts = options_cls.from_raw_lenient(options)
-    return 1 if opts.device == "cuda" or bool(getattr(opts, "gpu", False)) else 0
-
-
 def build_structures(
     parsed_per_input: Sequence[tuple[str, list[ParsedResult]]],
     prev_state: PipelineState,
@@ -80,7 +58,7 @@ def build_structures(
     produced it; a 1:1 child inherits the input's own ``parent_id``. Engine-independent — the
     one home for a step's fan-out + ID lineage.
     """
-    prev_by_id = {s.id: s for s in prev_state.structures}
+    prev_by_id = prev_state.by_id
     parents = [sid for sid, _ in parsed_per_input]
     fanouts = [len(parsed) for _, parsed in parsed_per_input]
     child_ids = iter(allocate_child_ids(parents, fanouts))
@@ -90,6 +68,7 @@ def build_structures(
         input_struct = prev_by_id.get(sid)
         is_fanout = len(parsed) > 1
         for ps in parsed:
+            _require_elements(ps.symbols, sid)
             child_parent = (
                 sid if is_fanout else (input_struct.parent_id if input_struct is not None else None)
             )
@@ -106,10 +85,31 @@ def build_structures(
                     enthalpy_hartree=ps.enthalpy_hartree,
                     energy_zpe_hartree=ps.energy_zpe_hartree,
                     imaginary_freqs=ps.imaginary_freqs,
+                    frequencies=ps.frequencies,
                     normal_modes=ps.normal_modes,
                 )
             )
     return StepResults(structures=tuple(out))
+
+
+def _require_elements(symbols: Sequence[str], sid: str) -> None:
+    """Refuse a symbol that names no element, as this job's parse failure.
+
+    The readers hand symbols through as the program printed them, and only the
+    :class:`~ase.Atoms` built below judges them — with a ``KeyError``, which is outside the
+    family :func:`chemrefine.lifecycle._parse_job` contains. Left to it, one dummy centre
+    (a constraint anchor a program prints as ``XX``) ended the whole run in a traceback and
+    discarded the successes of the same step, which were about to be cached. Judged here,
+    beside the construction and for every engine at once, it is this structure's ledgered
+    failure, naming what it saw. A ghost centre is a different case and cannot be caught:
+    a program prints it with its element's own symbol, so it reads as an atom.
+    """
+    unknown = sorted({s for s in symbols if s not in atomic_numbers})
+    if unknown:
+        raise OutputParseError(
+            f"job {sid}: symbol(s) {unknown} in the coordinate table are not chemical "
+            f"elements — a dummy centre, which ChemRefine cannot carry as an atom"
+        )
 
 
 class JobEngine(abc.ABC):
@@ -120,6 +120,28 @@ class JobEngine(abc.ABC):
     ``NotImplementedError``, a subclass missing ``parse_one`` still satisfies ``isinstance``,
     still registers, and still submits every job of a step before anything notices.
     """
+
+    required_declarations: ClassVar[tuple[str, ...]] = (
+        "name",
+        "label",
+        "template_suffix",
+        "output_suffix",
+        "output_globs",
+    )
+    """The ClassVars below that a concrete engine must define — checked by
+    :func:`~chemrefine.engines.api.register` at its decorator line.
+
+    ``abstractmethod`` already fails an incomplete subclass at construction, which is where
+    ``get_engine`` builds it — but it watches *methods*. The names below are bare annotations,
+    which no ``ABCMeta`` machinery sees: unset, ``output_suffix`` surfaces as a bare
+    ``AttributeError`` inside ``prepare``, and ``template_suffix`` stops the engine satisfying
+    :class:`~chemrefine.engines.api.TemplateDriven`, so the step reports the user's template as
+    missing while it sits on disk. Naming them here is the same move
+    :meth:`chemrefine.engines.mlip.registry.MlipLibrary.trainer` makes with its
+    ``required = [...]``, and for the same stated reason.
+
+    A base extends the tuple rather than replacing it, so a kind's requirements accumulate
+    down the chain (see :class:`~chemrefine.engines.orca.extopt.engine.ExtOptOrcaEngine`)."""
 
     name: ClassVar[str]
     label: ClassVar[str]
@@ -219,9 +241,43 @@ class JobEngine(abc.ABC):
     def pal(self, ctx: StepContext) -> int:
         """Per-job core count (PAL) before the scheduler clamps it to ``max_cores``."""
 
+    def slurm_layout(self, ctx: StepContext) -> tuple[int, int]:
+        """The MPI-ranks spelling ``(min(pal, max_cores), 1)`` — the default, for MPI programs.
+
+        One task per core, clamped to the budget exactly as the scheduler always has; the
+        clamp lives here rather than in the scheduler so an override cannot silently
+        disagree with it. A threaded engine overrides this to ``(1, threads)`` — N tasks
+        with one CPU each can be granted across nodes, where a single threaded process can
+        only use the first node's share.
+        """
+        return (min(self.pal(ctx), ctx.max_cores), 1)
+
+    def single_node(self, ctx: StepContext) -> bool:
+        """No: an MPI job's ranks may span nodes, and a threaded job is one task anyway."""
+        return False
+
     def gpus(self, ctx: StepContext) -> int:
-        """GPUs this job needs (default ``0`` = CPU); GPU engines override."""
+        """GPUs one job needs: what the step's validated options ask for, ``0`` otherwise.
+
+        The question is the model's — :attr:`~chemrefine.engines._options.EngineOptions.
+        gpu_demand` — asked here once for every job engine that declares a model, through
+        :attr:`options_cls`: the same model the engine renders its template from and the
+        ExtOpt server validates against, so the step's GPU demand, its SLURM header and its
+        script can never disagree about what ``device`` was asked for. An engine configured
+        through its template alone (ORCA) declares no model and asks for none.
+        """
+        if isinstance(self, OptionsDeclaring):
+            return self.options_cls.from_raw_lenient(ctx.step_cfg.options).gpu_demand
         return 0
+
+    def memory_mb(self, ctx: StepContext) -> int | None:
+        """Total MB one job requires; ``None`` (the default) leaves the header's policy alone.
+
+        An engine whose input declares its memory — ORCA's ``%maxcore``, Q-Chem's
+        ``mem_total`` — overrides this with that declaration (plus its own headroom rule),
+        and the script builder then extends a header allocation that falls short of it.
+        """
+        return None
 
     def output_dirs(self, ctx: StepContext) -> tuple[str, ...]:
         """Scratch sub-directories to copy back wholesale (default none)."""

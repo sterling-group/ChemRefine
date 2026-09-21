@@ -18,7 +18,9 @@ Only a ``stop`` step leaves failures pending — and these actions recover them:
 * ``rerun [step]`` — redo one whole step from scratch; every other step resumes, so one
   whose fingerprint no longer holds re-executes too.
 * ``rebuild-cache [step]`` — rebuild one step's cache from outputs already on
-  disk (parse only, no submission). The run ends at that step.
+  disk (parse only, no submission). The steps after it are re-reported from
+  their caches, stopping quietly at the first one the configuration can no
+  longer serve.
 * ``rebuild-nms [step]`` — the same rebuild, aimed at the NMS step (the one setting
   ``nms: true``, rather than the last step every other action defaults to). Round 1 is
   re-parsed and its displaced children re-read from the ``attemptK/`` they ran in, so
@@ -33,14 +35,21 @@ from enum import StrEnum
 
 from chemrefine import cache, pipeline
 from chemrefine.config import Config, StepConfig
-from chemrefine.errors import ChemRefineError
+from chemrefine.errors import ChemRefineError, ConfigError
 from chemrefine.step import RunPlan, StepMode
 
 logger = logging.getLogger(__name__)
 
 
 class Action(StrEnum):
-    """Lifecycle action requested by the CLI."""
+    """Lifecycle action requested by the CLI — the recovery vocabulary, in one place.
+
+    Everything that speaks it reads it from here: the CLI's subcommands, the agent's
+    ``start_run``, the GUI's Run panel (through the schema document, see
+    :func:`describe_actions`) and the tests that hold the agent guide to it. What a member
+    means to a caller is a property below rather than a roster kept beside the enum, in
+    another language, that a new member would have to be added to by hand.
+    """
 
     RUN = "run"
     RESUME = "resume"
@@ -49,12 +58,73 @@ class Action(StrEnum):
     RERUN = "rerun"
     RERUN_ERRORS = "rerun-errors"
 
+    @property
+    def takes_target(self) -> bool:
+        """Whether the action aims at one step; ``run`` and ``resume`` drive the whole pipeline.
+
+        Held to the CLI by ``tests/test_cli.py``: the subcommand of the same name declares a
+        ``target`` argument exactly when this says so.
+        """
+        return self not in (Action.RUN, Action.RESUME)
+
+    @property
+    def label(self) -> str:
+        """The action as a button reads it."""
+        return _DESCRIPTIONS[self][0]
+
+    @property
+    def blurb(self) -> str:
+        """What the action does, in the words a confirmation dialog uses."""
+        return _DESCRIPTIONS[self][1]
+
+
+_DESCRIPTIONS: dict[Action, tuple[str, str]] = {
+    Action.RUN: ("Run", "start the full pipeline from step 1, ignoring the cache"),
+    Action.RESUME: ("Resume", "carry on where the tree left off, honouring the cache"),
+    Action.REBUILD_CACHE: (
+        "Rebuild cache",
+        "re-parse the outputs already on disk — submits nothing",
+    ),
+    Action.REBUILD_NMS: ("Rebuild NMS", "redo the normal-mode resolution from the outputs on disk"),
+    Action.RERUN: ("Rerun", "recompute, discarding what is cached for it"),
+    Action.RERUN_ERRORS: ("Rerun errors", "re-attempt the ledgered failures, then carry on"),
+}
+"""Label and blurb per action — beside the enum, held complete by ``tests/test_recovery.py``.
+
+A dialog that misdescribes what it confirms is worse than none, so each member's sentence is
+its own; a member without one fails the test rather than reaching a page as ``undefined``.
+"""
+
+
+def describe_actions() -> list[dict[str, object]]:
+    """The vocabulary as the schema document carries it: one record per action.
+
+    ``name`` is the spelling every entry point takes, ``label`` how a button reads it,
+    ``blurb`` what a confirmation says it does, ``takes_target`` whether it aims at a step.
+    Served rather than restated: the GUI's Run panel renders its buttons and confirms its
+    dialogs from this list, so an action added here reaches the page with no edit there —
+    the same way a new engine reaches the engine dropdown.
+    """
+    return [
+        {"name": a.value, "label": a.label, "blurb": a.blurb, "takes_target": a.takes_target}
+        for a in Action
+    ]
+
 
 def resolve_target(config: Config, key: str | int) -> StepConfig:
-    """Look up a step by number or name; raise if missing."""
+    """Look up a step by number or name; raise :class:`ConfigError` if missing.
+
+    **The one step lookup.** The CLI's targets, the agent tools' ``step`` arguments and
+    the GUI behind them all resolve here, so one typo gets one refusal, and the refusal
+    lists what would have matched — spelled per caller, the copies drifted, and the
+    agent's answer was the one without the list. A :class:`~chemrefine.errors.ConfigError`
+    — exit 2, the documented "config invalid" code — because a target no step matches is
+    a mistake about the config's own vocabulary; as the base :class:`ChemRefineError` the
+    same typo exited 1 from the CLI and 2 from the agent tools.
+    """
     step = config.find_step(key)
     if step is None:
-        raise ChemRefineError(
+        raise ConfigError(
             f"no step matches {key!r}; available: {[s.dir_name() for s in config.steps]}"
         )
     return step
@@ -160,13 +230,15 @@ def _action_rerun_errors(config: Config, target: str | int | None) -> None:
 
 
 def _rebuild_plan(step_cfg: StepConfig) -> RunPlan:
-    """Re-parse ``step_cfg`` from the outputs on disk, submit nothing, and end there.
+    """Re-parse ``step_cfg`` from the outputs on disk, submitting nothing anywhere.
 
     What both rebuild actions mean, held in one place because they differ only in which step
     they aim at. Earlier steps cache-hit to supply the upstream state; the target is
     re-parsed (and, for NMS, re-resolved from the round-2 outputs already under its
-    ``attemptK/``); the steps after it are not this command's business — ``CACHE_ONLY``
-    raises for a cache a step that never ran cannot have, and resuming would submit.
+    ``attemptK/``); the steps after it are re-reported best-effort — served from their
+    caches when the current configuration still matches them, and ending the run quietly at
+    the first one it cannot serve (see :attr:`~chemrefine.step.RunPlan.stop_after`), so the
+    cumulative report never silently loses rows the tree can still vouch for.
     """
     return RunPlan(
         default=StepMode.CACHE_ONLY,
@@ -256,5 +328,15 @@ def execute(
     if handler is None:
         raise ChemRefineError(f"unknown action: {action!r}")
     with pipeline.run_lock(config.output_dir):
+        # Before the handler, not inside `pipeline.run`'s own (reentrant) turn, for two
+        # reasons. A refusal must land before anything mutates: `run` and `rerun`
+        # discard caches and manifests ahead of `pipeline.run`, and a fence that fired
+        # only inside it would leave a refused command having destroyed state on the
+        # way to being refused — the tree must be exactly as found. And no mutation may
+        # happen while a dead driver's jobs still write into the tree, which is what the
+        # fence is asking. (The invalidation touches only step.json, step.pkl and the
+        # manifest; the lease ledgers survive it, so the inner fence re-reads the same
+        # evidence and finds it already swept.)
+        pipeline.require_no_live_jobs(config)
         handler(config, target)
     return 0
