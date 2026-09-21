@@ -35,6 +35,7 @@ TESTS_ONLY = {
     "mapper": {"two_qubit_reduction"},
     "algorithm": {"gradient_threshold", "eigenvalue_threshold", "max_iterations", "reps"},
     "ansatz": {
+        "excitations",
         "entanglement",
         "flatten",
         "generalized",

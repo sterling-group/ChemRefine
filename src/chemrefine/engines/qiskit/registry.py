@@ -114,7 +114,9 @@ REGISTRIES: dict[str, ComponentRegistry] = {
 }
 
 
-def validate_component_graph(options: QiskitOptions) -> None:
+def validate_component_graph(
+    options: QiskitOptions, *, operator_pool_supplied: bool = False
+) -> None:
     """Validate names, per-component options, and algorithm/ansatz compatibility."""
     for category, selection in options.component_selections().items():
         REGISTRIES[category].options_for(selection)
@@ -123,7 +125,8 @@ def validate_component_graph(options: QiskitOptions) -> None:
     ansatz = ANSATZE.spec(options.ansatz.name)
     estimator = ESTIMATORS.spec(options.estimator.name)
     component_requirements = {"estimator", "optimizer", "initial_state", "initial_point"}
-    missing = algorithm.requires - ansatz.capabilities - component_requirements
+    capabilities = ansatz.capabilities | ({"operator_pool"} if operator_pool_supplied else set())
+    missing = algorithm.requires - capabilities - component_requirements
     if missing:
         raise ConfigError(
             f"qiskit algorithm {options.algorithm.name!r} requires ansatz capabilities "
@@ -132,11 +135,12 @@ def validate_component_graph(options: QiskitOptions) -> None:
         )
     if (
         options.algorithm.name == "adapt_vqe"
-        and options.ansatz.name == "uccsd"
+        and not operator_pool_supplied
+        and options.ansatz.name in {"uccsd", "ucc"}
         and getattr(ANSATZE.options_for(options.ansatz), "reps", 1) != 1
     ):
         raise ConfigError(
-            "qiskit ADAPT-VQE consumes UCCSD's operator pool rather than its repeated "
+            "qiskit ADAPT-VQE consumes the UCC operator pool rather than its repeated "
             "fixed circuit; set ansatz.options.reps to 1"
         )
     if options.device == "cuda":

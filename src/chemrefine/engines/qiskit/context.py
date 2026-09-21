@@ -21,6 +21,12 @@ class ElectronicStructureContext:
     num_particles: tuple[int, int]
     num_qubits: int
     multiplicity: int
+    fermionic_hamiltonian: Any | None = None
+    num_qubits_before_reduction: int | None = None
+    num_pauli_terms: int | None = None
+    mapping_metadata: dict[str, Any] = field(default_factory=dict)
+    active_space_metadata: dict[str, Any] = field(default_factory=dict)
+    provenance: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -29,6 +35,7 @@ class AnsatzArtifacts:
 
     circuit: Any | None = None
     operator_pool: Sequence[Any] | None = None
+    pool_metadata: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -50,6 +57,7 @@ class AlgorithmArtifacts:
     """A minimum eigensolver produced by an algorithm factory."""
 
     solver: Any
+    diagnostics: Any | None = None
 
 
 @dataclass
