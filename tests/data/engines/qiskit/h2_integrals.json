@@ -1,0 +1,20 @@
+{
+  "num_alpha": 1,
+  "num_beta": 1,
+  "num_spatial_orbitals": 2,
+  "one_body_integrals": [[-1.2563390730032502, 0.0], [0.0, -0.4718960072811419]],
+  "two_body_integrals": [
+    [[[0.6757101548035167, 0.0], [0.0, 0.6645817302552965]], [[0.0, 0.18093119978423136], [0.18093119978423136, 0.0]]],
+    [[[0.0, 0.18093119978423136], [0.18093119978423136, 0.0]], [[0.6645817302552965, 0.0], [0.0, 0.698573722732016]]]
+  ],
+  "two_body_order": "chemist",
+  "nuclear_repulsion_energy": 0.7199689944489797,
+  "orbital_energies": [-0.5806289181997334, 0.67633625344522],
+  "provenance": {
+    "source": "stored_pyscf_integrals",
+    "basis": "sto-3g",
+    "geometry_angstrom": [["H", 0.0, 0.0, 0.0], ["H", 0.0, 0.0, 0.735]],
+    "method": "RHF",
+    "note": "Generated once via Qiskit Nature 0.8 PySCFDriver; symmetry-zero entries below 1e-15 set to zero. Tests do not require PySCF."
+  }
+}
