@@ -449,7 +449,11 @@ def test_legacy_active_space_is_resolved_by_the_engine(
 
     assert step.options == raw
     assert resolved.active_space == ActiveSpaceOptions(electrons=2, orbitals=2)
-    assert resolved.as_job_spec()["active_space"] == {"electrons": 2, "orbitals": 2}
+    assert resolved.as_job_spec()["active_space"] == {
+        "electrons": 2,
+        "orbitals": 2,
+        "active_orbitals": None,
+    }
     assert "active_electrons" not in resolved.as_job_spec()
     assert undeclared_options(step) is None
     assert "active_electrons" in caplog.text
@@ -778,7 +782,11 @@ def test_scaffolded_qiskit_template_executes_with_shared_options_placeholder(
     runpy.run_path(str(script))
     assert captured["charge"] == 0
     assert captured["multiplicity"] == 1
-    assert captured["options"]["active_space"] == {"electrons": 2, "orbitals": 2}
+    assert captured["options"]["active_space"] == {
+        "electrons": 2,
+        "orbitals": 2,
+        "active_orbitals": None,
+    }
     assert "active_electrons" not in captured["options"]
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["engine_metadata"] == {"solver": {"num_iterations": 2}}
@@ -1381,7 +1389,11 @@ def test_run_job_builds_and_closes_a_full_variational_graph(
         "closed",
     ]
     assert ground.calls == [(context.mapper, solver, problem)]
-    assert result.metadata["active_space"] == {"electrons": 2, "orbitals": 2}
+    assert result.metadata["active_space"] == {
+        "electrons": 2,
+        "orbitals": 2,
+        "active_orbitals": None,
+    }
     assert result.metadata["evaluations"] == [
         {
             "evaluation": 1,

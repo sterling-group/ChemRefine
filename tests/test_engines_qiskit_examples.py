@@ -30,7 +30,7 @@ REQUIRED = {
 }
 
 TESTS_ONLY = {
-    "active_space": set(),
+    "active_space": {"active_orbitals"},
     "selection": set(),
     "mapper": {"two_qubit_reduction"},
     "algorithm": {"gradient_threshold", "eigenvalue_threshold", "max_iterations", "reps"},

@@ -191,7 +191,8 @@ values; `ComponentSelection(name="exact", options={})` is equivalent to
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `basis` | `sto-3g` | PySCF orbital basis passed to `PySCFDriver`. |
-| `active_space` | `None` | Optional `{electrons, orbitals}` reduction applied before mapper construction. `electrons` may be a total integer or `[n_alpha, n_beta]`. |
+| `active_space` | `None` | Optional `{electrons, orbitals, active_orbitals}` reduction applied before mapper construction. `electrons` may be a total integer or `[n_alpha, n_beta]`; optional `active_orbitals` gives explicit zero-based input spatial-orbital indices. |
+| `freeze_core` | `False` | Freeze the conventional doubly occupied atomic core before any explicit active-space reduction. Requires molecular element metadata. |
 | `mapper` | `ComponentSelection(name='jordan_wigner', options={})` | Fermion-to-qubit mapping component. |
 | `algorithm` | `ComponentSelection(name='exact', options={})` | Minimum-eigensolver algorithm component. |
 | `ansatz` | `ComponentSelection(name='uccsd', options={})` | Fixed circuit and/or adaptive operator-pool provider. |

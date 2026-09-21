@@ -12,7 +12,7 @@ import logging
 from collections.abc import Mapping
 from typing import Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 
 from chemrefine.engines._options import EngineOptions
 
@@ -48,6 +48,7 @@ class ActiveSpaceOptions(BaseModel):
 
     electrons: int | tuple[int, int] = Field(default=2)
     orbitals: int = Field(default=2, ge=1)
+    active_orbitals: list[StrictInt] | None = None
 
     @field_validator("electrons")
     @classmethod
@@ -75,6 +76,14 @@ class ActiveSpaceOptions(BaseModel):
                 f"active alpha/beta populations {self.electrons} do not fit in "
                 f"{self.orbitals} spatial orbitals"
             )
+        if self.active_orbitals is not None and (
+            len(self.active_orbitals) != self.orbitals
+            or len(set(self.active_orbitals)) != self.orbitals
+            or any(index < 0 for index in self.active_orbitals)
+        ):
+            raise ValueError(
+                "active_orbitals must contain one distinct non-negative index per orbital"
+            )
         return self
 
 
@@ -83,6 +92,7 @@ class QiskitOptions(EngineOptions):
 
     basis: str = Field("sto-3g", min_length=1)
     active_space: ActiveSpaceOptions | None = None
+    freeze_core: bool = False
 
     mapper: ComponentSelection = Field(
         default_factory=lambda: ComponentSelection.named("jordan_wigner")
