@@ -16,6 +16,14 @@
     "breaks": "the exact solver rejects the requested spin sector and can report a state with the wrong multiplicity"
   },
   {
+    "id": "qiskit-magnetization-sector-filter",
+    "path": "src/chemrefine/engines/qiskit/components/algorithms.py",
+    "old": "not np.isclose(magnetization[0], expected_magnetization)",
+    "new": "np.isclose(magnetization[0], expected_magnetization)",
+    "tests": "tests/test_engines_qiskit_exact.py",
+    "breaks": "the exact solver returns a state with different alpha and beta electron populations despite matching total particle count and spin"
+  },
+  {
     "id": "qiskit-aer-noise-is-applied",
     "path": "src/chemrefine/engines/qiskit/components/estimators.py",
     "old": "if noise_model is not None:",
