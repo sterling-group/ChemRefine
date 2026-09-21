@@ -33,6 +33,34 @@ def test_integral_data_copies_arrays_and_resolves_occupations():
     np.testing.assert_array_equal(data.orbital_occupations, [1, 0])
 
 
+@pytest.mark.parametrize("name", ["one_body_integrals", "two_body_integrals"])
+def test_primary_integral_blocks_cannot_be_none(name):
+    """Only optional beta blocks may be omitted from an electronic Hamiltonian."""
+    with pytest.raises(ConfigError, match=f"{name} is required"):
+        minimal_data(**{name: None})
+
+
+@pytest.mark.parametrize(
+    ("alpha", "beta", "multiplicity"),
+    [(2, 2, 3), (2, 1, 4), (1, 2, 4)],
+)
+def test_multiplicity_cannot_exceed_spin_orbital_capacity(alpha, beta, multiplicity):
+    """Fully paired orbitals cannot supply unpaired spins even at a sufficient electron count."""
+    with pytest.raises(ConfigError, match="multiplicity"):
+        minimal_data(num_alpha=alpha, num_beta=beta, multiplicity=multiplicity)
+
+
+@pytest.mark.parametrize(
+    ("alpha", "beta", "multiplicity"),
+    [(2, 2, 1), (2, 1, 2), (1, 2, 2), (2, 0, 3), (1, 1, 3)],
+)
+def test_allowed_spin_capacity_boundaries_remain_valid(alpha, beta, multiplicity):
+    """Both electron-rich and hole-rich populations admit their physical spin limits."""
+    data = minimal_data(num_alpha=alpha, num_beta=beta, multiplicity=multiplicity)
+    assert data.multiplicity == multiplicity
+    assert data.num_particles == (alpha, beta)
+
+
 @pytest.mark.parametrize(
     "options, message",
     [

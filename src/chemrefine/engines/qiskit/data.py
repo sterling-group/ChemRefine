@@ -98,16 +98,21 @@ class ElectronicStructureData:
         multiplicity = self.multiplicity
         if multiplicity is None:
             multiplicity = abs(self.num_alpha - self.num_beta) + 1
+        electron_count = sum(self.num_particles)
+        max_twice_spin = min(electron_count, 2 * n - electron_count)
         if (
             isinstance(multiplicity, bool)
             or not isinstance(multiplicity, int)
             or multiplicity < 1
             or multiplicity - 1 < abs(self.num_alpha - self.num_beta)
-            or multiplicity - 1 > sum(self.num_particles)
-            or (sum(self.num_particles) - multiplicity + 1) % 2
+            or multiplicity - 1 > max_twice_spin
+            or (electron_count - multiplicity + 1) % 2
         ):
             raise ConfigError("qiskit multiplicity is incompatible with the electron populations")
         object.__setattr__(self, "multiplicity", multiplicity)
+        for name in ("one_body_integrals", "two_body_integrals"):
+            if getattr(self, name) is None:
+                raise ConfigError(f"qiskit {name} is required")
         beta_names = (
             "one_body_integrals_beta",
             "two_body_integrals_beta_beta",
