@@ -1039,7 +1039,7 @@ def test_lazy_estimator_and_optimizer_factories(monkeypatch: pytest.MonkeyPatch)
     assert cobyla.kwargs["tol"] == 1e-7
     assert isinstance(spsa, fake.SPSA)
     assert spsa.kwargs["second_order"] is True
-    assert fake.algorithm_globals.random_seed == 17
+    assert fake.algorithm_globals.random_seed is None
     assert isinstance(unseeded_spsa, fake.SPSA)
     with pytest.raises(ValueError, match="must be set together"):
         SPSAOptions(learning_rate=0.2)

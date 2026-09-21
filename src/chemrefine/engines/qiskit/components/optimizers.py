@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Self
+from copy import deepcopy
+from threading import RLock
+from typing import Any, Self
 
+import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from chemrefine.engines.qiskit.registry import OPTIMIZERS
+
+_SPSA_RANDOM_LOCK = RLock()
 
 
 class SLSQPOptions(BaseModel):
@@ -74,14 +79,35 @@ def build_cobyla(*, options: COBYLAOptions) -> object:
 
 @OPTIMIZERS.register("spsa", SPSAOptions)
 def build_spsa(*, options: SPSAOptions) -> object:
-    """Build SPSA using scalar learning-rate and perturbation schedules."""
+    """Build SPSA with a private random stream and the existing scalar schedules.
+
+    Algorithms 0.4 reads a process-global generator during optimization. Swap
+    only its public bit-generator state for the duration of each minimize call,
+    restoring the caller's stream even on failure. The lock coordinates all
+    ChemRefine SPSA instances; unrelated code using Qiskit's global generator
+    concurrently does not participate in that lock.
+    """
     from qiskit_algorithms.optimizers import SPSA
     from qiskit_algorithms.utils import algorithm_globals
 
-    if options.seed is not None:
-        algorithm_globals.random_seed = options.seed
+    random = np.random.default_rng(options.seed)
 
-    return SPSA(
+    class IsolatedSPSA(SPSA):  # type: ignore[misc]
+        """Delegate optimization while preserving each instance's random stream."""
+
+        def minimize(self, fun: Any, x0: Any, jac: Any = None, bounds: Any = None) -> Any:
+            """Advance this optimizer's stream without consuming ambient random state."""
+            with _SPSA_RANDOM_LOCK:
+                upstream = algorithm_globals.random
+                previous_state = deepcopy(upstream.bit_generator.state)
+                upstream.bit_generator.state = random.bit_generator.state
+                try:
+                    return super().minimize(fun, x0, jac=jac, bounds=bounds)
+                finally:
+                    random.bit_generator.state = upstream.bit_generator.state
+                    upstream.bit_generator.state = previous_state
+
+    return IsolatedSPSA(
         maxiter=options.maxiter,
         blocking=options.blocking,
         trust_region=options.trust_region,
