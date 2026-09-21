@@ -24,7 +24,6 @@ from chemrefine.engines.qiskit.mapping import map_problem
 from chemrefine.engines.qiskit.operators import OperatorPool
 from chemrefine.engines.qiskit.options import QiskitOptions
 from chemrefine.engines.qiskit.problem import PreparedProblem, prepare_pyscf_problem
-from chemrefine.engines.qiskit.problem import _atom_spec as _atom_spec
 from chemrefine.engines.qiskit.registry import (
     ALGORITHMS,
     ANSATZE,
@@ -34,8 +33,7 @@ from chemrefine.engines.qiskit.registry import (
     OPTIMIZERS,
     validate_component_graph,
 )
-from chemrefine.engines.qiskit.reporting import jsonable as _jsonable
-from chemrefine.engines.qiskit.reporting import summarize_result
+from chemrefine.engines.qiskit.reporting import jsonable, summarize_result
 from chemrefine.engines.qiskit.result import QiskitRunResult as QiskitRunResult
 from chemrefine.errors import ConfigError
 
@@ -126,7 +124,7 @@ def _solve_context(
                 # VQE evaluates the mapped electronic Hamiltonian here; nuclear
                 # repulsion and transformer constants are added to the final total.
                 "objective_value_hartree": float(mean),
-                "metadata": _jsonable(metadata),
+                "metadata": jsonable(metadata),
             }
         )
         previous_algorithm_evaluation = algorithm_evaluation

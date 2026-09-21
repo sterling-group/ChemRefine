@@ -26,7 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from chemrefine.config import Config, StepConfig, load_config
 from chemrefine.engines import known_backend_extras, preflight_backends
 from chemrefine.engines.api import BackendRequirement, ProvisionableEngine, get_engine
-from chemrefine.engines.qiskit import workflow
+from chemrefine.engines.qiskit import problem, reporting, workflow
 from chemrefine.engines.qiskit.components.algorithms import (
     AdaptVQEOptions,
     _require,
@@ -1608,19 +1608,19 @@ def test_atom_spec_reads_one_xyz_frame_and_rejects_bad_inputs(tmp_path: Path) ->
         "2\nhydrogen\nH 0 0 0 extra\nH 0 0 0.735\n",
         encoding="utf-8",
     )
-    assert workflow._atom_spec(xyz) == "H 0 0 0; H 0 0 0.735"
+    assert problem._atom_spec(xyz) == "H 0 0 0; H 0 0 0.735"
 
     with pytest.raises(ConfigError, match="cannot read Qiskit XYZ"):
-        workflow._atom_spec(tmp_path / "missing.xyz")
+        problem._atom_spec(tmp_path / "missing.xyz")
     xyz.write_text("not-an-int\n", encoding="utf-8")
     with pytest.raises(ConfigError, match="cannot read Qiskit XYZ"):
-        workflow._atom_spec(xyz)
+        problem._atom_spec(xyz)
     xyz.write_text("2\ncomment\nH 0 0 0\n", encoding="utf-8")
     with pytest.raises(ConfigError, match="declares 2 atoms"):
-        workflow._atom_spec(xyz)
+        problem._atom_spec(xyz)
     xyz.write_text("1\ncomment\nH 0 0\n", encoding="utf-8")
     with pytest.raises(ConfigError, match="malformed atom row 1"):
-        workflow._atom_spec(xyz)
+        problem._atom_spec(xyz)
 
 
 def test_jsonable_handles_qiskit_and_numpy_diagnostic_shapes() -> None:
@@ -1632,12 +1632,12 @@ def test_jsonable_handles_qiskit_and_numpy_diagnostic_shapes() -> None:
         def __str__(self) -> str:
             return "other"
 
-    assert workflow._jsonable(None) is None
-    assert workflow._jsonable(np.float64(1.5)) == 1.5
-    assert workflow._jsonable("x") == "x"
-    assert workflow._jsonable(2 + 3j) == {"real": 2.0, "imag": 3.0}
-    assert workflow._jsonable({1: (np.array([1, 2]), ArrayLike())}) == {"1": [[1, 2], [7, 8]]}
-    assert workflow._jsonable(Other()) == "other"
+    assert reporting.jsonable(None) is None
+    assert reporting.jsonable(np.float64(1.5)) == 1.5
+    assert reporting.jsonable("x") == "x"
+    assert reporting.jsonable(2 + 3j) == {"real": 2.0, "imag": 3.0}
+    assert reporting.jsonable({1: (np.array([1, 2]), ArrayLike())}) == {"1": [[1, 2], [7, 8]]}
+    assert reporting.jsonable(Other()) == "other"
 
 
 def test_estimator_resource_always_runs_its_cleanup() -> None:
