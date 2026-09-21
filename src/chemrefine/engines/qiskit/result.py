@@ -32,10 +32,12 @@ class CircuitMetrics:
 class QiskitRunResult:
     """Stable engine output with energies in hartree and runtime in seconds.
 
-    ``energy_hartree`` retains the existing total-energy interface. Electronic
-    energy includes inactive-space constants; adding the nuclear repulsion
-    yields the total energy. Reference energy and signed energy error use the
-    total-energy convention. The first two fields preserve positional callers.
+    ``energy_hartree`` is total energy when nuclear repulsion is supplied,
+    otherwise electronic energy; ``total_energy_hartree`` then remains unknown.
+    Electronic energy includes inactive-space constants. A supplied reference
+    must use the same energy convention; energy error is signed. ``success``
+    means execution returned a finite energy, separately from ``converged``.
+    The first two fields preserve positional callers.
     Metadata and ADAPT records must contain only JSON-compatible plain data.
     """
 
