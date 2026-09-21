@@ -47,7 +47,9 @@ class QiskitEngine(
         ")\n"
         "\n"
         "energy_hartree = result.energy_hartree\n"
-        "engine_metadata = result.metadata\n"
+        "engine_metadata = result.as_metadata()\n"
+        "if result.converged is not None:\n"
+        "    converged = result.converged\n"
     )
     preflight_refuses: ClassVar[str] = (
         "unknown Qiskit components, invalid component options, or incompatible "

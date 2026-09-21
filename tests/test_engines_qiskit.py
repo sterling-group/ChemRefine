@@ -758,8 +758,9 @@ def test_only_qiskit_harvests_its_metadata(tmp_path: Path, monkeypatch: pytest.M
         assert not hasattr(parsed, "engine_metadata")
 
 
+@pytest.mark.parametrize("convergence", [None, False, True])
 def test_scaffolded_qiskit_template_executes_with_shared_options_placeholder(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, convergence: bool | None
 ) -> None:
     """Scaffolding, rendering and parsing agree on the existing Qiskit job contract."""
     from chemrefine.scaffold import scaffold_templates
@@ -773,7 +774,9 @@ def test_scaffolded_qiskit_template_executes_with_shared_options_placeholder(
     def fake_run_job(path: str, **kwargs: Any) -> workflow.QiskitRunResult:
         captured.update(kwargs)
         assert Path(path).is_file()
-        return workflow.QiskitRunResult(-1.25, {"solver": {"num_iterations": 2}})
+        return workflow.QiskitRunResult(
+            -1.25, {"solver": {"num_iterations": 2}}, converged=convergence
+        )
 
     monkeypatch.setattr(workflow, "run_job", fake_run_job)
     engine = get_engine("qiskit")
@@ -789,9 +792,11 @@ def test_scaffolded_qiskit_template_executes_with_shared_options_placeholder(
     }
     assert "active_electrons" not in captured["options"]
     payload = json.loads(output.read_text(encoding="utf-8"))
-    assert payload["engine_metadata"] == {"solver": {"num_iterations": 2}}
+    assert payload["engine_metadata"]["solver"] == {"num_iterations": 2}
+    assert payload["engine_metadata"]["result"]["converged"] is convergence
     [parsed] = engine.parse_one(output, sid, ctx)
     assert parsed.energy_hartree == -1.25
+    assert parsed.converged is convergence
     assert parsed.symbols == ("H", "H")
     np.testing.assert_allclose(parsed.positions, _seed().atoms.positions)
 
@@ -1568,7 +1573,7 @@ def test_callback_failure_releases_provider(supplied_problem_runner):
 
 def test_external_pool_replaces_configured_ansatz(supplied_problem_runner, monkeypatch):
     context, _, calls = supplied_problem_runner
-    validated = []
+    validated: list[int] = []
     pool = SimpleNamespace(
         operators=(object(),),
         metadata=({"label": "selected_double"},),

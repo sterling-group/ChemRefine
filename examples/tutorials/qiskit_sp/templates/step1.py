@@ -10,4 +10,6 @@ result = run_job(
 )
 
 energy_hartree = result.energy_hartree
-engine_metadata = result.metadata
+engine_metadata = result.as_metadata()
+if result.converged is not None:
+    converged = result.converged
