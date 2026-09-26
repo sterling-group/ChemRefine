@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-CHECK = runpy.run_path(str(Path(__file__).resolve().parents[1] / "scripts/check_provider_tests.py"))
+CHECK = runpy.run_path(str(Path(__file__).resolve().parents[1] / "tests/provider_reports.py"))
 
 
 def test_provider_report_requires_each_selected_file(tmp_path):

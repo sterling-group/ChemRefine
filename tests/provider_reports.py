@@ -11,7 +11,7 @@ from xml.etree import ElementTree
 def validate_report(report: Path, files: list[str]) -> None:
     """Require successful executed cases for every explicitly selected provider file."""
     # The trusted local pytest process writes this file within the CI job.
-    cases = list(ElementTree.parse(report).getroot().iter("testcase"))  # noqa: S314
+    cases = list(ElementTree.parse(report).getroot().iter("testcase"))
     if not cases or any(
         case.find(tag) is not None for case in cases for tag in ("skipped", "error", "failure")
     ):

@@ -92,7 +92,7 @@ jobs:
           import os, shlex, subprocess, sys
           subprocess.run([sys.executable, '-m', 'pytest', *shlex.split(os.environ['TESTS']),
                           '--cov', '--cov-report=', '--cov-fail-under=0', '--junitxml=provider-tests.xml', '-q'], check=True)
-          subprocess.run([sys.executable, 'scripts/check_provider_tests.py', 'provider-tests.xml',
+          subprocess.run([sys.executable, 'tests/provider_reports.py', 'provider-tests.xml',
                           *shlex.split(os.environ['TESTS'])], check=True)
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -136,7 +136,7 @@ jobs:
         run: |
           "$CHEMREFINE_HOME/backends/qiskit-resources/bin/python" -c 'import sys, openfermion, qualtran; assert sys.version_info[:2] == (3, 12)'
           "$CHEMREFINE_HOME/backends/qiskit-resources/bin/python" -m pytest tests/test_engines_qiskit_resource_estimates.py tests/test_engines_qiskit_resource_experiment.py tests/test_engines_qiskit_resource_providers.py --cov --cov-report= --cov-fail-under=0 --junitxml=provider-tests.xml -q
-          python scripts/check_provider_tests.py provider-tests.xml tests/test_engines_qiskit_resource_estimates.py tests/test_engines_qiskit_resource_experiment.py tests/test_engines_qiskit_resource_providers.py
+          python tests/provider_reports.py provider-tests.xml tests/test_engines_qiskit_resource_estimates.py tests/test_engines_qiskit_resource_experiment.py tests/test_engines_qiskit_resource_providers.py
           uv pip freeze --python "$CHEMREFINE_HOME/backends/qiskit-resources/bin/python" > provider-versions.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

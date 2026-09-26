@@ -129,7 +129,7 @@ step "the suite, with the coverage gate (CI: test)"
 mkdir "$work/coverage"
 COVERAGE_FILE="$work/coverage/.coverage.main" "$bin/pytest" --cov --cov-report= --cov-fail-under=0 -q
 COVERAGE_FILE="$work/coverage/.coverage.resources" "$RESOURCE_PY" -m pytest tests/test_engines_qiskit_resource_estimates.py tests/test_engines_qiskit_resource_experiment.py tests/test_engines_qiskit_resource_providers.py --cov --cov-report= --cov-fail-under=0 --junitxml="$work/resources.xml" -q
-"$PY" scripts/check_provider_tests.py "$work/resources.xml" tests/test_engines_qiskit_resource_estimates.py tests/test_engines_qiskit_resource_experiment.py tests/test_engines_qiskit_resource_providers.py
+"$PY" tests/provider_reports.py "$work/resources.xml" tests/test_engines_qiskit_resource_estimates.py tests/test_engines_qiskit_resource_experiment.py tests/test_engines_qiskit_resource_providers.py
 COVERAGE_FILE="$work/.coverage" "$PY" -m coverage combine "$work/coverage"
 COVERAGE_FILE="$work/.coverage" "$PY" -m coverage report --fail-under=100
 
