@@ -5,6 +5,7 @@ import importlib
 import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 import synthetic
@@ -217,6 +218,41 @@ def orca_error_termination(tmp_path: Path) -> Path:
     out.write_text(synthetic.ORCA_ERROR_TERMINATION_OUT, encoding="utf-8")
     out.with_suffix(".err").write_text(synthetic.ORCA_ERROR_TERMINATION_ERR, encoding="utf-8")
     return out
+
+
+@pytest.fixture
+def refusal_reader() -> Callable[[str, dict[str, Any]], Any]:
+    """A scripted model that calls one tool once, then replies with the failure it was handed.
+
+    What both embedded harnesses must show: a tool's refusal reaches the model as that
+    tool's failed result, in :func:`~chemrefine.errors.refusal_text`'s words, and the turn
+    goes on from it. One fixture, because the terminal and the web harness tests ask the
+    same question of the same channel. PydanticAI is imported inside, so the suite still
+    collects without the agent extra.
+    """
+    from pydantic_ai.messages import (
+        ModelMessage,
+        ModelResponse,
+        TextPart,
+        ToolCallPart,
+        ToolReturnPart,
+    )
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    def build(tool: str, args: dict[str, Any]) -> FunctionModel:
+        def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            failed = [
+                part
+                for part in messages[-1].parts
+                if isinstance(part, ToolReturnPart) and part.outcome == "failed"
+            ]
+            if not failed:
+                return ModelResponse(parts=[ToolCallPart(tool, args)])
+            return ModelResponse(parts=[TextPart(str(failed[0].content))])
+
+        return FunctionModel(script)
+
+    return build
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

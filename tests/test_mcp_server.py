@@ -93,7 +93,9 @@ async def test_only_a_deliberate_error_keeps_its_text_on_the_wire():
     what we raise, and what the SDK then sends.
     """
     from mcp.server import MCPServer
+    from mcp.server.mcpserver.exceptions import ToolError
 
+    from chemrefine.agent_tools import answering
     from chemrefine.errors import ConfigError
 
     def deliberate() -> str:
@@ -106,7 +108,7 @@ async def test_only_a_deliberate_error_keeps_its_text_on_the_wire():
 
     server = MCPServer(name="probe", version="0")
     for tool in (deliberate, crash):
-        server.tool()(mcp_server.actionable(tool))
+        server.tool()(answering(tool, ToolError))
 
     async with Client(server) as client:
         answered = await client.call_tool("deliberate", {})

@@ -15,16 +15,16 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import pytest
 import yaml
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -476,19 +476,31 @@ def test_a_turn_runs_on_a_loop_it_owns_and_closes():
     ``Agent.run_sync`` ran on whatever loop the thread held and, finding none, created one
     and left it installed — open, and owned by nobody: the implicit-loop behaviour Python
     deprecated. ``run_turn`` gives every turn a loop of its own and closes it on the way
-    out, so the loop a turn ran on is closed by the time the turn returns, and the next
-    turn runs on a new one rather than inheriting it.
+    out, and enters the agent on that loop — which is what opens and closes the provider's
+    HTTP client there, so no client outlives the loop its connections belong to.
     """
-    seen: list[asyncio.AbstractEventLoop] = []
+    events: list[tuple[str, asyncio.AbstractEventLoop]] = []
+
+    class Entered(FunctionModel):
+        async def __aenter__(self) -> Self:
+            events.append(("enter", asyncio.get_running_loop()))
+            return await super().__aenter__()
+
+        async def __aexit__(self, *exc: Any) -> bool | None:
+            events.append(("exit", asyncio.get_running_loop()))
+            return await super().__aexit__(*exc)
 
     async def spy(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        seen.append(asyncio.get_running_loop())
+        events.append(("request", asyncio.get_running_loop()))
         return ModelResponse(parts=[TextPart("ok")])
 
-    agent = harness.build_agent(FunctionModel(spy), confirm=_allow)
+    agent = harness.build_agent(Entered(spy), confirm=_allow)
     harness.run_turn(agent, "one")
     harness.run_turn(agent, "two")
-    first, second = seen
+    first, second = events[0][1], events[3][1]
+    assert events == [(e, first) for e in ("enter", "request", "exit")] + [
+        (e, second) for e in ("enter", "request", "exit")
+    ]
     assert first.is_closed() and second.is_closed()
     assert first is not second
 
@@ -558,28 +570,6 @@ def test_a_real_tool_answers_through_the_model_loop():
 # ---------------------------------------------------------------------------
 
 
-def _reads_back_a_refusal(tool: str, args: dict[str, Any]) -> FunctionModel:
-    """A model that calls ``tool`` once, then replies with what it was told about the call."""
-
-    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        told = [p for p in messages[-1].parts if isinstance(p, RetryPromptPart)]
-        if not told:
-            return ModelResponse(parts=[ToolCallPart(tool, args)])
-        return ModelResponse(parts=[TextPart(str(told[0].content))])
-
-    return FunctionModel(script)
-
-
-def _calls_forever(tool: str, args: dict[str, Any], requests: list[int]) -> FunctionModel:
-    """A model that makes the same call however it is answered, counting its requests."""
-
-    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        requests.append(len(messages))
-        return ModelResponse(parts=[ToolCallPart(tool, args)])
-
-    return FunctionModel(script)
-
-
 @pytest.mark.parametrize(
     "build",
     [
@@ -588,20 +578,20 @@ def _calls_forever(tool: str, args: dict[str, Any], requests: list[int]) -> Func
     ],
     ids=["terminal", "web"],
 )
-def test_a_tool_refusal_reaches_the_model_and_the_turn_goes_on(build: Any):
+def test_a_tool_refusal_reaches_the_model_and_the_turn_goes_on(build: Any, refusal_reader: Any):
     """What the MCP server already did, both embedded harnesses now do.
 
     A tool's ``ChemRefineError`` propagated out of the run, so the turn died on a routine
     refusal and the model never read the sentence that says what to change. It arrives
-    as the tool's answer, by class and message, and the model continues from it.
+    as the tool's failed result, by class and message, and the model continues from it.
     """
-    model = _reads_back_a_refusal("summarize_config", {"config_path": "/absent.yaml"})
+    model = refusal_reader("summarize_config", {"config_path": "/absent.yaml"})
     result = harness.run_turn(build(model), "summarize")
     assert result.output.startswith("ConfigError: ")
     assert "/absent.yaml" in result.output
 
 
-def test_an_allowed_mutation_that_refuses_is_read_by_the_model():
+def test_an_allowed_mutation_that_refuses_is_read_by_the_model(refusal_reader: Any):
     """The confirmation gate and the failure contract compose: asked once, answered once."""
     asked: list[str] = []
 
@@ -609,40 +599,35 @@ def test_an_allowed_mutation_that_refuses_is_read_by_the_model():
         asked.append(tool)
         return True
 
-    model = _reads_back_a_refusal("start_run", {"config_path": "/absent.yaml", "action": "x"})
+    model = refusal_reader("start_run", {"config_path": "/absent.yaml", "action": "x"})
     result = harness.run_turn(harness.build_agent(model, confirm=allow), "run it")
     assert asked == ["start_run"]
     assert result.output.startswith("ConfigError: unknown action")
 
 
-def test_a_refusal_the_model_cannot_get_past_ends_the_turn_on_that_refusal():
-    """Past the retry budget the turn ends — on the tool's own error, not the SDK's.
+def test_a_tool_that_keeps_refusing_leaves_the_turn_to_the_model():
+    """A refusal is a failed result, not a retry request, so there is no budget to exhaust.
 
-    ``TOOL_RETRIES`` further attempts after the first refusal, then the refusal itself
-    leaves :func:`harness.run_turn`, which is what both harnesses already show in their
-    documented shapes; "exceeded max retries count" would name the SDK, not the problem.
+    Each refusal reaches the model as that tool's failed result and costs one request of
+    the run; whether to call again is the model's decision, bounded by the run's request
+    limit — and, for a gated tool, by the human's yes on every call.
     """
-    requests: list[int] = []
-    model = _calls_forever("summarize_config", {"config_path": "/absent.yaml"}, requests)
-    with pytest.raises(ConfigError, match=r"/absent\.yaml"):
-        harness.run_turn(harness.build_agent(model, confirm=_allow), "summarize")
-    assert len(requests) == harness.TOOL_RETRIES + 1
 
+    def persistent(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        failed = [
+            part
+            for message in messages
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.outcome == "failed"
+        ]
+        if len(failed) < 4:
+            return ModelResponse(
+                parts=[ToolCallPart("summarize_config", {"config_path": "/absent.yaml"})]
+            )
+        return ModelResponse(parts=[TextPart(f"stopped after {len(failed)} refusals")])
 
-@pytest.mark.parametrize(
-    ("tool", "args"),
-    [("no_such_tool", {}), ("summarize_config", {})],
-    ids=["unknown-tool", "invalid-arguments"],
-)
-def test_a_run_that_gives_up_for_any_other_reason_is_not_dressed_as_a_refusal(
-    tool: str, args: dict[str, Any]
-):
-    """Only a tool's refusal is re-raised as itself; the SDK's other give-ups stay the SDK's."""
-    from pydantic_ai.exceptions import UnexpectedModelBehavior
-
-    model = _calls_forever(tool, args, [])
-    with pytest.raises(UnexpectedModelBehavior):
-        harness.run_turn(harness.build_agent(model, confirm=_allow), "go")
+    agent = harness.build_agent(FunctionModel(persistent), confirm=_allow)
+    assert harness.run_turn(agent, "summarize").output == "stopped after 4 refusals"
 
 
 # ---------------------------------------------------------------------------
@@ -815,15 +800,17 @@ def test_chat_repl_survives_a_dead_endpoint(monkeypatch: pytest.MonkeyPatch):
     assert any("recovered" in line for line in echoed[failed + 1 :])
 
 
-def test_chat_repl_shows_a_refusal_the_model_could_not_get_past(monkeypatch: pytest.MonkeyPatch):
-    """The turn ends on the refusal, printed by name and message, and the loop lives."""
+def test_chat_repl_prints_what_the_model_made_of_a_refusal(
+    monkeypatch: pytest.MonkeyPatch, refusal_reader: Any
+):
+    """The REPL shows the model's answer to a refusal — the turn is not a traceback."""
     import typer
 
     from chemrefine.agent import chat
 
-    stubborn = _calls_forever("summarize_config", {"config_path": "/absent.yaml"}, [])
+    model = refusal_reader("summarize_config", {"config_path": "/absent.yaml"})
     monkeypatch.setenv("CHEMREFINE_LLM_MODEL", "test-model")
-    monkeypatch.setattr(ProviderConfig, "build_model", lambda self: stubborn)
+    monkeypatch.setattr(ProviderConfig, "build_model", lambda self: model)
     prompts = iter(["hello", "exit"])
     monkeypatch.setattr(typer, "prompt", lambda *a, **k: next(prompts))
     echoed: list[str] = []

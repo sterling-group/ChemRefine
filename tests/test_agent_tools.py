@@ -64,7 +64,7 @@ def test_answering_hands_a_refusal_to_the_channel_and_lets_a_crash_through():
     """
 
     class Channel(Exception):
-        """Stands in for ``ToolError`` / ``ModelRetry``: takes the message, nothing else."""
+        """Stands in for ``ToolError`` / ``ToolFailed``: takes the message, nothing else."""
 
     def refuses(step: int) -> str:
         """Refuse every step."""

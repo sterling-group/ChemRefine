@@ -55,7 +55,7 @@ import typer
 from typer.main import get_group
 
 from chemrefine import __version__, cli_legacy
-from chemrefine.errors import ChemRefineError
+from chemrefine.errors import ChemRefineError, refusal_text
 
 if TYPE_CHECKING:
     from chemrefine.config import Config
@@ -194,7 +194,7 @@ def _dispatch(
 
         return execute(config, Action(action_name), target=target)
     except ChemRefineError as e:
-        logger.error("%s: %s", type(e).__name__, e)
+        logger.error("%s", refusal_text(e))
         raise typer.Exit(code=e.exit_code) from e
 
 
@@ -416,7 +416,7 @@ def agent(
             config_path=str(config_path) if config_path is not None else None,
         )
     except ChemRefineError as e:
-        logger.error("%s: %s", type(e).__name__, e)
+        logger.error("%s", refusal_text(e))
         raise typer.Exit(code=e.exit_code) from e
 
 
@@ -563,7 +563,7 @@ def scaffold(
             state = "wrote" if plan.path in written else "kept"
             typer.echo(f"{state} {plan.path}")
     except ChemRefineError as e:
-        logger.error("%s: %s", type(e).__name__, e)
+        logger.error("%s", refusal_text(e))
         raise typer.Exit(code=e.exit_code) from e
 
 

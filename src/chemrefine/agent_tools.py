@@ -51,6 +51,7 @@ from chemrefine.errors import (
     ConfigError,
     JobSubmissionError,
     RunLockError,
+    refusal_text,
 )
 from chemrefine.recovery import Action, resolve_target
 from chemrefine.state import Structure
@@ -1327,16 +1328,6 @@ nothing, and a mutating tool renamed without this set would silently go ungated.
 holds the subset relation."""
 
 
-def refusal_text(exc: ChemRefineError) -> str:
-    """A refusal as every harness shows it: the class that names it, then its message.
-
-    ``ConfigError: …`` / ``RunLockError: …`` — the class is the part of the taxonomy a
-    reader acts on (fix the config, or wait for the other driver), and the message says
-    what to change. The terminal chat prints this to the human; the model reads it too.
-    """
-    return f"{type(exc).__name__}: {exc}"
-
-
 def answering(
     tool: Callable[..., Any], channel: Callable[[str], BaseException]
 ) -> Callable[..., Any]:
@@ -1344,16 +1335,18 @@ def answering(
 
     A :class:`~chemrefine.errors.ChemRefineError` is an *answer* to the caller — an
     unknown action, a template not written yet, a lock another driver holds — and its
-    message says what to change, so it is re-raised as ``channel(refusal_text(exc))``:
-    the harness framework's own documented way to hand a message back to the model.
-    Anything else is a crash and propagates untouched, so no harness mistakes a bug for an
-    answer or shows the model a traceback.
+    message says what to change, so it is re-raised as
+    ``channel(`` :func:`~chemrefine.errors.refusal_text` ``)``: the framework's own
+    documented way to report a tool's failure to the model, which the model reads and
+    adapts to. Anything else is a crash and propagates untouched, so no harness mistakes a
+    bug for an answer or shows the model a traceback.
 
     The channel is passed in, not imported, because this module imports no agent
     framework: the MCP server passes its SDK's ``ToolError``, the embedded agent
-    PydanticAI's ``ModelRetry``. :func:`functools.wraps` keeps the name, docstring and
-    (through ``__wrapped__``) the signature, so each framework derives the tool's schema
-    and description from the original exactly as it would unwrapped.
+    PydanticAI's ``ToolFailed`` — each a failed tool result the model sees, not a request
+    to retry. :func:`functools.wraps` keeps the name, docstring and (through
+    ``__wrapped__``) the signature, so each framework derives the tool's schema and
+    description from the original exactly as it would unwrapped.
     """
 
     @functools.wraps(tool)

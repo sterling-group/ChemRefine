@@ -42,6 +42,17 @@ class ChemRefineError(Exception):
     exit_code: int = 1
 
 
+def refusal_text(error: ChemRefineError) -> str:
+    """A refusal as every surface shows it: the class that names it, then its message.
+
+    ``ConfigError: …`` / ``RunLockError: …`` — the class is the part of the taxonomy a
+    reader acts on (fix the config, or wait for the other driver), and the message says
+    what to change. The CLI logs it, the terminal chat prints it, and an agent's model
+    reads it as the tool's answer (:func:`chemrefine.agent_tools.answering`).
+    """
+    return f"{type(error).__name__}: {error}"
+
+
 class NoUsableCacheError(ChemRefineError):
     """A step that may not submit has no cache the current configuration can serve.
 

@@ -755,9 +755,10 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
             else:
                 result = run_turn(agent, body.message, message_history=chat_state["history"])
         except ChemRefineError as e:
-            # The documented {error, exit_code} shape, for a refusal the model could not
-            # get past (run_turn ends the turn on it) and for a request this panel refuses —
-            # with what is still pending, so the page offers only cards that can be answered.
+            # The harness refusing its own settings while the agent is built (an unusable
+            # CHEMREFINE_LLM_TIMEOUT), in the documented shape — with what is still pending,
+            # so the page offers only cards that can be answered. A tool's refusal never
+            # lands here: it is the tool's answer to the model.
             return jsonify({**_refusal(e), "pending": _still_pending()}), 400
         except Exception as e:  # the model endpoint is the outside world
             return jsonify(

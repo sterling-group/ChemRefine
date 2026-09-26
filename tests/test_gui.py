@@ -1377,28 +1377,8 @@ def test_a_resume_that_reached_the_run_leaves_nothing_to_answer_again(
     assert "no suspended run" in again.get_json()["error"]
 
 
-def _reads_back_a_refusal(tool: str, args: dict[str, Any]) -> Any:
-    """A model that calls ``tool`` once, then replies with what it was told about the call."""
-    from pydantic_ai.messages import (
-        ModelMessage,
-        ModelResponse,
-        RetryPromptPart,
-        TextPart,
-        ToolCallPart,
-    )
-    from pydantic_ai.models.function import AgentInfo, FunctionModel
-
-    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        told = [p for p in messages[-1].parts if isinstance(p, RetryPromptPart)]
-        if not told:
-            return ModelResponse(parts=[ToolCallPart(tool, args)])
-        return ModelResponse(parts=[TextPart(str(told[0].content))])
-
-    return FunctionModel(script)
-
-
 def test_a_tool_refusal_reaches_the_model_and_the_turn_answers(
-    client: Any, chat_env: pytest.MonkeyPatch
+    client: Any, chat_env: pytest.MonkeyPatch, refusal_reader: Any
 ):
     """The refusal is the model's to read, not a 400 that ends the turn under it.
 
@@ -1406,9 +1386,7 @@ def test_a_tool_refusal_reaches_the_model_and_the_turn_answers(
     the sentence that says what to change, where over MCP the same refusal is a tool
     result the model continues from.
     """
-    _inject_model(
-        chat_env, _reads_back_a_refusal("summarize_config", {"config_path": "/absent.yaml"})
-    )
+    _inject_model(chat_env, refusal_reader("summarize_config", {"config_path": "/absent.yaml"}))
     answered = _post(client, "/api/agent/chat", {"message": "summarize"})
     assert answered.status_code == 200
     assert answered.get_json()["reply"].startswith("ConfigError: ")
@@ -1416,12 +1394,12 @@ def test_a_tool_refusal_reaches_the_model_and_the_turn_answers(
 
 
 def test_an_approved_call_that_refuses_is_read_in_the_resumed_run(
-    client: Any, chat_env: pytest.MonkeyPatch
+    client: Any, chat_env: pytest.MonkeyPatch, refusal_reader: Any
 ):
     """An approved mutation's refusal answers the model inside the run the verdict resumed."""
     _inject_model(
         chat_env,
-        _reads_back_a_refusal("start_run", {"config_path": "/absent.yaml", "action": "explode"}),
+        refusal_reader("start_run", {"config_path": "/absent.yaml", "action": "explode"}),
     )
     suspended = _post(client, "/api/agent/chat", {"message": "run it"}).get_json()
     [card] = suspended["pending"]
@@ -1431,23 +1409,18 @@ def test_an_approved_call_that_refuses_is_read_in_the_resumed_run(
     assert resumed.get_json()["pending"] is None
 
 
-def test_a_refusal_the_model_cannot_get_past_keeps_the_documented_shape(
+def test_a_chat_setting_the_harness_cannot_use_is_the_documented_400(
     client: Any, chat_env: pytest.MonkeyPatch
 ):
-    """Retried until the budget runs out, the turn ends on the refusal: a 400 with its code."""
-    from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
-    from pydantic_ai.models.function import AgentInfo, FunctionModel
+    """The harness refusing its own settings is a refusal, not a dead endpoint's 502."""
+    from pydantic_ai.models.test import TestModel
 
-    def stubborn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(
-            parts=[ToolCallPart("summarize_config", {"config_path": "/absent.yaml"})]
-        )
-
-    _inject_model(chat_env, FunctionModel(stubborn))
-    failed = _post(client, "/api/agent/chat", {"message": "summarize"})
-    assert failed.status_code == 400
-    assert failed.get_json()["exit_code"] == 2
-    assert "/absent.yaml" in failed.get_json()["error"]
+    _inject_model(chat_env, TestModel(call_tools=[]))
+    chat_env.setenv("CHEMREFINE_LLM_TIMEOUT", "soon")
+    refused = _post(client, "/api/agent/chat", {"message": "hi"})
+    assert refused.status_code == 400
+    assert "CHEMREFINE_LLM_TIMEOUT" in refused.get_json()["error"]
+    assert (refused.get_json()["exit_code"], refused.get_json()["pending"]) == (2, None)
 
 
 def test_chat_maps_endpoint_failures_to_502(client: Any, chat_env: pytest.MonkeyPatch):

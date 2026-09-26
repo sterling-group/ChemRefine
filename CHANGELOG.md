@@ -489,8 +489,9 @@ for the full map.
   template not written yet, a run lock held — ended the turn: the terminal printed the
   error and the panel answered 400, and the model never read the sentence that says what
   to change. The refusal is now the tool's answer to the model, by class and message
-  (`ConfigError: …`), in both harnesses and over MCP, whose error text gains the class; a
-  turn whose model keeps making a call a tool refuses ends on that refusal.
+  (`ConfigError: …`) — a failed result the model reads and adapts from, the same in both
+  harnesses and over MCP, whose error text gains the class. The `agent` extra now needs
+  `pydantic-ai-slim` 2.16 or newer for that channel.
 - **An ExtOpt step's wrapper is never seen half-written.** Every job of an
   `mlip-extopt` / `pyscf-extopt` step executes one wrapper script, and a convergence retry
   rewrote it in place while its siblings ran — an ORCA that executed it in that window ran
