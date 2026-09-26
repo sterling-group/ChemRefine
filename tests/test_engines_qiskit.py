@@ -630,7 +630,7 @@ def test_qiskit_engine_is_registered_and_provisionable() -> None:
     assert engine.backend_requirement(aer).extra == "qiskit-aer"
     assert engine.backend_requirement(aer).import_name == "qiskit_aer"
     assert engine.backend_requirement({**aer, "algorithm": "exact"}).extra == "qiskit"
-    assert engine.backend_extras() == frozenset({"qiskit", "qiskit-aer"})
+    assert engine.backend_extras() == frozenset({"qiskit", "qiskit-aer", "qiskit-fermionic"})
     assert {"qiskit", "qiskit-aer"} <= known_backend_extras()
     pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
     extras = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"][

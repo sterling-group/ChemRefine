@@ -126,6 +126,11 @@ def validate_component_graph(
     for category, selection in options.component_selections().items():
         REGISTRIES[category].options_for(selection)
 
+    from chemrefine.engines.qiskit.components.fermionic_algorithms import validate_ffsim_options
+
+    if options.algorithm.name == "ffsim_vqe":
+        validate_ffsim_options(options)
+
     algorithm = ALGORITHMS.spec(options.algorithm.name)
     ansatz = ANSATZE.spec(options.ansatz.name)
     estimator = ESTIMATORS.spec(options.estimator.name)

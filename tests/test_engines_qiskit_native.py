@@ -116,6 +116,15 @@ def test_native_dispatch_does_not_construct_nature_solver(monkeypatch):
     assert result.solver == "native_test"
 
 
+@pytest.mark.parametrize("algorithm", ["ffsim_vqe"])
+def test_fermionic_algorithms_select_complete_worker_environment(algorithm):
+    """Algorithm libraries and sampler providers must coexist in one interpreter."""
+    options = {"algorithm": algorithm}
+    if algorithm != "ffsim_vqe":
+        options["sampler"] = "aer"
+    assert QiskitBackend().backend_requirement(options).extra == "qiskit-fermionic"
+
+
 def test_optimizer_provider_is_discovered_when_consumed(monkeypatch):
     """Provider dependency declarations apply to any component category."""
     requirement = BackendRequirement(extra="custom_optimizer", import_name="custom_optimizer")

@@ -225,7 +225,7 @@ dev = [
 ]
 # Driver-independent Qiskit Nature electronic-structure engine.
 qiskit-core = [
-    "qiskit>=1.4,<2.0",
+    "qiskit>=1.4,<2.6",
     "qiskit-nature>=0.8,<0.9",
     "qiskit-algorithms>=0.4,<0.5",
 ]
@@ -236,6 +236,15 @@ qiskit = ["chemrefine[qiskit-core,pyscf]"]
 qiskit-aer = [
     "qiskit-aer>=0.17,<0.18",
     "chemrefine[qiskit]",
+]
+# Fermionic simulation and sample-based chemistry share one compatible worker.
+# Fermions 0.1 requires Qiskit 2.5; keep this research stack bounded together.
+qiskit-fermionic = [
+    "qiskit>=2.5,<2.6",
+    "ffsim>=0.0.84,<0.0.85",
+    "qiskit-fermions>=0.1.0,<0.2",
+    "qiskit-addon-sqd>=0.13.1,<0.14",
+    "chemrefine[qiskit-aer]",
 ]
 
 [project.urls]
@@ -459,6 +468,10 @@ module = [
     "qiskit_aer.*",
     "qiskit_nature.*",
     "qiskit_algorithms.*",
+    "ffsim.*",
+    "qiskit_fermions.*",
+    "qiskit_addon_sqd.*",
+    "scipy.*",
 ]
 ignore_missing_imports = true
 
@@ -493,6 +506,14 @@ filterwarnings = [
     # alone so it stays narrow — verified that the identical warning raised from
     # chemrefine's own code still fails the suite.
     'ignore:Setting the shape on a NumPy array:DeprecationWarning:ase\.',
+    # Qiskit 2.5 evaluates PauliEvolutionGate matrices with SciPy sparse expm.
+    # SciPy 1.18 reports its internal CSR→CSC conversion; this affects efficiency,
+    # not the result. Keep other sparse warnings, including our own, visible.
+    'ignore:splu converted its input to CSC format:Warning:scipy.sparse.linalg._dsolve.linsolve',
+    'ignore:spsolve is more efficient when sparse b is in the CSC matrix format:Warning:scipy.sparse.linalg._matfuncs',
+    # Single-thread macOS PySCF wheels cannot change their OpenMP thread count.
+    # Keep this warning visible to users; only the test warning policy exempts it.
+    'ignore:OpenMP is not available. Setting omp_threads to .* has no effects:UserWarning:pyscf.lib.misc',
 ]
 markers = [
     "slow: tests that take longer than 1 second",
