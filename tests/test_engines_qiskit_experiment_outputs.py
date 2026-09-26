@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import subprocess
 import sys
@@ -33,11 +34,33 @@ NAMES = (
     "surface_code_resources",
 )
 
+# Complete Qiskit 2.5.2 version-13 streams, generated from empty one-/two-qubit
+# circuits. Keep fixtures SDK-free so local recovery can run without providers.
+_QPY_FIXTURES = {
+    "double_factorized_evolution": (
+        "UUlTS0lUDQIFAgAAAAAAAAABcHEAEGYACAAAAAIAAAAAAAAAAAAAAAIAAAABAAAAAAAAAAAAAAAA"
+        "Y29udHJhY3QtZml4dHVyZQAAAAAAAAAAe31xAQAAAAIAAQFxAAAAAAAAAAAAAAAAAAAAAQAAAAAA"
+        "AAAAAAAA////////////////AAAAAAAAAAA="
+    ),
+    "spacetime_postselection": (
+        "UUlTS0lUDQIFAgAAAAAAAAABcHEAEGYACAAAAAIAAAAAAAAAAAAAAAIAAAABAAAAAAAAAAAAAAAA"
+        "Y29udHJhY3QtZml4dHVyZQAAAAAAAAAAe31xAQAAAAIAAQFxAAAAAAAAAAAAAAAAAAAAAQAAAAAA"
+        "AAAAAAAA////////////////AAAAAAAAAAA="
+    ),
+    "circuit_cutting": (
+        "UUlTS0lUDQIFAgAAAAAAAAABcHEAEGYACAAAAAEAAAAAAAAAAAAAAAIAAAABAAAAAAAAAAAAAAAA"
+        "Y29udHJhY3QtZml4dHVyZQAAAAAAAAAAe31xAQAAAAEAAQFxAAAAAAAAAAAAAAAAAAAAAAAAAP//"
+        "/////////////wAAAAAAAAAA"
+    ),
+}
+
 
 def _case(name):
     """Construct compact, explicit scientific products independently of provider builders."""
     zero = np.zeros
-    qpy = np.frombuffer(b"QISKIT\r\x02\x05\x00" + (1).to_bytes(8, "big") + b"p", dtype=np.uint8)
+    qpy = np.frombuffer(
+        base64.b64decode(_QPY_FIXTURES.get(name, _QPY_FIXTURES["circuit_cutting"])), dtype=np.uint8
+    )
     if name == "lattice_dynamics":
         options = LatticeExperimentOptions().model_dump(mode="json")
         arrays = {
@@ -289,6 +312,61 @@ def test_each_registered_builtin_requires_its_scientific_product(tmp_path, name)
             validate_experiment_output(
                 name, _bundle(tmp_path, (case[0], arrays, case[2], case[3])), case[3]
             )
+
+
+@pytest.mark.parametrize(
+    ("name", "array"),
+    [
+        ("double_factorized_evolution", "circuits_qpy"),
+        ("spacetime_postselection", "checked_circuit_qpy"),
+        ("circuit_cutting", "logical_experiments_qpy"),
+    ],
+)
+@pytest.mark.parametrize("corruption", ["stub", "header_only", "version", "kind", "count", "dtype"])
+def test_qpy_products_reject_incomplete_or_incompatible_streams(tmp_path, name, array, corruption):
+    """Checksummed retained circuits still need a complete supported QPY structure."""
+    kind, arrays, metadata, options = _case(name)
+    payload = arrays[array].copy()
+    if corruption == "stub":
+        payload = payload[:7]
+    elif corruption == "header_only":
+        payload = payload[:20]
+    elif corruption == "version":
+        payload[6] = 255
+    elif corruption == "kind":
+        payload[19] = ord("s")
+    elif corruption == "count":
+        payload[17] = 2
+    else:
+        payload = payload.astype(np.uint16)
+    arrays[array] = payload
+    with pytest.raises(OutputParseError, match="QPY structure"):
+        validate_experiment_output(
+            name, _bundle(tmp_path, (kind, arrays, metadata, options)), options
+        )
+
+
+@pytest.mark.parametrize(
+    ("name", "array"),
+    [
+        ("double_factorized_evolution", "circuits_qpy"),
+        ("spacetime_postselection", "checked_circuit_qpy"),
+    ],
+)
+@pytest.mark.parametrize("field_offset", [28, 32])
+def test_unitary_qpy_products_match_declared_logical_dimensions(
+    tmp_path, name, array, field_offset
+):
+    """Evolution and check circuits retain unmeasured widths without hardware layout expansion."""
+    kind, arrays, metadata, options = _case(name)
+    payload = arrays[array].copy()
+    # In v13 the first header starts at byte 20; qubit/clbit fields end at 28/32.
+    payload[field_offset] += 1
+    arrays[array] = payload
+    with pytest.raises(OutputParseError, match="count disagrees"):
+        validate_experiment_output(
+            name, _bundle(tmp_path, (kind, arrays, metadata, options)), options
+        )
 
 
 @pytest.mark.parametrize(

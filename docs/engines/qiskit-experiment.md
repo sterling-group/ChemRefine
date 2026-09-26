@@ -151,9 +151,24 @@ their typed cost report and assumptions.
 These checks run without quantum SDKs or provider calls and do not reopen mutable
 input circuits or integrals. They establish the stored product's structural and
 reporting contract; they do not reproduce the calculation or certify scientific
-accuracy. QPY header validation does not replace decoding when executing a circuit.
+accuracy.
 `CACHE_ONLY` reports unusable output without submission; `RESUME` may recompute.
 Keep the complete bundle when copying results elsewhere.
+
+Retained QPY uses the same SDK-free structural validator as molecular circuit
+exports. It accepts [published QPY format versions](https://quantum.cloud.ibm.com/docs/en/api/qiskit/qpy)
+10–17 and checks complete file/type
+headers, circuit counts, declared section lengths, register indices and available
+circuit dimensions. Formats 16–17 additionally expose a circuit offset table;
+every indexed circuit prefix is checked. Earlier multi-circuit formats expose only
+the first prefix without decoding variable-length instructions, so later circuits
+receive a total-size lower bound. The symbolic-encoding byte is meaningful only
+in formats 10–12. These checks reject header-only stubs and unknown versions;
+they do not decode instruction parameters or custom operations. Worker-side
+QPY decoding remains necessary before executing a circuit.
+Double-factorized and spacetime artifacts also require their known quantum widths
+and zero classical bits: these saved evolution/check circuits precede measurement
+and hardware layout expansion. Cutting subcircuits may have different widths.
 
 For Python callers, `run_experiment(options, output_path)` executes the same
 registry builder and `read_bundle(output_path)` returns validated, read-only

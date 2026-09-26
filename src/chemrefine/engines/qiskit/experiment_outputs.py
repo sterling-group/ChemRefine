@@ -16,6 +16,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from chemrefine.engines.qiskit.bundles import QuantumBundle
+from chemrefine.engines.qiskit.qpy_validation import validate_qpy_payload
 from chemrefine.errors import ConfigError, OutputParseError
 
 OutputValidator = Callable[[QuantumBundle, Mapping[str, Any]], None]
@@ -114,15 +115,17 @@ def _packed(bundle: QuantumBundle, bits_name: str, counts_name: str, width: int)
     return counts
 
 
-def _qpy(bundle: QuantumBundle, name: str, circuits: int) -> None:
-    """Check the QPY header and circuit count without importing the Qiskit decoder."""
+def _qpy(
+    bundle: QuantumBundle,
+    name: str,
+    circuits: int,
+    *,
+    num_qubits: int | None = None,
+    num_clbits: int | None = None,
+) -> None:
+    """Apply shared local QPY structural checks without importing the SDK decoder."""
     value = _array(bundle, name, (None,), "u")
-    _require(value.dtype.itemsize == 1 and value.size >= 19, "missing QPY byte stream")
-    _require(value[:6].tobytes() == b"QISKIT", "invalid QPY byte stream header")
-    _require(
-        value[6] >= 10 and int.from_bytes(value[10:18].tobytes(), "big") == circuits,
-        "QPY circuit count or format disagrees",
-    )
+    validate_qpy_payload(value, circuits=circuits, num_qubits=num_qubits, num_clbits=num_clbits)
 
 
 def _lattice(bundle: QuantumBundle, options: Mapping[str, Any]) -> None:
@@ -187,7 +190,7 @@ def _double_factorized(bundle: QuantumBundle, options: Mapping[str, Any]) -> Non
     _array(bundle, "statevectors", (size, 1 << (2 * modes)))
     _array(bundle, "energies", (size,), "f")
     _array(bundle, "occupations", (size, 2 * modes), "f")
-    _qpy(bundle, "circuits_qpy", size)
+    _qpy(bundle, "circuits_qpy", size, num_qubits=2 * modes, num_clbits=0)
     metadata = bundle.metadata
     _fields(metadata, {"observations": list, "reference_occupations": dict, "circuits_format": str})
     _require(len(metadata["observations"]) == size, "missing factorized observations")
@@ -341,7 +344,7 @@ def _spacetime(bundle: QuantumBundle, options: Mapping[str, Any]) -> None:
         metadata["input_checks"] == controls["checks"] and len(metadata["output_checks"]) == checks,
         "missing Pauli check identities",
     )
-    _qpy(bundle, "checked_circuit_qpy", 1)
+    _qpy(bundle, "checked_circuit_qpy", 1, num_qubits=modes + checks, num_clbits=0)
     totals = {}
     for name, width in (("raw", modes + checks), ("accepted", modes), ("rejected", modes + checks)):
         totals[name] = sum(map(int, _packed(bundle, name + "_bitstrings", name + "_counts", width)))

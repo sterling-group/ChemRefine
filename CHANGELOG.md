@@ -27,6 +27,11 @@ for the full map.
 
 ### Added
 
+- **Structural QPY recovery checks.** Retained circuits now require complete,
+  supported file and circuit headers, consistent counts, dimensions and bounded
+  sections. SDK-free checks cover known formats 10–17; execution still decodes the
+  complete circuit in its worker.
+
 - **Readable boundary-size quantum bundles.** Descriptor limits now count the exact
   published UTF-8 bytes, including the final newline, and preserve prior outputs
   when a replacement exceeds that limit.

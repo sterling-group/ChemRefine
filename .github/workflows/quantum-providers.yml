@@ -24,7 +24,7 @@ jobs:
             extra: qiskit-aer
             imports: qiskit,qiskit_nature,qiskit_algorithms,qiskit_aer
             pins: qiskit==1.4.0 qiskit-nature==0.8.0 qiskit-algorithms==0.4.0 qiskit-aer==0.17.0
-            tests: tests/test_engines_qiskit_dynamics.py tests/test_engines_qiskit_measurement.py tests/test_engines_qiskit_exact.py tests/test_engines_qiskit_tapering.py tests/test_engines_qiskit_spectra.py tests/test_engines_qiskit_spectral_residuals.py tests/test_engines_qiskit_circuit_io.py tests/test_engines_qiskit_handoffs.py tests/test_engines_qiskit_integral_source.py
+            tests: tests/test_engines_qiskit_dynamics.py tests/test_engines_qiskit_measurement.py tests/test_engines_qiskit_exact.py tests/test_engines_qiskit_tapering.py tests/test_engines_qiskit_spectra.py tests/test_engines_qiskit_spectral_residuals.py tests/test_engines_qiskit_circuit_io.py tests/test_engines_qiskit_qpy_validation.py tests/test_engines_qiskit_handoffs.py tests/test_engines_qiskit_integral_source.py
           - profile: fermionic
             extra: qiskit-fermionic
             imports: ffsim,qiskit_fermions,qiskit_addon_sqd
