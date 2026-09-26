@@ -141,7 +141,7 @@ def validate_component_graph(
     if (
         options.algorithm.name == "adapt_vqe"
         and not operator_pool_supplied
-        and options.ansatz.name in {"uccsd", "ucc"}
+        and options.ansatz.name in {"uccsd", "ucc", "ucc_ranks"}
         and getattr(ANSATZE.options_for(options.ansatz), "reps", 1) != 1
     ):
         raise ConfigError(

@@ -7,6 +7,7 @@ Qiskit only when invoked inside the optional backend environment.
 from chemrefine.engines.qiskit.components import (
     algorithms,
     ansatze,
+    ansatze_extended,
     estimators,
     initial_points,
     initial_states,
@@ -19,6 +20,7 @@ from chemrefine.engines.qiskit.components import (
 __all__ = [
     "algorithms",
     "ansatze",
+    "ansatze_extended",
     "estimators",
     "initial_points",
     "initial_states",

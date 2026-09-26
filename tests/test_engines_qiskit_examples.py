@@ -64,6 +64,8 @@ TESTS_ONLY = {
         "flatten",
         "generalized",
         "include_imaginary",
+        "mode",
+        "ranks",
         "skip_final_rotation_layer",
         "su2_gates",
     },
