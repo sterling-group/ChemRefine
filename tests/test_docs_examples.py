@@ -3,7 +3,7 @@
 The README quickstart and each tutorial open with a complete YAML config, and nothing ran
 them: a schema change that renamed a field would leave every example teaching the old
 spelling, discovered by the next new user as a validation error on their first run. Any
-``yaml`` fence whose text contains ``steps:`` is a full config by this repo's convention,
+``yaml`` fence with a top-level ``steps:`` is a full config by this repo's convention,
 so each must parse and pass :class:`chemrefine.config.Config` — the same validation a real
 run applies first.
 
@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from textwrap import dedent
 
 import pytest
 import yaml
@@ -34,7 +35,7 @@ _YAML_FENCE_RE = re.compile(r"```yaml\n(.*?)```", re.DOTALL)
 
 
 def _config_blocks() -> list[object]:
-    """Every ``steps:``-carrying YAML block, id'd by file and block number.
+    """Every YAML block with top-level pipeline steps, id'd by file and block number.
 
     ``docs/`` ships in the repository but not in the sdist, so a distro packager's run
     validates the README's block alone rather than failing on a directory that was never
@@ -46,7 +47,7 @@ def _config_blocks() -> list[object]:
             continue
         text = path.read_text(encoding="utf-8")
         for n, match in enumerate(_YAML_FENCE_RE.finditer(text), 1):
-            if "steps:" in match.group(1):
+            if re.search(r"^steps\s*:", dedent(match.group(1)), re.MULTILINE):
                 blocks.append(
                     pytest.param(match.group(1), id=f"{path.relative_to(_REPO_ROOT)}:{n}")
                 )
