@@ -222,9 +222,10 @@ to `None`) with `Field(json_schema_extra={"input_file": True})`. Mark a filename
 container to declare all its non-`None` leaves. Add `file_format: quantum_bundle`
 for native JSON/NPZ bundles. Each returned reference has its full canonical option
 location and format. Declare fields inside nested models individually; unmarked
-strings remain ordinary data. Input option dictionaries use canonical model field
-names, matching `model_dump()`. The helper rejects cycles and nesting beyond 64
-option levels.
+strings remain ordinary data. File-bearing fields and their ancestor containers
+must be explicitly supplied with canonical model field names. The helper rejects
+aliases and non-`None` file defaults because the resolver traverses the original
+option dictionary. It also rejects cycles and nesting beyond 64 option levels.
 
 The step/cache layers digest those files; engines must not import cache machinery.
 Files produced by upstream steps need not exist during preflight, but must exist

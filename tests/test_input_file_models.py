@@ -244,3 +244,44 @@ def test_invalid_format_marks_cycles_and_excess_nesting_fail_cleanly():
         deep = [deep]
     with pytest.raises(ConfigError, match="64 option levels"):
         typed_input_references(Values(data=deep))
+
+
+def test_file_bearing_defaults_and_aliases_are_refused_before_resolution():
+    from pydantic import AliasChoices
+
+    class Defaulted(BaseModel):
+        path: str = Field("default.dat", json_schema_extra={"input_file": True})
+
+    with pytest.raises(ConfigError, match="supplied explicitly"):
+        typed_input_references(Defaulted())
+    assert typed_input_references(Defaulted(path="explicit.dat"))[0].location == ("path",)
+
+    class DefaultContainer(BaseModel):
+        source: _Source = Field(default_factory=lambda: _Source(bundle="default.json"))
+
+    with pytest.raises(ConfigError, match="supplied explicitly"):
+        typed_input_references(DefaultContainer())
+
+    for alias in (
+        {"alias": "input"},
+        {"serialization_alias": "input"},
+        {"validation_alias": AliasChoices("path", "input")},
+    ):
+
+        class Aliased(BaseModel):
+            path: str = Field(json_schema_extra={"input_file": True}, **alias)
+
+        model = Aliased.model_validate({"input" if "alias" in alias else "path": "file.dat"})
+        with pytest.raises(ConfigError, match="canonical names"):
+            typed_input_references(model)
+
+    class AliasContainer(BaseModel):
+        source: _Source = Field(alias="input")
+
+    with pytest.raises(ConfigError, match="canonical names"):
+        typed_input_references(AliasContainer.model_validate({"input": {"bundle": "file.json"}}))
+
+    class SameAlias(BaseModel):
+        path: str = Field(alias="path", json_schema_extra={"input_file": True})
+
+    assert typed_input_references(SameAlias(path="file.dat"))[0].location == ("path",)

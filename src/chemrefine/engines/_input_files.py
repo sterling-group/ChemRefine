@@ -28,7 +28,8 @@ def typed_input_references(
     Mark a string field, or a list/tuple/dictionary of strings, with
     ``json_schema_extra={"input_file": True}``. An optional ``file_format`` describes
     its parser. Unmarked strings are never interpreted as paths. ``None`` disables
-    an optional reference. Models use canonical field names, matching model_dump().
+    an optional reference. File-bearing fields and their model ancestors must be
+    explicitly supplied and unaliased so locations match the original option mapping.
     """
     references: list[TypedInputReference] = []
     active: set[int] = set()
@@ -73,12 +74,25 @@ def typed_input_references(
                     not isinstance(format_name, str) or not format_name.strip()
                 ):
                     raise ConfigError("input file formats must be nonempty names")
+                before = len(references)
                 walk(
                     getattr(value, name),
                     (*location, name),
                     declared=marked,
                     file_format=format_name,
                 )
+                if len(references) > before:
+                    if name not in value.model_fields_set:
+                        raise ConfigError(
+                            "file-bearing option fields must be supplied explicitly; "
+                            f"defaulted field {name!r} is missing from the input options"
+                        )
+                    aliases = (field.alias, field.validation_alias, field.serialization_alias)
+                    if any(alias is not None and alias != name for alias in aliases):
+                        raise ConfigError(
+                            "file-bearing option fields require canonical names; "
+                            f"aliased field {name!r} is not supported"
+                        )
         elif isinstance(value, Mapping):
             for key, item in value.items():
                 if not isinstance(key, str):
