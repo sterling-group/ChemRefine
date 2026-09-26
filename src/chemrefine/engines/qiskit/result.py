@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
-from typing import Any, Literal, cast
+from dataclasses import asdict, dataclass, field, replace
+from typing import TYPE_CHECKING, Any, Literal, cast
+
+if TYPE_CHECKING:
+    from chemrefine.engines.qiskit.determinants import DeterminantState
 
 
 @dataclass(frozen=True)
@@ -72,12 +75,19 @@ class QiskitRunResult:
     logical_circuit_metrics: CircuitMetrics | None = None
     transpiled_circuit_metrics: CircuitMetrics | None = None
 
+    target_root: int = 0
+    root_energies_hartree: tuple[float, ...] | None = None
+    root_electronic_energies_hartree: tuple[float, ...] | None = None
+    root_total_energies_hartree: tuple[float, ...] | None = None
+    states: tuple[DeterminantState, ...] = field(default=(), repr=False, compare=False)
+
     def as_dict(self) -> dict[str, Any]:
         """Return a detached JSON-native snapshot, rejecting objects and NaN/inf."""
-        return cast(
-            "dict[str, Any]",
-            json.loads(json.dumps(asdict(self), allow_nan=False)),
-        )
+        # Numerical states are transient worker payloads, persisted as referenced
+        # bundles by the workflow rather than copied into JSON sidecars.
+        data = asdict(replace(self, states=()))
+        data.pop("states")
+        return cast("dict[str, Any]", json.loads(json.dumps(data, allow_nan=False)))
 
     def as_metadata(self) -> dict[str, Any]:
         """Extend the existing sidecar diagnostics with the standardized result fields."""

@@ -5,7 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from chemrefine.engines.qiskit.determinants import DeterminantState
 
 from chemrefine.engines.qiskit.options import QiskitOptions
 from chemrefine.engines.qiskit.problem import PreparedProblem
@@ -45,6 +48,9 @@ class NativeOutcome:
     parameter_count: int | None = None
     optimizer_evaluations: int | None = None
     evaluations: list[dict[str, Any]] = field(default_factory=list)
+    states: tuple[DeterminantState, ...] = ()
+    active_energies_hartree: tuple[float, ...] = ()
+    target_root: int = 0
 
 
 def summarize_native(
@@ -59,7 +65,20 @@ def summarize_native(
         name: real_energy(value, f"{name} offset")
         for name, value in prepared.energy_offsets.items()
     }
+    roots = tuple(
+        real_energy(value, "root active electronic energy")
+        for value in (outcome.active_energies_hartree or (active,))
+    )
+    if not 0 <= outcome.target_root < len(roots) or roots[outcome.target_root] != active:
+        raise ConfigError("native target_root must identify the selected active energy")
+    if outcome.states and len(outcome.states) != len(roots):
+        raise ConfigError("native retained states must match the energy root count")
     nuclear = offsets.get("nuclear_repulsion_energy")
+    electronic_offset = sum(
+        value for name, value in offsets.items() if name != "nuclear_repulsion_energy"
+    )
+    electronic_roots = tuple(value + electronic_offset for value in roots)
+    reported_roots = tuple(value + (nuclear or 0.0) for value in electronic_roots)
     electronic = active + sum(
         value for name, value in offsets.items() if name != "nuclear_repulsion_energy"
     )
@@ -97,6 +116,8 @@ def summarize_native(
         "execution": "native",
         "energy_convention": "total" if nuclear is not None else "electronic",
         "active_energy_hartree": active,
+        "active_energies_hartree": roots,
+        "target_root": outcome.target_root,
         "evaluations": outcome.evaluations,
         "solver": outcome.diagnostics,
         "prepared_active_space": active_space,
@@ -130,6 +151,11 @@ def summarize_native(
         optimizer_evaluations=outcome.optimizer_evaluations,
         energy_evaluation_count=len(outcome.evaluations),
         termination_reason=outcome.termination_reason,
+        target_root=outcome.target_root,
+        root_energies_hartree=reported_roots,
+        root_electronic_energies_hartree=electronic_roots,
+        root_total_energies_hartree=reported_roots if nuclear is not None else None,
+        states=outcome.states,
     )
     # Check the complete artifact before it can be written or enter the result cache.
     try:

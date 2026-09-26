@@ -5,8 +5,9 @@ from __future__ import annotations
 from collections import Counter
 from contextlib import nullcontext
 from copy import deepcopy
+from dataclasses import dataclass
 from math import isqrt
-from typing import TYPE_CHECKING, Any, Self, cast
+from typing import TYPE_CHECKING, Any, Literal, Self, cast
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
@@ -23,9 +24,18 @@ from chemrefine.errors import ConfigError
 
 if TYPE_CHECKING:
     from chemrefine.engines.qiskit.components.samplers import AerSamplerOptions
+    from chemrefine.engines.qiskit.determinants import ProjectedEigensystem
     from chemrefine.engines.qiskit.fermionic import FermionicIntegrals
     from chemrefine.engines.qiskit.native import NativeOutcome, NativeSolveRequest
     from chemrefine.engines.qiskit.options import QiskitOptions
+
+
+@dataclass(frozen=True)
+class SpinSector:
+    """Spin populations independent of integral reality or provider restrictions."""
+
+    norb: int
+    nelec: tuple[int, int]
 
 
 class SubspaceOptions(BaseModel):
@@ -33,6 +43,10 @@ class SubspaceOptions(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 
+    projection: Literal["cartesian", "explicit"] = "cartesian"
+    num_roots: int = Field(1, ge=1)
+    target_root: int = Field(0, ge=0)
+    spin_constraint: Literal["require", "report"] = "require"
     shots: int = Field(4096, ge=1)
     samples_per_batch: int = Field(100, ge=1)
     num_batches: int = Field(3, ge=1)
@@ -53,6 +67,12 @@ class SubspaceOptions(BaseModel):
     @model_validator(mode="after")
     def _diagonalization_budget(self) -> Self:
         """Bound the total requested batch solves, including recovery iterations."""
+        if self.target_root >= self.num_roots:
+            raise ValueError("target_root must be smaller than num_roots")
+        if self.projection == "cartesian" and (
+            self.num_roots != 1 or self.spin_constraint != "require"
+        ):
+            raise ValueError("multiple roots or spin reporting require projection: explicit")
         iterations = self.max_iterations if self.configuration_recovery else 1
         if iterations * self.num_batches > self.max_total_diagonalizations:
             raise ValueError("SQD batch solves exceed max_total_diagonalizations")
@@ -156,7 +176,7 @@ def _chemistry(request: NativeSolveRequest) -> FermionicIntegrals:
 
 
 def _checked_counts(
-    counts: dict[str, int], data: FermionicIntegrals, options: SubspaceOptions
+    counts: dict[str, int], data: FermionicIntegrals | SpinSector, options: SubspaceOptions
 ) -> tuple[dict[str, int], dict[str, Any]]:
     """Validate sample width, frequencies, budget and spin-resolved particle counts."""
     if not counts:
@@ -198,13 +218,13 @@ def _checked_counts(
 
 def _check_sampling_memory(
     request: NativeSolveRequest,
-    data: FermionicIntegrals,
+    data: FermionicIntegrals | SpinSector,
     options: SubspaceOptions,
     *,
     total_shots: int,
 ) -> None:
     """Check dense simulation and retained-shot estimates before any circuit executes."""
-    if data.norb > 63:
+    if options.projection == "cartesian" and data.norb > 63:
         raise ConfigError("the PySCF SQD adapter supports at most 63 spatial orbitals")
     if options.symmetrize_spin and data.nelec[0] != data.nelec[1]:
         raise ConfigError("SQD symmetrize_spin requires equal alpha and beta populations")
@@ -412,6 +432,8 @@ def _solve_samples(
         num_qubits=2 * data.norb,
         ansatz=ansatz,
         evaluations=evaluations,
+        states=(_retained_state(result.sci_state, data.norb),),
+        active_energies_hartree=(energy,),
         diagnostics={
             **sample_metadata,
             "sampling": sampling_metadata,
@@ -433,6 +455,184 @@ def _solve_samples(
     )
 
 
+def _retained_state(state: Any, norb: int) -> Any:
+    """Preserve a released Cartesian SCI state's explicit basis and amplitudes."""
+    from chemrefine.engines.qiskit.determinants import DeterminantState
+
+    determinants = tuple(
+        int(alpha) | (int(beta) << norb) for alpha in state.ci_strs_a for beta in state.ci_strs_b
+    )
+    return DeterminantState(2 * norb, determinants, np.asarray(state.amplitudes).ravel())
+
+
+def _solve_explicit_samples(
+    request: NativeSolveRequest,
+    counts: dict[str, int],
+    options: SubspaceOptions,
+    sampling_metadata: dict[str, Any],
+    *,
+    ansatz: str | None = None,
+) -> NativeOutcome:
+    """Recover and diagonalize explicit determinants without a spin-factor closure."""
+    from pyscf.lib import num_threads, with_omp_threads
+    from qiskit_addon_sqd.configuration_recovery import recover_configurations
+
+    from chemrefine.engines.qiskit.determinants import (
+        FermionicHamiltonian,
+        projected_eigensystem,
+    )
+    from chemrefine.engines.qiskit.native import NativeOutcome
+
+    prepared = request.prepared
+    norb, nelec = prepared.num_spatial_orbitals, prepared.num_particles
+    counts, sample_metadata = _checked_counts(counts, SpinSector(norb=norb, nelec=nelec), options)
+    if options.symmetrize_spin and nelec[0] != nelec[1]:
+        raise ConfigError("SQD symmetrize_spin requires equal alpha and beta populations")
+    hamiltonian = FermionicHamiltonian.from_operator(
+        prepared.fermionic_hamiltonian, num_modes=2 * norb
+    )
+    angular = prepared.problem.properties.angular_momentum
+    spin_operator = (
+        None
+        if angular is None
+        else FermionicHamiltonian.from_operator(
+            angular.second_q_ops()["AngularMomentum"], num_modes=2 * norb
+        )
+    )
+    if spin_operator is None and options.spin_constraint == "require":
+        raise ConfigError("SQD spin_constraint requires an angular momentum observable")
+    memory_limit = options.max_memory_mb * 1024**2
+    if len(counts) * (8 * norb + 192) + 192 * len(hamiltonian.terms) > memory_limit:
+        raise ConfigError("explicit SQD input storage estimate exceeds max_memory_mb")
+    bitstrings = np.array([[bit == "1" for bit in bits] for bits in counts], dtype=bool)
+    probabilities = np.array(list(counts.values()), dtype=float)
+    probabilities /= probabilities.sum()
+    occupancies = (
+        np.asarray(prepared.problem.orbital_occupations),
+        np.asarray(prepared.problem.orbital_occupations_b),
+    )
+    rng = np.random.default_rng(options.seed)
+    best = None
+    previous = None
+    evaluations: list[dict[str, Any]] = []
+    iteration_records: list[dict[str, Any]] = []
+    for iteration in range(options.max_iterations if options.configuration_recovery else 1):
+        if options.configuration_recovery:
+            recovered, weights = recover_configurations(
+                bitstrings, probabilities, occupancies, *nelec, rand_seed=rng
+            )
+        else:
+            recovered, weights = bitstrings, probabilities
+        candidates = np.array(
+            [int("".join("1" if bit else "0" for bit in row), 2) for row in recovered], dtype=object
+        )
+        batch_energies = []
+        for batch in range(options.num_batches):
+            size = min(options.samples_per_batch, len(candidates), options.max_subspace_dimension)
+            selected = candidates[rng.choice(len(candidates), size=size, replace=False, p=weights)]
+            basis = {int(bits) for bits in selected}
+            if options.symmetrize_spin:
+                mask = (1 << norb) - 1
+                basis.update(((bits & mask) << norb) | (bits >> norb) for bits in tuple(basis))
+            threads = (
+                nullcontext()
+                if num_threads() == request.options.cores
+                else with_omp_threads(request.options.cores)
+            )
+            with threads:
+                eigensystem = projected_eigensystem(
+                    hamiltonian,
+                    sorted(basis),
+                    num_roots=options.num_roots,
+                    max_subspace_dimension=options.max_subspace_dimension,
+                    max_memory_mb=options.max_memory_mb,
+                    tolerance=options.energy_tol,
+                    max_iterations=options.sci_max_cycle,
+                    seed=options.seed,
+                )
+            energy = float(eigensystem.energies[options.target_root])
+            if best is None or energy < best.energies[options.target_root]:
+                best = eigensystem
+            batch_energies.append(eigensystem.energies.tolist())
+            record = {
+                "evaluation": len(evaluations) + 1,
+                "objective_value_hartree": energy,
+                "metadata": {"iteration": iteration + 1, "batch": batch},
+            }
+            evaluations.append(record)
+            if request.callback is not None:
+                request.callback(deepcopy(record))
+        best = cast("ProjectedEigensystem", best)
+        state = best.states[options.target_root]
+        diagonal = np.zeros(2 * norb)
+        for bits, amplitude in zip(state.determinants, state.amplitudes, strict=True):
+            diagonal += abs(amplitude) ** 2 * np.array(
+                [(bits >> mode) & 1 for mode in range(2 * norb)]
+            )
+        updated = (diagonal[:norb], diagonal[norb:])
+        iteration_records.append({"iteration": iteration + 1, "energies_hartree": batch_energies})
+        stop = (
+            previous is not None
+            and abs(float(best.energies[options.target_root]) - previous) <= options.energy_tol
+            and np.max(np.abs(np.asarray(updated) - np.asarray(occupancies)))
+            <= options.occupancies_tol
+        )
+        occupancies = updated
+        previous = float(best.energies[options.target_root])
+        if stop:
+            break
+    best = cast("ProjectedEigensystem", best)
+    spin = (prepared.multiplicity - 1) / 2
+    target_spin = spin * (spin + 1)
+    spin_records = []
+    if spin_operator is not None:
+        for root, state in enumerate(best.states):
+            original = state.sparse()
+            image = spin_operator.apply(original, max_entries=memory_limit // 192)
+            mean = sum(
+                value.conjugate() * image.get(bits, 0j) for bits, value in original.items()
+            ).real
+            residual = float(
+                np.sqrt(
+                    sum(
+                        abs(image.get(bits, 0j) - target_spin * original.get(bits, 0j)) ** 2
+                        for bits in image.keys() | original.keys()
+                    )
+                )
+            )
+            spin_records.append(
+                {"root": root, "spin_squared": float(mean), "spin_eigenstate_residual": residual}
+            )
+            if options.spin_constraint == "require" and residual > options.spin_tolerance:
+                raise ConfigError(f"SQD root {root} fails requested spin residual: {residual:.8g}")
+    return NativeOutcome(
+        active_energy_hartree=float(best.energies[options.target_root]),
+        active_energies_hartree=tuple(float(value) for value in best.energies),
+        target_root=options.target_root,
+        states=best.states,
+        num_qubits=2 * norb,
+        ansatz=ansatz,
+        evaluations=evaluations,
+        termination_reason="sampled_subspace_completed",
+        diagnostics={
+            **sample_metadata,
+            "sampling": sampling_metadata,
+            "projection": "explicit",
+            "subspace_dimension": len(best.states[0].determinants),
+            "configuration_recovery": options.configuration_recovery,
+            "iterations": iteration_records,
+            "seed": options.seed,
+            "root_residuals": list(best.residuals),
+            "root_spin": spin_records,
+            "target_spin_squared": target_spin,
+            "spin_constraint": options.spin_constraint,
+            "orbital_occupancies": [values.tolist() for values in occupancies],
+            "property_source": "projected_subspace_state",
+            "energy_convention": "active_electronic_without_offsets",
+        },
+    )
+
+
 @ALGORITHMS.register(
     "sqd",
     SQDOptions,
@@ -448,11 +648,26 @@ def build_sqd(*, options: SQDOptions, request: NativeSolveRequest) -> NativeOutc
     from chemrefine.engines.qiskit.sampling import sample_circuit
 
     validate_subspace_options(request.options)
-    data = _chemistry(request)
+    if options.projection == "explicit":
+        data: FermionicIntegrals | SpinSector = SpinSector(
+            norb=request.prepared.num_spatial_orbitals, nelec=request.prepared.num_particles
+        )
+    else:
+        data = _chemistry(request)
     if options.counts is not None:
         if request.initial_point is not None:
             raise ConfigError("SQD supplied counts cannot be combined with an initial point")
-        return _solve_samples(request, data, options.counts, options, {"source": "supplied_counts"})
+        if options.projection == "explicit":
+            return _solve_explicit_samples(
+                request, options.counts, options, {"source": "supplied_counts"}
+            )
+        return _solve_samples(
+            request,
+            cast("FermionicIntegrals", data),
+            options.counts,
+            options,
+            {"source": "supplied_counts"},
+        )
     if options.shots > options.max_total_shots:
         raise ConfigError("SQD shots exceed max_total_shots")
     _check_sampling_memory(request, data, options, total_shots=options.shots)
@@ -488,9 +703,22 @@ def build_sqd(*, options: SQDOptions, request: NativeSolveRequest) -> NativeOutc
         cores=request.options.cores,
         parameter_values=values.tolist(),
     )
+    if options.projection == "explicit":
+        return _solve_explicit_samples(
+            request,
+            batch.counts,
+            options,
+            {
+                "source": "fixed_ansatz",
+                "parameter_source": parameter_source,
+                "parameter_values": values.tolist(),
+                **batch.metadata,
+            },
+            ansatz=request.options.ansatz.name,
+        )
     return _solve_samples(
         request,
-        data,
+        cast("FermionicIntegrals", data),
         batch.counts,
         options,
         {
@@ -545,6 +773,19 @@ def build_sqdrift(*, options: SqDRIFTOptions, request: NativeSolveRequest) -> Na
         )
         counts.update(batch.counts)
         records.append({**info, "shots": batch.shots, "sampling": batch.metadata})
+    if options.projection == "explicit":
+        return _solve_explicit_samples(
+            request,
+            dict(counts),
+            options,
+            {
+                "source": "sqdrift",
+                "experimental": True,
+                "diagonal_terms_retained": True,
+                "mode_order": "alpha_then_beta",
+                "circuits": records,
+            },
+        )
     return _solve_samples(
         request,
         data,
