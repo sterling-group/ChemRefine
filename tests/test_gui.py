@@ -1338,22 +1338,77 @@ def test_chat_refuses_approvals_with_nothing_pending(client: Any, chat_env: pyte
     assert "no suspended run" in refused.get_json()["error"]
 
 
-def test_chat_keeps_tool_errors_in_the_documented_shape(client: Any, chat_env: pytest.MonkeyPatch):
-    """A ChemRefineError from a tool is a 400 with its exit code — never a 502."""
-    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+def _reads_back_a_refusal(tool: str, args: dict[str, Any]) -> Any:
+    """A model that calls ``tool`` once, then replies with what it was told about the call."""
+    from pydantic_ai.messages import (
+        ModelMessage,
+        ModelResponse,
+        RetryPromptPart,
+        TextPart,
+        ToolCallPart,
+    )
     from pydantic_ai.models.function import AgentInfo, FunctionModel
 
     def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if len(messages) == 1:
-            return ModelResponse(
-                parts=[ToolCallPart("summarize_config", {"config_path": "/absent.yaml"})]
-            )
-        return ModelResponse(parts=[TextPart("unreached")])
+        told = [p for p in messages[-1].parts if isinstance(p, RetryPromptPart)]
+        if not told:
+            return ModelResponse(parts=[ToolCallPart(tool, args)])
+        return ModelResponse(parts=[TextPart(str(told[0].content))])
 
-    _inject_model(chat_env, FunctionModel(script))
+    return FunctionModel(script)
+
+
+def test_a_tool_refusal_reaches_the_model_and_the_turn_answers(
+    client: Any, chat_env: pytest.MonkeyPatch
+):
+    """The refusal is the model's to read, not a 400 that ends the turn under it.
+
+    A 400 here dropped the turn — the user's message included — and the model never saw
+    the sentence that says what to change, where over MCP the same refusal is a tool
+    result the model continues from.
+    """
+    _inject_model(
+        chat_env, _reads_back_a_refusal("summarize_config", {"config_path": "/absent.yaml"})
+    )
+    answered = _post(client, "/api/agent/chat", {"message": "summarize"})
+    assert answered.status_code == 200
+    assert answered.get_json()["reply"].startswith("ConfigError: ")
+    assert "/absent.yaml" in answered.get_json()["reply"]
+
+
+def test_an_approved_call_that_refuses_is_read_in_the_resumed_run(
+    client: Any, chat_env: pytest.MonkeyPatch
+):
+    """An approved mutation's refusal answers the model inside the run the verdict resumed."""
+    _inject_model(
+        chat_env,
+        _reads_back_a_refusal("start_run", {"config_path": "/absent.yaml", "action": "explode"}),
+    )
+    suspended = _post(client, "/api/agent/chat", {"message": "run it"}).get_json()
+    [card] = suspended["pending"]
+    resumed = _post(client, "/api/agent/chat", {"approvals": {card["id"]: True}})
+    assert resumed.status_code == 200
+    assert resumed.get_json()["reply"].startswith("ConfigError: unknown action")
+    assert resumed.get_json()["pending"] is None
+
+
+def test_a_refusal_the_model_cannot_get_past_keeps_the_documented_shape(
+    client: Any, chat_env: pytest.MonkeyPatch
+):
+    """Retried until the budget runs out, the turn ends on the refusal: a 400 with its code."""
+    from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    def stubborn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[ToolCallPart("summarize_config", {"config_path": "/absent.yaml"})]
+        )
+
+    _inject_model(chat_env, FunctionModel(stubborn))
     failed = _post(client, "/api/agent/chat", {"message": "summarize"})
     assert failed.status_code == 400
     assert failed.get_json()["exit_code"] == 2
+    assert "/absent.yaml" in failed.get_json()["error"]
 
 
 def test_chat_maps_endpoint_failures_to_502(client: Any, chat_env: pytest.MonkeyPatch):

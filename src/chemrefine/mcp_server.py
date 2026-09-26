@@ -17,7 +17,6 @@ message instead of a traceback.
 
 from __future__ import annotations
 
-import functools
 from collections.abc import Callable
 from typing import Any
 
@@ -29,8 +28,8 @@ from chemrefine import __version__
 # Explicit re-export aliases: tests and docs address the surface as mcp_server.TOOLS /
 # mcp_server.guide_text, and `no_implicit_reexport` requires the spelling to say so.
 from chemrefine.agent_tools import TOOLS as TOOLS
+from chemrefine.agent_tools import answering
 from chemrefine.agent_tools import guide_text as guide_text
-from chemrefine.errors import ChemRefineError
 
 
 def actionable(tool: Callable[..., Any]) -> Callable[..., Any]:
@@ -53,18 +52,10 @@ def actionable(tool: Callable[..., Any]) -> Callable[..., Any]:
     is the SDK's hygiene and worth keeping — this says which of our exceptions are answers to
     the caller rather than failures of the server.
 
-    :func:`functools.wraps` carries ``__wrapped__``, so the SDK still derives the tool's
-    schema from the original signature and its description from the original docstring.
+    That rule is :func:`chemrefine.agent_tools.answering`, which the embedded agent applies
+    too; ``ToolError`` is this SDK's channel for it.
     """
-
-    @functools.wraps(tool)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
-        try:
-            return tool(*args, **kwargs)
-        except ChemRefineError as exc:
-            raise ToolError(str(exc)) from exc
-
-    return wrapper
+    return answering(tool, ToolError)
 
 
 def build_server() -> MCPServer:

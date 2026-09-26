@@ -147,6 +147,12 @@ A declined call is reported to the model as a structured refusal it must respect
 changes on disk without your yes, which also bounds what any prompt-injected instruction
 could do. In an MCP client the client's own approval dialog plays this role.
 
+A tool that refuses on its own account — a config that does not load, an action it does not
+know, a run lock another driver holds — answers the model with the error's class and message
+(`ConfigError: …`), in the terminal chat, the builder's chat panel and over MCP alike, and the
+model corrects the call from there. If it keeps making the call a tool refuses, the turn
+ends on that refusal and shows it to you.
+
 Small local models make clumsier tool calls (the harness feeds validation errors back and
 they retry) and reason more shallowly about chemistry; the gates, schemas and refusal
 behaviour are identical to frontier models. For stronger chemistry without payment, any

@@ -6,7 +6,8 @@ agent register *the same functions* and cannot drift apart. Nothing here imports
 agent framework; every function takes JSON-compatible arguments, returns a
 JSON-serializable dict, and raises :class:`~chemrefine.errors.ChemRefineError`
 subclasses — whose documented ``exit_code`` taxonomy doubles as the structured failure
-signal a caller branches on.
+signal a caller branches on. How a harness hands such a refusal back to the model is one
+rule too, :func:`answering`, so the two cannot disagree about that either.
 
 Two design rules, both taken from what breaks agent/HPC integrations in practice:
 
@@ -28,8 +29,10 @@ from __future__ import annotations
 
 import csv
 import dataclasses
+import functools
 import subprocess
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -44,6 +47,7 @@ from chemrefine.engines.api import FrequencyOutputParsing, ParsedResult, get_eng
 from chemrefine.errors import (
     ENDPOINT_UNREACHABLE,
     EXIT_CODES,
+    ChemRefineError,
     ConfigError,
     JobSubmissionError,
     RunLockError,
@@ -1321,6 +1325,45 @@ agent wraps exactly these in its own confirmation prompt. Every name must match 
 member of :data:`TOOLS` — the gate matches by name, so an entry naming nothing gates
 nothing, and a mutating tool renamed without this set would silently go ungated. A test
 holds the subset relation."""
+
+
+def refusal_text(exc: ChemRefineError) -> str:
+    """A refusal as every harness shows it: the class that names it, then its message.
+
+    ``ConfigError: …`` / ``RunLockError: …`` — the class is the part of the taxonomy a
+    reader acts on (fix the config, or wait for the other driver), and the message says
+    what to change. The terminal chat prints this to the human; the model reads it too.
+    """
+    return f"{type(exc).__name__}: {exc}"
+
+
+def answering(
+    tool: Callable[..., Any], channel: Callable[[str], BaseException]
+) -> Callable[..., Any]:
+    """``tool`` under the one failure contract every harness applies to it.
+
+    A :class:`~chemrefine.errors.ChemRefineError` is an *answer* to the caller — an
+    unknown action, a template not written yet, a lock another driver holds — and its
+    message says what to change, so it is re-raised as ``channel(refusal_text(exc))``:
+    the harness framework's own documented way to hand a message back to the model.
+    Anything else is a crash and propagates untouched, so no harness mistakes a bug for an
+    answer or shows the model a traceback.
+
+    The channel is passed in, not imported, because this module imports no agent
+    framework: the MCP server passes its SDK's ``ToolError``, the embedded agent
+    PydanticAI's ``ModelRetry``. :func:`functools.wraps` keeps the name, docstring and
+    (through ``__wrapped__``) the signature, so each framework derives the tool's schema
+    and description from the original exactly as it would unwrapped.
+    """
+
+    @functools.wraps(tool)
+    def answered(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return tool(*args, **kwargs)
+        except ChemRefineError as exc:
+            raise channel(refusal_text(exc)) from exc
+
+    return answered
 
 
 def guide_text() -> str:

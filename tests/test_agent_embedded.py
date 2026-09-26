@@ -19,7 +19,13 @@ from typing import Any
 
 import pytest
 import yaml
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    RetryPromptPart,
+    TextPart,
+    ToolCallPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
@@ -548,6 +554,98 @@ def test_a_real_tool_answers_through_the_model_loop():
 
 
 # ---------------------------------------------------------------------------
+# The failure contract: a refusal is the model's to read, a crash is not
+# ---------------------------------------------------------------------------
+
+
+def _reads_back_a_refusal(tool: str, args: dict[str, Any]) -> FunctionModel:
+    """A model that calls ``tool`` once, then replies with what it was told about the call."""
+
+    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        told = [p for p in messages[-1].parts if isinstance(p, RetryPromptPart)]
+        if not told:
+            return ModelResponse(parts=[ToolCallPart(tool, args)])
+        return ModelResponse(parts=[TextPart(str(told[0].content))])
+
+    return FunctionModel(script)
+
+
+def _calls_forever(tool: str, args: dict[str, Any], requests: list[int]) -> FunctionModel:
+    """A model that makes the same call however it is answered, counting its requests."""
+
+    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        requests.append(len(messages))
+        return ModelResponse(parts=[ToolCallPart(tool, args)])
+
+    return FunctionModel(script)
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda model: harness.build_agent(model, confirm=_allow),
+        lambda model: harness.build_web_agent(model),
+    ],
+    ids=["terminal", "web"],
+)
+def test_a_tool_refusal_reaches_the_model_and_the_turn_goes_on(build: Any):
+    """What the MCP server already did, both embedded harnesses now do.
+
+    A tool's ``ChemRefineError`` propagated out of the run, so the turn died on a routine
+    refusal and the model never read the sentence that says what to change. It arrives
+    as the tool's answer, by class and message, and the model continues from it.
+    """
+    model = _reads_back_a_refusal("summarize_config", {"config_path": "/absent.yaml"})
+    result = harness.run_turn(build(model), "summarize")
+    assert result.output.startswith("ConfigError: ")
+    assert "/absent.yaml" in result.output
+
+
+def test_an_allowed_mutation_that_refuses_is_read_by_the_model():
+    """The confirmation gate and the failure contract compose: asked once, answered once."""
+    asked: list[str] = []
+
+    def allow(tool: str, _args: str) -> bool:
+        asked.append(tool)
+        return True
+
+    model = _reads_back_a_refusal("start_run", {"config_path": "/absent.yaml", "action": "x"})
+    result = harness.run_turn(harness.build_agent(model, confirm=allow), "run it")
+    assert asked == ["start_run"]
+    assert result.output.startswith("ConfigError: unknown action")
+
+
+def test_a_refusal_the_model_cannot_get_past_ends_the_turn_on_that_refusal():
+    """Past the retry budget the turn ends — on the tool's own error, not the SDK's.
+
+    ``TOOL_RETRIES`` further attempts after the first refusal, then the refusal itself
+    leaves :func:`harness.run_turn`, which is what both harnesses already show in their
+    documented shapes; "exceeded max retries count" would name the SDK, not the problem.
+    """
+    requests: list[int] = []
+    model = _calls_forever("summarize_config", {"config_path": "/absent.yaml"}, requests)
+    with pytest.raises(ConfigError, match=r"/absent\.yaml"):
+        harness.run_turn(harness.build_agent(model, confirm=_allow), "summarize")
+    assert len(requests) == harness.TOOL_RETRIES + 1
+
+
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [("no_such_tool", {}), ("summarize_config", {})],
+    ids=["unknown-tool", "invalid-arguments"],
+)
+def test_a_run_that_gives_up_for_any_other_reason_is_not_dressed_as_a_refusal(
+    tool: str, args: dict[str, Any]
+):
+    """Only a tool's refusal is re-raised as itself; the SDK's other give-ups stay the SDK's."""
+    from pydantic_ai.exceptions import UnexpectedModelBehavior
+
+    model = _calls_forever(tool, args, [])
+    with pytest.raises(UnexpectedModelBehavior):
+        harness.run_turn(harness.build_agent(model, confirm=_allow), "go")
+
+
+# ---------------------------------------------------------------------------
 # The confirmation gate
 # ---------------------------------------------------------------------------
 
@@ -717,24 +815,22 @@ def test_chat_repl_survives_a_dead_endpoint(monkeypatch: pytest.MonkeyPatch):
     assert any("recovered" in line for line in echoed[failed + 1 :])
 
 
-def test_chat_repl_keeps_a_tool_errors_documented_shape(monkeypatch: pytest.MonkeyPatch):
-    """A ``ChemRefineError`` out of a turn prints its name and message, and the loop lives."""
+def test_chat_repl_shows_a_refusal_the_model_could_not_get_past(monkeypatch: pytest.MonkeyPatch):
+    """The turn ends on the refusal, printed by name and message, and the loop lives."""
     import typer
 
     from chemrefine.agent import chat
 
-    def broken(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        raise ConfigError("no step matches 'x'")
-
+    stubborn = _calls_forever("summarize_config", {"config_path": "/absent.yaml"}, [])
     monkeypatch.setenv("CHEMREFINE_LLM_MODEL", "test-model")
-    monkeypatch.setattr(ProviderConfig, "build_model", lambda self: FunctionModel(broken))
+    monkeypatch.setattr(ProviderConfig, "build_model", lambda self: stubborn)
     prompts = iter(["hello", "exit"])
     monkeypatch.setattr(typer, "prompt", lambda *a, **k: next(prompts))
     echoed: list[str] = []
     monkeypatch.setattr(typer, "echo", lambda m, **k: echoed.append(str(m)))
 
     chat.main(provider="custom")
-    assert any("ConfigError: no step matches" in line for line in echoed)
+    assert any(line.startswith("ConfigError: ") and "/absent.yaml" in line for line in echoed)
 
 
 def test_cli_agent_hands_off_and_maps_config_errors(

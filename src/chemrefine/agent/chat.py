@@ -12,6 +12,7 @@ import typer
 
 from chemrefine.agent.harness import build_agent, run_turn
 from chemrefine.agent.providers import ProviderConfig
+from chemrefine.agent_tools import refusal_text
 from chemrefine.errors import ChemRefineError
 
 
@@ -45,8 +46,9 @@ def main(
         try:
             result = run_turn(agent, prompt, message_history=history)
         except ChemRefineError as e:
-            # A tool's own failure keeps its documented name-and-message shape.
-            typer.echo(f"{type(e).__name__}: {e}", err=True)
+            # A refusal the model could not get past (run_turn ends the turn on it) keeps
+            # its documented name-and-message shape — the one the model was shown.
+            typer.echo(refusal_text(e), err=True)
             continue
         except Exception as e:  # the model endpoint is the outside world
             typer.echo(f"model endpoint failed: {e}", err=True)

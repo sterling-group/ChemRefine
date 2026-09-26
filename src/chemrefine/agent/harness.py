@@ -1,8 +1,10 @@
 """Assemble the PydanticAI agent: shared tools, gated mutations, packaged knowledge.
 
-The harness registers :data:`chemrefine.agent_tools.TOOLS` verbatim — the same
-functions the MCP server serves, schemas derived from the same signatures — and wraps
-exactly the :data:`~chemrefine.agent_tools.MUTATING_TOOLS` in a confirmation callback:
+The harness registers :data:`chemrefine.agent_tools.TOOLS` — the same functions the MCP
+server serves, schemas derived from the same signatures, under the same failure contract
+(:func:`~chemrefine.agent_tools.answering`: a refusal reaches the model, a crash does not)
+— and wraps exactly the :data:`~chemrefine.agent_tools.MUTATING_TOOLS` in a confirmation
+callback:
 where an MCP client's own approval dialog gates a mutating call, the embedded chat has
 no client in front of it, so the gate lives here. A declined call returns a structured
 ``{"denied": …}`` result the model can read and continue from — a refusal is an answer,
@@ -31,18 +33,36 @@ import json
 from collections.abc import Callable, Sequence
 from typing import Any, TypeVar
 
-from pydantic_ai import Agent, AgentRunResult, DeferredToolRequests, DeferredToolResults
+from pydantic_ai import (
+    Agent,
+    AgentRunResult,
+    DeferredToolRequests,
+    DeferredToolResults,
+    ModelRetry,
+)
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings
 
 from chemrefine import agent_tools
 from chemrefine.agent.providers import chat_timeout_seconds
+from chemrefine.errors import ChemRefineError
 
 ConfirmFn = Callable[[str, str], bool]
 """``(tool_name, rendered_args) -> allow?`` — the chat asks the human, tests script it."""
 
 OutputT = TypeVar("OutputT")
+
+TOOL_RETRIES = 2
+"""How many times in a row one tool may refuse within a turn before the turn ends on it.
+
+A refusal reaches the model as PydanticAI's ``ModelRetry`` — the message and a request to
+correct the call — and the model gets this many further attempts at that tool. Past them
+the model is not converging, and :func:`run_turn` ends the turn on the refusal itself, so
+the human reads what was refused rather than the SDK's "exceeded max retries". Stated
+here rather than left to the SDK default, because the budget is a decision about how long
+a turn may spend on one refusal: each attempt at a gated tool asks the human again."""
 
 
 def _gated(fn: Callable[..., Any], confirm: ConfirmFn) -> Callable[..., Any]:
@@ -89,7 +109,7 @@ instruction had nothing to key on."""
 
 
 def _turn_settings() -> ModelSettings:
-    """Per-request settings both harnesses share — currently just how long a turn may take.
+    """Per-request settings both harnesses share — currently how long one request may take.
 
     Applied here rather than at the two call sites so the terminal REPL and the web panel
     cannot drift apart, and as a request setting rather than a bespoke HTTP client because
@@ -127,12 +147,14 @@ def build_agent(
         model,
         instructions=instructions(config_path, gate=TERMINAL_GATE),
         model_settings=_turn_settings(),
+        retries=TOOL_RETRIES,
     )
     for tool in agent_tools.TOOLS:
+        answered = agent_tools.answering(tool, ModelRetry)
         if tool.__name__ in agent_tools.MUTATING_TOOLS:
-            agent.tool_plain(_gated(tool, confirm))
+            agent.tool_plain(_gated(answered, confirm))
         else:
-            agent.tool_plain(tool)
+            agent.tool_plain(answered)
     return agent
 
 
@@ -162,10 +184,11 @@ def build_web_agent(
         instructions=instructions(config_path, gate=WEB_GATE),
         output_type=[str, DeferredToolRequests],
         model_settings=_turn_settings(),
+        retries=TOOL_RETRIES,
     )
     for tool in agent_tools.TOOLS:
         register = agent.tool_plain(requires_approval=tool.__name__ in agent_tools.MUTATING_TOOLS)
-        register(tool)
+        register(agent_tools.answering(tool, ModelRetry))
     return agent
 
 
@@ -190,6 +213,12 @@ def run_turn(
     The agent is *entered* for the turn (:func:`_entered_run`), which is what PydanticAI
     asks for so the provider's HTTP client opens and closes on the loop that uses it; a
     client left open would otherwise outlive the loop its connections belong to.
+
+    A turn the model could not get past a tool's refusal in (:data:`TOOL_RETRIES`) ends on
+    that refusal: the :class:`~chemrefine.errors.ChemRefineError` the tool raised, which each
+    harness already shows in its documented shape. Any other way a run gives up — arguments
+    that never validate, a tool that does not exist, output it cannot parse — propagates as
+    the SDK raised it.
     """
     return asyncio.run(
         _entered_run(
@@ -210,8 +239,27 @@ async def _entered_run(
 ) -> AgentRunResult[OutputT]:
     """:meth:`Agent.run` inside ``async with agent`` — the turn :func:`run_turn` drives."""
     async with agent:
-        return await agent.run(
-            user_prompt,
-            message_history=message_history,
-            deferred_tool_results=deferred_tool_results,
-        )
+        try:
+            return await agent.run(
+                user_prompt,
+                message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
+            )
+        except UnexpectedModelBehavior as exhausted:
+            refusal = _refusal_behind(exhausted)
+            if refusal is None:
+                raise
+            raise refusal from None
+
+
+def _refusal_behind(exhausted: UnexpectedModelBehavior) -> ChemRefineError | None:
+    """The tool refusal a run ran out of retries on, if that is why it ended.
+
+    The one shape :func:`~chemrefine.agent_tools.answering` produces: the SDK raises
+    ``UnexpectedModelBehavior`` from the last ``ModelRetry``, which was raised from the
+    tool's own error. Read off the cause chain rather than the message, whose wording is
+    the SDK's and changes between its releases.
+    """
+    retry = exhausted.__cause__
+    refusal = retry.__cause__ if isinstance(retry, ModelRetry) else None
+    return refusal if isinstance(refusal, ChemRefineError) else None

@@ -113,7 +113,8 @@ async def test_only_a_deliberate_error_keeps_its_text_on_the_wire():
         crashed = await client.call_tool("crash", {})
 
     assert answered.is_error is True
-    assert "name the basis set explicitly" in answered.content[0].text
+    # By class and message — the shape the embedded agent's model reads the same refusal in.
+    assert "ConfigError: name the basis set explicitly" in answered.content[0].text
 
     assert crashed.is_error is True
     assert "private/path" not in crashed.content[0].text, (

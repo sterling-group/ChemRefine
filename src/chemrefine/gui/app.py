@@ -634,7 +634,8 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
                     agent, _field(payload, "message"), message_history=chat_state["history"]
                 )
         except ChemRefineError:
-            # A tool's own failure keeps its documented {error, exit_code} shape.
+            # The documented {error, exit_code} shape, for a refusal the model could not
+            # get past (run_turn ends the turn on it) and for a request this panel refuses.
             raise
         except Exception as e:  # the model endpoint is the outside world
             return jsonify({"error": f"model endpoint failed: {e}"}), 502

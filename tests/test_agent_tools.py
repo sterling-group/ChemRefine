@@ -55,6 +55,35 @@ def test_every_mutating_tool_name_names_a_tool():
     assert not phantom, f"MUTATING_TOOLS entries naming no tool: {sorted(phantom)}"
 
 
+def test_answering_hands_a_refusal_to_the_channel_and_lets_a_crash_through():
+    """The one failure contract, framework-free: which errors are answers, and how they read.
+
+    A ``ChemRefineError`` leaves through the harness's channel by class and message, its
+    original kept as the cause; anything else is a crash and leaves as itself. The wrapper
+    is invisible to schema derivation — same name, docstring and signature.
+    """
+
+    class Channel(Exception):
+        """Stands in for ``ToolError`` / ``ModelRetry``: takes the message, nothing else."""
+
+    def refuses(step: int) -> str:
+        """Refuse every step."""
+        raise RunLockError(f"a driver already holds step {step}")
+
+    def crashes() -> str:
+        """Fail the way a bug does."""
+        raise KeyError("internal")
+
+    answered = agent_tools.answering(refuses, Channel)
+    with pytest.raises(Channel, match=r"^RunLockError: a driver already holds step 3$") as info:
+        answered(step=3)
+    assert isinstance(info.value.__cause__, RunLockError)
+    with pytest.raises(KeyError, match="internal"):
+        agent_tools.answering(crashes, Channel)()
+    assert answered.__name__ == "refuses" and answered.__doc__ == "Refuse every step."
+    assert inspect.signature(answered) == inspect.signature(refuses)
+
+
 # ---------------------------------------------------------------------------
 # Introspection + validation re-exposures
 # ---------------------------------------------------------------------------
