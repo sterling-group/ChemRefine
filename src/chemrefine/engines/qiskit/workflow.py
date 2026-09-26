@@ -115,7 +115,7 @@ def _solve_context(
     if resolved.circuit_export is not None:
         from chemrefine.engines.qiskit.circuit_io import bound_circuit
 
-        raw = result.raw_result
+        raw: Any = result.raw_result
         if resolved.algorithm.name == "adapt_vqe":
             logical = algorithm.solver.retained_logical_circuit()
             parameters = raw.optimal_point

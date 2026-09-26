@@ -122,7 +122,9 @@ def test_generated_molecular_worker_feeds_measurement_bundle(tmp_path):
                                 "name": "pauli_measurement",
                                 "options": {
                                     "circuit_path": str(target),
-                                    "observable": {"IIII": 1.0},
+                                    "observable": {"IIZZ": 1.0},
+                                    "measurement": {"shots": 128, "pilot_shots": 16, "seed": 7},
+                                    "sampler": {"name": "statevector", "options": {"seed": 7}},
                                 },
                             },
                         },
@@ -145,7 +147,7 @@ def test_generated_molecular_worker_feeds_measurement_bundle(tmp_path):
     assert second.state.structures == first.state.structures
     assert (
         read_bundle(tmp_path / "outputs/step2/experiment/artifact.json").metadata["expectation"]
-        == 1
+        == -1
     )
     assert run_step(config, config.steps[1], first.state).cache_hit
     # A changed NPZ invalidates integrity at either end of this native handoff.
@@ -333,3 +335,78 @@ def test_raw_qpy_decode_type_error_is_an_actionable_configuration_failure(tmp_pa
     path.write_bytes(b"QISKIT\x0d" + b"\0" * 100)
     with pytest.raises(ConfigError, match="cannot load circuit"):
         read_circuit(path)
+
+
+@pytest.mark.parametrize("encoding", ["jordan_wigner", "parity", "inconsistent_width"])
+def test_shadow_handoff_requires_the_full_jordan_wigner_occupation_register(h2, tmp_path, encoding):
+    """Real exported JW preparations run; reduced or contradictory occupations are rejected."""
+    from dataclasses import replace
+
+    from chemrefine.engines.qiskit.circuit_io import save_circuit
+    from chemrefine.engines.qiskit.experiment_shadows import (
+        ShadowExperimentOptions,
+        shadow_experiment,
+    )
+
+    mapper = "parity" if encoding == "parity" else "jordan_wigner"
+    result = run_problem(h2, options={"algorithm": "vqe", "mapper": mapper, "circuit_export": {}})
+    exported = result.circuits[0]
+    if encoding == "inconsistent_width":
+        # The mapper name alone cannot establish occupation-register compatibility.
+        exported = replace(
+            exported,
+            description=exported.description.model_copy(update={"num_spin_orbitals": 6}),
+        )
+    path = save_circuit(tmp_path / "preparation.json", exported)
+    options = ShadowExperimentOptions.model_validate(
+        {
+            "circuit_path": str(path),
+            "shadows": {
+                "ensemble": "majorana_clifford",
+                "num_settings": 3,
+                "shots_per_setting": 16,
+                "max_order": 1,
+                "seed": 4,
+            },
+            "sampler": {"name": "statevector", "options": {"seed": 7}},
+        }
+    )
+    if encoding != "jordan_wigner":
+        with pytest.raises(ConfigError, match="unreduced Jordan-Wigner"):
+            shadow_experiment(options=options, device="cpu", cores=1, max_output_bytes=1048576)
+        return
+    acquired = shadow_experiment(options=options, device="cpu", cores=1, max_output_bytes=1048576)
+    assert acquired.kind == "fermionic_shadows"
+    assert acquired.metadata["num_modes"] == 4
+    assert acquired.metadata["ensemble"] == "majorana_clifford"
+    assert acquired.arrays["settings"].shape == (3, 8, 8)
+    assert acquired.arrays["one_body"].shape == (4, 4)
+    assert np.isfinite(acquired.arrays["one_body"]).all()
+    assert np.sum(acquired.arrays["counts"]) == 48
+    np.testing.assert_allclose(
+        acquired.arrays["one_body"], acquired.arrays["one_body"].conj().T, atol=1e-12
+    )
+
+
+def test_experiment_dependencies_hash_bound_payload_and_ignore_unrelated_pointers(h2, tmp_path):
+    """Only declared circuit fields contribute bundle payloads to generic dependency hashing."""
+    from chemrefine.engines.qiskit.circuit_io import save_circuit
+    from chemrefine.engines.qiskit.experiment import QiskitExperimentEngine
+
+    result = run_problem(h2, options={"algorithm": "vqe", "circuit_export": {}})
+    path = save_circuit(tmp_path / "preparation.json", result.circuits[0])
+    payload = path.parent / read_bundle(path).description.payload
+    options = {
+        "experiment": {
+            "name": "pauli_measurement",
+            "options": {"circuit_path": str(path), "observable": {"IIII": 1.0}},
+        }
+    }
+    dependencies = QiskitExperimentEngine().input_file_dependencies(
+        options,
+        {
+            "/experiment/options/circuit_path": path,
+            "/experiment/options/undeclared_path": tmp_path / "unrelated-missing-file.json",
+        },
+    )
+    assert dependencies == {"experiment/options/circuit_path/payload": payload}

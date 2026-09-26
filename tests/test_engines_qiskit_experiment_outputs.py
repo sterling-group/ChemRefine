@@ -279,6 +279,7 @@ def test_each_registered_builtin_requires_its_scientific_product(tmp_path, name)
     case = _case(name)
     validate_experiment_output(name, _bundle(tmp_path, case), case[3])
     assert set(NAMES) == set(EXPERIMENTS.names())
+    broken: tuple[str, dict, dict, dict]
     for broken in (("unrelated", case[1], case[2], case[3]), (case[0], {}, {}, case[3])):
         with pytest.raises(OutputParseError, match="experiment product"):
             validate_experiment_output(name, _bundle(tmp_path, broken), case[3])
@@ -404,7 +405,7 @@ def test_byte_aligned_packing_and_registered_extensions(tmp_path, monkeypatch):
 
     register_experiment_output(" Custom-Report ", "report", validate_report)
     require_experiment_output("custom_report")
-    custom = ("report", {}, {"answer": 42}, {"answer": 42})
+    custom: tuple[str, dict, dict, dict] = ("report", {}, {"answer": 42}, {"answer": 42})
     validate_experiment_output("custom_report", _bundle(tmp_path, custom), custom[3])
     with pytest.raises(OutputParseError, match="must declare"):
         validate_experiment_output("unregistered", _bundle(tmp_path, custom), custom[3])

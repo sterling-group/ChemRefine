@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import io
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from struct import error as StructError
@@ -73,7 +73,7 @@ class BoundCircuit:
 def bound_circuit(
     context: ElectronicStructureContext,
     circuit: Any,
-    parameters: Mapping[Any, float] | Sequence[float],
+    parameters: Mapping[Any, float] | Iterable[float],
     *,
     root: int = 0,
 ) -> BoundCircuit:
