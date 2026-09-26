@@ -876,7 +876,6 @@ def reattempt_nms(
         if s.id not in failed_ids and s.parent_id not in failed_ids
     )
     return lifecycle.finalize(
-        engine,
         ctx,
         step_cfg,
         key,

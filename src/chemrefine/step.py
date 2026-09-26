@@ -740,7 +740,7 @@ def _incremental_step_outcome(
             trust_resolutions=trust,
         )
         successes, failures = list(resolution.survivors), list(resolution.failures)
-    results = lifecycle.finalize(engine, ctx, step_cfg, key, successes, failures)
+    results = lifecycle.finalize(ctx, step_cfg, key, successes, failures)
     _restamp(inputs, ctx, step_cfg, key)
     return _step_outcome(ctx, step_cfg, results, cache_hit=False)
 
@@ -788,7 +788,7 @@ def _run_full_step(
             round2=round2,
         )
         successes, failures = list(resolution.survivors), list(resolution.failures)
-    results = lifecycle.finalize(engine, ctx, step_cfg, key, successes, failures)
+    results = lifecycle.finalize(ctx, step_cfg, key, successes, failures)
     return _step_outcome(ctx, step_cfg, results, cache_hit=False)
 
 
@@ -846,7 +846,7 @@ def _finish_artifact_step(
         )
     logger.info("step %d: produced %s", step_cfg.step, artifact)
     results = engine.parse(StepInputs(files=()), ctx)
-    results = lifecycle.finalize(engine, ctx, step_cfg, key, list(results.structures), [])
+    results = lifecycle.finalize(ctx, step_cfg, key, list(results.structures), [])
     return _step_outcome(ctx, step_cfg, results, cache_hit=False)
 
 
@@ -979,7 +979,7 @@ def rebuild_cache_step(
             ctx,
         )
         successes, failures = list(resolution.survivors), list(resolution.failures)
-    results = lifecycle.finalize(engine, ctx, step_cfg, key, successes, failures)
+    results = lifecycle.finalize(ctx, step_cfg, key, successes, failures)
     _restamp(manifest, ctx, step_cfg, key)
     return _step_outcome(ctx, step_cfg, results, cache_hit=False)
 
@@ -1010,4 +1010,4 @@ def _resubmit_failed(
         raise CacheError(f"step {step_cfg.step}: cannot rerun — no manifest to rehydrate inputs")
     successes, failures = lifecycle.resubmit_unusable(engine, ctx, manifest)
     successes, failures = lifecycle.retry_unconverged(engine, ctx, successes, failures)
-    return lifecycle.finalize(engine, ctx, step_cfg, key, successes, failures)
+    return lifecycle.finalize(ctx, step_cfg, key, successes, failures)

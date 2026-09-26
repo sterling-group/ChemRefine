@@ -922,7 +922,6 @@ def test_best_backfills_are_stored_in_parent_order_whatever_order_they_failed_in
     changed: an ordinary step re-parsed, an ``mlip-train`` step retrained on a new split.
     """
     from chemrefine import cache
-    from chemrefine.engines.api import get_engine
 
     parents = PipelineState(structures=tuple(Structure(id=i, atoms=Atoms("H")) for i in "0123"))
     step_cfg = StepConfig(step=1, engine="fake", operation="opt_sp", on_failure="best")
@@ -935,7 +934,7 @@ def test_best_backfills_are_stored_in_parent_order_whatever_order_they_failed_in
         ctx.step_dir.mkdir()
         key = cache.StepKey.of(step_cfg, parents.structures, None)
         successes = [parents.structures[2], parents.structures[0]]
-        results = lifecycle.finalize(get_engine("fake"), ctx, step_cfg, key, successes, failures)
+        results = lifecycle.finalize(ctx, step_cfg, key, successes, failures)
         downstream = cache.StepKey.of(after, results.structures, None)
         return [s.id for s in results.structures], downstream.fingerprint
 

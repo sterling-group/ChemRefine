@@ -887,7 +887,6 @@ def _in_parent_order(structures: Iterable[Structure], parents: PipelineState) ->
 
 
 def finalize(
-    engine: CalculationEngine,
     ctx: StepContext,
     step_cfg: StepConfig,
     key: cache.StepKey,
