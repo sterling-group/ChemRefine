@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from chemrefine.engines._backend_server import sidecar
 from chemrefine.engines._backend_server.base import CalculationData
 from chemrefine.errors import JobFailureError
 
@@ -195,6 +196,13 @@ def write_wrapper_script(
     orchestrator's own interpreter (``sys.executable``) — it needs chemrefine
     but no backend stack, and a bare ``python`` on PATH may be a system
     interpreter without chemrefine installed.
+
+    The wrapper is one file per step that every job of the step executes, once per
+    optimiser step, and a convergence retry prepares the step again while its siblings
+    run. So it is replaced atomically (:func:`~chemrefine.engines._backend_server.sidecar.
+    write_atomic`) — an in-place write had a window between truncate and write in which a
+    sibling's ORCA executed an empty script — and left alone when it already holds these
+    bytes, which for one step is every prepare after the first.
     """
     path = Path(path)
     extra = f" {extra_args}" if extra_args else ""
@@ -210,6 +218,6 @@ def write_wrapper_script(
         f"exec {shlex.quote(sys.executable)} -m chemrefine.engines.orca.extopt.bridge "
         f'--backend {backend} --bind "$SERVER_URL"{extra} "$1"\n'
     )
-    path.write_text(script, encoding="utf-8")
-    path.chmod(0o755)
-    return path
+    if path.is_file() and path.read_text(encoding="utf-8") == script:
+        return path
+    return sidecar.write_atomic(path, script, prefix=f".{path.name}.", mode=0o755)

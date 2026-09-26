@@ -459,6 +459,11 @@ for the full map.
 
 ### Fixed
 
+- **An ExtOpt step's wrapper is never seen half-written.** Every job of an
+  `mlip-extopt` / `pyscf-extopt` step executes one wrapper script, and a convergence retry
+  rewrote it in place while its siblings ran — an ORCA that executed it in that window ran
+  an empty script and got no gradient. It is now replaced in one rename, and not rewritten
+  at all when it already holds the same bytes.
 - **An `on_failure: best` step stores its structures in their parents' order.** The
   backfilled failures were appended after the survivors in the order they failed, which
   differs between a resume and a `rebuild-cache` of the same step, so the steps after it

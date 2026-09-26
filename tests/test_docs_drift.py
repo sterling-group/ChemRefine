@@ -398,3 +398,61 @@ def test_no_docstring_counts_something_the_tree_can_grow() -> None:
         "prose counts something the tree can grow; state the invariant instead:\n  "
         + "\n  ".join(offenders)
     )
+
+
+# ---------------------------------------------------------------------------
+# Prose attached to nothing
+# ---------------------------------------------------------------------------
+
+
+def _orphaned_strings(tree: ast.AST) -> Iterator[int]:
+    """Line numbers of the bare strings in ``tree`` that document nothing.
+
+    A bare string documents what it sits against: the body it opens (a module, class or
+    function docstring) or the assignment just above it (an attribute docstring, which
+    every reader and griffe take as that name's). Anywhere else it is attached to nothing,
+    and reads as part of whatever precedes it.
+    """
+    for node in ast.walk(tree):
+        for field in ("body", "orelse", "finalbody"):
+            body = getattr(node, field, None)
+            if not isinstance(body, list):
+                continue
+            for index, statement in enumerate(body):
+                if not (
+                    isinstance(statement, ast.Expr)
+                    and isinstance(statement.value, ast.Constant)
+                    and isinstance(statement.value.value, str)
+                ):
+                    continue
+                opens = (
+                    index == 0
+                    and field == "body"
+                    and isinstance(
+                        node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+                    )
+                )
+                follows = index > 0 and isinstance(body[index - 1], (ast.Assign, ast.AnnAssign))
+                if not (opens or follows):
+                    yield statement.lineno
+
+
+def test_every_docstring_is_attached_to_what_it_documents() -> None:
+    """No docstring in the package floats free of the name it describes.
+
+    ``SERVER_TOKEN_FILENAME``'s security rationale — why the token file is ``0600`` and
+    what makes ``/calculate`` the owning run's alone — sat under ``SERVER_LOADING_FILENAME``
+    after a constant was inserted between the name and its docstring: the token had no
+    documentation, and the loading marker seemed to have two paragraphs about secrets.
+    ``interrogate`` checks that functions and classes carry docstrings, not that an
+    attribute's is still its own, so nothing saw it.
+    """
+    offenders = [
+        f"{path.relative_to(_SRC.parent.parent)}:{line}"
+        for path in sorted(_SRC.rglob("*.py"))
+        for line in _orphaned_strings(ast.parse(path.read_text(encoding="utf-8")))
+    ]
+    assert offenders == [], (
+        "a bare string documents nothing here; put it under the name it describes:\n  "
+        + "\n  ".join(offenders)
+    )

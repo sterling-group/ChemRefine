@@ -32,6 +32,11 @@ SERVER_URL_FILENAME: str = "server.url"
 """Filename of the sidecar that records ``host:port`` once the server is ready."""
 
 SERVER_TOKEN_FILENAME: str = "server.token"  # noqa: S105 — a filename, not a secret
+"""Filename of the sidecar holding the per-run bearer token (written ``0600``).
+
+The server binds loopback, but on a multi-tenant HPC node any same-host
+user can reach loopback ports — the token (readable only by the job owner)
+is what makes ``/calculate`` usable by the owning run alone."""
 
 SERVER_LOADING_FILENAME: str = "server.loading"
 """The marker the server holds in ``$WORK_DIR`` from launch until its URL is published.
@@ -41,11 +46,6 @@ before the server binds, so nothing else the wrapper can observe distinguishes a
 still loading from one that hung. The run block's readiness loop counts only the seconds
 this marker is absent against its budget, and holds a separate, longer ceiling over the
 load itself."""
-"""Filename of the sidecar holding the per-run bearer token (written ``0600``).
-
-The server binds loopback, but on a multi-tenant HPC node any same-host
-user can reach loopback ports — the token (readable only by the job owner)
-is what makes ``/calculate`` usable by the owning run alone."""
 
 
 @dataclass(frozen=True)

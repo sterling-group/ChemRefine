@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -201,6 +202,39 @@ def test_write_wrapper_script_emits_exec_call_and_is_executable(tmp_path: Path):
     # ``python`` that may resolve to a system interpreter without chemrefine.
     assert f"exec {shlex.quote(sys.executable)} -m" in text
     assert out.stat().st_mode & 0o100  # owner-execute bit
+
+
+def test_a_rewrite_never_changes_the_wrapper_a_job_already_has_open(tmp_path: Path):
+    """A job executing the wrapper keeps the whole file it opened; the next one gets the new.
+
+    Every job of an ExtOpt step executes the step's one wrapper, and a convergence retry
+    prepares the step again while its siblings run. Written in place, the rewrite truncated
+    the file the siblings were executing — an ORCA that read it in that window ran an empty
+    script, which exits 0 and writes no gradient. Replaced by a rename, the open file is
+    untouched, complete, and executable from its first appearance.
+    """
+    out = tmp_path / "mlip_extopt.sh"
+    protocol.write_wrapper_script(path=out, backend="mlip", url_file=tmp_path / "server.url")
+    first = out.read_bytes()
+    with out.open("rb") as running:
+        protocol.write_wrapper_script(path=out, backend="pyscf", url_file=tmp_path / "server.url")
+        assert running.read() == first
+    assert "--backend pyscf" in out.read_text(encoding="utf-8")
+    assert out.stat().st_mode & 0o777 == 0o755
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["mlip_extopt.sh"]  # no temp left
+
+
+def test_a_wrapper_that_already_says_it_is_left_alone(tmp_path: Path):
+    """Every prepare of a step writes the same bytes, so after the first there is no write."""
+    out = tmp_path / "mlip_extopt.sh"
+    protocol.write_wrapper_script(path=out, backend="mlip", url_file=tmp_path / "server.url")
+    # Back-dated, so a rewrite in place (same inode, fresh mtime) is as visible as a
+    # replacement (new inode): only a write that never happened keeps both.
+    os.utime(out, ns=(1_000_000_000, 1_000_000_000))
+    before = out.stat()
+    protocol.write_wrapper_script(path=out, backend="mlip", url_file=tmp_path / "server.url")
+    after = out.stat()
+    assert (after.st_ino, after.st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
 
 
 def test_write_wrapper_script_threads_extra_args(tmp_path: Path):
