@@ -1164,16 +1164,19 @@ estimator.
   selection and convergence loop remains unchanged; dependency upgrades need
   the termination/rollback tests to pass.
 - Parity's particle-number reduction is supported. General Z2 symmetry
-  detection/tapering is left for a future mapper extension.
-- All built-in estimators run locally. The standard `[qiskit-aer]` extra installs
+  tapering is available through the reference-aware `z2_tapered` mapper; see
+  [its domain and operator-transformation rules](qiskit-tapering.md).
+- The default estimators run locally. The standard `[qiskit-aer]` extra installs
   Aer's CPU distribution. Aer GPU simulation requires Linux, a compatible CUDA
   stack, and the separately installed `qiskit-aer-gpu` distribution.
 - An Aer noise model is a classical approximation of specified gate/readout
-  errors. No built-in estimator connects to IBM Runtime, opens a provider
-  session, uses cloud credentials, or submits to quantum hardware.
+  errors. Explicitly selecting the `runtime` provider enables remote execution,
+  provider modes and retrieval; [Runtime options](qiskit-runtime.md) keep remote
+  backend selection separate from the local CPU/GPU grant.
 - The engine currently returns a single-point energy and the input coordinates.
-  It does not provide forces, frequency analysis, geometry optimization, or
-  excited states.
+  Additional roots use [excited-state algorithms](qiskit-spectra.md); the selected
+  root supplies the canonical molecular energy. Forces, frequency analysis and
+  geometry optimization remain outside this engine.
 
 ## Troubleshooting
 
@@ -1332,7 +1335,7 @@ The public Python API adds `FermionicLatticeModel`, `LatticeEdge`,
 Run `examples/tutorials/qiskit_fermionic/lattice_dynamics.py` in the optional
 environment for a two-site Hubbard example.
 
-Models support real hopping graphs, Hubbard onsite interaction, extended
+Models support complex hopping graphs, Hubbard onsite interaction, extended
 density interactions, and site potentials. Spinful mode order is all alpha
 sites followed by all beta sites. Periodic dimensions of length two have one
 undirected bond, not two copies. Potential and energy shifts are explicit.
@@ -1341,7 +1344,8 @@ Dynamics support JW, BK, and untapered parity; Lie and second-/fourth-order
 Suzuki product formulas; positive or negative time; and explicit initial occupied
 modes. Physical hopping/density blocks conserve particle number. Fermions
 synthesizes circuits through its public mapping interface; BK and parity use
-Nature's mappings. The supported encodings have no auxiliary qubits.
+Nature's mappings. These standard mappings have no auxiliary qubits. Optional [local encodings](qiskit-encodings.md)
+add domain-specific auxiliary qubits, stabilizers and decoding.
 
 `build_lattice_dynamics` returns circuit artifacts. The simulator returns a
 separate `LatticeDynamicsResult` with mode occupations, particle number, energy,
@@ -1351,23 +1355,34 @@ observables are not inserted into molecular `steps.csv` as hartree energies.
 Limits bound qubits, evolution blocks, statevector working bytes and the optional
 small exact reference. Exact comparison uses sparse exponential action.
 
-## Development backlog and deferred classical references
+## Research toolkit and deferred classical references
 
-The following are **not implemented** by this addition:
+The component catalog is the authoritative list of registered methods, option
+schemas, provider requirements and supported domains. Research components are
+marked experimental. These guides describe their numerical conventions and
+limitations:
 
-- Flow-set/local auxiliary encodings from arXiv:2512.11418. Qiskit Fermions 0.1
-  does not expose them. A later implementation needs verified logical-state
-  preparation, stabilizer constraints, sector selection and observable decoding.
-- Excited-state VQD/qEOM/QSE, VarQITE, advanced ADAPT variants, SKQD,
-  orbital optimization, general Z₂ tapering, measurement shadows, mitigation,
-  circuit cutting, IBM Runtime/hardware execution, and fault-tolerant resource
-  estimates. Each requires its own supported execution and result contract;
-  registry extensibility alone does not mean a technique is implemented.
-- Standalone FCI/CASCI, CASSCF, selected-CI, coupled-cluster-reference and DMRG
-  workflows. These are reserved for another classical-engine development
-  routine. They should integrate through ChemRefine's existing engines and
-  shared chemistry-data interfaces. No duplicate classical chemistry engine
-  is introduced here. Existing exact diagnostics remain available.
+| Workflow | Guide |
+| --- | --- |
+| Sampled states, observables, orbital optimization and Krylov spaces | [Sampled quantum states](qiskit-states.md) |
+| VQD, qEOM and root/sector selection | [Quantum spectra](qiskit-spectra.md) |
+| TETRIS/CEO-ADAPT and adaptive QNSPSA | [Adaptive solvers](qiskit-adaptive.md) |
+| Reference-aware general Z₂ tapering | [Tapering](qiskit-tapering.md) |
+| VarQITE and VarQRTE | [Variational dynamics](qiskit-dynamics.md) |
+| Double-factorized molecular evolution | [Double factorization](qiskit-double-factorized.md) |
+| Orbital and Majorana measurement ensembles | [Fermionic shadows](qiskit-shadows.md) |
+| BKSF, VC/DK encodings and graph-flow synthesis | [Local encodings](qiskit-encodings.md) |
+| Runtime providers and mitigation | [Runtime execution](qiskit-runtime.md) |
+| Experimental endpoint Pauli postselection | [Spacetime checks](qiskit-spacetime.md) |
+| Complex D/Q/G-constrained reconstruction | [RDM reconstruction](qiskit-rdm-reconstruction.md) |
+| Gate/wire cuts, partitions and width-constrained planning | [Circuit cutting](qiskit-cutting.md) |
+| Pauli, double-factorized, THC and physical-resource reports | [Resource estimation](qiskit-resources.md) |
+| YAML artifacts, measurement grouping and recovery | [Quantum experiments](qiskit-experiment.md) |
+
+Standalone FCI/CASCI, CASSCF, selected-CI, coupled-cluster-reference and DMRG
+workflows remain reserved for another classical-engine development routine.
+They should integrate through ChemRefine's existing engines and shared
+chemistry-data interfaces. Existing exact diagnostics remain available.
 
 The source basis for these choices is the IBM
 [Qiskit Fermions introduction](https://www.ibm.com/quantum/blog/qiskit-fermions),
