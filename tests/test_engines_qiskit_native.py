@@ -84,7 +84,7 @@ def test_native_missing_optional_versions_are_omitted(monkeypatch):
         """Simulate a separately distributed provider with no local metadata."""
         raise PackageNotFoundError(name)
 
-    monkeypatch.setattr("chemrefine.engines.qiskit.native.version", missing)
+    monkeypatch.setattr("chemrefine.engines.qiskit.provenance.version", missing)
     result = summarize_native(
         NativeOutcome(-1), NativeSolveRequest(_prepared({}), QiskitOptions()), runtime_seconds=0
     )

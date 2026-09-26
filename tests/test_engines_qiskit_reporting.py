@@ -57,7 +57,7 @@ def report_boundary(monkeypatch):
         raise PackageNotFoundError(package)
 
     monkeypatch.setattr(reporting, "logical_circuit_metrics", measure)
-    monkeypatch.setattr(reporting, "version", version)
+    monkeypatch.setattr("chemrefine.engines.qiskit.provenance.version", version)
     return calls, metrics
 
 

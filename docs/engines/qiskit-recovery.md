@@ -74,3 +74,23 @@ requests. Resolving that refusal requires known-ID retrieval or the explicit
 resubmission acknowledgement above; ordinary resume is not a recovery decision.
 Neither a journal entry nor a provider job ID substitutes for a complete validated
 result bundle.
+
+## Execution provenance
+
+Molecular diagnostics retain provenance under `engine_metadata.provenance`;
+experiment bundle metadata uses `execution_provenance`. Both record the consumed
+component graph, selected managed profile, Python implementation/version, operating
+system and machine architecture, and ChemRefine version. Configured components that
+the selected algorithm does not consume are excluded from this graph. Provider
+package versions come from the selected dependency families in installed package
+metadata, with unavailable distribution metadata recorded explicitly. This inventory
+describes the selected stack; it is not a trace asserting that every dependency ran.
+
+For a source checkout, the first provenance collection in each process captures its
+Git commit and whether the checkout is dirty. Installed VCS/archive distributions use
+their recorded commit or SHA-256 where available; other installs identify the package
+version and leave unavailable source facts unknown. Source URLs, account selectors,
+local paths and changed filenames are omitted. A dirty flag does not preserve the
+patch: archive the source changes separately before publishing reproducible results.
+The runnable `examples/tutorials/qiskit_sp/runtime_fake.yaml` example produces the
+same provenance schema without remote execution.

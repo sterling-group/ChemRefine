@@ -37,6 +37,7 @@ from chemrefine.engines.qiskit.lattice import (
 )
 from chemrefine.engines.qiskit.options import ComponentSelection
 from chemrefine.engines.qiskit.profiles import BACKEND_PROFILES
+from chemrefine.engines.qiskit.provenance import experiment_provenance
 from chemrefine.engines.qiskit.registry import REGISTRIES, ComponentRegistry
 from chemrefine.errors import ConfigError
 from chemrefine.state import JobBatch, StepContext, StepInputs, StepResults
@@ -170,7 +171,11 @@ def run_experiment(options: Mapping[str, Any], output_path: Path) -> Path:
         output_path,
         kind=result.kind,
         arrays=result.arrays,
-        metadata={**result.metadata, "resolved_options": resolved.model_dump(mode="json")},
+        metadata={
+            **result.metadata,
+            "resolved_options": resolved.model_dump(mode="json"),
+            "execution_provenance": experiment_provenance(resolved.experiment),
+        },
         max_bytes=resolved.max_output_bytes,
     )
 

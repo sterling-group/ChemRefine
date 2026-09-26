@@ -27,6 +27,10 @@ for the full map.
 
 ### Added
 
+- **Shared quantum provenance.** Molecular results and experiment artifacts record
+  consumed component graphs, selected provider dependency versions, interpreter and
+  platform facts, and sanitized source identifiers through one collector.
+
 - **Runtime restart protection.** Matching unresolved current or archived journal
   requests refuse resubmission by default. An explicit acknowledgement can permit
   new work; bounded, serialized intent publication preserves recovery evidence.

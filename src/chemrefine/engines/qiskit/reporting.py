@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
 import numpy as np
@@ -15,6 +14,7 @@ from chemrefine.engines.qiskit.context import (
 )
 from chemrefine.engines.qiskit.metrics import logical_circuit_metrics, transpiled_circuit_metrics
 from chemrefine.engines.qiskit.options import QiskitOptions
+from chemrefine.engines.qiskit.provenance import molecular_provenance
 from chemrefine.engines.qiskit.registry import REGISTRIES
 from chemrefine.engines.qiskit.result import QiskitRunResult
 from chemrefine.errors import ConfigError
@@ -58,12 +58,6 @@ def result_metadata(
         )
         if (value := getattr(raw, name, None)) is not None
     }
-    versions = {}
-    for package in ("qiskit", "qiskit-nature", "qiskit-algorithms", "qiskit-aer", "pyscf"):
-        try:
-            versions[package] = version(package)
-        except PackageNotFoundError:
-            continue
     return {
         "components": {
             category: {
@@ -87,7 +81,10 @@ def result_metadata(
         "solver": diagnostics,
         "mapping": context.mapping_metadata,
         "prepared_active_space": context.active_space_metadata,
-        "provenance": {**context.provenance, "package_versions": versions},
+        "provenance": {
+            **context.provenance,
+            **molecular_provenance(options, preparation_source=context.provenance.get("source")),
+        },
     }
 
 

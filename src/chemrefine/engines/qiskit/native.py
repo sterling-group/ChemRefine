@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -13,6 +12,7 @@ if TYPE_CHECKING:
 
 from chemrefine.engines.qiskit.options import QiskitOptions
 from chemrefine.engines.qiskit.problem import PreparedProblem
+from chemrefine.engines.qiskit.provenance import molecular_provenance
 from chemrefine.engines.qiskit.registry import REGISTRIES
 from chemrefine.engines.qiskit.reporting import real_energy
 from chemrefine.engines.qiskit.result import QiskitRunResult
@@ -85,21 +85,6 @@ def summarize_native(
         value for name, value in offsets.items() if name != "nuclear_repulsion_energy"
     )
     energy = real_energy(electronic + (nuclear or 0.0), "reported energy")
-    versions = {}
-    for package in (
-        "qiskit",
-        "qiskit-nature",
-        "qiskit-algorithms",
-        "qiskit-aer",
-        "pyscf",
-        "ffsim",
-        "qiskit-fermions",
-        "qiskit-addon-sqd",
-    ):
-        try:
-            versions[package] = version(package)
-        except PackageNotFoundError:
-            continue
     active_space = {
         "original_num_spatial_orbitals": prepared.original_num_spatial_orbitals,
         "active_orbitals": list(prepared.active_orbitals),
@@ -126,7 +111,7 @@ def summarize_native(
         "provenance": {
             **prepared.provenance,
             "problem_metadata": prepared.metadata,
-            "package_versions": versions,
+            **molecular_provenance(options, preparation_source=prepared.provenance.get("source")),
         },
     }
     result = QiskitRunResult(
