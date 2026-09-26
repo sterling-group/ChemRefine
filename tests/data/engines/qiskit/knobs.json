@@ -8,6 +8,7 @@
     "ansatz",
     "initial_state",
     "estimator",
+    "sampler",
     "optimizer",
     "initial_point",
     "cores"
@@ -15,7 +16,6 @@
   "tests_only": [
     "freeze_core",
     "device",
-    "backend_python",
-    "sampler"
+    "backend_python"
   ]
 }

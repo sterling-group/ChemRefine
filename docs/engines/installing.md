@@ -180,12 +180,21 @@ chemrefine backends install qiskit-aer
 chemrefine backends list
 ```
 
-The `[qiskit-core]` extra supplies Qiskit `>=1.4,<2.0`, Qiskit Nature
+The `[qiskit-core]` extra supplies Qiskit `>=1.4,<2.6`, Qiskit Nature
 `>=0.8,<0.9`, and Qiskit Algorithms `>=0.4,<0.5`. It supports upstream integral
 inputs without requiring PySCF. The existing `[qiskit]` extra adds PySCF for
 XYZ-driven calculations and the CLI examples; `[qiskit-aer]` additionally
 supplies CPU Aer `>=0.17,<0.18`. The managed backend names remain `qiskit` and
 `qiskit-aer`.
+
+The optional `[qiskit-fermionic]` environment includes the Aer stack, Qiskit
+`>=2.5,<2.6`, ffsim `>=0.0.84,<0.0.85`, Qiskit Fermions `>=0.1,<0.2`, and
+Qiskit Addon SQD `>=0.13.1,<0.14`. Install with
+`pip install "chemrefine[qiskit-fermionic]"`, or
+`chemrefine backends install qiskit-fermionic`. Native algorithms select that
+complete worker environment; mixing unrelated provider environments fails
+preflight rather than dropping a dependency. The core remains usable with
+Qiskit 1.4. The Fermions integrations require the 2.5 stack.
 
 The four built-in estimators all run locally and need no cloud credentials:
 `statevector`, the lightweight shot-based `basic_backend`, exact-expectation

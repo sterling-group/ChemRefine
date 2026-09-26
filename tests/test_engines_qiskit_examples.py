@@ -18,29 +18,15 @@ from chemrefine.engines.qiskit.registry import REGISTRIES
 REPO = Path(__file__).resolve().parent.parent
 
 REQUIRED = {
-    "active_space": {
-        "electrons",
-        "orbitals",
-    },
-    "selection": {
-        "name",
-        "options",
-    },
+    "active_space": {"electrons", "orbitals"},
+    "selection": {"name", "options"},
     "mapper": set(),
     "algorithm": set(),
-    "ansatz": {
-        "preserve_spin",
-        "reps",
-    },
+    "ansatz": {"reps", "preserve_spin"},
     "initial_state": set(),
-    "estimator": {
-        "default_precision",
-        "seed",
-    },
-    "sampler": set(),
-    "optimizer": {
-        "maxiter",
-    },
+    "estimator": {"default_precision", "seed"},
+    "sampler": {"seed"},
+    "optimizer": {"maxiter"},
     "initial_point": set(),
 }
 
@@ -119,7 +105,6 @@ TESTS_ONLY = {
         "method",
         "noise_model",
         "optimization_level",
-        "seed",
         "seed_simulator",
         "seed_transpiler",
         "simulation_precision",

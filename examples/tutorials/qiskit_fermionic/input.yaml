@@ -1,0 +1,31 @@
+template_dir: ../qiskit_sp/templates
+output_dir: ./outputs
+input: ../qiskit_sp/h2.xyz
+charge: 0
+multiplicity: 1
+max_cores: 1
+dispatch: local
+
+steps:
+  - step: 1
+    name: sampled_h2
+    engine: qiskit
+    operation: sp
+    options:
+      basis: sto-3g
+      cores: 1
+      algorithm:
+        name: sqd
+        options:
+          parameter_values: [0.0, 0.0, 0.2]
+          shots: 4096
+          samples_per_batch: 4
+          num_batches: 1
+          max_iterations: 3
+          max_subspace_dimension: 16
+          configuration_recovery: false
+          seed: 17
+      sampler:
+        name: statevector
+        options:
+          seed: 17

@@ -2,7 +2,7 @@
 
 ChemRefine's `qiskit` engine runs modular electronic-structure ground-state
 calculations with Qiskit Nature. A step chooses the mapper, algorithm, ansatz,
-initial state, estimator, optimizer, and initial point independently. Changing
+initial state, estimator, sampler, optimizer, and initial point independently. Changing
 from exact diagonalization to VQE or ADAPT-VQE is therefore a configuration
 change, not a new step template.
 
@@ -12,6 +12,12 @@ calculations**. It does not optimize geometries or return nuclear gradients.
 The Python API also accepts molecular-orbital integrals directly, so the solver
 pipeline does not depend on one classical electronic-structure program.
 
+The optional fermionic research stack also supplies UCJ/LUCJ simulation, SQD,
+experimental SqDRIFT, and a separate Python API for lattice dynamics. See
+[Fermionic research workflows](#fermionic-research-workflows) below for supported
+combinations and limitations. Availability is explicit; the toolkit does not
+claim to implement every published quantum algorithm.
+
 ## Install and run the example
 
 Install the optional stack in the current environment:
@@ -20,6 +26,8 @@ Install the optional stack in the current environment:
 pip install "chemrefine[qiskit]"
 # Add Aer when selecting aer_statevector or aer_shots:
 pip install "chemrefine[qiskit-aer]"
+# UCJ/LUCJ, SQD, SqDRIFT and lattice dynamics:
+pip install "chemrefine[qiskit-fermionic]"
 ```
 
 Alternatively, keep it in an isolated ChemRefine-managed environment:
@@ -28,6 +36,7 @@ Alternatively, keep it in an isolated ChemRefine-managed environment:
 chemrefine backends install qiskit
 # Or install the Aer-capable environment:
 chemrefine backends install qiskit-aer
+chemrefine backends install qiskit-fermionic
 chemrefine backends list
 ```
 
@@ -215,8 +224,8 @@ values; `ComponentSelection(name="exact", options={})` is equivalent to
 | `algorithm` | `ComponentSelection(name='exact', options={})` | Minimum-eigensolver algorithm component. |
 | `ansatz` | `ComponentSelection(name='uccsd', options={})` | Fixed circuit and/or adaptive operator-pool provider. |
 | `initial_state` | `ComponentSelection(name='hartree_fock', options={})` | Circuit prepended to a variational ansatz or used as ADAPT's starting state. |
-| `sampler` | `ComponentSelection(name='statevector', options={})` | V2 sampler for terminal circuit measurements. |
 | `estimator` | `ComponentSelection(name='statevector', options={})` | Qiskit V2 estimator implementation. |
+| `sampler` | `ComponentSelection(name='statevector', options={})` | V2 sampler for SQD/SqDRIFT and the public circuit-sampling API. |
 | `optimizer` | `ComponentSelection(name='slsqp', options={})` | Classical optimizer for VQE's parameters. |
 | `initial_point` | `ComponentSelection(name='zeros', options={})` | Fixed-VQE parameter initialization. |
 | `cores` | `1` | Requested per-structure CPU allocation, capped by the run's `max_cores`. Aer uses the granted allocation as its maximum parallel-thread count. |
@@ -1176,3 +1185,187 @@ estimator.
 | VQE and the final energy differ by a constant | Callback `objective_value_hartree` excludes nuclear-repulsion and active-space constants. Compare the final `energy_hartree` or `steps.csv` value. |
 | A larger active-space job exhausts memory | Exact and statevector simulation still scale exponentially in qubit count, including Aer statevector methods on a GPU. Reduce the active space or choose a method whose scaling fits the problem. |
 | Results change between SPSA runs | Set the SPSA `seed`, estimator/simulator seed, and initial-point seed; also pin package versions and all tolerances. |
+
+## Additional circuit and search choices
+
+These components work with the existing VQE workflow and the core optional stack:
+
+| Component | Registered choices | Scientific contract |
+| --- | --- | --- |
+| Reference | `determinant` | Explicit `alpha` and `beta` lists of occupied active spatial orbitals; validated against the prepared electron counts. Supports JW, BK and parity. |
+| Rank-selected UCC | `ucc_ranks` | `ranks: [1, 2]`, or another distinct positive rank list; supports generalized and imaginary excitations and supplies an ADAPT pool. Non-generalized pools follow the actual reference occupations. |
+| Real circuit | `real_amplitudes` | RY/CX layers with configurable entanglement and repetitions; generally does not conserve particle number or spin. |
+| Number-conserving circuit | `excitation_preserving` | Untapered JW only. `mode: iswap` or `fsim`; default separate alpha/beta layers plus interspin controlled phases. Preserves each spin population, but does not guarantee total S². |
+| Optimizer | `l_bfgs_b`, `powell`, `nelder_mead` | Additional quasi-Newton and derivative-free searches for the quantum objective. |
+| Optimizer | `cg`, `bfgs` | Additional gradient-based classical searches for the quantum objective. |
+
+Optimizer options are strict and reflect the supported Qiskit Algorithms controls. Rank-selected UCC with
+ADAPT requires `reps: 1`, just like UCCSD. Explicit `determinant` metadata is used
+by UCCSD and rank-selected UCC when generating occupied-to-virtual excitations.
+For `excitation_preserving`, use a seeded random initial point: all-zero
+parameters can be stationary even when a better state exists.
+
+## Fermionic research workflows
+
+These integrations are experimental ChemRefine workflows over released
+libraries. They use the existing preparation, active-space, pipeline and result
+interfaces, while avoiding a mandatory Pauli mapping for native fermionic
+solvers. Install `[qiskit-fermionic]`. Runnable H₂ configurations live in
+`examples/tutorials/qiskit_fermionic/`: `input.yaml` (SQD), `lucj.yaml`, and
+`sqdrift.yaml`. All use the ordinary single-point worker template.
+
+### UCJ and LUCJ with ffsim
+
+Select `algorithm.name: ffsim_vqe`. Its algorithm options select `ansatz: ucj`
+or `lucj`, `spin_variant: balanced` or `unbalanced`, `n_reps`, optional
+`interaction_pairs`, and `with_final_orbital_rotation`. LUCJ defaults to
+nearest-neighbor same-spin and onsite opposite-spin interactions. Custom pairs
+replace those defaults: two blocks for balanced UCJ, three for unbalanced UCJ.
+
+Initialization uses seeded numeric parameters (`initialization: random`,
+`seed`, `initial_scale`), `initialization: zeros`, or `initial_parameters`.
+The public `run_problem(..., initial_point=...)` supplies the same complete
+numeric vector. Supplying both forms is an error. No coupled-cluster calculation
+is performed for initialization. Choose the optimizer through the ordinary
+`optimizer` component. Other circuit, mapper, estimator, sampler and
+initial-point component overrides are rejected because this path does not use
+them.
+
+ffsim classically simulates a quantum ansatz in a fixed alpha/beta particle
+sector of dimension `binomial(n, n_alpha) * binomial(n, n_beta)`. It is noiseless
+and does not submit quantum hardware jobs. Controls `max_statevector_dimension`,
+`max_parameters`, `max_evaluations`, and `max_memory_mb` bound planned work.
+Memory estimates are not operating-system limits. The final S² eigenstate
+residual must satisfy `spin_tolerance`; conserving alpha/beta populations alone
+does not prove the requested total spin. Diagnostics include parameter vectors,
+energy evaluations, spin, and state dimension. If the optimizer does not expose
+a convergence flag, the result preserves `converged: null`.
+
+### Sampling and SQD
+
+The `sampler` registry offers `statevector`, `basic_backend`, and `aer`.
+`statevector` has a `seed`; backend samplers have `seed_simulator`,
+`seed_transpiler`, and `optimization_level`. Aer additionally offers
+`method: automatic|statevector|density_matrix|matrix_product_state|tensor_network`,
+`simulation_precision`, and a serialized `noise_model`. The existing GPU
+constraints apply. These providers generate actual integer counts from finite
+shots. They do not return mitigation quasiprobabilities.
+
+`sample_circuit(circuit, selection, shots=..., parameter_values=...)` returns a
+`SampleBatch`. Input circuits have no classical registers. The helper binds a
+copy, measures each logical qubit, then compiles if needed; logical qubit zero
+remains the rightmost bit in returned counts. Provider resources close on both
+success and failure. Third-party samplers can declare their dependency through
+`BackendRequirement`, just as estimators can.
+
+Select `algorithm.name: sqd`. Supply either:
+
+- `algorithm.options.counts`: positive integer frequencies in canonical JW
+  bitstring order, with alpha orbitals on the right and beta on the left;
+- a registered ansatz/reference and `parameter_values`, an API `initial_point`,
+  or the configured initial-point component. This samples a **fixed** circuit;
+  SQD does not perform VQE optimization first.
+
+SQD diagonalizes the original active Hamiltonian in sampled determinant
+subspaces. Its classical selected-CI kernel is integral to the hybrid algorithm,
+not a standalone classical-reference workflow. `configuration_recovery: true`
+enables the released addon's occupancy-driven recovery; `false` postselects
+particle-valid counts and performs one iteration. `seed` controls recovery and
+batch selection. Set the sampler seed separately for repeatable acquisition.
+
+Controls include `shots`, `samples_per_batch`, `num_batches`, `max_iterations`,
+`energy_tol`, `occupancies_tol`, `sci_max_cycle`, `sci_max_space`, and
+`symmetrize_spin`. Resource limits include `max_total_shots`,
+`max_subspace_dimension`, `max_total_diagonalizations`, and `max_memory_mb`.
+The dimension bound applies to the alpha/beta Cartesian product, with a
+conservative per-spin limit. Diagnostics retain rejected-sample fractions,
+iteration energies, subspace sizes, occupancies and the full S² residual.
+Completion reports `converged: null`: recovery stopping does not certify that
+the samples span the true ground state or achieve chemical accuracy.
+
+Both SQD and SqDRIFT require untapered JW, real shared spatial integrals,
+nonzero alpha **and** beta populations, and at most 63 spatial orbitals. The
+empty-spin restriction comes from the released PySCF selected-CI kernel.
+Unrestricted unequal spin integrals are rejected. `symmetrize_spin` requires
+equal alpha/beta populations. Explicitly configured components that are unused
+by a native path fail preflight.
+
+### Grouped SqDRIFT
+
+Select `algorithm.name: sqdrift`. In addition to SQD controls, choose `times`,
+`num_groups`, `randomizations`, and `max_circuits`. Each realization starts from
+the prepared problem's actual determinant and uses Qiskit Fermions' grouped
+electronic-structure qDRIFT pass. Terms are grouped into Hermitian fermionic
+excitations; they are not sampled as unrelated Pauli strings. The unmodified
+Hamiltonian is used for final subspace diagonalization.
+
+This implementation retains diagonal terms and canonical mode order. It does
+not implement the paper's optional heuristic filtering, relabeling, or every
+hardware optimization. Circuit and sampler seeds, evolution times, shot counts,
+and randomization metadata are recorded. It is an experimental implementation
+of the grouped sampling workflow, not a claim to reproduce all paper results.
+
+### Energy conventions
+
+Native objectives contain the active electronic operator only. Reporting restores
+inactive/frozen-core offsets once and nuclear repulsion once. As in the existing
+API, `energy_hartree` is total energy when nuclear repulsion is known, otherwise
+electronic energy. The callback objective and final molecular energy therefore
+may differ by a constant. Result metadata records package versions and resolved
+components. `success` means execution produced a finite result; convergence and
+accuracy remain separate.
+
+## Fermionic lattice dynamics
+
+The public Python API adds `FermionicLatticeModel`, `LatticeEdge`,
+`chain_lattice`, `square_lattice`, `LatticeDynamicsOptions`,
+`build_lattice_dynamics`, and `simulate_lattice_dynamics`.
+Run `examples/tutorials/qiskit_fermionic/lattice_dynamics.py` in the optional
+environment for a two-site Hubbard example.
+
+Models support real hopping graphs, Hubbard onsite interaction, extended
+density interactions, and site potentials. Spinful mode order is all alpha
+sites followed by all beta sites. Periodic dimensions of length two have one
+undirected bond, not two copies. Potential and energy shifts are explicit.
+
+Dynamics support JW, BK, and untapered parity; Lie and second-/fourth-order
+Suzuki product formulas; positive or negative time; and explicit initial occupied
+modes. Physical hopping/density blocks conserve particle number. Fermions
+synthesizes circuits through its public mapping interface; BK and parity use
+Nature's mappings. The supported encodings have no auxiliary qubits.
+
+`build_lattice_dynamics` returns circuit artifacts. The simulator returns a
+separate `LatticeDynamicsResult` with mode occupations, particle number, energy,
+energy drift, return probability, and optional exact-evolution fidelity. Units
+are those of the caller's model, with time in inverse energy and ħ=1. These
+observables are not inserted into molecular `steps.csv` as hartree energies.
+Limits bound qubits, evolution blocks, statevector working bytes and the optional
+small exact reference. Exact comparison uses sparse exponential action.
+
+## Development backlog and deferred classical references
+
+The following are **not implemented** by this addition:
+
+- Flow-set/local auxiliary encodings from arXiv:2512.11418. Qiskit Fermions 0.1
+  does not expose them. A later implementation needs verified logical-state
+  preparation, stabilizer constraints, sector selection and observable decoding.
+- Excited-state VQD/qEOM/QSE, VarQITE, advanced ADAPT variants, SKQD,
+  orbital optimization, general Z₂ tapering, measurement shadows, mitigation,
+  circuit cutting, IBM Runtime/hardware execution, and fault-tolerant resource
+  estimates. Each requires its own supported execution and result contract;
+  registry extensibility alone does not mean a technique is implemented.
+- Standalone FCI/CASCI, CASSCF, selected-CI, coupled-cluster-reference and DMRG
+  workflows. These are reserved for another classical-engine development
+  routine. They should integrate through ChemRefine's existing engines and
+  shared chemistry-data interfaces. No duplicate classical chemistry engine
+  is introduced here. Existing exact diagnostics remain available.
+
+The source basis for these choices is the IBM
+[Qiskit Fermions introduction](https://www.ibm.com/quantum/blog/qiskit-fermions),
+[ffsim introduction](https://www.ibm.com/quantum/blog/ffsim),
+[Fermions 0.1 documentation](https://qiskit.github.io/qiskit-fermions/stable/0.1/),
+[repository](https://github.com/Qiskit/qiskit-fermions),
+[IBM add-on documentation](https://quantum.cloud.ibm.com/docs/en/addons/qiskit-fermions),
+and the supplied [flow-set paper](https://arxiv.org/abs/2512.11418) and
+[SqDRIFT paper](https://arxiv.org/abs/2508.02578). Research papers describe
+methods; runnable support is defined by the tested components above.

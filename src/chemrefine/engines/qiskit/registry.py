@@ -127,11 +127,10 @@ def validate_component_graph(
         REGISTRIES[category].options_for(selection)
 
     from chemrefine.engines.qiskit.components.fermionic_algorithms import validate_ffsim_options
+    from chemrefine.engines.qiskit.components.subspace_algorithms import validate_subspace_options
 
     if options.algorithm.name == "ffsim_vqe":
         validate_ffsim_options(options)
-    from chemrefine.engines.qiskit.components.subspace_algorithms import validate_subspace_options
-
     validate_subspace_options(options)
 
     algorithm = ALGORITHMS.spec(options.algorithm.name)
