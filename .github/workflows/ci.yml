@@ -75,7 +75,20 @@ jobs:
         run: pip install -e ".[test]"
 
       - name: Run tests with coverage
-        run: pytest --cov=chemrefine --cov-report=term-missing --cov-report=xml --cov-fail-under=100 -q
+        env:
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage.full-${{ matrix.python-version }}
+          OMP_NUM_THREADS: "1"
+        # Optional providers run in separate compatible environments. The coverage
+        # job combines every required worker and enforces 100% lines AND branches.
+        run: pytest --cov --cov-report=term-missing --cov-report=xml --cov-fail-under=0 -q
+
+      - name: Preserve coverage data for the complete provider graph
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-data-full-${{ matrix.python-version }}
+          path: .coverage.full-*
+          include-hidden-files: true
+          if-no-files-found: error
 
       # 100% -> 100% over a different set of lines is invisible in the gate alone;
       # keeping the report makes a drop reviewable after the fact.
@@ -438,11 +451,43 @@ jobs:
           pip install ".[test]"
           python -m pytest -q -p no:cacheprovider
 
+  quantum-providers:
+    uses: ./.github/workflows/quantum-providers.yml
+
+  coverage:
+    needs: [test, quantum-providers]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.13"
+      - run: pip install 'coverage>=7.10'
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: coverage-data-*
+          merge-multiple: true
+          path: coverage-data
+      - name: Enforce complete line and branch coverage across provider workers
+        run: |
+          coverage combine coverage-data
+          coverage report --fail-under=100
+          coverage xml
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-complete
+          path: coverage.xml
+          if-no-files-found: error
+
   required-checks-pass:
     if: always()
     needs:
       - pre-commit
       - test
+      - quantum-providers
+      - coverage
       - extras-resolve
       - floors
       - type-check

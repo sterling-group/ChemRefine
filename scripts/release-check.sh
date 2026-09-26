@@ -6,8 +6,8 @@
 #   scripts/release-check.sh          the above, plus the tier-3 live suite (release)
 #
 # `--pr` is the one a contributor runs before opening a pull request: if it passes, CI
-# will too, bar the things no workstation can do (below). It needs nothing but a `[dev]`
-# install — no ORCA, no MLIP stack, no second interpreter.
+# will too, bar the things no workstation can do (below). It needs a `[dev,qiskit-toolkit]`
+# install and a Python 3.12 resource worker — no ORCA or MLIP stack.
 #
 # The default mode adds the half CI *cannot* run at all. GitHub-hosted runners have no
 # ORCA and no MLIP stack, so the tier-3 suite — the only tests that drive real binaries
@@ -38,6 +38,7 @@
 #   PY        the Python to gate with          (default: active venv/conda, else python3)
 #   LIVE_PY   the Python for the tier-3 suite  (default: $PY — set it when the MLIP and
 #             PySCF stacks live in an environment of their own)
+#   RESOURCE_PY Python 3.12 resource-worker interpreter (required unless $PY qualifies)
 #   ORCA      the ORCA binary                  (default: whatever is on PATH)
 
 set -euo pipefail
@@ -93,6 +94,11 @@ if [ -n "$(git status --porcelain)" ]; then
     fail "working tree is dirty — gate a clean tree"
 fi
 
+RESOURCE_PY="${RESOURCE_PY:-$PY}"
+[ -x "$RESOURCE_PY" ] || fail "RESOURCE_PY must name the Python 3.12 resource-worker interpreter"
+"$RESOURCE_PY" -c 'import sys, pathlib, chemrefine, openfermion, qualtran, pytest_cov, coverage; assert sys.version_info[:2] == (3, 12); assert pathlib.Path(chemrefine.__file__).resolve().parent.parent == pathlib.Path.cwd() / "src"' || fail "set RESOURCE_PY to this checkout's qiskit-resources worker (backends install qiskit-resources --python 3.12), with pytest-cov and coverage>=7.10 installed"
+"$PY" -c 'import qiskit_ibm_runtime, qiskit_addon_cutting, qiskit_mitigation, samplomatic, cvxpy, scs' || fail "install this checkout with [dev,qiskit-toolkit] to run all local provider contracts"
+
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
@@ -120,7 +126,12 @@ step "types (CI: type-check)"
 export CHEMREFINE_REQUIRE_NODE=1
 
 step "the suite, with the coverage gate (CI: test)"
-"$bin/pytest" --cov=chemrefine --cov-fail-under=100 -q
+mkdir "$work/coverage"
+COVERAGE_FILE="$work/coverage/.coverage.main" "$bin/pytest" --cov --cov-report= --cov-fail-under=0 -q
+COVERAGE_FILE="$work/coverage/.coverage.resources" "$RESOURCE_PY" -m pytest tests/test_engines_qiskit_resource_estimates.py tests/test_engines_qiskit_resource_experiment.py tests/test_engines_qiskit_resource_providers.py --cov --cov-report= --cov-fail-under=0 --junitxml="$work/resources.xml" -q
+"$PY" scripts/check_provider_tests.py "$work/resources.xml" tests/test_engines_qiskit_resource_estimates.py tests/test_engines_qiskit_resource_experiment.py tests/test_engines_qiskit_resource_providers.py
+COVERAGE_FILE="$work/.coverage" "$PY" -m coverage combine "$work/coverage"
+COVERAGE_FILE="$work/.coverage" "$PY" -m coverage report --fail-under=100
 
 step "every declared extra still resolves (CI: extras-resolve)"
 # Metadata only — no torch wheel is downloaded. Read out of the metadata that declares

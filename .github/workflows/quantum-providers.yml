@@ -1,0 +1,150 @@
+name: Quantum provider contracts
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  OMP_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
+
+jobs:
+  numerical:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        versions: [floor, current]
+        include:
+          - profile: core
+            extra: qiskit-aer
+            imports: qiskit,qiskit_nature,qiskit_algorithms,qiskit_aer
+            pins: qiskit==1.4.0 qiskit-nature==0.8.0 qiskit-algorithms==0.4.0 qiskit-aer==0.17.0
+            tests: tests/test_engines_qiskit_dynamics.py tests/test_engines_qiskit_measurement.py tests/test_engines_qiskit_exact.py tests/test_engines_qiskit_spectra.py
+          - profile: fermionic
+            extra: qiskit-fermionic
+            imports: ffsim,qiskit_fermions,qiskit_addon_sqd
+            pins: qiskit==2.5.0 ffsim==0.0.84 qiskit-fermions==0.1.0 qiskit-addon-sqd==0.13.1
+            tests: tests/test_engines_qiskit_native.py tests/test_engines_qiskit_subspace.py tests/test_engines_qiskit_krylov.py tests/test_engines_qiskit_orbitals.py tests/test_engines_qiskit_double_factorized.py tests/test_engines_qiskit_double_factorized_experiment.py tests/test_engines_qiskit_encodings.py tests/test_engines_qiskit_shadows.py tests/test_engines_qiskit_shadow_experiment.py
+          - profile: runtime
+            extra: qiskit-runtime
+            imports: qiskit_ibm_runtime,qiskit_mitigation,samplomatic
+            pins: qiskit-ibm-runtime==0.50.0 qiskit-mitigation==0.1.1 samplomatic==0.21.0
+            tests: tests/test_engines_qiskit_runtime_providers.py
+          - profile: cutting
+            extra: qiskit-cutting
+            imports: qiskit_addon_cutting
+            pins: qiskit-addon-cutting==0.10.0
+            tests: tests/test_engines_qiskit_cutting_provider.py
+          - profile: rdm
+            extra: qiskit-rdm
+            imports: cvxpy,scs
+            pins: cvxpy==1.6.5 scs==3.2.7.post2
+            tests: tests/test_engines_qiskit_rdm_reconstruction.py tests/test_engines_qiskit_rdm_provider.py
+          - profile: toolkit
+            versions: current
+            extra: qiskit-toolkit
+            imports: ffsim,qiskit_fermions,qiskit_addon_sqd,qiskit_ibm_runtime,qiskit_addon_cutting,cvxpy,scs
+            tests: tests/test_engines_qiskit_native.py tests/test_engines_qiskit_runtime_providers.py tests/test_engines_qiskit_cutting_provider.py tests/test_engines_qiskit_rdm_provider.py
+        profile: [core, fermionic, runtime, cutting, rdm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install selected provider profile
+        env:
+          EXTRA: ${{ matrix.extra }}
+          PINS: ${{ matrix.pins }}
+          VERSIONS: ${{ matrix.versions }}
+        run: |
+          python - <<'PY'
+          import os, shlex, subprocess, sys
+          command = [sys.executable, '-m', 'pip', 'install', '-e', f'.[{os.environ["EXTRA"]}]',
+                     'pytest>=8', 'pytest-cov>=7', 'coverage>=7.10']
+          if os.environ['VERSIONS'] == 'floor':
+              command.extend(shlex.split(os.environ['PINS']))
+          subprocess.run(command, check=True)
+          PY
+      - name: Verify SDK availability and record exact versions
+        env:
+          IMPORTS: ${{ matrix.imports }}
+        run: |
+          python - <<'PY'
+          import importlib, os
+          for name in os.environ['IMPORTS'].split(','):
+              importlib.import_module(name)
+          PY
+          pip freeze > provider-versions.txt
+      - name: Execute real numerical contracts and collect worker coverage
+        env:
+          TESTS: ${{ matrix.tests }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage.provider-${{ matrix.profile }}-${{ matrix.versions }}
+        run: |
+          python - <<'PY'
+          import os, shlex, subprocess, sys
+          subprocess.run([sys.executable, '-m', 'pytest', *shlex.split(os.environ['TESTS']),
+                          '--cov', '--cov-report=', '--cov-fail-under=0', '--junitxml=provider-tests.xml', '-q'], check=True)
+          subprocess.run([sys.executable, 'scripts/check_provider_tests.py', 'provider-tests.xml',
+                          *shlex.split(os.environ['TESTS'])], check=True)
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-data-provider-${{ matrix.profile }}-${{ matrix.versions }}
+          path: .coverage.provider-*
+          include-hidden-files: true
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: versions-${{ matrix.profile }}-${{ matrix.versions }}
+          path: provider-versions.txt
+
+  resources:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        versions: [floor, current]
+    env:
+      CHEMREFINE_HOME: ${{ github.workspace }}/.resource-worker
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Provision a separate resource worker through the public CLI
+        run: |
+          pip install -e . uv
+          chemrefine backends install qiskit-resources --python 3.12
+          uv pip install --python "$CHEMREFINE_HOME/backends/qiskit-resources/bin/python" 'pytest>=8' 'pytest-cov>=7' 'coverage>=7.10'
+      - name: Pin provider floors when selected
+        if: matrix.versions == 'floor'
+        run: uv pip install --python "$CHEMREFINE_HOME/backends/qiskit-resources/bin/python" 'openfermion[resources]==1.8.1' 'qualtran==0.7.0'
+      - name: Execute resource provider contracts in Python 3.12
+        env:
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage.resources-${{ matrix.versions }}
+        run: |
+          "$CHEMREFINE_HOME/backends/qiskit-resources/bin/python" -c 'import sys, openfermion, qualtran; assert sys.version_info[:2] == (3, 12)'
+          "$CHEMREFINE_HOME/backends/qiskit-resources/bin/python" -m pytest tests/test_engines_qiskit_resource_estimates.py tests/test_engines_qiskit_resource_experiment.py tests/test_engines_qiskit_resource_providers.py --cov --cov-report= --cov-fail-under=0 --junitxml=provider-tests.xml -q
+          python scripts/check_provider_tests.py provider-tests.xml tests/test_engines_qiskit_resource_estimates.py tests/test_engines_qiskit_resource_experiment.py tests/test_engines_qiskit_resource_providers.py
+          uv pip freeze --python "$CHEMREFINE_HOME/backends/qiskit-resources/bin/python" > provider-versions.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-data-resources-${{ matrix.versions }}
+          path: .coverage.resources-*
+          include-hidden-files: true
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: versions-resources-${{ matrix.versions }}
+          path: provider-versions.txt

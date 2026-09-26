@@ -24,7 +24,11 @@ One command runs every gate your pull request will face:
 scripts/release-check.sh --pr
 ```
 
-It needs nothing but a `[dev]` install — no ORCA, no MLIP stack — and gates
+It needs `[dev,qiskit-toolkit]` and a Python 3.12 resource worker, but no ORCA
+or MLIP stack. Set `RESOURCE_PY` to the worker interpreter provisioned with
+`chemrefine backends install qiskit-resources --python 3.12`, and install
+`pytest-cov>=7` and `coverage>=7.10` in that worker. The gate combines coverage
+from both interpreters before enforcing 100% lines and branches. It gates
 the checkout you are standing in, refusing to run against a `chemrefine`
 installed anywhere else. If it passes, CI will too, apart from the four
 things no workstation can do (named at the end of the run, and listed under
@@ -42,9 +46,12 @@ python scripts/mutation_gate.py               # critical predicates are *checked
 
 The coverage gate is real: new code ships with tests that cover every
 line and branch, and every module/class/function carries a docstring
-(`interrogate --fail-under=100`). The suite takes under a minute — run it often.
+(`interrogate --fail-under=100`). Use focused tests in the inner loop; numerical provider jobs take longer.
 The `[test]` and `[dev]` extras include the fermionic quantum stack so numerical
-provider tests run in the coverage job. A regular ChemRefine runtime installation
+provider tests run in the main suite. CI also tests Runtime, cutting, RDM and
+resource providers at declared direct-provider floors and selected current
+versions, rejects skipped numerical cases, and combines worker coverage.
+Dependency floors for transitive packages are tested separately in the core job. A regular ChemRefine runtime installation
 still installs quantum libraries only when a Qiskit extra is selected.
 The mutation gate is the slow one (~1.5 min) because it runs a suite per mutation;
 it only needs re-running when you touch one of the predicates it lists

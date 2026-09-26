@@ -169,6 +169,8 @@ pyscf-gpu = [
 test = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
+    # Collect spawned numerical workers through coverage's subprocess support.
+    "coverage>=7.10",
     # Property tests for the numerical core (tests/test_properties.py) — the invariants
     # that have to hold for every input, as opposed to the cases someone thought of.
     "hypothesis>=6.100",
@@ -530,6 +532,12 @@ pythonpath = ["tests"]
 # rather than the one that removes the API. The suite is clean under this today.
 filterwarnings = [
     "error",
+    # Qiskit 1.4 internally reads these deprecated properties; Nature 0.8 uses
+    # its NLocal base. Keep the supported SDK floor testable without hiding other
+    # deprecations or changing the runtime warning policy.
+    'ignore:The property ``qiskit.dagcircuit.dagcircuit.DAGCircuit.(duration|unit)`` is deprecated:DeprecationWarning',
+    'ignore:The property ``qiskit.circuit.instruction.Instruction.condition`` is deprecated:DeprecationWarning',
+    'ignore:The class ``qiskit.circuit.library.n_local.n_local.NLocal`` is pending deprecation:PendingDeprecationWarning',
     # numpy 2.5 deprecates assigning `.shape`, and ase 3.29 still does it in ~18 places —
     # `Atoms.new_array` among them, so *any* empty `Atoms()` warns. On a fresh install
     # (numpy 2.5.2 + ase 3.29.0) that is 68 failures, none of them ours: chemrefine
@@ -568,6 +576,8 @@ markers = [
 [tool.coverage.run]
 source = ["chemrefine"]
 branch = true
+relative_files = true
+patch = ["subprocess"]
 
 [tool.coverage.report]
 fail_under = 100

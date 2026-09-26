@@ -25,19 +25,6 @@ from chemrefine.engines.qiskit.options import ComponentSelection
 from chemrefine.engines.qiskit.registry import ESTIMATORS
 from chemrefine.errors import ConfigError
 
-# Qiskit 1.4's own converter touches deprecated DAG timing fields while compiling
-# LCU circuits. These two upstream warnings do not occur on the current provider.
-pytestmark = [
-    pytest.mark.filterwarnings(
-        r"ignore:The property ``qiskit.dagcircuit.dagcircuit.DAGCircuit.(duration|unit)`` "
-        r"is deprecated:DeprecationWarning"
-    ),
-    pytest.mark.filterwarnings(
-        r"ignore:The property ``qiskit.circuit.instruction.Instruction.condition`` "
-        r"is deprecated:DeprecationWarning"
-    ),
-]
-
 
 def _ry():
     """Return the complete real one-qubit state manifold."""
