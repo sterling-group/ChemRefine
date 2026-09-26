@@ -27,6 +27,11 @@ for the full map.
 
 ### Added
 
+- **Grouped quantum measurement.** YAML and Python workflows support ungrouped,
+  qubit-wise commuting and general commuting Pauli measurements. Independent pilot
+  allocation, joint-shot covariance, physical counts, input-file cache identity and
+  array artifact validation share the quantum experiment contract.
+
 - **Local fermion encodings.** Graph BKSF and open-square VC/DK mappings include
   code constraints, actual-reference preparation, complex observables and sample
   decoding. Flow-set evolution uses verified specialized VC circuits and general

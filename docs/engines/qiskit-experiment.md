@@ -54,6 +54,46 @@ steps:
 
 See `examples/tutorials/qiskit_experiment/input.yaml` for a complete pipeline.
 
+## Grouped Pauli measurement
+
+`pauli_measurement` accepts a `circuit_path` containing one bound, unmeasured QPY
+circuit, a real-coefficient `observable` mapping Pauli labels to weights, and a
+`sampler` component. File paths resolve relative to the configuration file; input
+bytes participate in cache identity. `max_circuit_bytes` defaults to 33554432.
+Declared bundle inputs also include their referenced NPZ payloads in cache identity.
+
+```yaml
+experiment:
+  name: pauli_measurement
+  options:
+    circuit_path: bell.qpy
+    observable: {XX: 1.0, YY: 1.0, ZZ: 1.0}
+    sampler: statevector
+    measurement: {grouping: commuting, shots: 4096, pilot_shots: 64, seed: 7}
+```
+
+`measurement.grouping` selects `none`, qubit-wise commuting `qwc` (the default),
+or general `commuting`. General groups use signed Clifford diagonalization;
+the reported rotation cost includes those entangling gates. `shots` defaults to
+4096 and includes independent pilot shots (default 64 per group). Pilots estimate
+variances for allocation and are excluded from the final mean. Every production
+group receives at least two shots. Uncertainty uses the full covariance of terms
+measured together, not a sum of independent-term errors. It is an empirical
+standard error, not a guaranteed confidence interval.
+
+`seed` defaults to zero and splits local pilot/production random streams.
+`max_terms` defaults to 4096; `max_memory_mb` defaults to 512 and guards estimated
+count, covariance and supported simulator storage, not an OS reservation. Constants
+alone require zero shots. Ideal statevector sampling and noisy Aer sampling retain
+their existing sampler meanings. CUDA requires an Aer-capable worker and sampler.
+
+Reports retain physical integer counts in NPZ separately from expectations. Packed
+bitstrings use Qiskit display order, big-endian packing and trailing zero padding;
+`num_qubits` identifies meaningful bits. Per-group covariance arrays, coefficients,
+signed Z images and shot allocations make uncertainty reconstruction reproducible.
+The same implementation is available as `measure_observable` in the public Python
+API. The complete `measurement.yaml` example includes a small QPY input.
+
 ## Outputs and recovery
 
 The product is `stepN/experiment/artifact.json`, accompanied by its named NPZ

@@ -40,6 +40,11 @@ from chemrefine.engines.qiskit.lattice import (
     square_lattice,
 )
 from chemrefine.engines.qiskit.mapping import map_problem
+from chemrefine.engines.qiskit.measurement import (
+    MeasurementOptions,
+    measure_observable,
+    measurement_groups,
+)
 from chemrefine.engines.qiskit.operators import Excitation, OperatorPool
 from chemrefine.engines.qiskit.options import ActiveSpaceOptions, ComponentSelection, QiskitOptions
 from chemrefine.engines.qiskit.orbitals import (
@@ -73,6 +78,7 @@ __all__ = [
     "LatticeEdge",
     "LatticeIntegratorOptions",
     "LocalEncodingOptions",
+    "MeasurementOptions",
     "MolecularMetadata",
     "OperatorPool",
     "OrbitalOptimizationOptions",
@@ -90,6 +96,8 @@ __all__ = [
     "lattice_encoding_qubits",
     "load_states",
     "map_problem",
+    "measure_observable",
+    "measurement_groups",
     "optimize_orbitals",
     "partition_flow_edges",
     "prepare_problem",

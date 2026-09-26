@@ -22,7 +22,12 @@ from chemrefine.config import StepConfig
 from chemrefine.engines import _provision
 from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.api import BackendRequirement, ComponentCategory, RunBlock, register
-from chemrefine.engines.qiskit.bundles import DEFAULT_MAX_BYTES, read_bundle, write_bundle
+from chemrefine.engines.qiskit.bundles import (
+    DEFAULT_MAX_BYTES,
+    bundle_dependencies,
+    read_bundle,
+    write_bundle,
+)
 from chemrefine.engines.qiskit.lattice import (
     FermionicLatticeModel,
     LatticeDynamicsOptions,
@@ -30,7 +35,8 @@ from chemrefine.engines.qiskit.lattice import (
     lattice_encoding_qubits,
 )
 from chemrefine.engines.qiskit.options import ComponentSelection
-from chemrefine.engines.qiskit.registry import ComponentRegistry
+from chemrefine.engines.qiskit.profiles import BACKEND_PROFILES
+from chemrefine.engines.qiskit.registry import REGISTRIES, ComponentRegistry
 from chemrefine.errors import ConfigError
 from chemrefine.state import JobBatch, StepContext, StepInputs, StepResults
 
@@ -127,7 +133,15 @@ def lattice_experiment(*, options: LatticeExperimentOptions, **context: Any) -> 
 
 def validate_experiment(options: QiskitExperimentOptions) -> None:
     """Resolve typed scientific options without importing optional SDKs."""
-    EXPERIMENTS.options_for(options.experiment)
+    component = EXPERIMENTS.options_for(options.experiment)
+    for category in EXPERIMENTS.spec(options.experiment.name).requires & REGISTRIES.keys():
+        selection = getattr(component, category)
+        REGISTRIES[category].options_for(selection)
+        if (
+            options.device == "cuda"
+            and "cuda" not in REGISTRIES[category].spec(selection.name).capabilities
+        ):
+            raise ConfigError(f"qiskit {category} {selection.name!r} requires device: cpu")
     if (
         options.device == "cuda"
         and "cuda" not in EXPERIMENTS.spec(options.experiment.name).capabilities
@@ -140,7 +154,10 @@ def run_experiment(options: Mapping[str, Any], output_path: Path) -> Path:
     resolved = QiskitExperimentOptions.from_raw(options)
     validate_experiment(resolved)
     result: ExperimentResult = EXPERIMENTS.build(
-        resolved.experiment, cores=resolved.cores, max_output_bytes=resolved.max_output_bytes
+        resolved.experiment,
+        cores=resolved.cores,
+        device=resolved.device,
+        max_output_bytes=resolved.max_output_bytes,
     )
     return write_bundle(
         output_path,
@@ -172,19 +189,52 @@ class QiskitExperimentEngine:
         """Resolve the selected experiment's declared worker environment."""
         resolved = self.options_cls.from_raw(options)
         validate_experiment(resolved)
-        requirement = EXPERIMENTS.spec(resolved.experiment.name).backend_requirement
-        return requirement or BackendRequirement(extra="qiskit", import_name="qiskit_nature")
+        spec = EXPERIMENTS.spec(resolved.experiment.name)
+        requirements = [] if spec.backend_requirement is None else [spec.backend_requirement]
+        component = EXPERIMENTS.options_for(resolved.experiment)
+        for category in spec.requires & REGISTRIES.keys():
+            selected = REGISTRIES[category].spec(getattr(component, category).name)
+            if selected.backend_requirement is not None:
+                requirements.append(selected.backend_requirement)
+        return BACKEND_PROFILES.resolve(requirements)
 
     def backend_extras(self) -> frozenset[str]:
         """Discover all registered experiment providers for backend installation."""
         return frozenset(
-            {"qiskit"}
+            set(BACKEND_PROFILES.names())
             | {
                 requirement.extra
                 for name in EXPERIMENTS.names()
                 if (requirement := EXPERIMENTS.spec(name).backend_requirement) is not None
             }
         )
+
+    def input_file_options(self, options: Mapping[str, Any]) -> tuple[tuple[str | int, ...], ...]:
+        """Declare file-valued fields from the selected experiment's typed schema."""
+        component = EXPERIMENTS.options_for(self.options_cls.from_raw(options).experiment)
+        return tuple(
+            ("experiment", "options", name)
+            for name, field in type(component).model_fields.items()
+            if isinstance(field.json_schema_extra, dict)
+            and field.json_schema_extra.get("input_file")
+            and getattr(component, name) is not None
+        )
+
+    def input_file_dependencies(self, files: Mapping[str, Path]) -> Mapping[str, Path]:
+        """Enumerate manifest payloads by declared format, never by filename guessing."""
+        bundle_fields = {
+            f"/experiment/options/{field_name}"
+            for name in EXPERIMENTS.names()
+            for field_name, field in EXPERIMENTS.spec(name).options_cls.model_fields.items()
+            if isinstance(field.json_schema_extra, dict)
+            and field.json_schema_extra.get("file_format") == "quantum_bundle"
+        }
+        return {
+            f"{pointer.lstrip('/')}/{key}": payload
+            for pointer, path in files.items()
+            if pointer in bundle_fields
+            for key, payload in bundle_dependencies(path).items()
+        }
 
     def check_step(self, step_cfg: StepConfig, *, charge: int, multiplicity: int) -> None:
         """Refuse invalid science before any upstream step submits work."""
@@ -269,3 +319,9 @@ class QiskitExperimentEngine:
     def extra_header_fields(self, ctx: StepContext) -> tuple[tuple[str, object], ...]:
         """Record the selected experiment in the shared run log."""
         return (("experiment", self._options(ctx).experiment.name),)
+
+
+# Built-ins register in both the orchestrator and worker without importing SDKs.
+from chemrefine.engines.qiskit import (  # noqa: E402
+    experiment_measurement as _experiment_measurement,  # noqa: F401
+)

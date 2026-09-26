@@ -157,7 +157,7 @@ def test_declared_provider_and_single_artifact_failure_policy(tmp_path):
     """Preflight, backend discovery and runtime share one options interpretation."""
     engine = QiskitExperimentEngine()
     assert engine.backend_requirement({}).extra == "qiskit-fermionic"
-    assert engine.backend_extras() == {"qiskit", "qiskit-fermionic"}
+    assert {"qiskit", "qiskit-aer", "qiskit-fermionic"} <= engine.backend_extras()
     ctx = _ctx(tmp_path)
     with pytest.raises(ConfigError, match="on_failure"):
         engine.prepare(
