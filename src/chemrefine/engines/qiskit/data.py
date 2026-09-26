@@ -13,14 +13,16 @@ from numpy.typing import ArrayLike, NDArray
 from chemrefine.errors import ConfigError
 
 
-def _array(value: ArrayLike, shape: tuple[int, ...], name: str) -> NDArray[np.float64]:
-    """Copy finite real input into a read-only array with a prescribed shape."""
+def _array(
+    value: ArrayLike, shape: tuple[int, ...], name: str, *, complex_allowed: bool = False
+) -> NDArray[Any]:
+    """Copy finite input into a read-only array with a prescribed shape and domain."""
     try:
-        if np.iscomplexobj(value):
+        if np.iscomplexobj(value) and not complex_allowed:
             raise ValueError("complex-valued integrals are not supported")
-        array = np.array(value, dtype=float, copy=True)
+        array = np.array(value, dtype=complex if np.iscomplexobj(value) else float, copy=True)
     except (TypeError, ValueError) as exc:
-        raise ConfigError(f"qiskit {name} must contain real numbers: {exc}") from exc
+        raise ConfigError(f"qiskit {name} must contain valid numbers: {exc}") from exc
     if array.shape != shape or not np.all(np.isfinite(array)):
         raise ConfigError(f"qiskit {name} must be finite with shape {shape}")
     array.setflags(write=False)
@@ -50,7 +52,7 @@ class MolecularMetadata:
 
 @dataclass(frozen=True)
 class ElectronicStructureData:
-    """Real integrals in orthonormal molecular orbitals, in atomic units.
+    """Real or complex integrals in orthonormal molecular orbitals, in atomic units.
 
     ``two_body_order`` explicitly declares chemist ``(pq|rs)`` or Qiskit
     physicist ordering; the engine never guesses from tensor symmetries.
@@ -128,19 +130,24 @@ class ElectronicStructureData:
             if value is None:
                 continue
             rank = 2 if name.startswith("one_body") else 4
-            array = _array(value, (n,) * rank, name)
+            array = _array(value, (n,) * rank, name, complex_allowed=True)
             if rank == 2:
-                symmetric = np.allclose(array, array.T, atol=1e-10, rtol=1e-10)
+                symmetric = np.allclose(array, array.T.conj(), atol=1e-10, rtol=1e-10)
             else:
                 chemist = array if self.two_body_order == "chemist" else array.transpose(0, 3, 1, 2)
-                symmetric = np.allclose(chemist, chemist.swapaxes(0, 1), atol=1e-10, rtol=1e-10)
-                symmetric &= np.allclose(chemist, chemist.swapaxes(2, 3), atol=1e-10, rtol=1e-10)
+                symmetric = np.allclose(
+                    chemist, chemist.transpose(1, 0, 3, 2).conj(), atol=1e-10, rtol=1e-10
+                )
+                if not np.iscomplexobj(array):
+                    symmetric &= np.allclose(
+                        chemist, chemist.swapaxes(0, 1), atol=1e-10, rtol=1e-10
+                    )
                 if name != "two_body_integrals_beta_alpha":
                     symmetric &= np.allclose(
                         chemist, chemist.transpose(2, 3, 0, 1), atol=1e-10, rtol=1e-10
                     )
             if not symmetric:
-                raise ConfigError(f"qiskit {name} violates real integral Hermitian symmetry")
+                raise ConfigError(f"qiskit {name} violates integral Hermitian symmetry")
             object.__setattr__(self, name, array)
         for name in ("orbital_energies", "orbital_energies_beta", "overlap_alpha_beta"):
             value = getattr(self, name)

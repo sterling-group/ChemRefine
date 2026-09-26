@@ -6,6 +6,15 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from chemrefine.engines.qiskit.data import ElectronicStructureData, MolecularMetadata
+from chemrefine.engines.qiskit.determinants import (
+    DeterminantState,
+    FermionicHamiltonian,
+    FermionTerm,
+    ProjectedEigensystem,
+    ReducedDensityMatrices,
+    projected_eigensystem,
+    projected_operator,
+)
 from chemrefine.engines.qiskit.lattice import (
     FermionicLatticeModel,
     LatticeCircuit,
@@ -32,7 +41,10 @@ from chemrefine.engines.qiskit.workflow import EvaluationCallback, run_job, run_
 __all__ = [
     "ActiveSpaceOptions",
     "CircuitMetrics",
+    "DeterminantState",
     "ElectronicStructureData",
+    "FermionTerm",
+    "FermionicHamiltonian",
     "FermionicLatticeModel",
     "LatticeCircuit",
     "LatticeDynamicsOptions",
@@ -41,14 +53,18 @@ __all__ = [
     "MolecularMetadata",
     "OperatorPool",
     "PreparedProblem",
+    "ProjectedEigensystem",
     "QiskitOptions",
     "QiskitRunResult",
+    "ReducedDensityMatrices",
     "SampleBatch",
     "build_lattice_dynamics",
     "chain_lattice",
     "map_problem",
     "prepare_problem",
     "prepare_pyscf_problem",
+    "projected_eigensystem",
+    "projected_operator",
     "run_adapt_vqe",
     "run_job",
     "run_problem",
