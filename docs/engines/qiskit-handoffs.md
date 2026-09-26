@@ -24,7 +24,7 @@ separately from the nonconstant normalization.
 `save_integrals` and `load_integrals` are the Python exchange functions. A producing
 engine must explicitly supply valid MO tensors; this feature does not extract them
 automatically from an ORCA/PySCF output or track orbital changes after a geometry
-update. The [integral-input example](https://github.com/Sterling-Group/ChemRefine/tree/main/examples/tutorials/qiskit_integrals)
+update. The [integral-input example](https://github.com/sterling-group/ChemRefine/tree/main/examples/tutorials/qiskit_integrals)
 uses a supplied H₂ bundle and the exact quantum reference solver.
 
 Paths resolve against the YAML file. The scheduler/cache layer hashes both the
@@ -85,7 +85,7 @@ missing payload invalidates reuse; parsing and cache rebuilding do not contact a
 provider. In the Python API, `run_problem(..., options={"algorithm": "vqe", "circuit_export": {}})`
 returns transient `result.circuits`; call `save_circuit` to persist them.
 
-The [two-step example](https://github.com/Sterling-Group/ChemRefine/tree/main/examples/tutorials/qiskit_handoffs)
+The [two-step example](https://github.com/sterling-group/ChemRefine/tree/main/examples/tutorials/qiskit_handoffs)
 solves H₂ from stored integrals, exports its VQE preparation, then measures `IIZZ`
 (alpha-particle parity) through `qiskit-experiment`. Run it from its directory with
 `chemrefine run input.yaml`. The configured environment must include the selected

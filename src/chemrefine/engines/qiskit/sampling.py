@@ -97,11 +97,12 @@ class SamplingSession:
         self.selection = (
             ComponentSelection.named(selection) if isinstance(selection, str) else selection
         )
-        self.options = SAMPLERS.options_for(self.selection).model_dump(mode="json")
+        resolved = SAMPLERS.options_for(self.selection)
+        self.options = resolved.model_dump(mode="json")
         seeds = [
-            self.options[name]
+            value
             for name in ("seed", "seed_simulator")
-            if self.options.get(name) is not None
+            if (value := getattr(resolved, name, None)) is not None
         ]
         self._configured_seed = bool(seeds)
         if seed is not None:
