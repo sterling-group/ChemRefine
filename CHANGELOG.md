@@ -459,6 +459,12 @@ for the full map.
 
 ### Fixed
 
+- **A chat turn that fails after your verdicts never offers them again.** In the
+  builder's chat panel the allowed calls run before the model is asked anything, so a turn
+  that then failed — the model endpoint dropping — had already made its changes, yet the
+  allow/deny cards came back with your verdicts filled in, and one click ran the same
+  calls a second time. The suspended run is now taken when the verdicts are applied, and
+  the cards return only when the turn failed before reaching it.
 - **A tool's refusal reaches the embedded agent's model, as it did over MCP.** In
   `chemrefine agent` and the builder's chat panel, a tool refusing — an unknown action, a
   template not written yet, a run lock held — ended the turn: the terminal printed the

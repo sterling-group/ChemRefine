@@ -28,6 +28,7 @@ from __future__ import annotations
 import importlib
 import secrets
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,19 @@ from chemrefine import agent_tools, introspect, io
 from chemrefine.cache import atomic_write
 from chemrefine.errors import ChemRefineError, ConfigError
 from chemrefine.gui import STATIC_DIR
+
+
+def _refusal(error: ChemRefineError) -> dict[str, Any]:
+    """A ChemRefineError in the GUI's documented shape: its message and its exit code."""
+    return {"error": str(error), "exit_code": error.exit_code}
+
+
+@dataclass(frozen=True)
+class _Suspended:
+    """A chat run paused on the human's verdicts: its messages, and the cards they answer."""
+
+    messages: list[Any]
+    cards: list[dict[str, Any]]
 
 
 def _wire_int(value: Any, key: str) -> int:
@@ -194,7 +208,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         if isinstance(error, HTTPException):
             return error
         if isinstance(error, ChemRefineError):
-            return jsonify({"error": str(error), "exit_code": error.exit_code}), 400
+            return jsonify(_refusal(error)), 400
         raise error
 
     @app.get("/api/bootstrap")
@@ -463,8 +477,14 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
 
     # One user, one browser, one conversation: the chat state lives on the app instance
     # (history = PydanticAI's own message list; pending = the suspended run awaiting the
-    # human's allow/deny verdicts).
+    # human's allow/deny verdicts, a `_Suspended`).
     chat_state: dict[str, Any] = {"history": None, "pending": None}
+
+    def _still_pending() -> list[dict[str, Any]] | None:
+        """The cards a failed turn leaves answerable — what the page may offer again."""
+        suspended = chat_state["pending"]
+        return suspended.cards if suspended is not None else None
+
     # One conversation, but four waitress threads — and a turn is a read-modify-write
     # around a model call that takes seconds to a minute. Two overlapping POSTs would
     # both run from the same history and the last writer would win: a turn's messages
@@ -616,46 +636,48 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
                 or (str(config_path) if config_path is not None else None),
             )
             if payload.get("approvals"):
-                pending = chat_state["pending"]
-                if pending is None:
-                    return jsonify({"error": "no suspended run to resume"}), 400
+                suspended = chat_state["pending"]
+                if suspended is None:
+                    return jsonify({"error": "no suspended run to resume", "pending": None}), 400
+                verdicts = DeferredToolResults(
+                    approvals={
+                        k: _typed(v, f"approvals.{k}", bool)
+                        for k, v in _field(payload, "approvals", dict).items()
+                    }
+                )
+                # Taken, not read: the approved calls run before the model is asked anything,
+                # so once the resume starts, a failure — the endpoint dying on the next
+                # request, a refusal the model cannot get past — leaves no run for these
+                # cards to answer, and answering them again would run those calls twice.
+                chat_state["pending"] = None
                 result = run_turn(
-                    agent,
-                    message_history=pending,
-                    deferred_tool_results=DeferredToolResults(
-                        approvals={
-                            k: _typed(v, f"approvals.{k}", bool)
-                            for k, v in _field(payload, "approvals", dict).items()
-                        }
-                    ),
+                    agent, message_history=suspended.messages, deferred_tool_results=verdicts
                 )
             else:
                 result = run_turn(
                     agent, _field(payload, "message"), message_history=chat_state["history"]
                 )
-        except ChemRefineError:
+        except ChemRefineError as e:
             # The documented {error, exit_code} shape, for a refusal the model could not
-            # get past (run_turn ends the turn on it) and for a request this panel refuses.
-            raise
+            # get past (run_turn ends the turn on it) and for a request this panel refuses —
+            # with what is still pending, so the page offers only cards that can be answered.
+            return jsonify({**_refusal(e), "pending": _still_pending()}), 400
         except Exception as e:  # the model endpoint is the outside world
-            return jsonify({"error": f"model endpoint failed: {e}"}), 502
+            return jsonify(
+                {"error": f"model endpoint failed: {e}", "pending": _still_pending()}
+            ), 502
         # Computed once, before the branch, and reported on both: an approved write and a
         # fresh batch of approval cards arrive in the *same* turn, so a signal attached
         # only to the text branch would be silently dropped exactly when the agent is
         # working steadily.
         wrote_config = _config_written_by(result)
         if isinstance(result.output, DeferredToolRequests):
-            chat_state["pending"] = result.all_messages()
-            return jsonify(
-                {
-                    "reply": None,
-                    "wrote_config": wrote_config,
-                    "pending": [
-                        {"id": call.tool_call_id, "tool": call.tool_name, "args": call.args}
-                        for call in result.output.approvals
-                    ],
-                }
-            )
+            cards = [
+                {"id": call.tool_call_id, "tool": call.tool_name, "args": call.args}
+                for call in result.output.approvals
+            ]
+            chat_state["pending"] = _Suspended(result.all_messages(), cards)
+            return jsonify({"reply": None, "wrote_config": wrote_config, "pending": cards})
         chat_state["history"] = result.all_messages()
         chat_state["pending"] = None
         return jsonify({"reply": result.output, "pending": None, "wrote_config": wrote_config})

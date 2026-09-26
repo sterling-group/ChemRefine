@@ -943,6 +943,49 @@ def test_a_superseded_check_cannot_rearm_send():
     assert json.loads(out) == {"ok": None, "ready": False}
 
 
+_CARD = '{"id": "c1", "tool": "start_run", "args": {}}'
+
+
+@pytest.mark.parametrize(
+    ("response", "offered_again"),
+    [
+        ("null", True),
+        ('{"status": 409, "body": {"error": "a chat turn is already running"}}', True),
+        (f'{{"status": 400, "body": {{"error": "not a boolean", "pending": [{_CARD}]}}}}', True),
+        ('{"status": 502, "body": {"error": "model endpoint failed", "pending": null}}', False),
+    ],
+    ids=["unreachable", "busy", "refused-before-the-run", "failed-after-the-run"],
+)
+def test_a_failed_resume_offers_the_cards_again_only_while_they_can_be_answered(
+    response: str, offered_again: bool
+):
+    """The cards come back when the verdicts never reached the run, and only then.
+
+    Restored unconditionally, a resume that failed *after* its approved calls ran — the
+    endpoint dying on the next request — put the cards back with their verdicts filled in,
+    and one click ran the same calls again. The server says what is still pending whenever
+    it answered the resume; when it did not (busy, unreachable), nothing was touched.
+    """
+    out = _run_component_in_node(
+        """
+      const b = builder();
+      b.chatAvailability = () => {};
+      const response = RESPONSE;
+      global.fetch = async () => {
+        if (response === null) throw new TypeError("network down");
+        return { ok: false, status: response.status, json: async () => response.body };
+      };
+      b.chat.pending = [CARD];
+      await b.decide("c1", true);
+      console.log(JSON.stringify({
+        cards: b.chat.pending.map((c) => c.id), decisions: b.chat.decisions,
+      }));
+    """.replace("RESPONSE", response).replace("CARD", _CARD)
+    )
+    expected = {"cards": ["c1"], "decisions": {"c1": True}}
+    assert json.loads(out) == (expected if offered_again else {"cards": [], "decisions": {}})
+
+
 def test_the_key_is_not_sent_to_a_provider_whose_key_field_is_hidden():
     """The key survives a provider switch; it must not travel with one that hides it.
 

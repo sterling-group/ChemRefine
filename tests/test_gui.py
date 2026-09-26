@@ -1320,6 +1320,7 @@ def test_chat_reads_an_approval_as_a_json_boolean_not_by_truthiness(
     assert refused.get_json()["error"] == (
         f"'approvals.{request_card['id']}' must be a boolean, not {type(verdict).__name__}"
     )
+    assert refused.get_json()["pending"] == [request_card]  # refused before the run: still open
     assert not (tmp_path / "templates").exists()
 
     resumed = _post(
@@ -1336,6 +1337,43 @@ def test_chat_refuses_approvals_with_nothing_pending(client: Any, chat_env: pyte
     refused = _post(client, "/api/agent/chat", {"approvals": {"x": True}})
     assert refused.status_code == 400
     assert "no suspended run" in refused.get_json()["error"]
+    assert refused.get_json()["pending"] is None
+
+
+def test_a_resume_that_reached_the_run_leaves_nothing_to_answer_again(
+    client: Any, chat_env: pytest.MonkeyPatch, tmp_path: Path
+):
+    """The approved calls run first; a failure after that must not offer them again.
+
+    The verdicts run the approved calls before the model is asked anything, so an endpoint
+    that dies on that next request fails a resume whose mutations already happened. The
+    suspended run stayed behind, the page put the cards back with their verdicts filled
+    in, and one click ran the same calls a second time. The run is taken when the resume
+    starts, and the failure says nothing is pending.
+    """
+    from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    config = _saved_config(tmp_path)
+
+    def dies_after_the_approval(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart("scaffold_templates", {"config_path": str(config)})]
+            )
+        raise RuntimeError("connection reset by the endpoint")
+
+    _inject_model(chat_env, FunctionModel(dies_after_the_approval))
+    [card] = _post(client, "/api/agent/chat", {"message": "scaffold it"}).get_json()["pending"]
+
+    failed = _post(client, "/api/agent/chat", {"approvals": {card["id"]: True}})
+    assert failed.status_code == 502
+    assert failed.get_json()["pending"] is None
+    assert (tmp_path / "templates" / "step1.inp").is_file()  # the approved call did run
+
+    again = _post(client, "/api/agent/chat", {"approvals": {card["id"]: True}})
+    assert again.status_code == 400
+    assert "no suspended run" in again.get_json()["error"]
 
 
 def _reads_back_a_refusal(tool: str, args: dict[str, Any]) -> Any:

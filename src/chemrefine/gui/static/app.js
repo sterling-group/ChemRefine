@@ -377,8 +377,9 @@ function builder() {
     // convenience rather than the thing the user asked for — the structure lists behind the
     // combo boxes, where "this step has not run yet" is the ordinary case and announcing it
     // on every step change is noise. It never suppresses the null return: the caller still
-    // has to cope with not getting an answer.
-    async api(method, url, body, { quiet = false } = {}) {
+    // has to cope with not getting an answer. `onFailure` hands a refused request's body to
+    // a caller that needs more from it than the flash — the chat reads what is still pending.
+    async api(method, url, body, { quiet = false, onFailure } = {}) {
       if (this.staticMode) return this.staticApi(url, body);
       const options = { method, headers: { "X-ChemRefine-Token": this.token } };
       if (body !== undefined) {
@@ -397,6 +398,7 @@ function builder() {
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         if (!quiet) this.flash = data.error || `${response.status} error`;
+        if (onFailure) onFailure(data);
         return null;
       }
       return data;
@@ -1591,11 +1593,13 @@ function builder() {
       if (this.savedPath) payload.config_path = this.savedPath;
       return payload;
     },
-    async _chatTurn(extra) {
+    async _chatTurn(extra, { onFailure } = {}) {
       const generation = ++this._chatGen;
       this.chat.busy = true;
       try {
-        const data = await this.api("POST", "/api/agent/chat", this._chatPayload(extra));
+        const data = await this.api("POST", "/api/agent/chat", this._chatPayload(extra), {
+          onFailure,
+        });
         if (!data) return false; // server refused; flash explains
         if (generation !== this._chatGen) return true; // a reset won the race: drop it
         if (data.pending) {
@@ -1638,10 +1642,21 @@ function builder() {
       this.chat.pending = [];
       this.chat.decisions = {};
       const generation = this._chatGen;
-      const landed = await this._chatTurn({ approvals });
-      // A failed resume must not swallow the verdicts: without the cards the suspended
-      // run has nothing left to answer it. Restore unless a reset intervened.
-      if (!landed && this._chatGen === generation + 1) {
+      let stillPending; // what the server says is left to answer, when it says
+      const landed = await this._chatTurn(
+        { approvals },
+        {
+          onFailure: (data) => {
+            if ("pending" in data) stillPending = data.pending;
+          },
+        },
+      );
+      // A resume that never reached the run — busy, unreachable, refused before it started —
+      // must not swallow the verdicts: without the cards the suspended run has nothing left
+      // to answer it. One that did reach it is another matter: the approved calls ran before
+      // the model was asked anything, the server says nothing is pending, and the same cards
+      // answered again would run those calls twice. Restore unless a reset intervened.
+      if (!landed && stillPending !== null && this._chatGen === generation + 1) {
         this.chat.pending = heldPending;
         this.chat.decisions = approvals;
       }

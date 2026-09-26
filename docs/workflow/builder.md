@@ -267,8 +267,10 @@ the tab for as long as the tab does, and is gone on reload. Set
 Then talk:
 the agent uses the same tools as everywhere else. Mutating actions **suspend** the
 agent and appear as allow/deny cards naming the exact call and its arguments; nothing
-touches disk or starts compute until you click *allow*. The panel needs the local
-server, so the online playground shows a note instead.
+touches disk or starts compute until you click *allow*. If the turn fails after your
+verdicts were applied — the model endpoint dropping, say — the cards do not come back:
+the calls you allowed have already run, and nothing is left for them to answer. The
+panel needs the local server, so the online playground shows a note instead.
 
 When the agent saves the config, **the builder loads it** — the form and the YAML pane
 update, and the right column switches back to `input.yaml` so you see what changed. The
