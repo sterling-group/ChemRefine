@@ -1,6 +1,6 @@
-# Qiskit ground-state calculations
+# Qiskit molecular single-point calculations
 
-ChemRefine's `qiskit` engine runs modular electronic-structure ground-state
+ChemRefine's `qiskit` engine runs modular ground- and excited-state electronic-structure
 calculations with Qiskit Nature. A step chooses the mapper, algorithm, ansatz,
 initial state, estimator, sampler, optimizer, and initial point independently. Changing
 from exact diagonalization to VQE or ADAPT-VQE is therefore a configuration
@@ -99,6 +99,7 @@ result = run_job(
     charge=int("$CHARGE"),
     multiplicity=int("$MULTIPLICITY"),
     options=json.loads("$OPTIONS_JSON"),
+    artifact_dir=".",
 )
 
 energy_hartree = result.energy_hartree
@@ -138,8 +139,10 @@ flowchart TD
     PROBLEM --> MAP[Mapper factory]
     MAP --> CTX[ElectronicStructureContext<br/>problem, particles, orbitals, qubits]
     CTX --> BUILD[Build required components]
-    BUILD --> GSE[GroundStateEigensolver]
+    BUILD --> GSE[Qiskit Nature GroundStateEigensolver]
+    BUILD --> NATIVE[Native sampled, adaptive and spectral solvers]
     GSE --> RESULT[Total molecular energy and diagnostics]
+    NATIVE --> RESULT
     RESULT --> JSON[Per-structure JSON]
     JSON --> CACHE[ChemRefine cache, ensembles, steps.csv]
 ```
@@ -148,14 +151,18 @@ The active-space transformer does not replace the electronic calculation with
 only a mean-field energy. PySCF first supplies molecular orbitals and electronic
 integrals. Qiskit Nature then folds the inactive-space contribution into the
 transformed Hamiltonian's constants and exposes the chosen active orbitals to
-the quantum solver. ChemRefine reports `result.total_energies[0]`, which includes
-the active-space and nuclear-repulsion constants.
+the quantum solver. The selected physical root supplies `energy_hartree`; root
+zero is the default. Total molecular energies include active-space and nuclear
+constants exactly once. An integral problem without a known nuclear constant
+reports its electronic-energy convention explicitly instead.
 
 ### Component dependencies and lifetimes
 
-Every component has a narrow construction contract. The estimator is a managed
-resource so a future provider implementation can open a session before solver
-assembly and close it reliably afterward.
+Every component has a narrow construction contract. Estimators and samplers are
+managed resources: providers can open sessions before solver assembly and close
+them reliably afterward. Transitive requirements also apply; QNSPSA consumes a
+sampler and the current circuit for fidelity even when its algorithm directly
+requires only an estimator.
 
 ```mermaid
 flowchart LR
@@ -169,20 +176,23 @@ flowchart LR
     CIR --> IP[Initial-point factory]
 
     ECFG[Estimator config] --> ER[EstimatorResource opens]
+    SCFG[Sampler config] --> SR[SamplerResource opens]
     OCFG[Optimizer config] --> O[Optimizer]
+    SR --> O
 
     C --> ALG[Algorithm factory]
     ER --> ALG
+    SR --> ALG
     O --> ALG
     IS --> ALG
     CIR --> ALG
     POOL --> ALG
     IP --> ALG
     ALG --> SOLVE[Ground-state solve]
-    SOLVE --> CLOSE[EstimatorResource closes]
+    SOLVE --> CLOSE[Execution resources close]
 
     classDef optional stroke-dasharray: 5 5;
-    class IS,A,CIR,POOL,IP,ER,O optional;
+    class IS,A,CIR,POOL,IP,ER,SR,O optional;
 ```
 
 The dashed components are conditional:
@@ -228,6 +238,7 @@ values; `ComponentSelection(name="exact", options={})` is equivalent to
 | --- | --- | --- |
 | `basis` | `sto-3g` | PySCF orbital basis passed to `PySCFDriver`. |
 | `integral_source` | `None` | Optional portable MO bundle with checked molecular identity; bypasses the PySCF geometry driver. |
+| `circuit_export` | `None` | Optional bound logical circuit bundles from supported variational algorithms; `max_bytes` limits each retained QPY payload. Preserves mapper, orbital, parameter and energy conventions for downstream experiments. |
 | `active_space` | `None` | Optional `{electrons, orbitals, active_orbitals}` reduction applied before mapper construction. `electrons` may be a total integer or `[n_alpha, n_beta]`; optional `active_orbitals` gives explicit zero-based input spatial-orbital indices. |
 | `freeze_core` | `False` | Freeze the conventional doubly occupied atomic core before any explicit active-space reduction. Requires molecular element metadata. |
 | `mapper` | `ComponentSelection(name='jordan_wigner', options={})` | Fermion-to-qubit mapping component. |
@@ -239,8 +250,8 @@ values; `ComponentSelection(name="exact", options={})` is equivalent to
 | `optimizer` | `ComponentSelection(name='slsqp', options={})` | Classical optimizer for VQE's parameters. |
 | `initial_point` | `ComponentSelection(name='zeros', options={})` | Fixed-VQE parameter initialization. |
 | `cores` | `1` | Requested per-structure CPU allocation, capped by the run's `max_cores`. Aer uses the granted allocation as its maximum parallel-thread count. |
-| `device` | `cpu` | Shared engine option. Use `cuda` only with an Aer estimator in a Linux environment containing the compatible `qiskit-aer-gpu` package; it also makes ChemRefine request GPU resources. |
-| `backend_python` | `None` | Explicit backend interpreter override. Normally let ChemRefine resolve `qiskit` or `qiskit-aer` from the selected estimator. |
+| `device` | `cpu` | Shared engine option. Use `cuda` with a consumed GPU-capable Aer estimator or sampler in a Linux environment containing the compatible `qiskit-aer-gpu` package; it also makes ChemRefine request GPU resources. |
+| `backend_python` | `None` | Explicit backend interpreter override. Normally let ChemRefine select a declared provider profile containing every dependency consumed by the resolved component graph. |
 
 The Qiskit engine translates the older flat pair `active_electrons` /
 `active_orbitals` into `active_space` for compatibility, including for direct
@@ -1048,7 +1059,9 @@ or add a standalone classical reference solver.
 
 ## Extending the registries
 
-The assembly layer uses seven registries:
+The assembly layer uses eight molecular registries. The live component catalog
+from `chemrefine schema` is the authoritative roster and publishes their option
+schemas, requirements, provider profiles and supported research domains:
 
 ```python
 from chemrefine.engines.qiskit.registry import (
@@ -1059,6 +1072,7 @@ from chemrefine.engines.qiskit.registry import (
     INITIAL_STATES,
     MAPPERS,
     OPTIMIZERS,
+    SAMPLERS,
 )
 ```
 
@@ -1073,7 +1087,8 @@ for `adapt_vqe` plus `efficient_su2` before a calculation starts.
 | `INITIAL_STATES` | `options`, `ElectronicStructureContext` | `QuantumCircuit` |
 | `ANSATZE` | `options`, context, initial state | `AnsatzArtifacts(circuit=..., operator_pool=...)` |
 | `ESTIMATORS` | `options`, top-level `device`, `cores` | `EstimatorResource` containing a V2 estimator |
-| `OPTIMIZERS` | `options` | Qiskit Algorithms optimizer |
+| `SAMPLERS` | `options`, top-level `device`, `cores` | `SamplerResource` containing a V2 sampler |
+| `OPTIMIZERS` | `options`, plus declared circuit/sampler context for QNSPSA | Qiskit Algorithms optimizer |
 | `INITIAL_POINTS` | `options`, ansatz artifacts | NumPy parameter vector |
 | `ALGORITHMS` | `options`, context, assembled components | `AlgorithmArtifacts(solver=...)` |
 
@@ -1097,7 +1112,7 @@ class RealAmplitudesOptions(BaseModel):
 
 
 @ANSATZE.register(
-    "real_amplitudes",
+    "custom_real_amplitudes",
     RealAmplitudesOptions,
     capabilities=frozenset({"circuit"}),
 )
@@ -1119,7 +1134,8 @@ def build_real_amplitudes(
     return AnsatzArtifacts(circuit=circuit)
 ```
 
-Then YAML can select it with `ansatz: real_amplitudes` for VQE.
+Then YAML can select it with `ansatz: custom_real_amplitudes` for VQE. The existing
+`real_amplitudes` name is already registered; extension names must be unique.
 
 !!! important "Registration must happen in both processes"
 
@@ -1162,9 +1178,11 @@ estimator.
 
 ## Compatibility and limitations
 
-- The supported dependency ranges are Qiskit `>=1.4,<2.0`, Qiskit Nature
+- The core dependency ranges are Qiskit `>=1.4,<2.6`, Qiskit Nature
   `>=0.8,<0.9`, Qiskit Algorithms `>=0.4,<0.5`, and Qiskit Aer
-  `>=0.17,<0.18`.
+  `>=0.17,<0.18`. The fermionic profile requires Qiskit `>=2.5,<2.6`.
+  Optional provider profiles add their own compatible ranges; the extras in
+  `pyproject.toml` declare them and provider CI tests floors and current versions.
 - Exact diagonalization and statevector simulation scale exponentially with
   qubit count. Define a chemically meaningful active space before treating
   either as practical for a larger molecule.
@@ -1193,9 +1211,11 @@ estimator.
   Aer's CPU distribution. Aer GPU simulation requires Linux, a compatible CUDA
   stack, and the separately installed `qiskit-aer-gpu` distribution.
 - An Aer noise model is a classical approximation of specified gate/readout
-  errors. Explicitly selecting the `runtime` provider enables remote execution,
+  errors. Explicitly selecting the `ibm_runtime` component enables remote execution,
   provider modes and retrieval; [Runtime options](qiskit-runtime.md) keep remote
-  backend selection separate from the local CPU/GPU grant.
+  backend selection separate from the local CPU/GPU grant. `qiskit-runtime` is
+  the managed environment name; the estimator and sampler selection key is
+  `ibm_runtime`.
 - The engine currently returns a single-point energy and the input coordinates.
   Additional roots use [excited-state algorithms](qiskit-spectra.md); the selected
   root supplies the canonical molecular energy. Forces, frequency analysis and
@@ -1278,7 +1298,8 @@ a convergence flag, the result preserves `converged: null`.
 
 ### Sampling and SQD
 
-The `sampler` registry offers `statevector`, `basic_backend`, and `aer`.
+The `sampler` registry offers `statevector`, `basic_backend`, `aer`, and
+[`ibm_runtime`](qiskit-runtime.md).
 `statevector` has a `seed`; backend samplers have `seed_simulator`,
 `seed_transpiler`, and `optimization_level`. Aer additionally offers
 `method: automatic|statevector|density_matrix|matrix_product_state|tensor_network`,
