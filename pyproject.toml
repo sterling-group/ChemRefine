@@ -180,6 +180,11 @@ test = [
     # and provisioned-backend jobs were doing. `server` is named rather than left to
     # arrive via `gui`, because the extopt tests need it for their own reason.
     "chemrefine[server,mcp,gui,agent]",
+    # Numerical quantum tests exercise real provider behavior (integral ordering,
+    # spin sectors, sampling and circuit synthesis). The coverage gate needs this
+    # optional stack; skipping it would leave new algorithm branches untested.
+    # Runtime installations remain modular: only the test/dev extras pull it in.
+    "chemrefine[qiskit-fermionic]",
     # A Node for tests/test_gui_assets.py — `node --check` on the four scripts and `node -e`
     # on the pure form logic, the one layer no Python gate can see. Declared rather than
     # left to whatever is on PATH because a machine without one turned seven tests into

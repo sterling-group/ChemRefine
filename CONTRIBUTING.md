@@ -43,6 +43,9 @@ python scripts/mutation_gate.py               # critical predicates are *checked
 The coverage gate is real: new code ships with tests that cover every
 line and branch, and every module/class/function carries a docstring
 (`interrogate --fail-under=100`). The suite takes under a minute — run it often.
+The `[test]` and `[dev]` extras include the fermionic quantum stack so numerical
+provider tests run in the coverage job. A regular ChemRefine runtime installation
+still installs quantum libraries only when a Qiskit extra is selected.
 The mutation gate is the slow one (~1.5 min) because it runs a suite per mutation;
 it only needs re-running when you touch one of the predicates it lists
 (`python scripts/mutation_gate.py --list`).
