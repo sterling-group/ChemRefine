@@ -88,12 +88,12 @@
     "breaks": "noncommuting endpoint checks change the ideal payload unitary and spuriously reject valid inputs"
   },
   {
-    "id": "qiskit-spacetime-controlled-sign",
+    "id": "qiskit-spacetime-output-sign",
     "path": "src/chemrefine/engines/qiskit/spacetime.py",
-    "old": "if sign == -1:",
-    "new": "if sign == 1:",
+    "old": "_controlled_pauli(circuit, outgoing[index], modes + index)",
+    "new": "_controlled_pauli(circuit, outgoing[index].lstrip(\"-\"), modes + index)",
     "tests": "tests/test_engines_qiskit_spacetime.py",
-    "breaks": "incorrect controlled Pauli phases change check syndromes despite apparently correct unsigned conjugation"
+    "breaks": "discarding a conjugated output-check sign changes physical check syndromes even when unsigned Pauli conjugation is correct"
   },
   {
     "id": "qiskit-rdm-primal-feasibility",

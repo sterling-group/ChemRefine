@@ -759,7 +759,13 @@ def main(argv: list[str] | None = None) -> int:
     with tempfile.TemporaryDirectory(prefix="chemrefine-mutation-") as tmp:
         work = Path(tmp)
         _copy_tree(work)
-        env = {**os.environ, "PYTHONPATH": _prepended_path(os.environ, work / "src")}
+        env = {
+            **os.environ,
+            "PYTHONPATH": _prepended_path(os.environ, work / "src"),
+            # Equal-length edits/restores can share Python's one-second cache stamp.
+            # The copy starts without bytecode; keep each subprocess on current source.
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
         _assert_isolated(work, env)
         _assert_baseline_is_green(work, env)
         print(f"baseline green; {len(selected)} mutation(s) to check\n", flush=True)
