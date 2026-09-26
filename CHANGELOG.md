@@ -27,6 +27,11 @@ for the full map.
 
 ### Added
 
+- **Reconstructed measurement recovery.** Version 2 measurement artifacts retain
+  signed Clifford certificates and validate configured observables, production
+  counts, covariance and uncertainty independently. Older measurement artifacts
+  require regeneration; validation and cache rebuilding remain provider-free.
+
 - **Structural QPY recovery checks.** Retained circuits now require complete,
   supported file and circuit headers, consistent counts, dimensions and bounded
   sections. SDK-free checks cover known formats 10–17; execution still decodes the

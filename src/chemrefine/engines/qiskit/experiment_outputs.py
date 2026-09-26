@@ -207,52 +207,10 @@ def _double_factorized(bundle: QuantumBundle, options: Mapping[str, Any]) -> Non
 
 
 def _measurement(bundle: QuantumBundle, options: Mapping[str, Any]) -> None:
-    """Require the group covariance matrices and corresponding physical count records."""
-    metadata = bundle.metadata
-    _fields(metadata, {"num_qubits": int, "groups": list, "shots": int, "bit_order": str})
-    width = len(next(iter(options["observable"])))
-    _require(metadata["num_qubits"] == width, "observable register width disagrees")
-    for name in ("expectation", "standard_error"):
-        _require(type(metadata[name]) in (float, int), f"invalid {name}")
-    _require(metadata["standard_error"] >= 0, "negative measurement uncertainty")
-    total = 0
-    labels = []
-    for group in metadata["groups"]:
-        _fields(
-            group,
-            {
-                "paulis": list,
-                "shots": int,
-                "pilot_shots": int,
-                "coefficients": list,
-                "z_masks": list,
-                "signs": list,
-            },
-        )
-        number = len(group["paulis"])
-        _require(
-            number > 0
-            and all(len(group[key]) == number for key in ("coefficients", "z_masks", "signs")),
-            "invalid measurement group",
-        )
-        _array(bundle, group["covariance_array"], (number, number), "f")
-        counts = _packed(bundle, group["bitstrings_array"], group["counts_array"], width)
-        _require(sum(map(int, counts)) == group["shots"], "measurement group shot total disagrees")
-        _require(
-            group["pilot_shots"] == options["measurement"]["pilot_shots"],
-            "measurement pilot allocation disagrees",
-        )
-        total += group["shots"] + group["pilot_shots"]
-        labels.extend(group["paulis"])
-    expected = sorted(
-        label for label, value in options["observable"].items() if value and label != "I" * width
-    )
-    _require(sorted(labels) == expected, "measurement groups do not cover the observable")
-    _require(total == metadata["shots"], "measurement total shots disagree")
-    _require(
-        total == (options["measurement"]["shots"] if expected else 0),
-        "measurement budget disagrees",
-    )
+    """Certify measurement frames and reconstruct statistics from production counts."""
+    from chemrefine.engines.qiskit.measurement_validation import validate_measurement
+
+    validate_measurement(bundle, options)
 
 
 def _shadows(bundle: QuantumBundle, options: Mapping[str, Any]) -> None:

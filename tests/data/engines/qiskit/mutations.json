@@ -126,5 +126,37 @@
     "new": "complex(second + energy**2)",
     "tests": "tests/test_engines_qiskit_spectral_residuals.py",
     "breaks": "a second Hamiltonian moment is converted into a spurious physical residual even for exact eigenstates"
+  },
+  {
+    "id": "qiskit-measurement-streamed-covariance",
+    "path": "src/chemrefine/engines/qiskit/measurement.py",
+    "old": "(samples.shots - 1)",
+    "new": "samples.shots",
+    "tests": "tests/test_engines_qiskit_measurement.py",
+    "breaks": "streamed production statistics use a population covariance and understate finite-shot uncertainty"
+  },
+  {
+    "id": "qiskit-measurement-configured-coefficients",
+    "path": "src/chemrefine/engines/qiskit/measurement_validation.py",
+    "old": "value == expected[label]",
+    "new": "True",
+    "tests": "tests/test_engines_qiskit_measurement_validation.py",
+    "breaks": "self-consistent altered coefficients replace the configured observable during artifact recovery"
+  },
+  {
+    "id": "qiskit-measurement-clifford-sign",
+    "path": "src/chemrefine/engines/qiskit/measurement_validation.py",
+    "old": "0 if sign == 1 else 2",
+    "new": "0",
+    "tests": "tests/test_engines_qiskit_measurement_validation.py",
+    "breaks": "negative Pauli images lose their conjugation phase and legitimate measurement frames are misinterpreted"
+  },
+  {
+    "id": "qiskit-measurement-reconstructed-covariance",
+    "path": "src/chemrefine/engines/qiskit/measurement_validation.py",
+    "old": "(shots - 1)",
+    "new": "shots",
+    "tests": "tests/test_engines_qiskit_measurement_validation.py",
+    "breaks": "independent artifact reconstruction uses the wrong covariance denominator and cannot certify empirical uncertainty"
   }
 ]

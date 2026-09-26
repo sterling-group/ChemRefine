@@ -36,6 +36,7 @@ class MeasurementGroup:
     coefficients: NDArray[np.float64]
     z_masks: tuple[int, ...]
     signs: tuple[int, ...]
+    tableau: NDArray[np.uint8]
 
 
 def _independent(paulis: Any) -> list[str]:
@@ -111,6 +112,7 @@ def measurement_groups(
                     sum(int(bit) << index for index, bit in enumerate(row)) for row in diagonal.z
                 ),
                 tuple(1 if phase == 0 else -1 for phase in diagonal.phase),
+                np.asarray(Clifford(rotation).tableau, dtype=np.uint8),
             )
         )
     return constants, tuple(result)
@@ -122,20 +124,30 @@ def group_statistics(
     """Estimate a weighted observable using the covariance of jointly measured terms."""
     if samples.shots < 2:
         raise ConfigError("measurement covariance requires at least two shots")
-    values = np.asarray(
-        [
+    means = np.zeros(len(group.labels))
+    for bits, count in samples.counts.items():
+        values = np.asarray(
             [
                 sign * (-1 if (int(bits, 2) & mask).bit_count() % 2 else 1)
                 for mask, sign in zip(group.z_masks, group.signs, strict=True)
-            ]
-            for bits in samples.counts
-        ],
-        dtype=float,
-    )
-    weights = np.asarray(list(samples.counts.values()), dtype=float)
-    means = weights @ values / samples.shots
-    centered = values - means
-    covariance = (centered.T * weights) @ centered / (samples.shots - 1)
+            ],
+            dtype=float,
+        )
+        means += count * values
+    means /= samples.shots
+    covariance = np.zeros((len(means), len(means)))
+    for bits, count in samples.counts.items():
+        centered = (
+            np.asarray(
+                [
+                    sign * (-1 if (int(bits, 2) & mask).bit_count() % 2 else 1)
+                    for mask, sign in zip(group.z_masks, group.signs, strict=True)
+                ],
+                dtype=float,
+            )
+            - means
+        )
+        covariance += count * np.outer(centered, centered) / (samples.shots - 1)
     variance = float(group.coefficients @ covariance @ group.coefficients)
     return float(group.coefficients @ means), max(0.0, variance), covariance
 
@@ -162,7 +174,11 @@ def measure_observable(
             "measurement requires a bound, unmeasured circuit matching the observable"
         )
     width = int(circuit.num_qubits)
-    storage = 24 * len(observable) ** 2 + options.shots * (width + 32)
+    storage = (
+        24 * len(observable) ** 2
+        + options.shots * (width + 32)
+        + len(observable) * 2 * width * (2 * width + 1)
+    )
     if sampler.name in {"statevector", "basic_backend", "aer"}:
         method = SAMPLERS.options_for(sampler).model_dump().get("method", "statevector")
         if method in {"automatic", "statevector", "density_matrix"}:
@@ -171,7 +187,15 @@ def measure_observable(
         raise ConfigError("measurement storage estimate exceeds max_memory_mb")
     constant, groups = measurement_groups(observable, options)
     if not groups:
-        return {"expectation": constant, "standard_error": 0.0, "shots": 0, "groups": []}
+        return {
+            "measurement_format_version": 2,
+            "expectation": constant,
+            "standard_error": 0.0,
+            "shots": 0,
+            "grouping": options.grouping,
+            "pilot_policy": "independent_allocation_only",
+            "groups": [],
+        }
     remaining = options.shots - len(groups) * options.pilot_shots
     if remaining < 2 * len(groups):
         raise ConfigError(
@@ -213,11 +237,13 @@ def measure_observable(
                     "counts": samples.counts,
                     "z_masks": list(group.z_masks),
                     "signs": list(group.signs),
+                    "clifford_tableau": group.tableau.tolist(),
                     "basis_gate_counts": dict(group.circuit.count_ops()),
                     "basis_depth": group.circuit.depth(),
                 }
             )
     return {
+        "measurement_format_version": 2,
         "expectation": expectation,
         "standard_error": float(np.sqrt(variance_of_mean)),
         "shots": options.shots,

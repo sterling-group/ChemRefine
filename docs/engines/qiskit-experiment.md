@@ -94,6 +94,23 @@ Reports retain physical integer counts in NPZ separately from expectations. Pack
 bitstrings use Qiskit display order, big-endian packing and trailing zero padding;
 `num_qubits` identifies meaningful bits. Per-group covariance arrays, coefficients,
 signed Z images and shot allocations make uncertainty reconstruction reproducible.
+Measurement format version 2 also retains each rotation's signed binary Clifford
+tableau in NPZ. Its rows are the images of `X0,...,Xn-1,Z0,...,Zn-1` under
+`C P C†`; columns hold X bits, Z bits and a negative-sign bit, with qubit zero
+first. Local recovery verifies binary entries, symplectic relations and each
+configured Pauli's signed Z image. Different valid diagonalizing Cliffords are
+accepted. This certificate establishes algebraic consistency, not proof that a
+provider physically executed the recorded rotation.
+
+Completion, cache consumption and cache rebuilding independently reconstruct
+group means, sample covariance, the identity contribution and total standard
+error from production counts. Pilots never enter those statistical denominators.
+They also check configured coefficients, grouping, bit order and shot budgets.
+Reconstruction uses one outcome vector at a time and respects `max_memory_mb`,
+including retained arrays and its covariance workspace. Floating comparisons allow
+`1e-10` relative and `1e-12` absolute rounding error. Reports predating version 2
+must be regenerated: `CACHE_ONLY` reports an unusable cache, `RESUME` may execute
+again, and `rebuild-cache` only validates local outputs without submitting jobs.
 The same implementation is available as `measure_observable` in the public Python
 API. The complete `measurement.yaml` example includes a small QPY input.
 

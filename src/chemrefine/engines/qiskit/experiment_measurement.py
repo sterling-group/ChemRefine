@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from chemrefine.engines.qiskit.experiment import EXPERIMENTS, ExperimentResult
 from chemrefine.engines.qiskit.measurement import MeasurementOptions, measure_observable
+from chemrefine.engines.qiskit.measurement_validation import BIT_ORDER, TABLEAU_CONVENTION
 from chemrefine.engines.qiskit.options import ComponentSelection
 from chemrefine.errors import ConfigError, OutputParseError
 
@@ -110,6 +111,9 @@ def measurement_experiment(
     for index, group in enumerate(result["groups"]):
         prefix = f"group_{index}"
         arrays[prefix + "_covariance"] = np.asarray(group.pop("covariance"), dtype=float)
+        arrays[prefix + "_clifford_tableau"] = np.asarray(
+            group.pop("clifford_tableau"), dtype=np.uint8
+        )
         counts = group.pop("counts")
         arrays[prefix + "_bitstrings"] = np.packbits(
             np.asarray([[int(bit) for bit in bits] for bits in counts], dtype=np.uint8), axis=1
@@ -119,10 +123,12 @@ def measurement_experiment(
             covariance_array=prefix + "_covariance",
             bitstrings_array=prefix + "_bitstrings",
             counts_array=prefix + "_counts",
+            clifford_tableau_array=prefix + "_clifford_tableau",
         )
     result.update(
         num_qubits=circuit.num_qubits,
-        bit_order="Qiskit display order, packed big-endian, trailing zero padding",
+        bit_order=BIT_ORDER,
         units="observable_coefficient_units",
+        clifford_tableau_convention=TABLEAU_CONVENTION,
     )
     return ExperimentResult(kind="pauli_measurement", arrays=arrays, metadata=result)

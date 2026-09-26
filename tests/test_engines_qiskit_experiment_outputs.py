@@ -124,11 +124,18 @@ def _case(name):
         }
         return "double_factorized_trajectory", arrays, metadata, options
     if name == "pauli_measurement":
-        options = {"observable": {"Z": 1.0}, "measurement": {"shots": 4, "pilot_shots": 2}}
+        from chemrefine.engines.qiskit.measurement import MeasurementOptions
+        from chemrefine.engines.qiskit.measurement_validation import BIT_ORDER, TABLEAU_CONVENTION
+
+        options = {
+            "observable": {"Z": 1.0},
+            "measurement": MeasurementOptions(shots=4, pilot_shots=2).model_dump(),
+        }
         arrays = {
             "covariance": zero((1, 1)),
             "bitstrings": zero((1, 1), np.uint8),
             "counts": np.array([2], np.uint64),
+            "tableau": np.array([[1, 0, 0], [0, 1, 0]], np.uint8),
         }
         metadata = {
             "num_qubits": 1,
@@ -140,13 +147,21 @@ def _case(name):
                     "coefficients": [1.0],
                     "z_masks": [1],
                     "signs": [1],
+                    "expectation": 1.0,
+                    "pilot_variance": 0.0,
+                    "clifford_tableau_array": "tableau",
                     "covariance_array": "covariance",
                     "bitstrings_array": "bitstrings",
                     "counts_array": "counts",
                 }
             ],
             "shots": 4,
-            "bit_order": "big endian",
+            "bit_order": BIT_ORDER,
+            "clifford_tableau_convention": TABLEAU_CONVENTION,
+            "measurement_format_version": 2,
+            "units": "observable_coefficient_units",
+            "grouping": "qwc",
+            "pilot_policy": "independent_allocation_only",
             "expectation": 1.0,
             "standard_error": 0.0,
         }
@@ -473,6 +488,8 @@ def test_byte_aligned_packing_and_registered_extensions(tmp_path, monkeypatch):
     case = _case("pauli_measurement")
     case[2]["num_qubits"] = 8
     case[2]["groups"][0]["paulis"] = ["ZIIIIIII"]
+    case[2]["groups"][0]["z_masks"] = [128]
+    case[1]["tableau"] = np.column_stack((np.eye(16, dtype=np.uint8), np.zeros(16, np.uint8)))
     case[3]["observable"] = {"ZIIIIIII": 1.0}
     validate_experiment_output("pauli_measurement", _bundle(tmp_path, case), case[3])
 
