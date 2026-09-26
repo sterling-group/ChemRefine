@@ -991,9 +991,11 @@ def test_a_mode_number_that_is_not_one_is_a_400(client: Any, tmp_path: Path, mod
     response = _get(client, f"/api/structure?config_path={config}&step=1&mode_index={mode}")
     assert response.status_code == 400
     assert "not a whole number" in response.get_json()["error"]
-    # A negative one is a number, and gets the library's own range refusal instead.
+    # A negative one is a number: the page passes it on, and the refusal is the library's
+    # (the range at both ends is asserted there, in test_agent_tools_chemistry).
     negative = _get(client, f"/api/structure?config_path={config}&step=1&mode_index=-1")
     assert negative.status_code == 400
+    assert "needs a structure_id" in negative.get_json()["error"]
 
 
 def test_a_seed_the_config_names_but_that_is_missing_is_a_400(client: Any, tmp_path: Path):

@@ -745,7 +745,10 @@ def test_the_tail_is_read_from_the_end_not_by_reading_the_whole_log(tmp_path: Pa
         status = agent_tools.run_status(str(path), log_tail_lines=3)
 
     assert status["log_tail"] == ["line 059997", "line 059998", "line 059999"]
-    assert read < log.stat().st_size // 4  # a whole-file read is what this rules out
+    # Both bounds: below, the counted handle is the door the tail came through — a read
+    # through any other (the builtin `open`, `read_text`, `os.read`) counts nothing, and
+    # nothing is not cheap; above, a whole-file read is what this rules out.
+    assert 0 < read < log.stat().st_size // 4
 
 
 def test_a_multibyte_character_split_across_a_chunk_boundary_survives(

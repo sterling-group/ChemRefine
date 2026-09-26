@@ -599,9 +599,11 @@ def test_get_structure_with_a_mode_carries_displacement_columns(tmp_path: Path):
     assert len(lines[2].split()) == 7
     assert result["mode_index"] == 6
 
-    # The same range check analyze_mode applies, from the same helper.
-    with pytest.raises(ConfigError, match="out of range"):
-        agent_tools.get_structure(str(path), 1, structure_id="0", mode_index=99)
+    # The same range check analyze_mode applies, from the same helper — at both ends, since
+    # a negative index is a valid Python one and would draw the mode counted from the last.
+    for outside in (99, -1):
+        with pytest.raises(ConfigError, match="out of range"):
+            agent_tools.get_structure(str(path), 1, structure_id="0", mode_index=outside)
 
     # A mode belongs to one structure, so asking for one without saying which is a
     # refusal rather than a guess at the first.
@@ -865,9 +867,11 @@ def test_a_multi_frame_file_shows_its_last_frame(tmp_path: Path):
     assert agent_tools.read_structure_file(str(tmp_path / "two.xyz"))["formula"] == "O"
 
 
-def test_analyze_mode_names_a_real_mode_range(tmp_path: Path):
+@pytest.mark.parametrize("outside", [99, -1], ids=["past-the-last", "negative"])
+def test_analyze_mode_names_a_real_mode_range(tmp_path: Path, outside: int):
+    """Both ends: ``-1`` indexes the last mode in numpy, and must not describe it."""
     with pytest.raises(ConfigError, match="out of range"):
-        agent_tools.analyze_mode(str(_freq_tree(tmp_path)), 1, "0", mode_index=99)
+        agent_tools.analyze_mode(str(_freq_tree(tmp_path)), 1, "0", mode_index=outside)
 
 
 def test_analyze_mode_refuses_the_missing_pieces(tmp_path: Path):

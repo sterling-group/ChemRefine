@@ -1004,21 +1004,36 @@ def test_first_run_over_a_clean_tree_archives_nothing(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_halt_if_pending_skips_a_cache_only_step(tmp_path: Path):
-    cfg = _config(tmp_path, on_failure="stop")
-    # CACHE_ONLY is the mode every step a scoped action isn't targeting runs in;
-    # halting there would stop `rerun-errors N` before it ever reached step N.
-    halt_if_pending(cfg, cfg.steps[0], StepMode.CACHE_ONLY)
+@pytest.mark.parametrize(
+    ("mode", "halts"),
+    [
+        (StepMode.CACHE_ONLY, False),
+        (StepMode.EXECUTE, True),
+        (StepMode.RESUME, True),
+        (StepMode.REBUILD, True),
+    ],
+    ids=lambda v: v.name if isinstance(v, StepMode) else ("halts" if v else "passes"),
+)
+def test_a_pending_stop_step_halts_in_every_mode_but_cache_only(
+    tmp_path: Path, mode: StepMode, halts: bool
+):
+    """With failures on a ``stop`` step's ledger, only ``CACHE_ONLY`` runs on past it.
 
-
-def test_halt_if_pending_raises_when_stop_step_has_pending(tmp_path: Path):
+    CACHE_ONLY is the mode every step a scoped action isn't targeting runs in; halting
+    there would stop `rerun-errors N` before it ever reached step N. The ledger is what
+    makes the exemption observable at all: with none, ``halt_if_pending`` returns before
+    it asks the mode, and a test without one passes whatever ``can_halt`` answers.
+    """
     cfg = _config(tmp_path, on_failure="stop")
-    step_dir = step_dir_for(cfg, cfg.steps[0])
     cache.save_failure_records(
-        step_dir, [FailureRecord(structure_id="1", kind=FailureKind.FAILED, reason="x")]
+        step_dir_for(cfg, cfg.steps[0]),
+        [FailureRecord(structure_id="1", kind=FailureKind.FAILED, reason="x")],
     )
-    with pytest.raises(ChemRefineError, match="halted"):
-        halt_if_pending(cfg, cfg.steps[0], StepMode.RESUME)
+    if halts:
+        with pytest.raises(ChemRefineError, match="halted"):
+            halt_if_pending(cfg, cfg.steps[0], mode)
+    else:
+        halt_if_pending(cfg, cfg.steps[0], mode)
 
 
 def test_halt_if_pending_no_pending_returns(tmp_path: Path):

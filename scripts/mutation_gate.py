@@ -330,6 +330,33 @@ _BUNDLED: tuple[Mutation, ...] = (
         "pointed at, archiving the very outputs they were asked to read",
     ),
     Mutation(
+        id="cache-only-may-halt",
+        path="src/chemrefine/step.py",
+        old=(
+            "            case StepMode.CACHE_ONLY:\n                return False\n"
+            "            case StepMode.EXECUTE | StepMode.RESUME | StepMode.REBUILD:\n"
+            "                return True"
+        ),
+        new=(
+            "            case StepMode.CACHE_ONLY:\n                return True\n"
+            "            case StepMode.EXECUTE | StepMode.RESUME | StepMode.REBUILD:\n"
+            "                return True"
+        ),
+        tests="tests/test_step.py",
+        breaks="`rerun-errors N` and `rebuild-cache N` stop at an earlier `stop` step's "
+        "pending failures and never reach step N — the scoped actions become unusable "
+        "on exactly the trees they exist for",
+    ),
+    Mutation(
+        id="mode-index-negative",
+        path="src/chemrefine/agent_tools.py",
+        old="    if not 0 <= mode_index < n_modes:\n",
+        new="    if mode_index >= n_modes:\n",
+        tests="tests/test_agent_tools_chemistry.py",
+        breaks="`mode_index=-1` describes and animates the last mode instead of refusing, "
+        "so a transition-state check reads a mode nobody asked for",
+    ),
+    Mutation(
         id="resume-row-adoption",
         path="src/chemrefine/step.py",
         old="if sid not in provenance.rows or provenance.rows[sid][0] != current[sid][0]",
