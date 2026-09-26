@@ -334,7 +334,6 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
             continue
         engine = get_engine(step.engine)
         options_ok = True
-        preflight_ok = True
         declared = None  # the engine's own reading of the step's options, when it has one
         if isinstance(engine, OptionsDeclaring):
             try:
@@ -356,7 +355,6 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
                     multiplicity=step.effective_multiplicity(config.multiplicity),
                 )
             except ConfigError as e:
-                preflight_ok = False
                 issues.append(
                     ValidationIssue(
                         loc=("steps", index, "options"), kind="preflight", message=str(e)
@@ -465,9 +463,9 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
             # Only scheduler-run engines resolve a header (locally too); an inline engine
             # like the test fake never reads one, and warning about it would be noise.
             headers.setdefault(effective_header(config, step, engine), []).append(step.step)
-        # After the options and the engine's preflight read clean: the layout reads the same
-        # options, and would only repeat those rows in the scheduler's words.
-        if options_ok and preflight_ok and (over := over_budget(config, step, engine)):
+        # After the options read clean: the layout reads the same options, and would only
+        # repeat that row in the scheduler's words.
+        if options_ok and (over := _over_budget(config, step, engine)):
             warnings.append(
                 ValidationIssue(loc=("steps", index, "options"), kind="budget", message=over)
             )
@@ -492,7 +490,7 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
     return issues, warnings
 
 
-def over_budget(config: Config, step: StepConfig, engine: CalculationEngine) -> str | None:
+def _over_budget(config: Config, step: StepConfig, engine: CalculationEngine) -> str | None:
     """Why the run would refuse this step's jobs against the budget the config states.
 
     :func:`~chemrefine.engines.check_batch` — the check the run applies at t=0 and again
@@ -501,7 +499,7 @@ def over_budget(config: Config, step: StepConfig, engine: CalculationEngine) -> 
     ``max_gpus`` are for the host to answer, so they bound nothing here; a config authored
     on a laptop for a cluster must not be judged by the laptop.
 
-    A layout the engine cannot compute from here — an ORCA step whose template does not
+    A layout the engine cannot compute from here — one read off a template that does not
     exist yet (the report's own ``template`` warning) or cannot be read — is left to the
     run, which refuses it by name; the rest of the step is still checked above. An engine
     the scheduler does not run (an inline one) has no jobs to budget.
@@ -514,9 +512,7 @@ def over_budget(config: Config, step: StepConfig, engine: CalculationEngine) -> 
     except (ChemRefineError, OSError):
         return None
     try:
-        check_batch(
-            engine, ctx, local=config.dispatch == "local", gpu_budget=lambda: config.max_gpus
-        )
+        check_batch(engine, ctx, local=config.dispatch == "local", gpu_budget=config.max_gpus)
     except ChemRefineError as e:
         return str(e)
     return None

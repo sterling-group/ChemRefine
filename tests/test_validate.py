@@ -615,12 +615,23 @@ def test_what_only_the_host_can_answer_bounds_nothing(tmp_path: Path):
     assert _budget(report) == []
 
 
-def test_a_step_its_preflight_refuses_is_not_budgeted_as_well(tmp_path: Path):
-    """The preflight's row says what is wrong; the scheduler's words would only repeat it."""
+def test_a_preflight_refusal_does_not_hide_the_budget_row(tmp_path: Path):
+    """Every finding at once: a step the preflight refuses is still held to the budget.
+
+    The two rows are two consequences, each with its own fix; hiding the second behind the
+    first means fixing one row, re-validating, and only then being told the next.
+    """
     report = _validate(
         tmp_path,
-        max_gpus=0,
-        steps=[{"step": 1, "engine": "qchem", "options": {"device": "cuda"}}],
+        dispatch="local",
+        steps=[
+            {
+                "step": 1,
+                "engine": "mlip-train",
+                "on_failure": "skip",
+                "options": {"task_name": "mace_off", "device": "cuda", "gpus": 2},
+            }
+        ],
     )
-    assert [issue.kind for issue in report.issues] == ["preflight"]
-    assert _budget(report) == []
+    assert "preflight" in [issue.kind for issue in report.issues]
+    assert any("local dispatch pins one device" in message for message in _budget(report))

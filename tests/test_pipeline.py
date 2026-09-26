@@ -1524,6 +1524,9 @@ def test_a_step_the_scheduler_would_refuse_stops_the_run_before_any_step_runs(tm
     config decided before anything started.
     """
     io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=tmp_path)
+    (tmp_path / "templates").mkdir()
+    for name in ("step2.in", "cpu.slurm.header"):  # everything but the budget is in order
+        (tmp_path / "templates" / name).write_text("# starter\n", encoding="utf-8")
     cfg = _config(
         tmp_path,
         input=tmp_path / "step0_seed.xyz",

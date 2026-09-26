@@ -19,7 +19,6 @@ other run of a structure set goes through :func:`chemrefine.lifecycle.submit_and
 
 from __future__ import annotations
 
-import functools
 import logging
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -37,7 +36,7 @@ from chemrefine.config import (
     is_failure_policy,
     policy_stores_backfills,
 )
-from chemrefine.engines import check_batch
+from chemrefine.engines import BatchPlan
 from chemrefine.engines.api import (
     ArtifactEngine,
     AuxFileConsuming,
@@ -127,21 +126,22 @@ def build_context(
 
 
 def preflight_batches(config: Config, steps: Iterable[StepConfig], *, local: bool) -> None:
-    """The scheduler's refusals for every step in ``steps``, before any of them runs.
+    """Everything that would stop each step's jobs before they run, checked before any step.
 
-    :func:`~chemrefine.engines.check_batch` against the budget this run has — its
-    ``max_cores``, its dispatch, and, only once some step needs a GPU, its resolved GPU
-    budget — on the context each step will run with, less the structures no layout reads.
-    The batch applies the same checks again when it submits; this is what moves them from
-    the failing step's turn to the start of the run, where the engine's own preflight
-    already fires.
+    For every step in ``steps`` the scheduler runs: its input template, as its ``prepare``
+    requires it (:func:`chemrefine.ids.require_template`), then its whole batch plan —
+    SLURM header, job shape, GPU budget (:meth:`chemrefine.engines.BatchPlan.of`) — on the
+    context the step will run with, less the structures no layout reads, under this run's
+    ``max_cores``, dispatch and resolved GPU budget.
     """
-    budget = functools.cache(lambda: slurm.resolve_gpu_budget(config.max_gpus, local=local).count)
+    budget = slurm.resolve_gpu_budget(config.max_gpus, local=local)
     for step_cfg in steps:
         engine = get_engine(step_cfg.engine)
         if isinstance(engine, JobExecutable):
             ctx = build_context(config, step_cfg, PipelineState(), engine)
-            check_batch(engine, ctx, local=local, gpu_budget=budget)
+            if isinstance(engine, TemplateDriven):
+                ids.require_template(ctx.template, label=engine.label)
+            BatchPlan.of(engine, ctx, local=local, gpu_budget=budget)
 
 
 class StepMode(StrEnum):

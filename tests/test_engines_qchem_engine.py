@@ -160,7 +160,7 @@ def test_an_mpi_product_over_the_budget_is_refused(tmp_path: Path):
     ctx = _ctx(tmp_path, options={"nprocs": 4, "cores": 4}, max_cores=8)
     (tmp_path / "templates" / "cpu.slurm.header").write_text("#!/bin/bash\n", encoding="utf-8")
     with pytest.raises(ConfigError, match="16 cores, more than max_cores=8"):
-        _execution._BatchPlan.of(get_engine("qchem"), ctx, local=True)
+        _execution.check_batch(get_engine("qchem"), ctx, local=True, gpu_budget=None)
 
 
 def test_memory_mb_is_the_templates_mem_total(tmp_path: Path):

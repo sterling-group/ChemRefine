@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import logging
 from collections import deque
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
@@ -75,26 +74,22 @@ def check_batch(
     ctx: StepContext,
     *,
     local: bool,
-    gpu_budget: Callable[[], int | None],
+    gpu_budget: int | None,
 ) -> BatchShape:
-    """The scheduler's refusals for one step's jobs — the one place they are decided.
+    """One step's job shape, refused where it cannot run within the budget.
 
-    Each is decidable from the step's configuration alone, so each has three callers: the
-    batch that is about to submit (:meth:`_BatchPlan.of`), the run at t=0 for every step
-    that may submit (:func:`chemrefine.step.preflight_batches`), and ``chemrefine
-    validate`` for the part no host decides (:mod:`chemrefine.validate`). Spelled only at
-    the batch, they fired at the failing step's own turn, after every step before it had
-    run — hours of compute to learn that ``max_gpus: 0`` meets a ``device: cuda`` step.
+    The layout must name at least one task and one core, its product must fit
+    ``max_cores``, local dispatch runs one GPU per job, and the GPUs a job needs must fit
+    ``gpu_budget`` — ``None`` where no bound is known (``chemrefine validate`` with
+    ``max_gpus`` unset). Every batch's plan asks this (:meth:`BatchPlan.of`), which the run
+    also builds at t=0 for every step that may submit, and ``validate`` asks it against the
+    part of the budget no host decides.
 
     The core count is the engine's ``slurm_layout`` product, not a bare ``pal``: the
-    default layout carries the historical ``min(pal, max_cores)`` clamp itself, and a
-    layout that *names* both factors (an MPI x threads step) cannot be clamped by
-    squeezing the product — the factorization is the job's shape — so exceeding the
-    budget is refused outright instead of silently reshaped.
-
-    ``gpu_budget`` is asked only for a step that needs a GPU, and answers ``None`` where
-    no bound is known (``validate`` with ``max_gpus`` unset): resolving it can fork
-    ``nvidia-smi``, which a CPU-only step has no reason to pay for.
+    default layout carries the ``min(pal, max_cores)`` clamp itself, and a layout that
+    *names* both factors (an MPI x threads step) cannot be clamped by squeezing the product
+    — the factorization is the job's shape — so exceeding the budget is refused rather than
+    reshaped.
     """
     ntasks, cpus_per_task = engine.slurm_layout(ctx)
     if ntasks < 1 or cpus_per_task < 1:
@@ -112,25 +107,25 @@ def check_batch(
     if local and shape.gpus > 1:
         # `Throttler.assign_device` hands out a single device index per job and
         # `_submit_one` exports it as one `CUDA_VISIBLE_DEVICES` value, so a job asking
-        # for several local GPUs (an `mlip-train` step with `gpus: 2`) would be charged
-        # for all of them but pinned to one — refused rather than under-provisioned.
+        # for several local GPUs would be charged for all of them but pinned to one —
+        # refused rather than under-provisioned.
         raise ConfigError(
             f"step {ctx.step_cfg.step} requests {shape.gpus} GPUs, but local dispatch pins "
             f"one device per job; run this step under SLURM or set `options.device: cpu`"
         )
-    if shape.gpus and (budget := gpu_budget()) is not None and shape.gpus > budget:
+    if gpu_budget is not None and shape.gpus > gpu_budget:
         # A config mistake (e.g. `max_gpus: 0` with a CUDA step) is a ConfigError with
         # its documented exit code, not the throttler's traceback.
         raise ConfigError(
             f"step {ctx.step_cfg.step} needs {shape.gpus} GPU(s) but the budget is "
-            f"{budget}; raise `max_gpus` or set `options.device: cpu`"
+            f"{gpu_budget}; raise `max_gpus` or set `options.device: cpu`"
         )
     return shape
 
 
 @dataclass(frozen=True)
-class _BatchPlan:
-    """What :func:`run_batch` resolves once and every job of the batch then reuses.
+class BatchPlan:
+    """One step's batch, resolved once and reused by every job of it.
 
     Only the values that cost something to derive or that the budget checks depend on. The
     step label and operation stay off it: they are one-liners off the ``ctx`` that
@@ -139,40 +134,36 @@ class _BatchPlan:
     """
 
     header_path: Path
-    pal: int
-    ntasks: int
-    cpus_per_task: int
+    shape: BatchShape
     memory_mb: int | None
     single_node: bool
-    gpus: int
     local: bool
     gpu_budget: throttle.GpuBudget
 
     @classmethod
-    def of(cls, engine: JobExecutable, ctx: StepContext, *, local: bool) -> _BatchPlan:
-        """Resolve and **validate** this batch's plan, whichever way it will be submitted.
+    def of(
+        cls,
+        engine: JobExecutable,
+        ctx: StepContext,
+        *,
+        local: bool,
+        gpu_budget: throttle.GpuBudget,
+    ) -> BatchPlan:
+        """This step's plan, **validated**: its SLURM header, its job shape, its budget.
 
-        Built before the array/queue fork rather than inside the queue branch, so a step is
-        judged by its configuration and not by the path it happens to take. The GPU checks
-        used to sit after that fork: the same ``max_gpus: 0`` that raised a
-        :class:`~chemrefine.errors.ConfigError` per job submitted silently as an array, and
-        ``pal`` and the header were re-resolved in the array branch by hand. The checks
-        themselves are :func:`check_batch`'s, which the run already applied at t=0; here
-        they hold against the budget this batch actually runs under.
+        Built before the array/queue fork, so a step is judged by its configuration and not
+        by the path it takes — and by the run at t=0 for every step that may submit
+        (:func:`chemrefine.step.preflight_batches`), so a plan the scheduler refuses stops
+        the run before any step has computed. The header resolves first, so a missing one
+        reports itself before anything about cores or GPUs.
         """
-        # Header first, so a missing template still reports itself before anything about
-        # GPUs — the order these were resolved in before they moved here.
         header_path = _header_path(engine, ctx)
-        gpu_budget = slurm.resolve_gpu_budget(ctx.max_gpus, local=local)
-        shape = check_batch(engine, ctx, local=local, gpu_budget=lambda: gpu_budget.count)
+        shape = check_batch(engine, ctx, local=local, gpu_budget=gpu_budget.count)
         return cls(
             header_path=header_path,
-            pal=shape.cores,
-            ntasks=shape.ntasks,
-            cpus_per_task=shape.cpus_per_task,
+            shape=shape,
             memory_mb=engine.memory_mb(ctx),
             single_node=engine.single_node(ctx),
-            gpus=shape.gpus,
             local=local,
             gpu_budget=gpu_budget,
         )
@@ -203,7 +194,9 @@ def run_batch(
     follow-ups as another batch. Correct, but without the overlap.
     """
     local = slurm.dispatch_locally(ctx.dispatch)
-    plan = _BatchPlan.of(engine, ctx, local=local)
+    plan = BatchPlan.of(
+        engine, ctx, local=local, gpu_budget=slurm.resolve_gpu_budget(ctx.max_gpus, local=local)
+    )
     if ctx.slurm_array and not local:
         batch = _run_array(engine, plan, inputs, ctx)
         if follow := sweep(inputs, sink):
@@ -236,7 +229,7 @@ def run_batch(
 
 def _submit_one(
     engine: JobExecutable,
-    plan: _BatchPlan,
+    plan: BatchPlan,
     ctx: StepContext,
     throttler: throttle.Throttler,
     job: JobTriple,
@@ -250,13 +243,13 @@ def _submit_one(
     inp, out, sid = job
     # Pin a free GPU per local job so concurrent CUDA jobs don't collide on device
     # 0; under SLURM the scheduler sets CUDA_VISIBLE_DEVICES itself.
-    device = throttler.assign_device() if (plan.local and plan.gpus) else None
+    device = throttler.assign_device() if (plan.local and plan.shape.gpus) else None
     env = {"CUDA_VISIBLE_DEVICES": device} if device is not None else None
     script_path = inp.with_suffix(".slurm")
     slurm.build_script(
         job_name=inp.stem,
-        ntasks=plan.ntasks,
-        cpus_per_task=plan.cpus_per_task,
+        ntasks=plan.shape.ntasks,
+        cpus_per_task=plan.shape.cpus_per_task,
         memory_mb=plan.memory_mb,
         single_node=plan.single_node,
         template_path=plan.header_path,
@@ -278,14 +271,20 @@ def _submit_one(
     # Leased before anyone waits on it, so the record survives a driver that dies
     # without unwinding — the case the resume fence exists for.
     slurm.record_lease(ctx.step_dir, job_id)
-    throttler.register(job_id, plan.pal, gpus=plan.gpus, device=device)
-    logger.info("submitted %s as job %s (pal=%d, gpus=%d)", inp.name, job_id, plan.pal, plan.gpus)
+    throttler.register(job_id, plan.shape.cores, gpus=plan.shape.gpus, device=device)
+    logger.info(
+        "submitted %s as job %s (cores=%d, gpus=%d)",
+        inp.name,
+        job_id,
+        plan.shape.cores,
+        plan.shape.gpus,
+    )
     return job_id
 
 
 def _run_queue(
     engine: JobExecutable,
-    plan: _BatchPlan,
+    plan: BatchPlan,
     ctx: StepContext,
     throttler: throttle.Throttler,
     inputs: StepInputs,
@@ -310,7 +309,7 @@ def _run_queue(
     jobs: dict[Path, str] = {}
     index: dict[str, JobTriple] = {}
     while pending or throttler.active_jobs:
-        while pending and throttler.has_room(plan.pal, gpus_needed=plan.gpus):
+        while pending and throttler.has_room(plan.shape.cores, gpus_needed=plan.shape.gpus):
             job = pending.popleft()
             jobs[job[0]] = job_id = _submit_one(engine, plan, ctx, throttler, job)
             index[job_id] = job
@@ -324,7 +323,7 @@ def _run_queue(
             # missing result for a structure nobody can see was skipped.
             raise ChemRefineError(
                 f"step {ctx.step_cfg.step}: {len(pending)} job(s) left unsubmitted with "
-                f"nothing running — {plan.pal} cores + {plan.gpus} gpu(s) against a "
+                f"nothing running — {plan.shape.cores} cores + {plan.shape.gpus} gpu(s) against a "
                 f"budget of {throttler.max_cores} + {throttler.max_gpus}"
             )
         if pending:
@@ -333,10 +332,10 @@ def _run_queue(
             logger.debug(
                 "waiting on budget: cores %d+%d/%d, gpus %d+%d/%d",
                 throttler.cores_in_use,
-                plan.pal,
+                plan.shape.cores,
                 throttler.max_cores,
                 throttler.gpus_in_use,
-                plan.gpus,
+                plan.shape.gpus,
                 throttler.max_gpus,
             )
         for job_id in throttler.wait_for_completion(
@@ -347,7 +346,7 @@ def _run_queue(
 
 
 def _run_array(
-    engine: JobExecutable, plan: _BatchPlan, inputs: StepInputs, ctx: StepContext
+    engine: JobExecutable, plan: BatchPlan, inputs: StepInputs, ctx: StepContext
 ) -> JobBatch:
     """Submit the whole batch as SLURM job array(s); block until they drain.
 
@@ -372,9 +371,8 @@ def _run_array(
     ``.name``, so it composes unchanged. GPU placement is the scheduler's (``--gres`` in
     the cuda header), as on the per-job path.
 
-    Takes the same :class:`_BatchPlan` the queue path does — the header and ``pal`` were
-    re-derived here once, which is one edit away from an array running under a different
-    core count than the budget was checked against.
+    Takes the same :class:`BatchPlan` the queue path does, so an array runs under the
+    header and core count the budget was checked against.
     """
     if not inputs.files:
         return JobBatch(jobs={})
@@ -385,8 +383,8 @@ def _run_array(
     script_path = output_dir / f"{step_label}_array.slurm"
     slurm.build_array_script(
         step_label=step_label,
-        ntasks=plan.ntasks,
-        cpus_per_task=plan.cpus_per_task,
+        ntasks=plan.shape.ntasks,
+        cpus_per_task=plan.shape.cpus_per_task,
         memory_mb=plan.memory_mb,
         single_node=plan.single_node,
         template_path=plan.header_path,
@@ -403,11 +401,11 @@ def _run_array(
     )
 
     manifests = slurm.write_array_manifests(inputs.files, output_dir, step_label=step_label)
-    # Divided by the chunk count as well as by `pal`, because every chunk is submitted now
-    # rather than after the one before it drained, and each carries its own `%limit`. By
-    # `pal` alone each of a 2500-structure step's three arrays got the *whole* budget:
-    # 3 x 64 tasks x pal 8 = 1536 cores against a `max_cores: 512`.
-    max_concurrent = max(1, ctx.max_cores // (plan.pal * len(manifests)))
+    # Divided by the chunk count as well as by a job's cores, because every chunk is
+    # submitted at once and each carries its own `%limit`: by the cores alone, each of a
+    # 2500-structure step's three arrays would get the *whole* budget — 3 x 64 tasks x 8
+    # cores = 1536 against a `max_cores: 512`.
+    max_concurrent = max(1, ctx.max_cores // (plan.shape.cores * len(manifests)))
     jobs: dict[Path, str] = {}
     for manifest, chunk in manifests:
         parent_id = slurm.submit_array(
@@ -417,11 +415,11 @@ def _run_array(
         for inp, _out, _sid in chunk:
             jobs[inp] = parent_id
         logger.info(
-            "submitted %s as array %s (%d tasks, pal=%d, max %d concurrent)",
+            "submitted %s as array %s (%d tasks, cores=%d, max %d concurrent)",
             step_label,
             parent_id,
             len(chunk),
-            plan.pal,
+            plan.shape.cores,
             max_concurrent,
         )
 

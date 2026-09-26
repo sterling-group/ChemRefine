@@ -177,7 +177,7 @@ def test_a_gpu_step_with_no_known_budget_is_not_refused_for_it(tmp_path: Path):
     """``None`` is "no bound known" (``validate`` with ``max_gpus`` unset), not zero GPUs."""
     engine = _FakeJobEngine()
     engine.gpu_count = 1
-    shape = _execution.check_batch(engine, _ctx(tmp_path), local=True, gpu_budget=lambda: None)
+    shape = _execution.check_batch(engine, _ctx(tmp_path), local=True, gpu_budget=None)
     assert shape == _execution.BatchShape(ntasks=1, cpus_per_task=1, gpus=1)
     assert shape.cores == 1
 
@@ -190,7 +190,7 @@ def test_a_degenerate_layout_is_an_engine_bug(tmp_path: Path):
         patch.object(_ThreadedJobEngine, "slurm_layout", return_value=(0, 4)),
         pytest.raises(ChemRefineError, match="both must be at least 1"),
     ):
-        _execution._BatchPlan.of(engine, ctx, local=True)
+        _execution.check_batch(engine, ctx, local=True, gpu_budget=None)
 
 
 @patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))

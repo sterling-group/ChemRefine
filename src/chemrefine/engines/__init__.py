@@ -21,7 +21,7 @@ public face, so the flat pipeline + CLI never import a building block directly.
 import importlib
 import pkgutil
 
-from chemrefine.engines._execution import check_batch
+from chemrefine.engines._execution import BatchPlan, check_batch
 from chemrefine.engines._provision import (
     backend_env_path,
     backend_env_python,
@@ -33,6 +33,7 @@ from chemrefine.engines._provision import (
 from chemrefine.engines.api import get_engine, preflight_steps, register
 
 __all__ = [
+    "BatchPlan",
     "backend_env_path",
     "backend_env_python",
     "build_backend_env",

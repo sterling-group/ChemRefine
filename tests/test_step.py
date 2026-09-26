@@ -2249,25 +2249,104 @@ def test_the_orca_engines_template_aux_files_reach_the_step_key(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_a_cpu_only_run_never_resolves_the_gpu_budget(tmp_path: Path, monkeypatch):
-    """The budget can fork ``nvidia-smi``; a walk with no GPU step has no reason to ask."""
-    from chemrefine import slurm
+def _templates(tmp_path: Path, *names: str) -> None:
+    """Write ``names`` into the config's template directory, as a scaffold would."""
+    templates = tmp_path / "templates"
+    templates.mkdir(exist_ok=True)
+    for name in names:
+        (templates / name).write_text("# starter\n", encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("present", "refusal"),
+    [
+        (("cpu.slurm.header",), r"template not found: .*step2\.py"),
+        (("step2.py",), "SLURM header template not found"),
+    ],
+    ids=["step-template", "slurm-header"],
+)
+def test_the_walk_refuses_what_would_stop_a_steps_jobs(
+    tmp_path: Path, present: tuple[str, ...], refusal: str
+):
+    """A step's template and its batch's header are checked at t=0, not at the step's turn.
+
+    Both are refused by the step itself — the template by its ``prepare``, the header by
+    its batch plan — after every step before it has run, when the config decided them
+    before anything started.
+    """
+    from chemrefine.errors import ConfigError
     from chemrefine.step import preflight_batches
 
-    def unasked(*_a, **_k):
-        raise AssertionError("the GPU budget was resolved for a CPU-only walk")
-
-    monkeypatch.setattr(slurm, "resolve_gpu_budget", unasked)
-    cfg = _config(tmp_path)
-    steps = [*cfg.steps, StepConfig(step=2, engine="mlip", options={"device": "cpu"})]
-    preflight_batches(cfg, steps, local=True)  # the inline fake is not scheduled at all
+    _templates(tmp_path, *present)
+    mlip = StepConfig(step=2, engine="mlip", options={"device": "cpu"})
+    with pytest.raises(ConfigError, match=refusal):
+        preflight_batches(_config(tmp_path), [mlip], local=True)
 
 
 def test_a_gpu_step_meets_the_budget_the_run_resolves(tmp_path: Path):
     from chemrefine.errors import ConfigError
     from chemrefine.step import preflight_batches
 
+    _templates(tmp_path, "step2.py", "cuda.slurm.header")
     cfg = _config(tmp_path).model_copy(update={"max_gpus": 0})
     cuda = StepConfig(step=2, engine="mlip", options={"device": "cuda"})
     with pytest.raises(ConfigError, match=r"step 2 needs 1 GPU\(s\) but the budget is 0"):
         preflight_batches(cfg, [cuda], local=True)
+
+
+def test_a_walk_with_nothing_to_refuse_passes(tmp_path: Path):
+    """A runnable scheduled step passes, and an inline engine (the fake) is not scheduled."""
+    from chemrefine.step import preflight_batches
+
+    _templates(tmp_path, "step2.py", "cpu.slurm.header")
+    cfg = _config(tmp_path)
+    preflight_batches(cfg, [*cfg.steps, StepConfig(step=2, engine="mlip")], local=True)
+
+
+def test_a_scheduled_engine_that_reads_no_template_is_not_asked_for_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Being template-driven is a capability, not a given: the walk asks it of the engine.
+
+    Every bundled job engine reads a template, but :class:`~chemrefine.engines.api.
+    TemplateDriven` is optional by design — an engine that fabricates or passes structures
+    through reads none — so a scheduled engine without one still has its batch planned.
+    """
+    from chemrefine import step as step_module
+
+    class Templateless:
+        """Satisfies the scheduler's protocol and declares no template."""
+
+        name = "templateless"
+        output_globs = ("*.out",)
+
+        def prepare(self, ctx): ...
+        def submit(self, inputs, ctx): ...
+        def parse(self, inputs, ctx): ...
+        def run_block(self, ctx, inp_path, out_path): ...
+        def pal(self, ctx):
+            return 1
+
+        def slurm_layout(self, ctx):
+            return (1, 1)
+
+        def single_node(self, ctx):
+            return False
+
+        def gpus(self, ctx):
+            return 0
+
+        def memory_mb(self, ctx):
+            return None
+
+        def output_dirs(self, ctx):
+            return ()
+
+        def extra_header_fields(self, ctx):
+            return ()
+
+    monkeypatch.setattr(step_module, "get_engine", lambda _name: Templateless())
+    _templates(tmp_path, "cpu.slurm.header")
+    step_module.preflight_batches(
+        _config(tmp_path), [StepConfig(step=2, engine="fake")], local=True
+    )
