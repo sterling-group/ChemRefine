@@ -585,7 +585,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         """
         from pydantic_ai import DeferredToolRequests, DeferredToolResults
 
-        from chemrefine.agent.harness import build_web_agent
+        from chemrefine.agent.harness import build_web_agent, run_turn
         from chemrefine.agent.providers import ProviderConfig
 
         payload = _body()
@@ -619,7 +619,8 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
                 pending = chat_state["pending"]
                 if pending is None:
                     return jsonify({"error": "no suspended run to resume"}), 400
-                result = agent.run_sync(
+                result = run_turn(
+                    agent,
                     message_history=pending,
                     deferred_tool_results=DeferredToolResults(
                         approvals={
@@ -629,8 +630,8 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
                     ),
                 )
             else:
-                result = agent.run_sync(
-                    _field(payload, "message"), message_history=chat_state["history"]
+                result = run_turn(
+                    agent, _field(payload, "message"), message_history=chat_state["history"]
                 )
         except ChemRefineError:
             # A tool's own failure keeps its documented {error, exit_code} shape.

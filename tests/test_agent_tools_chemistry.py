@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import shutil
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -114,6 +115,25 @@ def test_lookup_smiles_offline_names_the_alternative(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(urllib.request, "urlopen", refuse)
     with pytest.raises(ConfigError, match="pass a SMILES"):
         agent_tools.lookup_smiles("aspirin")
+
+
+def test_lookup_smiles_closes_the_error_response_of_an_unknown_name(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """PubChem's 404 is a response as well as an error, and the lookup closes it.
+
+    An ``HTTPError`` holds the body the server sent; left open, the collector reaches it
+    in whichever test runs next, and on 3.14 that is a ``ResourceWarning`` there.
+    """
+    missing = urllib.error.HTTPError("https://pubchem", 404, "Not Found", {}, None)
+
+    def not_found(request: urllib.request.Request, timeout: float) -> _CannedResponse:
+        raise missing
+
+    monkeypatch.setattr(urllib.request, "urlopen", not_found)
+    with pytest.raises(ConfigError, match="pass a SMILES"):
+        agent_tools.lookup_smiles("no-such-compound")
+    assert missing.closed
 
 
 def test_lookup_smiles_survives_a_body_it_cannot_decode(monkeypatch: pytest.MonkeyPatch):

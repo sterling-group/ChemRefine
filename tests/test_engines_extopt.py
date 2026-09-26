@@ -851,6 +851,7 @@ def test_submit_calculation_http_error_becomes_jobfailure():
         pytest.raises(JobFailureError, match="HTTP 500"),
     ):
         bridge.submit_calculation(server_url="x", data=_data())
+    assert err.closed  # the error response is closed where it is caught
 
 
 def test_submit_calculation_url_error_becomes_jobfailure():

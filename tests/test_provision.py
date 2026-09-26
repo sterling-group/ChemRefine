@@ -172,7 +172,7 @@ def test_require_backend_does_not_advise_an_install_that_would_do_nothing(
     """
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
     monkeypatch.setattr(provision.importlib.util, "find_spec", lambda _n: None)
-    monkeypatch.setattr(provision, "_supported_pythons", lambda _e: ("3.12",))
+    _elsewhere(monkeypatch, ("3.12",))
     with pytest.raises(ConfigError) as excinfo:
         provision.require_backend(BackendRequirement(extra="mlip-orb", import_name="orb_models"))
     message = str(excinfo.value)
@@ -459,8 +459,7 @@ def test_candidates_are_the_classifiers_inside_requires_python(monkeypatch):
 
 def test_candidates_fall_back_to_this_interpreter_without_classifiers(monkeypatch):
     _metadata_with(monkeypatch, requires_python=">=3.11", classifiers=())
-    here = f"{sys.version_info.major}.{sys.version_info.minor}"
-    assert provision._candidate_pythons() == (here,)
+    assert provision._candidate_pythons() == (provision.this_python(),)
 
 
 def test_candidates_fall_back_to_this_interpreter_without_a_dist(monkeypatch):
@@ -470,8 +469,7 @@ def test_candidates_fall_back_to_this_interpreter_without_a_dist(monkeypatch):
         raise provision.importlib.metadata.PackageNotFoundError
 
     monkeypatch.setattr(provision.importlib.metadata, "metadata", _raise)
-    here = f"{sys.version_info.major}.{sys.version_info.minor}"
-    assert provision._candidate_pythons() == (here,)
+    assert provision._candidate_pythons() == (provision.this_python(),)
 
 
 def test_an_extra_is_supported_where_it_contributes_everything(monkeypatch):
@@ -631,6 +629,18 @@ def _supports(monkeypatch, versions: tuple[str, ...]) -> None:
     monkeypatch.setattr(provision, "_supported_pythons", lambda _e: versions)
 
 
+def _elsewhere(monkeypatch, versions: tuple[str, ...]) -> None:
+    """The extra claims only ``versions``, and the orchestrator runs on 3.14 — none of them.
+
+    Both halves of the premise pinned, not just the claim: the running interpreter is the
+    other half of the comparison, and left to the host, a test of "the extra needs 3.12"
+    found itself already on 3.12 on that leg of the matrix.
+    """
+    assert "3.14" not in versions
+    _supports(monkeypatch, versions)
+    monkeypatch.setattr(provision, "this_python", lambda: "3.14")
+
+
 def test_the_orchestrators_own_interpreter_is_used_where_the_extra_installs(monkeypatch):
     """The common case, and what this module did unconditionally before it could choose."""
     _supports(monkeypatch, ("3.14", provision.this_python(), "3.11"))
@@ -647,13 +657,13 @@ def test_an_extra_that_claims_nothing_still_builds_here(monkeypatch):
 @pytest.mark.parametrize("tool", ["conda", "uv"])
 def test_conda_and_uv_are_asked_for_a_version_they_can_produce(monkeypatch, tool):
     """Neither needs an interpreter on the machine: conda resolves one, uv downloads one."""
-    _supports(monkeypatch, ("3.12", "3.11"))
+    _elsewhere(monkeypatch, ("3.12", "3.11"))
     monkeypatch.setattr(provision.shutil, "which", lambda _n: None)  # nothing on PATH at all
     assert provision.resolve_base_python("mlip-orb", tool) == provision.BasePython("3.12", tool)
 
 
 def test_a_venv_is_created_by_the_canonical_interpreter_for_that_version(monkeypatch):
-    _supports(monkeypatch, ("3.12",))
+    _elsewhere(monkeypatch, ("3.12",))
     monkeypatch.setattr(
         provision.shutil, "which", lambda n: "/usr/bin/python3.12" if n == "python3.12" else None
     )
@@ -667,13 +677,13 @@ def test_uv_supplies_the_python_a_venv_machine_lacks(monkeypatch):
     It is the only tool on such a machine that can still produce the interpreter, and an env
     it makes is installed into by uv — which is why the tool travels with the version.
     """
-    _supports(monkeypatch, ("3.12",))
+    _elsewhere(monkeypatch, ("3.12",))
     monkeypatch.setattr(provision.shutil, "which", lambda n: "/usr/bin/uv" if n == "uv" else None)
     assert provision.resolve_base_python("mlip-orb", "venv") == provision.BasePython("3.12", "uv")
 
 
 def test_no_interpreter_and_no_uv_is_refused_with_the_ways_out(monkeypatch):
-    _supports(monkeypatch, ("3.12",))
+    _elsewhere(monkeypatch, ("3.12",))
     monkeypatch.setattr(provision.shutil, "which", lambda _n: None)
     with pytest.raises(BackendProvisionError) as excinfo:
         provision.resolve_base_python("mlip-orb", "venv")
@@ -810,6 +820,7 @@ def test_build_backend_env_installs_into_an_env_that_already_exists(monkeypatch,
 
 def test_build_backend_env_runs_the_detected_tool(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    _supports(monkeypatch, (provision.this_python(),))  # mlip-mace installs here
     monkeypatch.setattr(provision, "_direct_url", lambda: None)
     monkeypatch.setattr(provision, "detect_env_tool", lambda: "venv")
     calls: list[list[str]] = []
@@ -832,7 +843,7 @@ def test_a_fresh_env_is_created_on_the_python_the_extra_supports(monkeypatch, tm
     """The whole point: the backend's Python, not the orchestrator's."""
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
     monkeypatch.setattr(provision, "_direct_url", lambda: None)
-    _supports(monkeypatch, ("3.12",))
+    _elsewhere(monkeypatch, ("3.12",))
     monkeypatch.setattr(
         provision.shutil, "which", lambda n: "/usr/bin/python3.12" if n == "python3.12" else None
     )
@@ -974,6 +985,7 @@ def test_a_failed_build_carries_an_exit_code(monkeypatch, tmp_path: Path, failur
     shell function, not a binary) would reach the user as a traceback.
     """
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    _supports(monkeypatch, (provision.this_python(),))  # mlip-mace installs here
     monkeypatch.setattr(provision, "_direct_url", lambda: None)
 
     def _boom(argv, **_k):
@@ -992,6 +1004,7 @@ def test_a_half_built_env_is_not_left_behind(monkeypatch, tmp_path: Path):
     handed to every later run as though complete and fail on the backend import instead.
     """
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    _supports(monkeypatch, (provision.this_python(),))  # mlip-mace installs here
     monkeypatch.setattr(provision, "_direct_url", lambda: None)
     env_path = provision.backend_env_path("mlip-mace")
 
@@ -1017,6 +1030,7 @@ def test_an_interrupted_fresh_build_is_also_swept(monkeypatch, tmp_path: Path):
     **existing** env is never torn down, since that env is work the user already has.
     """
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    _supports(monkeypatch, (provision.this_python(),))  # mlip-mace installs here
     monkeypatch.setattr(provision, "_direct_url", lambda: None)
     env_path = provision.backend_env_path("mlip-mace")
 
@@ -1319,6 +1333,7 @@ def test_backends_cli_install_validates_and_builds(monkeypatch, tmp_path: Path):
     from chemrefine.cli import app
 
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    _supports(monkeypatch, (provision.this_python(),))  # mlip-mace installs here
     runner = CliRunner()
 
     bad = runner.invoke(app, ["backends", "install", "not-a-backend"])

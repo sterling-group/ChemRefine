@@ -149,6 +149,7 @@ def submit_calculation(
         with urlopen(request, timeout=timeout) as response:  # noqa: S310
             body = response.read()
     except HTTPError as e:
+        e.close()  # the error response, closed like the success (see ENDPOINT_UNREACHABLE)
         raise JobFailureError(f"ExtOpt server returned HTTP {e.code}: {e.reason}") from e
     except URLError as e:
         if isinstance(e.reason, TimeoutError):

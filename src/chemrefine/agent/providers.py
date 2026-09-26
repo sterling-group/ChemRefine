@@ -336,6 +336,7 @@ def check(config: ProviderConfig, *, timeout: float = 5.0) -> CheckReport:
         with urlopen(request, timeout=timeout) as response:  # noqa: S310 — scheme checked above
             listing = json.loads(response.read().decode("utf-8"))
     except HTTPError as e:
+        e.close()  # the error response, closed like the success (see ENDPOINT_UNREACHABLE)
         if e.code in (401, 403):
             return CheckReport(
                 ok=False,

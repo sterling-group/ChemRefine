@@ -12,6 +12,7 @@ not happen.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from pathlib import Path
 from typing import Any
@@ -308,6 +309,27 @@ def test_check_reports_other_http_statuses_plainly():
     assert "HTTP 500" in report.findings[0]
 
 
+@pytest.mark.parametrize("status", [401, 500])
+def test_check_closes_the_error_response(monkeypatch: pytest.MonkeyPatch, status: int):
+    """A status the check reports is a response it received, and it closes it.
+
+    An ``HTTPError`` holds the body the endpoint sent; left open, the collector reaches it
+    in whichever test runs next, and on 3.14 that is a ``ResourceWarning`` there.
+    """
+    from urllib.error import HTTPError
+
+    from chemrefine.agent.providers import check
+
+    answer = HTTPError("http://127.0.0.1:1/v1/models", status, "refused", {}, None)
+
+    def respond(*args: Any, **kwargs: Any) -> None:
+        raise answer
+
+    monkeypatch.setattr("urllib.request.urlopen", respond)
+    assert check(_cfg("http://127.0.0.1:1/v1")).ok is False
+    assert answer.closed
+
+
 def test_check_reports_an_unreachable_endpoint(monkeypatch: pytest.MonkeyPatch):
     from urllib.error import URLError
 
@@ -438,8 +460,31 @@ def test_every_shared_tool_is_registered_verbatim():
         return ModelResponse(parts=[TextPart("ok")])
 
     agent = harness.build_agent(FunctionModel(spy), confirm=_allow)
-    agent.run_sync("hello")
+    harness.run_turn(agent, "hello")
     assert seen["tools"] == sorted(t.__name__ for t in agent_tools.TOOLS)
+
+
+def test_a_turn_runs_on_a_loop_it_owns_and_closes():
+    """No turn leaves an event loop behind on the thread that ran it.
+
+    ``Agent.run_sync`` ran on whatever loop the thread held and, finding none, created one
+    and left it installed — open, and owned by nobody: the implicit-loop behaviour Python
+    deprecated. ``run_turn`` gives every turn a loop of its own and closes it on the way
+    out, so the loop a turn ran on is closed by the time the turn returns, and the next
+    turn runs on a new one rather than inheriting it.
+    """
+    seen: list[asyncio.AbstractEventLoop] = []
+
+    async def spy(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(asyncio.get_running_loop())
+        return ModelResponse(parts=[TextPart("ok")])
+
+    agent = harness.build_agent(FunctionModel(spy), confirm=_allow)
+    harness.run_turn(agent, "one")
+    harness.run_turn(agent, "two")
+    first, second = seen
+    assert first.is_closed() and second.is_closed()
+    assert first is not second
 
 
 def test_instructions_carry_the_guide_and_the_session_config():
@@ -464,7 +509,7 @@ def _prompt_seen_by(build: Any) -> str:
         seen["text"] = info.instructions or ""
         return ModelResponse(parts=[TextPart("ok")])
 
-    build(FunctionModel(spy)).run_sync("hello")
+    harness.run_turn(build(FunctionModel(spy)), "hello")
     return seen["text"]
 
 
@@ -498,7 +543,7 @@ def test_each_harness_is_told_the_gate_it_actually_enforces():
 def test_a_real_tool_answers_through_the_model_loop():
     """End to end offline: the model calls get_schema and the answer is the schema."""
     agent = harness.build_agent(TestModel(call_tools=["get_schema"]), confirm=_allow)
-    result = agent.run_sync("what does a config look like?")
+    result = harness.run_turn(agent, "what does a config look like?")
     assert "chemrefine_version" in result.output
 
 
@@ -535,7 +580,7 @@ def test_an_allowed_mutation_runs_and_names_itself_to_the_human(tmp_path: Path):
         return True
 
     agent = harness.build_agent(_scripted_scaffold(config), confirm=confirm)
-    result = agent.run_sync("scaffold my templates")
+    result = harness.run_turn(agent, "scaffold my templates")
     assert result.output == "finished"
     [(tool, rendered)] = asked
     assert tool == "scaffold_templates"
@@ -546,7 +591,7 @@ def test_an_allowed_mutation_runs_and_names_itself_to_the_human(tmp_path: Path):
 def test_a_declined_mutation_does_not_happen_and_the_loop_survives(tmp_path: Path):
     config = _orca_config(tmp_path)
     agent = harness.build_agent(_scripted_scaffold(config), confirm=lambda _tool, _args: False)
-    result = agent.run_sync("scaffold my templates")
+    result = harness.run_turn(agent, "scaffold my templates")
     assert result.output == "finished"  # the refusal was an answer, not a crash
     assert not (tmp_path / "templates").exists()
     denials = [
@@ -566,7 +611,7 @@ def test_read_only_tools_are_never_gated():
         return True
 
     agent = harness.build_agent(TestModel(call_tools=["get_schema"]), confirm=confirm)
-    agent.run_sync("schema please")
+    harness.run_turn(agent, "schema please")
     assert asked == []
 
 

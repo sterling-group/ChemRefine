@@ -14,11 +14,9 @@ question: ``ssh -X`` sets one on nodes whose only browser is lynx.
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import types
 import webbrowser
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -1240,6 +1238,34 @@ def test_chat_turns_thread_history(client: Any, chat_env: pytest.MonkeyPatch):
     assert seen[1] > seen[0]  # the second turn carried the first turn's messages
 
 
+def test_a_chat_turn_leaves_no_event_loop_on_the_serving_thread(
+    client: Any, chat_env: pytest.MonkeyPatch
+):
+    """Each web turn runs on a loop of its own and closes it before the response goes out.
+
+    waitress serves chat turns on a pool of worker threads; a turn that installed a loop
+    on its worker and left it open would leave one behind per thread for the life of the
+    server — which is what ``Agent.run_sync`` did.
+    """
+    import asyncio
+
+    from pydantic_ai.messages import ModelResponse, TextPart
+    from pydantic_ai.models.function import FunctionModel
+
+    seen: list[asyncio.AbstractEventLoop] = []
+
+    async def spy(messages: Any, info: Any) -> ModelResponse:
+        seen.append(asyncio.get_running_loop())
+        return ModelResponse(parts=[TextPart("ok")])
+
+    _inject_model(chat_env, FunctionModel(spy))
+    assert _post(client, "/api/agent/chat", {"message": "one"}).status_code == 200
+    assert _post(client, "/api/agent/chat", {"message": "two"}).status_code == 200
+    first, second = seen
+    assert first.is_closed() and second.is_closed()
+    assert first is not second
+
+
 def test_chat_gates_mutations_behind_http_approvals(
     client: Any, chat_env: pytest.MonkeyPatch, tmp_path: Path
 ):
@@ -1359,9 +1385,7 @@ def test_chat_reset_forgets_the_conversation(client: Any, chat_env: pytest.Monke
 
 
 def test_overlapping_chat_turns_contend_on_a_lock_not_on_the_state(
-    client: Any,
-    chat_env: pytest.MonkeyPatch,
-    owned_event_loop: Callable[[], contextlib.AbstractContextManager[Any]],
+    client: Any, chat_env: pytest.MonkeyPatch
 ):
     """A second Send during a turn hears "busy" — it must not run from the same history.
 
@@ -1391,9 +1415,7 @@ def test_overlapping_chat_turns_contend_on_a_lock_not_on_the_state(
     first: dict[str, Any] = {}
 
     def send_first() -> None:
-        # The turn runs on this thread, so the loop `run_sync` uses is this thread's to own.
-        with owned_event_loop():
-            first["response"] = _post(client, "/api/agent/chat", {"message": "one"})
+        first["response"] = _post(client, "/api/agent/chat", {"message": "one"})
 
     turn = threading.Thread(target=send_first)
     turn.start()

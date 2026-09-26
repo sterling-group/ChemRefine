@@ -161,4 +161,8 @@ refused connection (and, as ``HTTPError``, an HTTP status a caller that wants th
 catches first); ``OSError`` is a socket that fails or times out (``TimeoutError`` is
 one); ``HTTPException`` is the broken protocol. What a *body* that did arrive means —
 undecodable, not JSON, empty — is each caller's own verdict and stays beside it.
+
+An ``HTTPError`` is also the error *response*, a file over the body the server sent, so
+the handler that catches one closes it, as ``with urlopen(...)`` closes a success: left
+to the collector, it is a ``ResourceWarning`` on 3.14.
 """

@@ -380,7 +380,7 @@ def _candidate_pythons() -> tuple[str, ...]:
     """
     from packaging.specifiers import SpecifierSet
 
-    here = f"{sys.version_info.major}.{sys.version_info.minor}"
+    here = this_python()
     try:
         meta = importlib.metadata.metadata("ChemRefine")
     except importlib.metadata.PackageNotFoundError:

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import typer
 
-from chemrefine.agent.harness import build_agent
+from chemrefine.agent.harness import build_agent, run_turn
 from chemrefine.agent.providers import ProviderConfig
 from chemrefine.errors import ChemRefineError
 
@@ -43,7 +43,7 @@ def main(
         # guard it took the whole conversation down as a traceback — where the web harness
         # answers the same failures per turn (:func:`chemrefine.gui.app.create_app`).
         try:
-            result = agent.run_sync(prompt, message_history=history)
+            result = run_turn(agent, prompt, message_history=history)
         except ChemRefineError as e:
             # A tool's own failure keeps its documented name-and-message shape.
             typer.echo(f"{type(e).__name__}: {e}", err=True)

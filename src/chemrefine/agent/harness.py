@@ -12,7 +12,8 @@ mutating happens without the human's yes.
 Instructions = the packaged agent guide (:func:`chemrefine.agent_tools.guide_text`,
 identical bytes to the MCP resource) plus the session context (which config file, if
 any). The model is a parameter, never constructed here — that is what lets the tests
-run the entire harness against ``TestModel``/``FunctionModel`` offline.
+run the entire harness against ``TestModel``/``FunctionModel`` offline. Every turn, in
+either harness, runs through :func:`run_turn`, on an event loop the call owns.
 
 PydanticAI is imported at module scope, the way :mod:`chemrefine.mcp_server` imports its
 SDK: :mod:`.chat` imports this module, and the CLI imports :mod:`.chat` inside ``except
@@ -24,12 +25,14 @@ at runtime, so ``chemrefine agent --check`` still runs before the extra is insta
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import json
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Callable, Sequence
+from typing import Any, TypeVar
 
-from pydantic_ai import Agent, DeferredToolRequests
+from pydantic_ai import Agent, AgentRunResult, DeferredToolRequests, DeferredToolResults
+from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings
 
@@ -38,6 +41,8 @@ from chemrefine.agent.providers import chat_timeout_seconds
 
 ConfirmFn = Callable[[str, str], bool]
 """``(tool_name, rendered_args) -> allow?`` — the chat asks the human, tests script it."""
+
+OutputT = TypeVar("OutputT")
 
 
 def _gated(fn: Callable[..., Any], confirm: ConfirmFn) -> Callable[..., Any]:
@@ -162,3 +167,51 @@ def build_web_agent(
         register = agent.tool_plain(requires_approval=tool.__name__ in agent_tools.MUTATING_TOOLS)
         register(tool)
     return agent
+
+
+def run_turn(
+    agent: Agent[None, OutputT],
+    user_prompt: str | None = None,
+    *,
+    message_history: Sequence[ModelMessage] | None = None,
+    deferred_tool_results: DeferredToolResults | None = None,
+) -> AgentRunResult[OutputT]:
+    """One agent turn, on an event loop this call creates, owns and closes.
+
+    The only way either harness runs a turn. Not ``Agent.run_sync``: that takes whatever
+    loop ``asyncio.get_event_loop()`` answers for the thread and, finding none, creates one
+    and leaves it installed, open and owned by nobody — on the REPL's main thread, and on
+    every waitress worker that serves a chat turn. That implicit loop is the behaviour
+    Python deprecates (a ``DeprecationWarning`` on 3.12-3.13, a ``RuntimeError`` from
+    ``get_event_loop`` on 3.14), and PydanticAI's own guidance is the asynchronous method.
+    ``asyncio.run`` is the stdlib's entry point for exactly this — a fresh loop for the
+    call, closed when it returns — so no thread is ever left holding one.
+
+    The agent is *entered* for the turn (:func:`_entered_run`), which is what PydanticAI
+    asks for so the provider's HTTP client opens and closes on the loop that uses it; a
+    client left open would otherwise outlive the loop its connections belong to.
+    """
+    return asyncio.run(
+        _entered_run(
+            agent,
+            user_prompt,
+            message_history=message_history,
+            deferred_tool_results=deferred_tool_results,
+        )
+    )
+
+
+async def _entered_run(
+    agent: Agent[None, OutputT],
+    user_prompt: str | None,
+    *,
+    message_history: Sequence[ModelMessage] | None,
+    deferred_tool_results: DeferredToolResults | None,
+) -> AgentRunResult[OutputT]:
+    """:meth:`Agent.run` inside ``async with agent`` — the turn :func:`run_turn` drives."""
+    async with agent:
+        return await agent.run(
+            user_prompt,
+            message_history=message_history,
+            deferred_tool_results=deferred_tool_results,
+        )

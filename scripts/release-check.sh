@@ -7,7 +7,8 @@
 #
 # `--pr` is the one a contributor runs before opening a pull request: if it passes, CI
 # will too, bar the things no workstation can do (below). It needs nothing but a `[dev]`
-# install — no ORCA, no MLIP stack, no second interpreter.
+# install — no ORCA, no MLIP stack, no second interpreter (though it uses every supported
+# one it can find).
 #
 # The default mode adds the half CI *cannot* run at all. GitHub-hosted runners have no
 # ORCA and no MLIP stack, so the tier-3 suite — the only tests that drive real binaries
@@ -24,11 +25,12 @@
 #
 #   · the dependency-floors job — it needs a Python 3.11, which most machines lack, and
 #     CI runs it on every pull request as well as every tag;
-#   · the 3.11-3.14 matrix, for the same reason;
+#   · the matrix legs this machine has no interpreter for — the ones it has are run, and
+#     the ones it lacks are named at the end;
 #   · CodeQL, Scorecard and dependency-review, which are GitHub-hosted analyses with no
 #     local equivalent.
 #
-# All four are covered on the tag regardless: `publish.yml` calls `ci.yml`, so nothing
+# All of them are covered on the tag regardless: `publish.yml` calls `ci.yml`, so nothing
 # reaches PyPI without the full matrix having passed.
 #
 # Environment. Nothing machine-specific is baked in: the interpreter is whichever venv or
@@ -39,6 +41,8 @@
 #   LIVE_PY   the Python for the tier-3 suite  (default: $PY — set it when the MLIP and
 #             PySCF stacks live in an environment of their own)
 #   ORCA      the ORCA binary                  (default: whatever is on PATH)
+#   MATRIX_PYTHONS  interpreters for the other supported versions, space-separated, when
+#             they are not on PATH as `python3.X` (e.g. one living in a conda env)
 
 set -euo pipefail
 
@@ -46,7 +50,7 @@ mode="release"
 case "${1:-}" in
     --pr)      mode="pr" ;;
     ""|--release) ;;
-    -h|--help) sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,46p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)         printf 'unknown option %s (try --pr, --release, --help)\n' "$1" >&2; exit 2 ;;
 esac
 
@@ -189,6 +193,38 @@ tar -xzf dist/*.tar.gz -C "$work"
 # proves the tarball's own docs sources are complete, which is what can rot here.
 "$bin/mkdocs" build --strict -f "$work"/chemrefine-*/mkdocs.yml > /dev/null
 
+step "the sdist suite on every other supported Python found here (CI: test matrix)"
+# One interpreter used to be all this gate ran, and that is how the branch went red on
+# 3.14 with every local check green: a deprecation that only the newest interpreter raises
+# is invisible from any other. The versions are the classifiers' — the claim the matrix
+# exists to test — and each one this machine has runs the same sdist suite as above; the
+# ones it lacks are named at the end rather than silently dropped.
+this_py="$("$PY" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+missing_pythons=()
+for version in $("$PY" - <<'PY'
+import re, tomllib
+classifiers = tomllib.load(open("pyproject.toml", "rb"))["project"]["classifiers"]
+print(*(m[1] for c in classifiers if (m := re.fullmatch(r"Programming Language :: Python :: (3\.\d+)", c))))
+PY
+); do
+    [ "$version" = "$this_py" ] && continue
+    other="$(command -v "python$version" || true)"
+    for candidate in ${MATRIX_PYTHONS:-}; do
+        [ "$("$candidate" -c 'import sys; print("%d.%d" % sys.version_info[:2])')" = "$version" ] \
+            && other="$candidate"
+    done
+    if [ -z "$other" ]; then
+        missing_pythons+=("$version")
+        continue
+    fi
+    printf '  [%s] %s\n' "$version" "$other"
+    "$other" -m venv "$work/py$version"
+    ( cd "$work"/chemrefine-*/ \
+      && "$work/py$version/bin/pip" install --disable-pip-version-check --quiet ".[test]" \
+      && "$work/py$version/bin/python" -m pytest -q -p no:cacheprovider )
+done
+unmatched="${missing_pythons[*]:-none}"
+
 step "critical predicates are checked, not just covered (CI: mutation-gate)"
 # 100% branch coverage proves every line ran; it does not prove an assertion looked at the
 # result. This breaks each predicate whose inversion would be a wrong scientific answer and
@@ -197,8 +233,9 @@ step "critical predicates are checked, not just covered (CI: mutation-gate)"
 
 if [ "$mode" = "pr" ]; then
     printf '\n\033[32m✓ PR gate passed\033[0m\n'
-    printf '  Still CI-only: the dependency floors, the 3.11-3.14 matrix, CodeQL,\n'
-    printf '  Scorecard and dependency-review. All run on your pull request.\n'
+    printf '  Still CI-only: the dependency floors, the matrix legs with no interpreter\n'
+    printf '  here (%s), CodeQL, Scorecard and dependency-review. All run on your\n' "$unmatched"
+    printf '  pull request.\n'
     exit 0
 fi
 
@@ -256,7 +293,7 @@ fi
 
 version="$("$PY" -c 'import chemrefine; print(chemrefine.__version__)')"
 printf '\n\033[32m✓ ready to tag v%s\033[0m\n' "$version"
-printf '  Still CI-only: the dependency floors, the 3.11-3.14 matrix, CodeQL,\n'
-printf '  Scorecard and dependency-review — all run on the tag, since publish.yml\n'
-printf '  calls ci.yml before anything is published.\n'
+printf '  Still CI-only: the dependency floors, the matrix legs with no interpreter\n'
+printf '  here (%s), CodeQL, Scorecard and dependency-review — all run on the tag,\n' "$unmatched"
+printf '  since publish.yml calls ci.yml before anything is published.\n'
 printf '  remaining by hand: CHANGELOG Unreleased section retitled to %s\n' "$version"
