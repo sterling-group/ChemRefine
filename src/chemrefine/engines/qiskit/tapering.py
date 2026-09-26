@@ -176,7 +176,7 @@ class TaperingTransform:
         """Reduce a Clifford reference polynomially, or a general state within its byte budget."""
         from qiskit import QuantumCircuit
         from qiskit.circuit.library import StatePreparation
-        from qiskit.quantum_info import SparsePauliOp, StabilizerState, Statevector
+        from qiskit.quantum_info import Pauli, SparsePauliOp, StabilizerState, Statevector
         from qiskit.synthesis import synth_circuit_from_stabilizers
 
         reference_clifford = _reference_clifford(reference, self.num_qubits)
@@ -193,7 +193,7 @@ class TaperingTransform:
         for qubit in range(self.num_tapered):
             label = "I" * (self.num_qubits - qubit - 1) + "Z" + "I" * qubit
             if not np.isclose(
-                state.expectation_value(SparsePauliOp(label)), 1, atol=self.tolerance, rtol=0
+                state.expectation_value(Pauli(label)), 1, atol=self.tolerance, rtol=0
             ):
                 raise ConfigError("reference state does not occupy the selected tapering sector")
         generators = [
@@ -281,7 +281,7 @@ def build_tapering_transform(
         for earlier in generators[:index]:
             if not generator.paulis[0].commutes(earlier.paulis[0]):
                 raise ConfigError("symmetry generators must mutually commute")
-        expectation = complex(state.expectation_value(generator))
+        expectation = complex(generator.coeffs[0] * state.expectation_value(generator.paulis[0]))
         if (
             not np.isclose(abs(expectation.real), 1, atol=options.tolerance, rtol=0)
             or abs(expectation.imag) > options.tolerance

@@ -8,6 +8,7 @@ import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -31,7 +32,7 @@ from chemrefine.errors import ConfigError, OutputParseError
 
 pytest.importorskip("qiskit_nature")
 from qiskit import QuantumCircuit, qpy
-from qiskit.circuit import ParameterVector
+from qiskit.circuit import Parameter, ParameterVector
 from qiskit.quantum_info import SparsePauliOp, Statevector
 
 
@@ -59,11 +60,16 @@ def retained(molecular_context):
 def _raw_qpy_bundle(path, circuits, description):
     """Bypass writer guards to test independent reader validation with real QPY."""
     stream = io.BytesIO()
-    qpy.dump(circuits, stream)
+    qpy.dump(circuits or [QuantumCircuit(1)], stream, version=13)
+    payload = stream.getvalue()
+    if not circuits:
+        # QPY v13 stores an eight-byte program count after the ten-byte prefix.
+        # Keep the complete file header and circuit type key, with no programs.
+        payload = payload[:10] + bytes(8) + payload[18:20]
     return write_bundle(
         path,
         kind="bound_circuit",
-        arrays={"qpy": np.frombuffer(stream.getvalue(), dtype=np.uint8)},
+        arrays={"qpy": np.frombuffer(payload, dtype=np.uint8)},
         metadata=description.model_dump(mode="json"),
     )
 
@@ -184,7 +190,7 @@ def test_writer_refuses_invalid_bound_circuit_objects(tmp_path, retained, mode):
 def test_validation_rejects_incoherent_bundle_payloads(tmp_path, retained, mode):
     """Generic bundle integrity alone cannot establish the circuit artifact contract."""
     value, _circuit, _bindings = retained
-    arrays = {"qpy": np.frombuffer(b"QISKIT\x0d", dtype=np.uint8)}
+    arrays: dict[str, Any] = {"qpy": np.frombuffer(b"QISKIT\x0d", dtype=np.uint8)}
     metadata = value.description.model_dump(mode="json")
     if mode == "arrays":
         arrays["extra"] = np.zeros(1)
@@ -211,14 +217,16 @@ def test_validation_rejects_incoherent_bundle_payloads(tmp_path, retained, mode)
 @pytest.mark.parametrize("mode", ["empty", "multiple", "unbound", "measured", "width"])
 def test_reader_independently_rejects_qpy_content_mismatches(tmp_path, retained, mode):
     """Actual QPY must contain exactly the declared bound preparation."""
-    value, original, _bindings = retained
+    value, _original, _bindings = retained
     circuits = [value.circuit]
     if mode == "empty":
         circuits = []
     elif mode == "multiple":
         circuits *= 2
     elif mode == "unbound":
-        circuits = [original]
+        circuit = QuantumCircuit(value.description.num_qubits)
+        circuit.ry(Parameter("unbound"), 0)
+        circuits = [circuit]
     elif mode == "measured":
         circuits[0] = value.circuit.copy()
         circuits[0].measure_all()

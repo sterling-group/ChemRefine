@@ -66,6 +66,33 @@ def test_general_non_z_symmetries_states_observables_and_dynamics_are_consistent
     json.dumps(transform.metadata, allow_nan=False)
 
 
+@pytest.mark.parametrize("non_clifford", [False, True])
+def test_signed_generators_preserve_reference_sectors_and_energies(non_clifford):
+    """Signed Pauli sectors agree for stabilizer and general statevector references."""
+    reference = QuantumCircuit(2)
+    reference.x(0)
+    if non_clifford:
+        reference.ry(0.37, 1)
+    else:
+        reference.h(1)
+    hamiltonian = SparsePauliOp.from_list([("XI", 0.4), ("ZZ", 0.3)])
+    options = Z2TaperingOptions(generators=("-IZ",), sectors=(1,))
+    transform = build_tapering_transform(hamiltonian, reference, options=options)
+    assert transform.metadata["sectors"] == [1]
+    expected = Statevector.from_instruction(reference)
+    actual = Statevector.from_instruction(transform.prepare_reference(reference))
+    assert abs(np.vdot(transform.lift_statevector(actual), expected.data)) == pytest.approx(1)
+    assert actual.expectation_value(transform.map_operator(hamiltonian)) == pytest.approx(
+        expected.expectation_value(hamiltonian)
+    )
+    with pytest.raises(ConfigError, match="actual reference"):
+        build_tapering_transform(
+            hamiltonian,
+            reference,
+            options=Z2TaperingOptions(generators=("-IZ",), sectors=(-1,)),
+        )
+
+
 def test_explicit_general_reference_sector_and_zero_projected_observables():
     """An arbitrary rotation is supported when its actual symmetry sector is specified."""
     reference = QuantumCircuit(2)
