@@ -33,7 +33,9 @@ def _acquire(kind, selection):
         result = collect_fermionic_shadows(
             preparation,
             selection,
-            FermionicShadowOptions(num_particles=1, num_settings=3, shots_per_setting=4),
+            FermionicShadowOptions(
+                ensemble="majorana_clifford", num_settings=3, shots_per_setting=4
+            ),
         )
         return result.counts
     measurement = measure_observable(

@@ -38,7 +38,7 @@ For the inner loop, the individual gates are still the fastest way round:
 
 ```bash
 pre-commit run --all-files                    # lint + format + docstring coverage
-pytest --cov=chemrefine --cov-fail-under=100  # 100% coverage; live tier deselected
+pytest --cov --cov-fail-under=0             # local collection; aggregate gate below
 mypy                                          # type check (config in pyproject.toml)
 mkdocs build --strict                         # docs build with no warnings
 python scripts/mutation_gate.py               # critical predicates are *checked*, not just run
@@ -53,6 +53,24 @@ resource providers at declared direct-provider floors and selected current
 versions, rejects skipped numerical cases, and combines worker coverage.
 Dependency floors for transitive packages are tested separately in the core job. A regular ChemRefine runtime installation
 still installs quantum libraries only when a Qiskit extra is selected.
+
+Individual provider jobs use `--cov-fail-under=0` to collect compatible worker
+coverage. The mandatory `coverage` job combines those files with the main suite
+and enforces 100% line and branch coverage; `required-checks-pass` requires that
+aggregate job. A successful individual job is not a completed release gate.
+
+Each provider job preserves a `validation-<profile>-<versions>` artifact containing
+the exact package versions, source revision, interpreter/platform, intended test
+command and JUnit execution report. Upload runs even when tests fail, so failed
+numerical cases retain their environment evidence. Resource snapshots come from
+the separately provisioned Python 3.12 interpreter. A provisioning failure can
+precede these files; inspect the job log in that case. The environment snapshot
+does not claim that tests passed: the JUnit report and job status establish that.
+When reporting local checks, distinguish the tested revision and successful
+subsets from a full gate; list baseline/platform failures separately. CI runs on
+pushes or pull requests targeting `main`, or explicit workflow dispatch, so an
+untriggered feature branch can have no Actions runs despite local validation.
+
 The mutation gate is the slow one (~1.5 min) because it runs a suite per mutation;
 it only needs re-running when you touch one of the predicates it lists
 (`python scripts/mutation_gate.py --list`).
