@@ -27,6 +27,11 @@ for the full map.
 
 ### Added
 
+- **Experimental endpoint Pauli checks.** Clifford payloads support signed,
+  noncommuting user checks with explicit Aer noise. Artifacts preserve physical
+  data/syndrome counts, accepted and rejected samples, Wilson acceptance intervals,
+  conditional observables and the checked circuit.
+
 - **Complex constrained RDM reconstruction.** Experimental D/DQ/DQG fitting keeps
   raw tensors, supports masked weighted losses and explicit energy regularization,
   and independently checks SCS feasibility without representability or energy-bound

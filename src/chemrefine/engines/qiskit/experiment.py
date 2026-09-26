@@ -337,4 +337,5 @@ from chemrefine.engines.qiskit import (  # noqa: E402, F401
     experiment_measurement,
     experiment_rdm,
     experiment_shadows,
+    experiment_spacetime,
 )

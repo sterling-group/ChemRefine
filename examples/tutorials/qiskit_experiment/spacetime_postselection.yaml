@@ -1,0 +1,42 @@
+input: molecule.xyz
+template_dir: templates
+output_dir: outputs_spacetime_postselection
+charge: 0
+multiplicity: 1
+max_cores: 2
+dispatch: local
+steps:
+  - step: 1
+    engine: qiskit-experiment
+    options:
+      cores: 2
+      experiment:
+        name: spacetime_postselection
+        options:
+          circuit_path: bell_clifford.qpy
+          preparation_path: null
+          max_circuit_bytes: 33554432
+          sampler:
+            name: aer
+            options:
+              method: automatic
+              simulation_precision: double
+              optimization_level: 0
+              seed_transpiler: 13
+              seed_simulator: 7
+              noise_model:
+                errors:
+                  - type: qerror
+                    operations: [h]
+                    instructions:
+                      - [{name: x, qubits: [0]}]
+                      - [{name: id, qubits: [0]}]
+                    probabilities: [0.08, 0.92]
+          spacetime:
+            checks: [ZI, IX]
+            diagonal_observables: [ZZ, ZI, IZ]
+            shots: 2048
+            confidence: 0.95
+            max_qubits: 128
+            max_circuit_operations: 100000
+            max_memory_mb: 512

@@ -157,6 +157,7 @@ nav:
       - Qiskit ground-state calculations: engines/qiskit.md
       - Quantum experiments: engines/qiskit-experiment.md
       - Sampled quantum states: engines/qiskit-states.md
+      - Spacetime postselection: engines/qiskit-spacetime.md
       - Fermionic shadows: engines/qiskit-shadows.md
       - RDM reconstruction: engines/qiskit-rdm-reconstruction.md
       - Double-factorized evolution: engines/qiskit-double-factorized.md

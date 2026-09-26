@@ -92,6 +92,14 @@ from chemrefine.engines.qiskit.shadows import (
     rdm_expectation,
     shadow_circuit,
 )
+from chemrefine.engines.qiskit.spacetime import (
+    CheckedCircuit,
+    SpacetimeOptions,
+    SpacetimeResult,
+    build_spacetime_circuit,
+    collect_spacetime_counts,
+    postselect_spacetime_counts,
+)
 from chemrefine.engines.qiskit.state_io import load_states, save_states
 from chemrefine.engines.qiskit.tapering import (
     TaperingTransform,
@@ -102,6 +110,7 @@ from chemrefine.engines.qiskit.workflow import EvaluationCallback, run_job, run_
 
 __all__ = [
     "ActiveSpaceOptions",
+    "CheckedCircuit",
     "CircuitMetrics",
     "DeterminantState",
     "DoubleFactorizedEvolution",
@@ -134,6 +143,8 @@ __all__ = [
     "SampleBatch",
     "ShadowResult",
     "ShadowSetting",
+    "SpacetimeOptions",
+    "SpacetimeResult",
     "TaperingTransform",
     "VariationalDynamicsOptions",
     "VariationalDynamicsResult",
@@ -141,9 +152,11 @@ __all__ = [
     "build_double_factorized_evolution",
     "build_lattice_dynamics",
     "build_local_encoding",
+    "build_spacetime_circuit",
     "build_tapering_transform",
     "chain_lattice",
     "collect_fermionic_shadows",
+    "collect_spacetime_counts",
     "commuting_evolution",
     "dqg_matrices",
     "estimate_fermionic_shadows",
@@ -157,6 +170,7 @@ __all__ = [
     "optimize_orbitals",
     "orbital_shadow_snapshot",
     "partition_flow_edges",
+    "postselect_spacetime_counts",
     "prepare_problem",
     "prepare_pyscf_problem",
     "projected_eigensystem",
