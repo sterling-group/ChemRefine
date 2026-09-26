@@ -27,6 +27,7 @@ class QiskitEngine(
     name: ClassVar[str] = "qiskit"
     label: ClassVar[str] = "Qiskit Nature"
     options_cls: ClassVar[type[QiskitOptions]] = QiskitOptions
+    output_globs: ClassVar[tuple[str, ...]] = ("*.json", "*.xyz", "*.npz", "*.qpy")
     output_fields: ClassVar[tuple[OutputField, ...]] = (
         *SCRIPT_OUTPUT,
         OutputField("engine_metadata", field=None, finite=False),
@@ -44,6 +45,7 @@ class QiskitEngine(
         '    charge=int("$CHARGE"),\n'
         '    multiplicity=int("$MULTIPLICITY"),\n'
         '    options=json.loads("$OPTIONS_JSON"),\n'
+        '    artifact_dir=".",\n'
         ")\n"
         "\n"
         "energy_hartree = result.energy_hartree\n"
@@ -74,6 +76,17 @@ class QiskitEngine(
         """Repeat the preflight checks for recovery callers, then render the inputs."""
         self.check_step(ctx.step_cfg, charge=ctx.charge, multiplicity=ctx.multiplicity)
         return super().prepare(ctx)
+
+    def validate_outputs(self, inputs: StepInputs, ctx: StepContext) -> None:
+        """Validate referenced state bundles locally on completion and recovery."""
+        from chemrefine.engines.qiskit.state_io import validate_state_references
+
+        for _input_path, output_path, _identity in inputs.files:
+            validate_state_references(output_path)
+
+    def output_dirs(self, ctx: StepContext) -> tuple[str, ...]:
+        """Preserve reusable states, checkpoints and provider records from scratch."""
+        return ("checkpoints", "provider_jobs")
 
     def build_input(
         self,

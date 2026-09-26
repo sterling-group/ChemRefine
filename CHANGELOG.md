@@ -27,6 +27,11 @@ for the full map.
 
 ### Added
 
+- **Recoverable quantum states.** Molecular workers persist determinant states
+  and orbital frames in validated JSON/NPZ bundles. Scratch copy-back includes
+  numeric payloads and circuit files; cache reuse checks referenced states before
+  accepting a molecular result.
+
 - **Orbital optimization and sampled Krylov states.** Explicit SQD, SqDRIFT,
   SKQD and extended SQD retain complex determinant amplitudes and orbital frames.
   SKQD samples powers of one fixed approximate evolution operator, including

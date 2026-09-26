@@ -262,6 +262,7 @@ def run_job(
     charge: int,
     multiplicity: int,
     options: QiskitOptions | Mapping[str, Any],
+    artifact_dir: str | Path | None = None,
 ) -> QiskitRunResult:
     """Adapt a geometry/PySCF pipeline job to the driver-independent solver API."""
     started = perf_counter()
@@ -277,4 +278,10 @@ def run_job(
     # Pipeline runtime includes its classical electronic-structure preparation.
     from dataclasses import replace
 
+    if artifact_dir is not None and result.states:
+        from chemrefine.engines.qiskit.state_io import save_states
+
+        path = Path(artifact_dir) / f"{Path(xyz_path).stem}.states.json"
+        save_states(path, result.states)
+        result = replace(result, metadata={**result.metadata, "quantum_artifacts": [path.name]})
     return replace(result, runtime_seconds=perf_counter() - started)

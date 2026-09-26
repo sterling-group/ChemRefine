@@ -42,6 +42,7 @@ from chemrefine.engines.qiskit.problem import (
 )
 from chemrefine.engines.qiskit.result import CircuitMetrics, QiskitRunResult
 from chemrefine.engines.qiskit.sampling import SampleBatch, sample_circuit
+from chemrefine.engines.qiskit.state_io import load_states, save_states
 from chemrefine.engines.qiskit.workflow import EvaluationCallback, run_job, run_problem
 
 __all__ = [
@@ -68,6 +69,7 @@ __all__ = [
     "SampleBatch",
     "build_lattice_dynamics",
     "chain_lattice",
+    "load_states",
     "map_problem",
     "optimize_orbitals",
     "prepare_problem",
@@ -80,6 +82,7 @@ __all__ = [
     "run_problem",
     "run_vqe",
     "sample_circuit",
+    "save_states",
     "simulate_lattice_dynamics",
     "solve_exact",
     "square_lattice",

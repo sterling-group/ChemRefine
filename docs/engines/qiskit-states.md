@@ -49,6 +49,14 @@ The Python result exposes `result.states`, one immutable `DeterminantState` per
 root, and `root_energies_hartree`, `root_electronic_energies_hartree`, and
 `root_total_energies_hartree`. Numerical states are deliberately excluded from
 `result.as_dict()` and are persisted by the worker as referenced array artifacts.
+The shipped molecular worker writes a `<job>.states.json` descriptor and its
+integrity-checked NPZ payload, including any accumulated orbital rotation.
+`save_states(path, result.states)` and `load_states(path)` provide the same
+versioned format in Python. Paths inside descriptors are relative; amplitudes
+are complex numeric arrays and determinant integers use unsigned 64-bit limbs.
+Missing or corrupt referenced states invalidate a cached molecular result.
+Calling `run_problem` does not write files; `run_job(..., artifact_dir=...)`
+explicitly enables persistence at the pipeline boundary.
 
 ```python
 state = result.states[result.target_root]

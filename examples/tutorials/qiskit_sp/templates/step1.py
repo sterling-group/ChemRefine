@@ -7,6 +7,7 @@ result = run_job(
     charge=int("$CHARGE"),
     multiplicity=int("$MULTIPLICITY"),
     options=json.loads("$OPTIONS_JSON"),
+    artifact_dir=".",
 )
 
 energy_hartree = result.energy_hartree
