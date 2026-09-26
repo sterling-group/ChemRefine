@@ -14,6 +14,7 @@ import pytest
 from ase import Atoms
 from ase.io import read as ase_read
 
+import chemrefine.io as chemrefine_io
 from chemrefine.io import (
     gather_output_files,
     natural_key,
@@ -487,3 +488,110 @@ def test_smiles_to_xyz_is_reproducible(tmp_path: Path):
     assert [p.read_text(encoding="utf-8") for p in first] == [
         p.read_text(encoding="utf-8") for p in second
     ]
+
+
+# ---------------------------------------------------------------------------
+# atomic_write — the one writer for every file this package replaces
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("mode", [0o600, 0o755])
+def test_a_requested_mode_is_on_the_file_before_it_appears(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: int
+):
+    """The mode is set on the temp file, so ``path`` never exists with any other.
+
+    A token readable for an instant, or a wrapper ORCA finds but cannot execute, is what
+    a chmod after the rename would allow; the rename is where the check has to look.
+    """
+    import stat
+
+    at_rename: list[int] = []
+    real_replace = Path.replace
+
+    def watched(self: Path, target: Path) -> Path:
+        at_rename.append(stat.S_IMODE(self.stat().st_mode))
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", watched)
+    target = tmp_path / "file"
+    chemrefine_io.atomic_write(target, b"x", mode=mode)
+    assert at_rename == [mode]
+    assert stat.S_IMODE(target.stat().st_mode) == mode
+
+
+def test_a_write_that_cannot_re_mode_leaves_nothing_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A failed re-mode must strand neither the temp file nor its descriptor.
+
+    ``fchmod`` is the one step between ``mkstemp`` and ``fdopen`` that genuinely fails —
+    shared filesystems and FUSE/CIFS mounts refuse it. Done before the ``fdopen`` it took
+    both halves with it: nothing owned the descriptor yet, and the ``finally`` had not been
+    entered, so a ``.tmp_*.part`` stayed in the directory the user was writing to. That is a
+    nuisance once and an accumulation on the GUI's waitress threads, which write the user's
+    config through this same writer.
+    """
+    import os
+
+    monkeypatch.setattr(os, "fchmod", lambda *a: (_ for _ in ()).throw(OSError("EPERM")))
+    target = tmp_path / "doc.json"
+    with pytest.raises(OSError, match="EPERM"):
+        chemrefine_io.atomic_write(target, b'{"a": 1}')
+
+    assert not target.exists(), "a failed write must not leave a partial document"
+    assert list(tmp_path.iterdir()) == [], (
+        f"temp residue survived a failed re-mode: {[p.name for p in tmp_path.iterdir()]}"
+    )
+
+
+@pytest.mark.skipif(
+    not chemrefine_io._PROC_STATUS.is_file(),
+    reason="this kernel does not publish Umask; only the fallback probe exists here",
+)
+def test_the_umask_is_read_without_ever_being_written(monkeypatch: pytest.MonkeyPatch):
+    """Reading the umask by setting it is a process-global write other threads see.
+
+    ``os.umask`` reads by writing, so between the clear and the restore anything another
+    thread creates is made with no mask at all and a ``mkdir`` lands 0777 — world-writable
+    directories under an output tree that is routinely shared. The window is reachable:
+    the GUI runs on four waitress threads whose handlers both write through this module
+    and call ``Path.mkdir``. Linux publishes the value instead (``umask(2)``), so nothing
+    here may call ``os.umask`` at all.
+    """
+    import os
+
+    expected = next(
+        int(line.split()[1], 8)
+        for line in chemrefine_io._PROC_STATUS.read_text(encoding="utf-8").splitlines()
+        if line.startswith("Umask:")
+    )
+    monkeypatch.setattr(os, "umask", lambda _mask: pytest.fail("read the umask by setting it"))
+
+    assert chemrefine_io._umask() == expected
+
+
+@pytest.mark.parametrize("published", ["no status file at all", "a status file without the field"])
+def test_the_umask_falls_back_when_the_kernel_does_not_publish_it(
+    published: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A kernel older than 4.7 has no ``Umask`` field, and must still get the right mode.
+
+    Both ways the field can be absent take the probe, and the probe has to put back what
+    it set — otherwise the first cache write of the run would leave the process at umask
+    0 and every file after it world-writable, which is worse than the race it replaces.
+    Asking twice is what proves the restore happened.
+    """
+    import os
+
+    status = tmp_path / "status"
+    if published == "a status file without the field":
+        status.write_text("Name:\tpython\nPid:\t1\n", encoding="utf-8")
+    monkeypatch.setattr(chemrefine_io, "_PROC_STATUS", status)
+
+    previous = os.umask(0o027)
+    try:
+        assert chemrefine_io._umask() == 0o027
+        assert chemrefine_io._umask() == 0o027
+    finally:
+        os.umask(previous)

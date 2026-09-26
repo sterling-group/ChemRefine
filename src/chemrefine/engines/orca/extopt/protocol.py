@@ -17,13 +17,14 @@ match the rest of ChemRefine.
 from __future__ import annotations
 
 import shlex
+import stat
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from chemrefine.engines._backend_server import sidecar
 from chemrefine.engines._backend_server.base import CalculationData
 from chemrefine.errors import JobFailureError
+from chemrefine.io import atomic_write
 
 if TYPE_CHECKING:
     import numpy as np
@@ -181,6 +182,10 @@ def write_engrad(
     return path
 
 
+_EXECUTABLE = 0o755
+"""The wrapper's mode: ORCA executes it, and every job of the step reads it."""
+
+
 def write_wrapper_script(
     *,
     path: str | Path,
@@ -197,12 +202,10 @@ def write_wrapper_script(
     but no backend stack, and a bare ``python`` on PATH may be a system
     interpreter without chemrefine installed.
 
-    The wrapper is one file per step that every job of the step executes, once per
-    optimiser step, and a convergence retry prepares the step again while its siblings
-    run. So it is replaced atomically (:func:`~chemrefine.engines._backend_server.sidecar.
-    write_atomic`) — an in-place write had a window between truncate and write in which a
-    sibling's ORCA executed an empty script — and left alone when it already holds these
-    bytes, which for one step is every prepare after the first.
+    Every job of the step executes this one file, once per optimiser step, while a
+    convergence retry may prepare the step again. So it is replaced in one rename
+    (:func:`chemrefine.io.atomic_write`), executable from its first appearance, and left
+    alone when it already holds these bytes executably — every prepare after the first.
     """
     path = Path(path)
     extra = f" {extra_args}" if extra_args else ""
@@ -218,6 +221,11 @@ def write_wrapper_script(
         f"exec {shlex.quote(sys.executable)} -m chemrefine.engines.orca.extopt.bridge "
         f'--backend {backend} --bind "$SERVER_URL"{extra} "$1"\n'
     )
-    if path.is_file() and path.read_text(encoding="utf-8") == script:
+    if (
+        path.is_file()
+        and stat.S_IMODE(path.stat().st_mode) == _EXECUTABLE
+        and path.read_text(encoding="utf-8") == script
+    ):
         return path
-    return sidecar.write_atomic(path, script, prefix=f".{path.name}.", mode=0o755)
+    atomic_write(path, script.encode("utf-8"), mode=_EXECUTABLE)
+    return path

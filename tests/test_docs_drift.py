@@ -437,6 +437,22 @@ def _orphaned_strings(tree: ast.AST) -> Iterator[int]:
                     yield statement.lineno
 
 
+@pytest.mark.parametrize(
+    ("source", "orphans"),
+    [
+        ('A = 1\nB = 2\n"""b"""\n"""a"""\n', [4]),
+        ('x = 0\nx += 1\n"""after an augmented assignment"""\n', [3]),
+        ('"""module"""\nA: int = 1\n"""attribute"""\n', []),
+        ('class C:\n    """class"""\n    a = 1\n    """attribute"""\n', []),
+        ('def f():\n    """function"""\n    x = 1\n    """after an assignment"""\n', []),
+    ],
+    ids=["docstring-pushed-off-its-name", "augmented", "module", "class", "function"],
+)
+def test_the_orphan_walker_finds_what_it_is_for(source: str, orphans: list[int]) -> None:
+    """The guard below passes on a clean tree, so its detector needs a tree that is not."""
+    assert list(_orphaned_strings(ast.parse(source))) == orphans
+
+
 def test_every_docstring_is_attached_to_what_it_documents() -> None:
     """No docstring in the package floats free of the name it describes.
 

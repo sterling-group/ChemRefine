@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import TextIO
 
 from chemrefine.errors import CacheError, ConfigError, JobSubmissionError
+from chemrefine.io import atomic_write
 from chemrefine.throttle import GpuBudget, StallDeadline
 
 logger = logging.getLogger(__name__)
@@ -482,31 +483,13 @@ def load_leases(step_dir: Path) -> list[JobLease]:
 
 
 def _write_leases(path: Path, leases: list[JobLease]) -> None:
-    """Atomic tempfile + rename, spelled locally on purpose.
+    """The ledger, replaced whole (:func:`chemrefine.io.atomic_write`) in a plain file's mode.
 
-    Not :func:`chemrefine.cache.atomic_write`: this bottom-layer module must not import
-    upward (the architecture's spine), so the dance is re-spelled here the way
-    :func:`chemrefine.engines.mlip.train.base._fingerprint_sha1` re-spells its concept
-    across the same kind of boundary. Two things are deliberately different. The temp
-    file is created by an exclusive plain ``open`` rather than ``mkstemp``, so it lands
-    with the mode a plain write would give (``0666`` under the umask) and the rename
-    keeps it — ``mkstemp``'s ``0600`` made every ledger owner-only, and the resume fence
-    reads this file from whichever account next drives the tree, which the docs direct
-    to inspect it; the cache writer reaches the same mode with a ``fchmod`` this module
-    would have to re-spell. And there is no ``fsync``: a ledger truncated by a machine
-    crash is a :class:`~chemrefine.errors.CacheError` at the next read, which fails
-    closed, so durability buys nothing here. The driver is the tree's sole writer under
-    the run lock, so a pid-suffixed name is unique.
+    The resume fence reads it from whichever account next drives the tree, which the docs
+    direct to inspect it, so it gets the mode a plain write would give, not a private one.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".tmp_lease_{os.getpid()}")
-    tmp.unlink(missing_ok=True)
-    try:
-        with tmp.open("x", encoding="utf-8") as fh:
-            json.dump([{"id": j.id, "host": j.host, "pid": j.pid} for j in leases], fh)
-        tmp.replace(path)
-    finally:
-        tmp.unlink(missing_ok=True)
+    rows = [{"id": j.id, "host": j.host, "pid": j.pid} for j in leases]
+    atomic_write(path, json.dumps(rows).encode("utf-8"))
 
 
 def record_lease(step_dir: Path, job_id: str) -> None:

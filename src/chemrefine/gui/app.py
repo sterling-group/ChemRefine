@@ -47,9 +47,9 @@ from pydantic_core import PydanticCustomError
 from werkzeug.exceptions import HTTPException
 
 from chemrefine import agent_tools, introspect, io
-from chemrefine.cache import atomic_write
 from chemrefine.errors import ChemRefineError, ConfigError
 from chemrefine.gui import STATIC_DIR
+from chemrefine.io import atomic_write
 
 
 def _refusal(error: ChemRefineError) -> dict[str, Any]:

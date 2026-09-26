@@ -30,11 +30,11 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Literal, cast
 
-from chemrefine.cache import atomic_write
 from chemrefine.config import Config
 from chemrefine.engines.api import JobExecutable, StarterProviding, TemplateDriven, get_engine
 from chemrefine.errors import ConfigError, EngineNotFoundError
 from chemrefine.ids import step_template_path
+from chemrefine.io import atomic_write
 from chemrefine.validate import effective_header, shared_template_clash
 
 _SCRIPT_FALLBACK = (

@@ -1652,11 +1652,11 @@ def test_the_lease_ledger_is_written_readable_for_the_next_driver(tmp_path: Path
 def test_a_failed_lease_write_leaves_no_temp_file_behind(tmp_path: Path):
     """The temp file is the writer's, and it is gone whether or not the rename happened."""
     with (
-        patch.object(dispatch.json, "dump", side_effect=OSError("disk full")),
+        patch.object(Path, "replace", side_effect=OSError("disk full")),
         pytest.raises(OSError, match="disk full"),
     ):
         slurm.record_lease(tmp_path, "local-1")
-    assert not list(slurm.lease_path(tmp_path).parent.glob(".tmp_lease_*"))
+    assert not list(slurm.lease_path(tmp_path).parent.glob(".tmp_*"))
     assert not slurm.lease_path(tmp_path).exists()
 
 

@@ -1,4 +1,4 @@
-"""Filesystem I/O helpers — XYZ read/write, SMILES → 3D, CSV reporting.
+"""Filesystem I/O helpers — atomic replacement, XYZ read/write, SMILES → 3D, CSV reporting.
 
 Keeps every concrete file format in one place so individual engine
 modules don't grow their own XYZ-handling code. ``write_xyz`` accepts
@@ -21,7 +21,9 @@ stated price — the rule for a new engine is "use :func:`read_xyz_frames` /
 from __future__ import annotations
 
 import logging
+import os
 import re
+import tempfile
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -94,6 +96,66 @@ def natural_key(name: str | Path) -> list[object]:
 # ---------------------------------------------------------------------------
 # Text
 # ---------------------------------------------------------------------------
+
+
+_PROC_STATUS = Path("/proc/self/status")
+"""Where Linux publishes this process's umask — see :func:`_umask`."""
+
+
+def _umask() -> int:
+    """This process's umask, read without writing it.
+
+    ``os.umask`` is the only POSIX way to *read* the umask and it reads by setting it,
+    which is process-global: between the clear and the restore, anything another thread
+    creates is made with no mask at all, so a ``mkdir`` lands 0777. The GUI is served by
+    waitress on four threads whose handlers both write through :func:`atomic_write` and
+    call ``Path.mkdir``, so that window is reachable.
+
+    ``umask(2)`` names the remedy itself: since Linux 4.7 the value is published in
+    ``/proc/self/status``, and reading it changes nothing (CPython declined a thread-safe
+    wrapper, bpo-35275, since the POSIX API has none either). The probe stays as the
+    fallback for a kernel that does not publish the field; there the window is back, which
+    is the narrower of the two evils.
+    """
+    try:
+        for line in _PROC_STATUS.read_text(encoding="utf-8").splitlines():
+            if line.startswith("Umask:"):
+                return int(line.split()[1], 8)
+    except (OSError, ValueError, IndexError):
+        pass
+    mask = os.umask(0)
+    os.umask(mask)
+    return mask
+
+
+def atomic_write(path: Path, data: bytes, *, mode: int | None = None) -> None:
+    """Replace ``path`` with ``data`` whole — a temp file, its mode, fsync, then one rename.
+
+    The one writer for every file this package replaces: the caches, the configs and
+    templates it saves, the SLURM lease ledger, the ExtOpt sidecars and wrapper. A process
+    that opens or executes ``path`` at any moment gets the old file or the new one, never a
+    truncated one, and the ``fsync`` orders the rename after the data, so a machine crash
+    (not only a killed process) cannot leave it empty either.
+
+    ``mode`` is the file's permission bits, set on the temp file before the rename so the
+    file never appears under ``path`` with other ones: ``None`` gives what a plain
+    ``open()`` would — ``0o666`` under the umask, readable by the colleague a tree is
+    shared with — ``0o600`` keeps a secret owner-only, ``0o755`` makes a script executable.
+    The mode is set through the open file, inside the ``with``: it is the one step here
+    that shared filesystems and FUSE/CIFS mounts refuse, and there a failure still closes
+    the descriptor and removes the temp file rather than stranding either.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp_", suffix=".part")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            os.fchmod(fh.fileno(), 0o666 & ~_umask() if mode is None else mode)
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        Path(tmp).replace(path)
+    finally:
+        Path(tmp).unlink(missing_ok=True)
 
 
 def read_utf8(path: Path, *, what: str) -> str:

@@ -237,6 +237,19 @@ def test_a_wrapper_that_already_says_it_is_left_alone(tmp_path: Path):
     assert (after.st_ino, after.st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
 
 
+def test_a_wrapper_that_lost_its_exec_bit_is_written_again(tmp_path: Path):
+    """The bytes alone do not make a wrapper runnable; a same-bytes one without ``x`` is redone.
+
+    Left alone, every job of the step would fail to execute it and no retry could heal it —
+    a tree copied by a tool that drops exec bits is the likeliest way to get one.
+    """
+    out = tmp_path / "mlip_extopt.sh"
+    protocol.write_wrapper_script(path=out, backend="mlip", url_file=tmp_path / "server.url")
+    out.chmod(0o644)
+    protocol.write_wrapper_script(path=out, backend="mlip", url_file=tmp_path / "server.url")
+    assert out.stat().st_mode & 0o777 == 0o755
+
+
 def test_write_wrapper_script_threads_extra_args(tmp_path: Path):
     out = tmp_path / "pyscf_extopt.sh"
     protocol.write_wrapper_script(

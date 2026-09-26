@@ -193,7 +193,7 @@ def read_template(config_path: str, step: int | str) -> dict[str, Any]:
 def write_template(config_path: str, step: int | str, text: str) -> dict[str, Any]:
     """Replace one step's template with ``text`` (creating template_dir if needed).
 
-    Replaced whole or not at all (:func:`chemrefine.cache.atomic_write`): a kill or a
+    Replaced whole or not at all (:func:`chemrefine.io.atomic_write`): a kill or a
     full disk between truncating the file and writing it would leave an empty template
     where an edited one was, and :func:`~chemrefine.ids.require_template` would hand that
     stub to the engine on the next run — the rule :func:`save_config` already holds for
@@ -205,7 +205,7 @@ def write_template(config_path: str, step: int | str, text: str) -> dict[str, An
     """
     plan = _step_template_plan(load_config(_config_path(config_path)), step)
     try:
-        cache.atomic_write(plan.path, text.encode("utf-8"))
+        io.atomic_write(plan.path, text.encode("utf-8"))
     except OSError as e:
         raise ConfigError(f"cannot write template {plan.path}: {e}") from e
     return {"path": str(plan.path), "bytes": len(text.encode("utf-8"))}
@@ -629,7 +629,7 @@ def build_structures(
                 build_warnings.append(f"structure_{i}: {parity}")
     else:
         path = out / "structure_0.xyz"
-        cache.atomic_write(path, (xyz_text or "").encode("utf-8"))
+        io.atomic_write(path, (xyz_text or "").encode("utf-8"))
         try:
             frames = io.read_xyz_frames(path)
         except (ValueError, IndexError, KeyError, OSError) as e:
@@ -1263,7 +1263,7 @@ def save_config(path: str, yaml_text: str) -> dict[str, Any]:
     (``written: false``) rather than saved, so no tool call can leave a broken
     ``input.yaml`` where a later ``start_run`` would trip over it; warnings (missing
     templates and the like) do not block, exactly as ``chemrefine validate`` treats
-    them. The write itself is atomic (:func:`chemrefine.cache.atomic_write`), and
+    them. The write itself is atomic (:func:`chemrefine.io.atomic_write`), and
     relative paths inside the text are judged against the file's own directory, the way
     :func:`~chemrefine.config.load_config` will resolve them later.
     """
@@ -1274,7 +1274,7 @@ def save_config(path: str, yaml_text: str) -> dict[str, Any]:
         return payload
     try:
         destination.parent.mkdir(parents=True, exist_ok=True)
-        cache.atomic_write(destination, yaml_text.encode("utf-8"))
+        io.atomic_write(destination, yaml_text.encode("utf-8"))
     except OSError as e:
         # The module contract: a failure carries the documented exit code, so the GUI's
         # handler answers 400 and an MCP client gets a typed refusal — not a 500 traceback.
