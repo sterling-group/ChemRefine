@@ -14,6 +14,7 @@ from chemrefine.engines.qiskit.components import (
     initial_states_extended,
     mappers,
     optimizers,
+    optimizers_extended,
     samplers,
 )
 
@@ -27,5 +28,6 @@ __all__ = [
     "initial_states_extended",
     "mappers",
     "optimizers",
+    "optimizers_extended",
     "samplers",
 ]
