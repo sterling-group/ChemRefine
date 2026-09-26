@@ -71,6 +71,13 @@ from chemrefine.engines.qiskit.problem import (
     prepare_problem,
     prepare_pyscf_problem,
 )
+from chemrefine.engines.qiskit.rdm_reconstruction import (
+    RDMReconstructionOptions,
+    RDMReconstructionResult,
+    dqg_matrices,
+    rdm_constraint_diagnostics,
+    reconstruct_rdms,
+)
 from chemrefine.engines.qiskit.result import CircuitMetrics, QiskitRunResult
 from chemrefine.engines.qiskit.sampling import SampleBatch, sample_circuit
 from chemrefine.engines.qiskit.shadows import (
@@ -121,6 +128,8 @@ __all__ = [
     "ProjectedEigensystem",
     "QiskitOptions",
     "QiskitRunResult",
+    "RDMReconstructionOptions",
+    "RDMReconstructionResult",
     "ReducedDensityMatrices",
     "SampleBatch",
     "ShadowResult",
@@ -136,6 +145,7 @@ __all__ = [
     "chain_lattice",
     "collect_fermionic_shadows",
     "commuting_evolution",
+    "dqg_matrices",
     "estimate_fermionic_shadows",
     "lattice_encoding_qubits",
     "load_integrals",
@@ -152,7 +162,9 @@ __all__ = [
     "projected_eigensystem",
     "projected_operator",
     "random_shadow_settings",
+    "rdm_constraint_diagnostics",
     "rdm_expectation",
+    "reconstruct_rdms",
     "rotate_hamiltonian",
     "run_adapt_vqe",
     "run_job",

@@ -158,6 +158,7 @@ nav:
       - Quantum experiments: engines/qiskit-experiment.md
       - Sampled quantum states: engines/qiskit-states.md
       - Fermionic shadows: engines/qiskit-shadows.md
+      - RDM reconstruction: engines/qiskit-rdm-reconstruction.md
       - Double-factorized evolution: engines/qiskit-double-factorized.md
       - Variational dynamics: engines/qiskit-dynamics.md
       - Quantum spectra: engines/qiskit-spectra.md

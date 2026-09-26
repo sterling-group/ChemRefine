@@ -27,6 +27,11 @@ for the full map.
 
 ### Added
 
+- **Complex constrained RDM reconstruction.** Experimental D/DQ/DQG fitting keeps
+  raw tensors, supports masked weighted losses and explicit energy regularization,
+  and independently checks SCS feasibility without representability or energy-bound
+  claims. Native artifacts retain solver diagnostics and complex coherences.
+
 - **Durable quantum provider records.** Local and array workers keep credential-free
   request intents and returned job IDs outside scratch. Bounded, validated journals
   retain ambiguous submissions and support explicit retrieval from archived attempts.
