@@ -30,5 +30,77 @@
     "new": "if noise_model is None:",
     "tests": "tests/test_engines_qiskit.py",
     "breaks": "an explicitly requested Aer noise model is silently ignored, producing an ideal-simulator energy that looks valid but models a different experiment"
+  },
+  {
+    "id": "qiskit-artifact-digest",
+    "path": "src/chemrefine/engines/qiskit/bundles.py",
+    "old": "_digest(payload) != descriptor.sha256",
+    "new": "_digest(payload) == descriptor.sha256",
+    "tests": "tests/test_engines_qiskit_bundles.py",
+    "breaks": "corrupt state or trajectory payloads are accepted during cache reuse"
+  },
+  {
+    "id": "qiskit-orbital-shadow-inversion",
+    "path": "src/chemrefine/engines/qiskit/shadows.py",
+    "old": "one = (m + 1) * normal - num_particles * np.eye(m)",
+    "new": "one = m * normal - num_particles * np.eye(m)",
+    "tests": "tests/test_engines_qiskit_shadows.py",
+    "breaks": "number-conserving orbital shadow estimates use the wrong inverse measurement channel"
+  },
+  {
+    "id": "qiskit-majorana-shadow-inversion",
+    "path": "src/chemrefine/engines/qiskit/shadows.py",
+    "old": "inverse_four_majoranas = comb(2 * m, 4) / comb(m, 2)",
+    "new": "inverse_four_majoranas = comb(m, 2) / comb(2 * m, 4)",
+    "tests": "tests/test_engines_qiskit_shadows.py",
+    "breaks": "Majorana two-body coherences receive a biased inversion weight"
+  },
+  {
+    "id": "qiskit-variational-metric-sector",
+    "path": "src/chemrefine/engines/qiskit/dynamics.py",
+    "old": "eigenvalues[0] < -options.numerical_tolerance",
+    "new": "eigenvalues[0] > -options.numerical_tolerance",
+    "tests": "tests/test_engines_qiskit_dynamics.py",
+    "breaks": "invalid negative quantum geometric tensors pass the metric positivity guard"
+  },
+  {
+    "id": "qiskit-pauli-lcu-normalization",
+    "path": "src/chemrefine/engines/qiskit/resources.py",
+    "old": "if label != \"I\" * width and value != 0",
+    "new": "if label == \"I\" * width and value != 0",
+    "tests": "tests/test_engines_qiskit_resource_estimates.py",
+    "breaks": "LCU costs count constant offsets while dropping physical Hamiltonian terms"
+  },
+  {
+    "id": "qiskit-projected-residual",
+    "path": "src/chemrefine/engines/qiskit/determinants.py",
+    "old": "residual > max(1e-8, 100 * tolerance)",
+    "new": "residual < max(1e-8, 100 * tolerance)",
+    "tests": "tests/test_engines_qiskit_determinants.py",
+    "breaks": "a projected eigensystem is accepted or rejected using the wrong residual criterion"
+  },
+  {
+    "id": "qiskit-spacetime-check-order",
+    "path": "src/chemrefine/engines/qiskit/spacetime.py",
+    "old": "for index in reversed(range(count)):",
+    "new": "for index in range(count):",
+    "tests": "tests/test_engines_qiskit_spacetime.py",
+    "breaks": "noncommuting endpoint checks change the ideal payload unitary and spuriously reject valid inputs"
+  },
+  {
+    "id": "qiskit-spacetime-controlled-sign",
+    "path": "src/chemrefine/engines/qiskit/spacetime.py",
+    "old": "if sign == -1:",
+    "new": "if sign == 1:",
+    "tests": "tests/test_engines_qiskit_spacetime.py",
+    "breaks": "incorrect controlled Pauli phases change check syndromes despite apparently correct unsigned conjugation"
+  },
+  {
+    "id": "qiskit-rdm-primal-feasibility",
+    "path": "src/chemrefine/engines/qiskit/rdm_reconstruction.py",
+    "old": "max(residuals) > tolerance",
+    "new": "max(residuals) < tolerance",
+    "tests": "tests/test_engines_qiskit_rdm_provider.py",
+    "breaks": "a solver status can pass RDMs violating particle trace, contraction, Hermiticity or antisymmetry constraints"
   }
 ]
