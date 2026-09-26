@@ -161,12 +161,11 @@ def square_lattice(
     )
 
 
-class LatticeDynamicsOptions(BaseModel):
+class LatticeIntegratorOptions(BaseModel):
     """Ideal simulation and product-formula controls with explicit resource limits."""
 
     model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 
-    time: float = 1.0
     steps: StrictInt = Field(1, ge=1)
     order: Literal[1, 2, 4] = 2
     mapping: Literal["jordan_wigner", "bravyi_kitaev", "parity"] = "jordan_wigner"
@@ -175,6 +174,12 @@ class LatticeDynamicsOptions(BaseModel):
     max_evolution_blocks: StrictInt = Field(10000, ge=1)
     max_statevector_bytes: StrictInt = Field(268435456, ge=1)
     max_exact_qubits: StrictInt = Field(12, ge=1)
+
+
+class LatticeDynamicsOptions(LatticeIntegratorOptions):
+    """Integrator controls and the physical evolution time for a single circuit."""
+
+    time: float = 1.0
 
 
 @dataclass(frozen=True)

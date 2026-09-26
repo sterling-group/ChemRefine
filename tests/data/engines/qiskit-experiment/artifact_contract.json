@@ -1,0 +1,5 @@
+{
+  "tests": ["tests/test_engines_qiskit_experiment.py", "tests/test_engines_qiskit_bundles.py"],
+  "fixtures": ["lattice/artifact.json"],
+  "note": "Recorded real two-site ideal hopping trajectory; source options are in the manifest."
+}

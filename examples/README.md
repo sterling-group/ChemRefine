@@ -18,6 +18,7 @@ cd <example> && chemrefine run input.yaml
 | [tutorials/host_guest](tutorials/host_guest/) | macrocycle + Cl⁻ | DOCKER guest docking, per-step charge override, SOLVATOR microsolvation. |
 | [tutorials/mlip_training](tutorials/mlip_training/) | C₁₀H₂₂ | Dataset building with random NMS, MACE training, trained-model validation. |
 | [tutorials/qiskit_sp](tutorials/qiskit_sp/) | H₂ | Modular Qiskit Nature single point with an active space, UCCSD, and VQE; switchable in YAML to exact or ADAPT-VQE and to reference statevector, lightweight shots, Aer statevector, or Aer finite-shot estimators. |
+| [tutorials/qiskit_experiment](tutorials/qiskit_experiment/) | Two-site lattice | Artifact workflow with an ideal hopping trajectory, explicit time points, and portable NPZ output; input structures pass through unchanged. |
 | [tutorials/fairchem_finetune](tutorials/fairchem_finetune/) | water conformers | FAIRChem (UMA) fine-tuning: label with UMA, fine-tune via fairchem's own recipe, run the produced checkpoint. |
 | [tutorials/pyscf_refine](tutorials/pyscf_refine/) | water | Direct-PySCF single-point refinement through a `step1.py` script template. |
 | [tutorials/redox/amines](tutorials/redox/amines/) | 8 amines (SMILES) | CSV seeding and redox charge/multiplicity ladders per molecule. |

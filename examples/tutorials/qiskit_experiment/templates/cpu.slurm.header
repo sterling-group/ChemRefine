@@ -1,0 +1,2 @@
+#!/bin/bash
+# One local worker, or a site-specific CPU allocation when dispatch is changed.

@@ -1,0 +1,24 @@
+input: molecule.xyz
+template_dir: templates
+output_dir: outputs
+charge: 0
+multiplicity: 1
+max_cores: 2
+dispatch: local
+steps:
+  - step: 1
+    engine: qiskit-experiment
+    options:
+      cores: 2
+      max_output_bytes: 268435456
+      experiment:
+        name: lattice_dynamics
+        options:
+          model:
+            num_sites: 2
+            spinful: false
+            edges:
+              - {source: 0, target: 1, hopping: 1.0}
+          occupied_modes: [0]
+          times: [0.0, 0.25, 0.5, 1.0]
+          dynamics: {steps: 4, order: 2, exact_reference: true}

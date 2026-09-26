@@ -27,6 +27,17 @@ for the full map.
 
 ### Added
 
+- **Declared engine file dependencies and output validation.** Nested input file
+  options and referenced payloads participate in relocation-safe cache identity.
+  Engines can validate required native outputs before cache reuse; missing or
+  corrupt products cannot masquerade as a successful artifact. Cache-only and
+  rebuild operations remain read-only with respect to job submission.
+
+- **Quantum experiment artifacts.** `qiskit-experiment` runs registry-selected
+  workflows through the shared scheduler and preserves molecular structures. Lattice
+  trajectories write versioned JSON/NPZ bundles with allocation limits, integrity
+  checks, relative paths and scratch copy-back support.
+
 - **A per-step gradient timeout for the ExtOpt engines.** `gradient_timeout_seconds`
   (default `600`) bounds one call of the bridge ORCA invokes per geometry. The old bound
   was fixed, and its expiry read as "server unreachable" — or, for a gradient the server

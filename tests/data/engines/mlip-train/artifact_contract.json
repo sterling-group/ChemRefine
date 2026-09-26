@@ -1,0 +1,5 @@
+{
+  "tests": ["tests/test_engines_mlip_train_engine.py", "tests/test_step_artifact.py"],
+  "fixtures": [],
+  "note": "Training outputs are opaque model files; the tests construct and validate their recorded digest without deserializing an MLIP backend."
+}
