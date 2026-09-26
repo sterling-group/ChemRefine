@@ -27,6 +27,10 @@ for the full map.
 
 ### Added
 
+- **Molecular-to-experiment handoffs.** Circuit-producing solvers can export their
+  retained logical preparations for scheduled measurements and shadows, with
+  nested payload hashing, scratch copy-back and SDK-free cache validation.
+
 - **Portable quantum preparations.** Bound logical circuits retain parameters,
   mapping, particle sectors, active Hamiltonians, energy offsets and provenance in
   integrity-checked JSON/NPZ artifacts, using QPY compatible with Qiskit 1.4.

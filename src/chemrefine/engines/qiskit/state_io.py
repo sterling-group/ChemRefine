@@ -114,7 +114,7 @@ def load_states(path: Path, *, max_bytes: int = DEFAULT_MAX_BYTES) -> tuple[Dete
         raise OutputParseError(f"invalid determinant states in {path}: {exc}") from exc
 
 
-def validate_state_references(output_path: Path) -> None:
+def validate_state_references(output_path: Path, *, circuit_max_bytes: int = 33554432) -> None:
     """Validate a molecular sidecar's referenced quantum states without provider calls."""
     try:
         raw = json.loads(output_path.read_text(encoding="utf-8"))
@@ -129,6 +129,14 @@ def validate_state_references(output_path: Path) -> None:
             path = output_path.parent / name
             if path.resolve().parent != output_path.parent.resolve():
                 raise ValueError("quantum state descriptor escapes its output directory")
-            load_states(path)
+            bundle = read_bundle(path, max_bytes=max(DEFAULT_MAX_BYTES, circuit_max_bytes))
+            if bundle.description.kind == "bound_circuit":
+                from chemrefine.engines.qiskit.circuit_io import validate_circuit_bundle
+
+                validate_circuit_bundle(bundle)
+                if bundle.arrays["qpy"].nbytes > circuit_max_bytes:
+                    raise ValueError("bound circuit payload exceeds configured circuit_max_bytes")
+            else:
+                load_states(path)
     except (OSError, TypeError, ValueError) as exc:
         raise OutputParseError(f"invalid quantum state references in {output_path}: {exc}") from exc

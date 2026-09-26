@@ -133,7 +133,12 @@ def test_pipeline_solver_persists_all_roots_and_engine_validates_references(tmp_
     assert result.energy_hartree == result.root_energies_hartree[2]
     for original, loaded in zip(result.states, restored, strict=True):
         np.testing.assert_array_equal(original.amplitudes, loaded.amplitudes)
-    QiskitEngine().validate_outputs(StepInputs(files=((xyz, output, "0"),)), None)
+    from types import SimpleNamespace
+
+    from chemrefine.config import StepConfig
+
+    context = SimpleNamespace(step_cfg=StepConfig(step=1, engine="qiskit"))
+    QiskitEngine().validate_outputs(StepInputs(files=((xyz, output, "0"),)), context)
     assert "*.npz" in QiskitEngine.output_globs
     assert "provider_jobs" in QiskitEngine().output_dirs(None)
 

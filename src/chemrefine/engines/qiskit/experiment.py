@@ -240,17 +240,24 @@ class QiskitExperimentEngine:
 
         component = EXPERIMENTS.options_for(self.options_cls.from_raw(options).experiment)
         references = typed_input_references(component, prefix=("experiment", "options"))
-        bundle_fields = {
-            option_pointer(reference.location)
-            for reference in references
-            if reference.file_format == "quantum_bundle"
+        from chemrefine.engines.qiskit.circuit_io import circuit_input_dependencies
+
+        formats = {
+            option_pointer(reference.location): reference.file_format for reference in references
         }
-        return {
-            f"{pointer.lstrip('/')}/{key}": payload
-            for pointer, path in files.items()
-            if pointer in bundle_fields
-            for key, payload in bundle_dependencies(path).items()
-        }
+        dependencies = {}
+        for pointer, path in files.items():
+            file_format = formats.get(pointer)
+            if file_format == "quantum_bundle":
+                payloads = bundle_dependencies(path)
+            elif file_format == "quantum_circuit":
+                payloads = circuit_input_dependencies(path)
+            else:
+                continue
+            dependencies.update(
+                {f"{pointer.lstrip('/')}/{key}": payload for key, payload in payloads.items()}
+            )
+        return dependencies
 
     def check_step(self, step_cfg: StepConfig, *, charge: int, multiplicity: int) -> None:
         """Refuse invalid science before any upstream step submits work."""

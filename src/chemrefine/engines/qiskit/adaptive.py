@@ -368,6 +368,8 @@ def adaptive_solve(
         )
         measurements += session.measurements
         metrics = logical_circuit_metrics(circuit)
+        from chemrefine.engines.qiskit.circuit_io import bound_circuit
+
         return NativeOutcome(
             energy,
             converged=converged,
@@ -378,6 +380,9 @@ def adaptive_solve(
             parameter_count=len(point),
             optimizer_evaluations=len(evaluations),
             evaluations=evaluations,
+            circuits=(bound_circuit(context, circuit, point),)
+            if request.options.circuit_export is not None
+            else (),
             diagnostics={
                 "experimental": True,
                 "method": "ceo_adapt" if ceo else "tetris_adapt",

@@ -1,0 +1,39 @@
+# Run from this directory: chemrefine run input.yaml
+# Step 1 exports the converged molecular preparation; step 2 measures alpha parity.
+template_dir: ../qiskit_sp/templates
+output_dir: ./outputs
+input: ../qiskit_sp/h2.xyz
+charge: 0
+multiplicity: 1
+max_cores: 1
+dispatch: local
+steps:
+  - step: 1
+    engine: qiskit
+    operation: sp
+    options:
+      integral_source:
+        bundle_path: ../qiskit_sp/h2_mo.json
+      algorithm: vqe
+      ansatz: uccsd
+      mapper: jordan_wigner
+      circuit_export:
+        max_bytes: 1048576
+      cores: 1
+  - step: 2
+    engine: qiskit-experiment
+    options:
+      cores: 1
+      experiment:
+        name: pauli_measurement
+        options:
+          circuit_path: ./outputs/step1/0/step1_0_inp.root0.circuit.json
+          observable: {IIZZ: 1.0}
+          measurement:
+            grouping: qwc
+            shots: 1024
+            pilot_shots: 32
+            seed: 7
+          sampler:
+            name: statevector
+            options: {seed: 7}

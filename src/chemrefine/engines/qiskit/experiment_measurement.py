@@ -12,11 +12,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from chemrefine.engines.qiskit.experiment import EXPERIMENTS, ExperimentResult
 from chemrefine.engines.qiskit.measurement import MeasurementOptions, measure_observable
 from chemrefine.engines.qiskit.options import ComponentSelection
-from chemrefine.errors import ConfigError
+from chemrefine.errors import ConfigError, OutputParseError
 
 
 def read_circuit(path: Path, *, max_bytes: int = 33554432) -> Any:
-    """Read exactly one QPY circuit, with a bound on input bytes."""
+    """Read one QPY circuit or a bound preparation bundle with bounded input storage."""
     from qiskit import qpy
     from qiskit.exceptions import QiskitError
 
@@ -24,10 +24,24 @@ def read_circuit(path: Path, *, max_bytes: int = 33554432) -> Any:
         if path.stat().st_size > max_bytes:
             raise ValueError("QPY circuit exceeds its input byte limit")
         with path.open("rb") as stream:
+            signature = stream.read(6)
+            stream.seek(0)
+            if signature != b"QISKIT":
+                from chemrefine.engines.qiskit.circuit_io import load_circuit
+
+                return load_circuit(path, max_bytes=max_bytes).circuit
             circuits = qpy.load(stream)
         if len(circuits) != 1:
             raise ValueError("circuit input must contain exactly one QPY circuit")
-    except (OSError, ValueError, EOFError, StructError, QiskitError) as exc:
+    except (
+        OSError,
+        ValueError,
+        TypeError,
+        EOFError,
+        StructError,
+        QiskitError,
+        OutputParseError,
+    ) as exc:
         raise ConfigError(f"cannot load circuit {path}: {exc}") from exc
     return circuits[0]
 
@@ -36,7 +50,9 @@ class PauliCircuitInput(BaseModel):
     """A bounded QPY circuit and SDK-free Hermitian Pauli input validation."""
 
     model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
-    circuit_path: str = Field(min_length=1, json_schema_extra={"input_file": True})
+    circuit_path: str = Field(
+        min_length=1, json_schema_extra={"input_file": True, "file_format": "quantum_circuit"}
+    )
     max_circuit_bytes: int = Field(33554432, ge=1)
     observable: dict[str, float] = Field(min_length=1)
 

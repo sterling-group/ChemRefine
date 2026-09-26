@@ -110,8 +110,10 @@ class QiskitEngine(
         """Validate referenced state bundles locally on completion and recovery."""
         from chemrefine.engines.qiskit.state_io import validate_state_references
 
+        resolved = self.options_cls.from_raw(ctx.step_cfg.engine_options())
+        circuit_limit = resolved.circuit_export.max_bytes if resolved.circuit_export else 33554432
         for _input_path, output_path, _identity in inputs.files:
-            validate_state_references(output_path)
+            validate_state_references(output_path, circuit_max_bytes=circuit_limit)
 
     def output_dirs(self, ctx: StepContext) -> tuple[str, ...]:
         """Preserve reusable states, checkpoints and provider records from scratch."""

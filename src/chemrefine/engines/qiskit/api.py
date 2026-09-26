@@ -85,6 +85,7 @@ from chemrefine.engines.qiskit.measurement import (
 from chemrefine.engines.qiskit.operators import Excitation, OperatorPool
 from chemrefine.engines.qiskit.options import (
     ActiveSpaceOptions,
+    CircuitExportOptions,
     ComponentSelection,
     IntegralSourceOptions,
     QiskitOptions,
@@ -157,6 +158,7 @@ __all__ = [
     "BoundCircuit",
     "CheckedCircuit",
     "CircuitDescription",
+    "CircuitExportOptions",
     "CircuitMetrics",
     "CuttingOptions",
     "CuttingPlan",

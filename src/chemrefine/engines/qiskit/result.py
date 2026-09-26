@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
+    from chemrefine.engines.qiskit.circuit_io import BoundCircuit
     from chemrefine.engines.qiskit.determinants import DeterminantState
 
 
@@ -80,13 +81,15 @@ class QiskitRunResult:
     root_electronic_energies_hartree: tuple[float, ...] | None = None
     root_total_energies_hartree: tuple[float, ...] | None = None
     states: tuple[DeterminantState, ...] = field(default=(), repr=False, compare=False)
+    circuits: tuple[BoundCircuit, ...] = field(default=(), repr=False, compare=False)
 
     def as_dict(self) -> dict[str, Any]:
         """Return a detached JSON-native snapshot, rejecting objects and NaN/inf."""
         # Numerical states are transient worker payloads, persisted as referenced
         # bundles by the workflow rather than copied into JSON sidecars.
-        data = asdict(replace(self, states=()))
+        data = asdict(replace(self, states=(), circuits=()))
         data.pop("states")
+        data.pop("circuits")
         return cast("dict[str, Any]", json.loads(json.dumps(data, allow_nan=False)))
 
     def as_metadata(self) -> dict[str, Any]:

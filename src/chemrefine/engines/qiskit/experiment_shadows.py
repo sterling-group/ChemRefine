@@ -21,7 +21,9 @@ class ShadowExperimentOptions(BaseModel):
     """A bound Jordan-Wigner preparation, sampler and distinct fermionic ensemble."""
 
     model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
-    circuit_path: str = Field(min_length=1, json_schema_extra={"input_file": True})
+    circuit_path: str = Field(
+        min_length=1, json_schema_extra={"input_file": True, "file_format": "quantum_circuit"}
+    )
     max_circuit_bytes: int = Field(33554432, ge=1)
     shadows: FermionicShadowOptions
     sampler: ComponentSelection = Field(
@@ -51,6 +53,12 @@ class ShadowExperimentOptions(BaseModel):
 def shadow_experiment(*, options: ShadowExperimentOptions, **context: Any) -> ExperimentResult:
     """Collect a shadow dataset and retain enough arrays to reproduce its inversion."""
     circuit = read_circuit(Path(options.circuit_path), max_bytes=options.max_circuit_bytes)
+    exported = (circuit.metadata or {}).get("chemrefine_preparation")
+    if exported is not None and (
+        exported["mapping"].get("name") != "jordan_wigner"
+        or exported["num_spin_orbitals"] != circuit.num_qubits
+    ):
+        raise ConfigError("fermionic shadows require an unreduced Jordan-Wigner circuit bundle")
     modes, controls = circuit.num_qubits, options.shadows
     entries = modes**2 + (modes**4 if controls.max_order == 2 else 0)
     settings = controls.num_settings

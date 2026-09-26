@@ -3,6 +3,7 @@
   "examples": [
     "basis",
     "integral_source",
+    "circuit_export",
     "active_space",
     "mapper",
     "algorithm",

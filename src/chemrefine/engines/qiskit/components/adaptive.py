@@ -97,7 +97,7 @@ def build_ceo_pool(
     "tetris_adapt",
     AdaptiveOptions,
     execution="native",
-    capabilities=frozenset({"rebuilds_optimizer"}),
+    capabilities=frozenset({"rebuilds_optimizer", "bound_circuit"}),
     requires=frozenset({"mapper", "estimator", "optimizer", "operator_pool", "initial_state"}),
     status="experimental",
     supported_domains=("mapped_hermitian_pools", "fixed_particle_and_spin_projection"),
@@ -113,7 +113,7 @@ def build_tetris_adapt(*, options: AdaptiveOptions, request: NativeSolveRequest)
     "ceo_adapt",
     CEOOptions,
     execution="native",
-    capabilities=frozenset({"rebuilds_optimizer"}),
+    capabilities=frozenset({"rebuilds_optimizer", "bound_circuit"}),
     requires=frozenset(
         {"mapper", "estimator", "optimizer", "operator_pool", "ceo_pool", "initial_state"}
     ),

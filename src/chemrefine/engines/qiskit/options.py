@@ -99,6 +99,13 @@ class IntegralSourceOptions(BaseModel):
     geometry_tolerance_angstrom: float = Field(1e-7, gt=0, le=1e-3)
 
 
+class CircuitExportOptions(BaseModel):
+    """Retain logical bound preparations for supported circuit-producing algorithms."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    max_bytes: StrictInt = Field(33554432, ge=1)
+
+
 class QiskitOptions(EngineOptions):
     """Validated component graph for a Qiskit Nature ground-state calculation."""
 
@@ -106,6 +113,7 @@ class QiskitOptions(EngineOptions):
     active_space: ActiveSpaceOptions | None = None
     freeze_core: bool = False
     integral_source: IntegralSourceOptions | None = None
+    circuit_export: CircuitExportOptions | None = None
 
     mapper: ComponentSelection = Field(
         default_factory=lambda: ComponentSelection.named("jordan_wigner")

@@ -24,8 +24,14 @@ class SpacetimeExperimentOptions(BaseModel):
     """A Clifford QPY payload, optional initial preparation and explicitly noisy sampler."""
 
     model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
-    circuit_path: str = Field(min_length=1, json_schema_extra={"input_file": True})
-    preparation_path: str | None = Field(None, min_length=1, json_schema_extra={"input_file": True})
+    circuit_path: str = Field(
+        min_length=1, json_schema_extra={"input_file": True, "file_format": "quantum_circuit"}
+    )
+    preparation_path: str | None = Field(
+        None,
+        min_length=1,
+        json_schema_extra={"input_file": True, "file_format": "quantum_circuit"},
+    )
     max_circuit_bytes: int = Field(33554432, ge=1)
     spacetime: SpacetimeOptions
     sampler: ComponentSelection

@@ -18,6 +18,8 @@ cd <example> && chemrefine run input.yaml
 | [tutorials/host_guest](tutorials/host_guest/) | macrocycle + Cl⁻ | DOCKER guest docking, per-step charge override, SOLVATOR microsolvation. |
 | [tutorials/mlip_training](tutorials/mlip_training/) | C₁₀H₂₂ | Dataset building with random NMS, MACE training, trained-model validation. |
 | [tutorials/qiskit_sp](tutorials/qiskit_sp/) | H₂ | Modular Qiskit Nature single point with an active space, UCCSD, and VQE; switchable in YAML to exact or ADAPT-VQE and to reference statevector, lightweight shots, Aer statevector, or Aer finite-shot estimators. |
+| [tutorials/qiskit_integrals](tutorials/qiskit_integrals/) | H₂ integrals | Solve a supplied molecular integral bundle with geometry and particle checks. |
+| [tutorials/qiskit_handoffs](tutorials/qiskit_handoffs/) | Molecular preparation | Export a bound VQE circuit and consume it in a scheduled Pauli measurement step. |
 | [tutorials/qiskit_experiment](tutorials/qiskit_experiment/) | Quantum artifacts | Lattice and variational dynamics, local encodings, measurements, fermionic shadows and double-factorized trajectories with portable NPZ output; input structures pass through unchanged. |
 | [tutorials/qiskit_cutting](tutorials/qiskit_cutting/) | Quantum circuits | Manual gate/wire cuts, partitions and automated width-constrained planning with signed reconstruction. |
 | [tutorials/qiskit_resources](tutorials/qiskit_resources/) | Quantum resource models | Pauli-LCU/QPE, validated DF/THC costs and explicit surface-code/factory assumptions. |

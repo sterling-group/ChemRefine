@@ -129,6 +129,7 @@ def _root_sector(context: Any, measure: Any, options: SpectrumOptions) -> dict[s
 @ALGORITHMS.register(
     "vqd",
     VQDOptions,
+    capabilities=frozenset({"bound_circuit"}),
     status="experimental",
     supported_domains=(
         "fixed parameterized circuits",
@@ -223,6 +224,8 @@ def build_vqd(*, options: VQDOptions, request: NativeSolveRequest) -> NativeOutc
         # Sort by measured physical energy; keep corresponding root facts aligned.
         order = np.argsort(energies, kind="stable")
         roots = tuple(float(energies[index]) for index in order)
+        from chemrefine.engines.qiskit.circuit_io import bound_circuit
+
         return NativeOutcome(
             roots[options.target_root],
             active_energies_hartree=roots,
@@ -233,6 +236,12 @@ def build_vqd(*, options: VQDOptions, request: NativeSolveRequest) -> NativeOutc
             parameter_count=circuit.num_parameters,
             optimizer_evaluations=len(evaluations),
             evaluations=evaluations,
+            circuits=tuple(
+                bound_circuit(context, circuit, result.optimal_parameters[index], root=root)
+                for root, index in enumerate(order)
+            )
+            if request.options.circuit_export is not None
+            else (),
             termination_reason="optimizer_returned_and_roots_validated",
             diagnostics={
                 "experimental": True,

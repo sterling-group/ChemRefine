@@ -45,6 +45,10 @@ def tracked_adapt_vqe(
     class TrackedAdaptVQE(AdaptVQE):  # type: ignore[misc]
         """Observe one ADAPT run while leaving selection and convergence upstream."""
 
+        def retained_logical_circuit(self) -> Any:
+            """Rebuild the retained ansatz before routing, including upstream rollback."""
+            return self._build_ansatz()
+
         def _compute_gradients(self, theta: list[float], operator: Any) -> Any:
             """Record the same maximum candidate that the upstream loop will choose."""
             gradients = super()._compute_gradients(theta, operator)

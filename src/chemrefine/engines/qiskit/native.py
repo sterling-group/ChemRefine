@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from chemrefine.engines.qiskit.circuit_io import BoundCircuit
     from chemrefine.engines.qiskit.determinants import DeterminantState
     from chemrefine.engines.qiskit.operators import OperatorPool
 
@@ -53,6 +54,7 @@ class NativeOutcome:
     states: tuple[DeterminantState, ...] = ()
     active_energies_hartree: tuple[float, ...] = ()
     target_root: int = 0
+    circuits: tuple[BoundCircuit, ...] = ()
 
 
 def summarize_native(
@@ -143,6 +145,7 @@ def summarize_native(
         root_electronic_energies_hartree=electronic_roots,
         root_total_energies_hartree=reported_roots if nuclear is not None else None,
         states=outcome.states,
+        circuits=outcome.circuits,
     )
     # Check the complete artifact before it can be written or enter the result cache.
     try:

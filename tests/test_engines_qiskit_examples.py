@@ -12,13 +12,20 @@ from typing import Any
 
 import yaml
 
-from chemrefine.engines.qiskit.options import ActiveSpaceOptions, ComponentSelection
+from chemrefine.engines.qiskit.options import (
+    ActiveSpaceOptions,
+    CircuitExportOptions,
+    ComponentSelection,
+    IntegralSourceOptions,
+)
 from chemrefine.engines.qiskit.registry import REGISTRIES
 
 REPO = Path(__file__).resolve().parent.parent
 
 REQUIRED = {
     "active_space": {"electrons", "orbitals"},
+    "integral_source": {"bundle_path", "max_input_bytes", "geometry_tolerance_angstrom"},
+    "circuit_export": {"max_bytes"},
     "selection": {"name", "options"},
     "mapper": set(),
     "algorithm": {
@@ -46,6 +53,7 @@ REQUIRED = {
     "ansatz": {"reps", "preserve_spin", "max_pool_size"},
     "initial_state": set(),
     "estimator": {
+        "resubmission_policy",
         "default_precision",
         "seed",
         "implementation",
@@ -178,6 +186,7 @@ TESTS_ONLY = {
     },
     "sampler": {
         "account_name",
+        "resubmission_policy",
         "backend_name",
         "channel",
         "close_mode",
@@ -241,6 +250,8 @@ TESTS_ONLY = {
 
 _UNIVERSE = {
     "active_space": set(ActiveSpaceOptions.model_fields),
+    "integral_source": set(IntegralSourceOptions.model_fields),
+    "circuit_export": set(CircuitExportOptions.model_fields),
     "selection": set(ComponentSelection.model_fields),
     **{
         category: {
@@ -284,7 +295,8 @@ def test_qiskit_examples_cover_required_nested_knobs() -> None:
     assert examples, "no shipped example uses the Qiskit engine"
     used: dict[str, set[str]] = {section: set() for section in _UNIVERSE}
     for options in examples:
-        used["active_space"] |= set(options.get("active_space") or {})
+        for category in ("active_space", "integral_source", "circuit_export"):
+            used[category] |= set(options.get(category) or {})
         for category in REGISTRIES:
             selection = options.get(category)
             if not isinstance(selection, dict):

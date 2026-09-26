@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
+from dataclasses import replace
 from numbers import Real
 from pathlib import Path
 from time import perf_counter
@@ -111,6 +112,17 @@ def _solve_context(
         was_transpiled=assembled.transpiler is not None,
         operator_pool_supplied=operator_pool is not None,
     )
+    if resolved.circuit_export is not None:
+        from chemrefine.engines.qiskit.circuit_io import bound_circuit
+
+        raw = result.raw_result
+        if resolved.algorithm.name == "adapt_vqe":
+            logical = algorithm.solver.retained_logical_circuit()
+            parameters = raw.optimal_point
+        else:
+            logical = assembled.ansatz.circuit
+            parameters = raw.optimal_parameters
+        summary = replace(summary, circuits=(bound_circuit(context, logical, parameters),))
     logger.info(
         "Qiskit %s finished: %.12f hartree", resolved.algorithm.name, summary.energy_hartree
     )
@@ -214,12 +226,24 @@ def run_job(
         )
     result = run_problem(prepared, options=resolved)
     # Pipeline runtime includes its classical electronic-structure preparation.
-    from dataclasses import replace
-
+    artifacts = []
     if artifact_dir is not None and result.states:
         from chemrefine.engines.qiskit.state_io import save_states
 
         path = Path(artifact_dir) / f"{Path(xyz_path).stem}.states.json"
         save_states(path, result.states)
-        result = replace(result, metadata={**result.metadata, "quantum_artifacts": [path.name]})
+        artifacts.append(path.name)
+    if artifact_dir is not None and result.circuits:
+        from chemrefine.engines.qiskit.circuit_io import save_circuit
+
+        for circuit in result.circuits:
+            path = (
+                Path(artifact_dir)
+                / f"{Path(xyz_path).stem}.root{circuit.description.root}.circuit.json"
+            )
+            limit = resolved.circuit_export.max_bytes if resolved.circuit_export else 33554432
+            save_circuit(path, circuit, max_bytes=limit)
+            artifacts.append(path.name)
+    if artifacts:
+        result = replace(result, metadata={**result.metadata, "quantum_artifacts": artifacts})
     return replace(result, runtime_seconds=perf_counter() - started)

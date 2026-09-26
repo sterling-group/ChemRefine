@@ -200,6 +200,10 @@ def validate_component_graph(
 
     algorithm = ALGORITHMS.spec(options.algorithm.name)
     ansatz = ANSATZE.spec(options.ansatz.name)
+    if options.circuit_export is not None and "bound_circuit" not in algorithm.capabilities:
+        raise ConfigError(
+            f"qiskit algorithm {options.algorithm.name!r} cannot export bound circuits"
+        )
     capabilities = ansatz.capabilities | ({"operator_pool"} if operator_pool_supplied else set())
     if "rebuilds_optimizer" in algorithm.capabilities:
         capabilities |= {"circuit"}

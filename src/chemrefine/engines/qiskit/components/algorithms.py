@@ -80,6 +80,7 @@ def build_exact(
 @ALGORITHMS.register(
     "vqe",
     NoComponentOptions,
+    capabilities=frozenset({"bound_circuit"}),
     requires=frozenset({"estimator", "optimizer", "circuit", "initial_point"}),
 )
 def build_vqe(
@@ -113,6 +114,7 @@ def build_vqe(
 @ALGORITHMS.register(
     "adapt_vqe",
     AdaptVQEOptions,
+    capabilities=frozenset({"bound_circuit"}),
     requires=frozenset({"estimator", "optimizer", "operator_pool", "initial_state"}),
 )
 def build_adapt_vqe(
