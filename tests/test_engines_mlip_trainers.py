@@ -899,6 +899,46 @@ def test_the_driver_refuses_a_template_that_contradicts_the_step(tmp_path: Path,
         )
 
 
+@pytest.mark.parametrize(
+    ("rendered", "argv", "names"),
+    [
+        ({"weights_path": "/tpl/w.pth"}, [], r"`model_path` says nothing"),
+        ({"foundation": "0.2.0"}, ["--foundation", "0.3.0"], r"`model_name` says '0\.3\.0'"),
+        ({"foundation": "0.2.0"}, [], r"`model_name` says nothing"),
+        ({"seed": 0}, [], r"`seed` says 7"),
+    ],
+    ids=["checkpoint-the-step-never-named", "other-release", "release-unnamed", "seed-zero"],
+)
+def test_every_plan_fact_refuses_a_template_that_says_otherwise(
+    tmp_path: Path, monkeypatch, rendered: dict[str, object], argv: list[str], names: str
+):
+    """The keys the hooks start from are plan facts too — and silence on argv is a value.
+
+    The check listed ``device`` and ``seed``: a template ``weights_path`` for a step with no
+    ``model_path`` trained CHGNet from that checkpoint while the runlog and
+    ``trained_model.json`` said "scratch", and a template ``foundation`` lost to the step's
+    without a word. ``seed: 0`` is a value, not an absence.
+    """
+    from chemrefine.engines.mlip.train import driver as train_driver
+
+    _install_fake_chgnet_stack(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    facts = ["--device", "cpu", "--seed", "7", *argv]
+    with pytest.raises(SystemExit, match=names):
+        train_driver.main(["chgnet", str(_driver_config(tmp_path, **rendered)), *facts])
+
+
+def test_a_foundation_placeholder_rendered_empty_is_not_a_disagreement(tmp_path: Path, monkeypatch):
+    """``$FOUNDATION_MODEL`` renders empty for a from-scratch step: it states nothing."""
+    from chemrefine.engines.mlip.train import driver as train_driver
+
+    recorded = _install_fake_chgnet_stack(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    config = _driver_config(tmp_path, foundation=None, weights_path="")
+    assert train_driver.main(["chgnet", str(config), "--device", "cpu", "--seed", "7"]) == 0
+    recorded["chgnet_cls"].from_file.assert_not_called()
+
+
 def test_a_template_still_rendering_the_placeholders_keeps_working(tmp_path: Path, monkeypatch):
     """`device: $DEVICE`-style templates render the argv's own values — no conflict.
 

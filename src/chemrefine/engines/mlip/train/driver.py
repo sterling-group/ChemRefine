@@ -23,8 +23,10 @@ ApiTrainerBase.command`) and are overlaid onto the parsed config as authoritativ
 through the template as placeholders, each was silently lost whenever a template did not
 reference it — a ``device: cuda`` step trained on CPU with the GPU booked, a declared
 foundation model trained from scratch while the sidecar recorded it. A template value
-that *disagrees* with the step's own is refused by name; silent precedence in either
-direction is how this started.
+for any of them that *disagrees* with the step's own is refused by name, and so is one
+the step does not set at all; silent precedence in either direction is how this started.
+Which facts, and under which flags, is
+:data:`~chemrefine.engines.mlip.train.base.PLAN_FACTS` — read here, not restated.
 """
 
 from __future__ import annotations
@@ -34,6 +36,8 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
+
+from chemrefine.engines.mlip.train.base import PLAN_FACTS
 
 
 def _load_config(path: Path) -> dict[str, Any]:
@@ -47,48 +51,62 @@ def _load_config(path: Path) -> dict[str, Any]:
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
-    """The driver's own CLI — the generic shape plus the plan facts.
+    """The driver's own CLI — the generic shape plus one flag per plan fact.
 
-    ``--device`` and ``--seed`` are required because every training run has both and the
-    engine always writes them; the two foundation flags are optional because "from
-    scratch" is a legitimate run, and they are two flags rather than one string because a
-    checkpoint path and a release name are different facts the hooks dispatch on.
+    A fact every run has (``device``, ``seed``) is required, because the engine always
+    writes it; the two foundation flags are optional because "from scratch" is a
+    legitimate run, and they are two flags rather than one string because a checkpoint
+    path and a release name are different facts the hooks dispatch on.
     """
     parser = argparse.ArgumentParser(prog="chemrefine-train-driver")
     parser.add_argument("task_name", help="the registry task whose trainer runs")
     parser.add_argument("config", help="the rendered trainer config (backend knobs)")
-    parser.add_argument("--device", required=True, help="compute device, from step.options")
-    parser.add_argument("--seed", required=True, type=int, help="split/torch seed, from options")
-    parser.add_argument("--weights-path", default=None, help="local checkpoint to start from")
-    parser.add_argument(
-        "--foundation", default=None, help="released foundation model to start from"
-    )
+    for fact in PLAN_FACTS:
+        parser.add_argument(
+            fact.flag,
+            dest=fact.key,
+            required=fact.always,
+            type=fact.kind,
+            default=None,
+            help=f"from the step's `{fact.option}`",
+        )
     return parser.parse_args(argv)
+
+
+def _absent(value: Any) -> bool:
+    """Whether a rendered or parsed value states nothing — ``None`` or empty, never ``0``.
+
+    ``$FOUNDATION_MODEL`` renders empty for a from-scratch step, which YAML reads back as
+    ``None``; a ``seed: 0`` is a value, which a truthiness test would drop.
+    """
+    return value is None or value == ""
 
 
 def _overlay_plan_facts(config: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
     """Overlay the argv plan facts onto the rendered config, refusing a disagreement.
 
-    Equality is judged as strings because the template channel only carries strings: a
-    template that rendered ``seed: $SEED`` holds the same digits argv carries, and must
-    keep working — harmless duplication is not a conflict. ``start_from`` is the legacy
-    spelling a pre-channel template may still render; the hooks no longer read it, so a
-    hard-coded value that names something *else* must refuse rather than be silently
+    Every fact in :data:`~chemrefine.engines.mlip.train.base.PLAN_FACTS`, and a value the
+    step does not set counts too: a template ``weights_path`` for a step with no
+    ``model_path`` trained from that checkpoint while the runlog and the sidecar said
+    "scratch". Equality is judged as strings because the template channel only carries
+    strings: a template that rendered ``seed: $SEED`` holds the same digits argv carries,
+    and must keep working — harmless duplication is not a conflict. ``start_from`` is the
+    legacy spelling a pre-channel template may still render; the hooks no longer read it,
+    so a hard-coded value that names something *else* must refuse rather than be silently
     outranked (the inversion of the silent loss this driver exists to end).
     """
-    facts: dict[str, Any] = {"device": args.device, "seed": args.seed}
-    if args.weights_path:
-        facts["weights_path"] = args.weights_path
-    if args.foundation:
-        facts["foundation"] = args.foundation
-    for key in ("device", "seed"):
-        if key in config and str(config[key]) != str(facts[key]):
-            raise SystemExit(
-                f"train_driver: the template renders {key}: {config[key]!r} but the step's "
-                f"options say {facts[key]!r} — the options are authoritative for a plan "
-                f"fact. Remove `{key}:` from the template (or reference the ${key.upper()} "
-                f"placeholder, which renders the same value)."
-            )
+    facts = {fact.key: v for fact in PLAN_FACTS if not _absent(v := getattr(args, fact.key))}
+    for fact in PLAN_FACTS:
+        rendered = config.get(fact.key)
+        if _absent(rendered) or str(rendered) == str(facts.get(fact.key, "")):
+            continue
+        said = repr(facts[fact.key]) if fact.key in facts else "nothing"
+        raise SystemExit(
+            f"train_driver: the template renders {fact.key}: {rendered!r} but the step's "
+            f"`{fact.option}` says {said} — the options are authoritative for a plan fact. "
+            f"Remove `{fact.key}:` from the template; the driver hands the trainer the "
+            f"step's value itself."
+        )
     display = str(facts.get("weights_path") or facts.get("foundation") or "")
     if str(config.get("start_from") or "") not in ("", display):
         raise SystemExit(

@@ -92,9 +92,9 @@ class ChgnetTrainer(ApiTrainerBase):
         "its dataset is built from pymatgen Structures, whose lattice must be invertible"
     )
     driver_task = "chgnet"
-    required_config_keys = ("train_set", "valid_set", "run_name", "device", "seed")
-    """The base's plan-fact keys plus ``valid_set`` — ``Trainer.train`` takes a validation
-    loader positionally, so a config without one cannot call it."""
+    required_config_keys = ("train_set", "valid_set", "run_name")
+    """The base's keys plus ``valid_set`` — ``Trainer.train`` takes a validation loader
+    positionally, so a config without one cannot call it."""
     missing_config_hint = (
         "the template must reference $TRAIN_SET, $VALID_SET and $RUN_NAME so the render fills "
         "them (device and seed arrive on the driver's own command line)"

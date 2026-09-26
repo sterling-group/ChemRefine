@@ -55,11 +55,11 @@ import hashlib
 import logging
 import shlex
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from string import Template
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
 import numpy as np
 
@@ -207,6 +207,57 @@ class TrainingPlan:
         consequence.
         """
         return self.charge == 0 and self.multiplicity == 1
+
+    def facts(self) -> dict[str, str]:
+        """This run's :data:`PLAN_FACTS`, by the key each travels under; unset ones absent.
+
+        The one translation from the plan's fields to the fact vocabulary — the checkpoint
+        is :attr:`weights` here and ``weights_path`` on the wire — so the writer
+        (:meth:`ApiTrainerBase.command`) never spells a fact for itself.
+        """
+        values = {
+            "device": self.device,
+            "seed": str(self.seed),
+            "weights_path": str(self.weights) if self.weights is not None else None,
+            "foundation": self.foundation or None,
+        }
+        return {fact.key: v for fact in PLAN_FACTS if (v := values[fact.key]) is not None}
+
+
+class PlanFact(NamedTuple):
+    """One fact the shared train driver's command line carries to the library's hook.
+
+    ``key`` is the config key the hooks read, and ``--key`` (dashed) the flag it rides;
+    ``option`` is the step option it comes from — what a refusal tells the user to set;
+    ``always`` marks a fact every run has, which the command therefore always carries;
+    ``kind`` parses the flag's text back into the value the hooks were handed before.
+    """
+
+    key: str
+    option: str
+    always: bool
+    kind: Callable[[str], Any] = str
+
+    @property
+    def flag(self) -> str:
+        """The driver flag this fact rides: ``weights_path`` → ``--weights-path``."""
+        return "--" + self.key.replace("_", "-")
+
+
+PLAN_FACTS: tuple[PlanFact, ...] = (
+    PlanFact("device", "device", always=True),
+    PlanFact("seed", "seed", always=True, kind=int),
+    PlanFact("weights_path", "model_path", always=False),
+    PlanFact("foundation", "model_name", always=False),
+)
+"""The plan facts, declared once: what the step decides and the template must not.
+
+The command writer (:meth:`ApiTrainerBase.command`), the driver's parser and its overlay
+(:mod:`chemrefine.engines.mlip.train.driver`) and the hook's key check
+(:meth:`ApiTrainerBase.run_training`) all read this. Spelled per site, the overlay's
+disagreement check listed ``device`` and ``seed`` and not the two keys the hooks actually
+start from, so a template ``weights_path`` trained from a checkpoint the runlog and
+``trained_model.json`` recorded as "scratch"."""
 
 
 class TrainerBase(ABC):
@@ -407,17 +458,17 @@ class ApiTrainerBase(TrainerBase):
     driver_task: ClassVar[str]
     """The word the driver re-resolves in the backend env — the library's task key."""
 
-    required_config_keys: ClassVar[tuple[str, ...]] = ("train_set", "run_name", "device", "seed")
-    """Config keys :meth:`run_training` refuses to proceed without (present and non-null).
+    required_config_keys: ClassVar[tuple[str, ...]] = ("train_set", "run_name")
+    """The template's keys :meth:`run_training` refuses to proceed without (non-null).
 
-    ``device`` and ``seed`` are here because the driver **guarantees** them: they are plan
-    facts, and plan facts ride the driver's own command line rather than the user's
-    template (:meth:`command`). Read from the template with a silent per-backend fallback,
-    each one was lost whenever the template did not happen to reference its placeholder —
-    a ``device: cuda`` step trained on CPU with the GPU booked, a declared foundation
-    model trained from scratch while the sidecar recorded it, a ``seed`` reached the
-    split but not torch. The orchestrator charges, keys the cache and logs by the
-    declared values; the hook must run by the same ones."""
+    Only the template's own: the plan facts every run has (``device``, ``seed`` —
+    :data:`PLAN_FACTS`) are checked beside these, because the driver **guarantees** them
+    on its own command line rather than the user's template (:meth:`command`). Read from
+    the template with a silent per-backend fallback, each one was lost whenever the
+    template did not happen to reference its placeholder — a ``device: cuda`` step trained
+    on CPU with the GPU booked, a ``seed`` reached the split but not torch. The
+    orchestrator charges, keys the cache and logs by the declared values; the hook must
+    run by the same ones."""
 
     missing_config_hint: ClassVar[str]
     """One sentence naming the fix when a required key is missing — which placeholders
@@ -450,20 +501,22 @@ class ApiTrainerBase(TrainerBase):
         sidecar all asserted the declared value. A template channel is the CLI trainers'
         necessity — their libraries read the config file themselves — not this route's.
 
-        ``shlex.quote`` on the two free-text values, the same protection every other
-        engine-emitted command applies to a value it did not mint (``orca_command``, the
-        ``console_script`` helper above): ``device`` is a validated Literal and ``seed``
-        an int, but a checkpoint path and a model name are the user's own text.
+        Every fact passes through ``shlex.quote``, the same protection every other emitted
+        command applies to a value it did not mint (``orca_command``, the
+        ``console_script`` helper above): ``device`` is a validated Literal and ``seed`` an
+        int, which quote to themselves, but a checkpoint path and a model name are the
+        user's own text. Which facts, and under which flags, is :data:`PLAN_FACTS`.
         """
         python = self.quoted_launcher(plan)
+        facts = plan.facts()
         parts = [
             f"{python} -m chemrefine.engines.mlip.train.driver {self.driver_task} {config.name}",
-            f"--device {plan.device} --seed {plan.seed}",
+            *(
+                f"{fact.flag} {shlex.quote(facts[fact.key])}"
+                for fact in PLAN_FACTS
+                if fact.key in facts
+            ),
         ]
-        if plan.weights is not None:
-            parts.append(f"--weights-path {shlex.quote(str(plan.weights))}")
-        if plan.foundation:
-            parts.append(f"--foundation {shlex.quote(plan.foundation)}")
         return " ".join(parts)
 
     def artifact(self, run_dir: Path, run_name: str) -> Path:
@@ -477,7 +530,8 @@ class ApiTrainerBase(TrainerBase):
         test would refuse as missing — the same required-means-non-null semantics the
         script engines' output boundary holds.
         """
-        missing = [key for key in self.required_config_keys if config.get(key) is None]
+        always = [fact.key for fact in PLAN_FACTS if fact.always]
+        missing = [key for key in (*always, *self.required_config_keys) if config.get(key) is None]
         if missing:
             raise SystemExit(
                 f"{self.driver_task} training config is missing {missing} — "

@@ -123,7 +123,7 @@ class OrbTrainer(ApiTrainerBase):
 
     label = "ORB"
     driver_task = "orb"
-    required_config_keys = ("train_set", "run_name", "device", "seed")
+    required_config_keys = ("train_set", "run_name")
     """The base's set as is. ``base_model`` is deliberately not on it: the architecture
     may arrive as the template's ``base_model`` *or* as the step's ``model_name`` (the
     driver's ``foundation`` fact), and only the hook can weigh the pair — a flat

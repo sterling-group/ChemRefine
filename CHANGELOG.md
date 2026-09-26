@@ -459,6 +459,12 @@ for the full map.
 
 ### Fixed
 
+- **A CHGNet or ORB training template cannot name a different start point than the step.**
+  The driver refused a template `device` or `seed` that disagreed with the step, but not
+  the two keys training actually starts from: a template `weights_path` for a step with
+  no `model_path` trained from that checkpoint while the runlog and `trained_model.json`
+  said "scratch", and a template `foundation` lost silently to the step's `model_name`.
+  Every plan fact is now checked the same way, as the entry under *Changed* describes.
 - **A step the scheduler would refuse stops the run before anything runs.** A layout over
   `max_cores` (a Q-Chem `nprocs` x `cores` step), a CUDA step against `max_gpus: 0`, or
   several GPUs under `dispatch: local` was refused only when that step's jobs were about
