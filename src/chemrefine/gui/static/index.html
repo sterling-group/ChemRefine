@@ -247,9 +247,57 @@
             </template>
           </div>
         </div>
-        <p class="muted" x-show="!engineFields(step.engine).length">
+        <p class="muted" x-show="!schema.engines[step.engine]?.options_schema">
           This engine is configured through its template file — no options form.
         </p>
+        <template x-for="category in componentCategories(step.engine)" :key="category">
+          <details class="subform">
+            <summary x-text="category + ': ' + componentName(step, category)"></summary>
+            <label><span x-text="category"></span>
+              <select @change="setComponentName(index, category, $event.target.value)">
+                <template x-for="choice in componentChoices(step, category)" :key="choice">
+                  <option :value="choice" :selected="choice === componentName(step, category)"
+                          x-text="choice"></option>
+                </template>
+              </select>
+            </label>
+            <p class="muted">Changing the component keeps its existing settings. Validate after editing.</p>
+            <div class="fields">
+              <template x-for="field in componentFields(step, category)" :key="field.key">
+                <label :title="field.doc">
+                  <span x-text="field.key"></span>
+                  <template x-if="field.kind === 'select'">
+                    <select @change="setComponentOption(index, category, field, $event.target.value)">
+                      <option value="" :selected="(componentValue(step, category, field.key) ?? '') === ''"
+                              x-text="'(default: ' + field.fallback + ')'"></option>
+                      <template x-for="option in field.options" :key="option">
+                        <option :value="option" :selected="option === componentValue(step, category, field.key)"
+                                x-text="option"></option>
+                      </template>
+                    </select>
+                  </template>
+                  <template x-if="field.kind === 'checkbox'">
+                    <input type="checkbox" :checked="componentValue(step, category, field.key) ?? (field.fallback === 'true')"
+                           @change="setComponentOption(index, category, field, $event.target.checked)">
+                  </template>
+                  <template x-if="field.kind === 'number'">
+                    <input type="number" step="any" :min="field.min" :max="field.max"
+                           :value="componentValue(step, category, field.key) ?? field.fallbackNum ?? ''"
+                           @input="setComponentOption(index, category, field, $event.target.value)">
+                  </template>
+                  <template x-if="field.kind === 'text'">
+                    <input type="text" :value="componentValue(step, category, field.key) ?? ''"
+                           :placeholder="field.fallback"
+                           @input="setComponentOption(index, category, field, $event.target.value)">
+                  </template>
+                </label>
+              </template>
+            </div>
+            <button type="button" @click="openOptionsEditor(index, category)">Edit all component options as YAML</button>
+          </details>
+        </template>
+        <button type="button" x-show="schema.engines[step.engine]?.options_schema"
+                @click="openOptionsEditor(index)">Edit all engine options as YAML</button>
 
         <div class="fields">
           <label><span>nms</span>
@@ -769,6 +817,20 @@
     <button type="button" class="mini" @click="browse.open = false">Close</button>
   </div>
 </div>
+
+<!-- ============ Nested options editor ============ -->
+<template x-if="optionsEditor">
+  <div class="modal" @click.self="optionsEditor = null">
+    <div class="dialog">
+      <h2 x-text="optionsEditor.category ? optionsEditor.category + ' options' : 'Engine options'"></h2>
+      <p>Nested settings, lists, and custom keys are kept as entered. Apply a YAML mapping, then validate the workflow.</p>
+      <textarea x-model="optionsEditor.text" spellcheck="false" aria-label="Options YAML"></textarea>
+      <p class="error" x-show="optionsEditor.error" x-text="optionsEditor.error"></p>
+      <button type="button" @click="applyOptionsEditor()">Apply</button>
+      <button type="button" @click="optionsEditor = null">Cancel</button>
+    </div>
+  </div>
+</template>
 
 <!-- ============ Template editor modal ============ -->
 <div class="modal" x-show="tmpl.open" style="display:none" @click.self="tmpl.open = false">

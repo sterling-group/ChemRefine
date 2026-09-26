@@ -185,6 +185,7 @@ function builder() {
     fatal: "",
     schema: null,
     cfg: { steps: [] },
+    optionsEditor: null,
     execRows: [],
     stepKeys: [], // stable per-card identity; see rekeySteps()
     _uid: 0,
@@ -501,6 +502,33 @@ function builder() {
       if (!descriptor?.options_schema) return [];
       return fieldSpecs(descriptor.options_schema, ["backend_python"]);
     },
+    componentCatalog(engine) {
+      return this.schema.engines[engine]?.component_catalog || {};
+    },
+    componentCategories(engine) {
+      return Object.keys(this.componentCatalog(engine));
+    },
+    componentName(step, category) {
+      const selection = step.options?.[category];
+      const name = typeof selection === "string" ? selection : selection?.name;
+      return typeof name === "string"
+        ? name.trim().toLowerCase().replaceAll("-", "_")
+        : this.componentCatalog(step.engine)[category]?.default || "";
+    },
+    componentChoices(step, category) {
+      const known = Object.keys(this.componentCatalog(step.engine)[category]?.components || {});
+      const selected = this.componentName(step, category);
+      return selected && !known.includes(selected) ? [selected, ...known] : known;
+    },
+    componentFields(step, category) {
+      const spec = this.componentCatalog(step.engine)[category]?.components[
+        this.componentName(step, category)
+      ];
+      return fieldSpecs(spec?.options_schema);
+    },
+    componentValue(step, category, key) {
+      return step.options?.[category]?.options?.[key];
+    },
     sampleFields(step) {
       if (!step.sample) return [];
       const byMethod = { boltzmann: "BoltzmannSample", min: "MinSample", max: "MaxSample" };
@@ -517,9 +545,10 @@ function builder() {
       return suffix ? `step${step.step}.${suffix} (default)` : "(no template)";
     },
     passthroughKeys(step) {
-      const declared = new Set(
-        engineAndNmsKeys(this.engineFields(step.engine), step.nms ? this.nmsFields : []),
-      );
+      const declared = new Set([
+        ...Object.keys(this.schema.engines[step.engine]?.options_schema?.properties || {}),
+        ...engineAndNmsKeys([], step.nms ? this.nmsFields : []),
+      ]);
       return Object.keys(step.options || {}).filter((key) => !declared.has(key));
     },
 
@@ -550,6 +579,93 @@ function builder() {
       if (Object.keys(options).length) step.options = options;
       else delete step.options;
       this.syncYaml();
+    },
+    setComponentName(index, category, name) {
+      const step = this.cfg.steps[index];
+      const previous = step.options?.[category];
+      if (previous != null && typeof previous !== "string" && !optionMapping(previous)) {
+        this.flash = "Edit this component in YAML to repair its selection.";
+        return;
+      }
+      step.options = {
+        ...(step.options || {}),
+        [category]: { ...(typeof previous === "object" ? previous : {}), name },
+      };
+      this.syncYaml();
+    },
+    setComponentOption(index, category, field, raw) {
+      const step = this.cfg.steps[index];
+      const selection = step.options?.[category];
+      const previous = selection?.options;
+      if (
+        (selection != null && typeof selection !== "string" && !optionMapping(selection)) ||
+        (previous !== undefined && !optionMapping(previous))
+      ) {
+        this.flash = "Edit this component in YAML to repair its options.";
+        return;
+      }
+      const options = { ...(previous || {}) };
+      const value = coerceField(field, raw);
+      if (value === undefined) delete options[field.key];
+      else options[field.key] = value;
+      step.options = {
+        ...(step.options || {}),
+        [category]: {
+          ...(typeof selection === "object" ? selection : {}),
+          name: this.componentName(step, category),
+          options,
+        },
+      };
+      this.syncYaml();
+    },
+    openOptionsEditor(index, category = null) {
+      const step = this.cfg.steps[index];
+      const selection = step.options?.[category];
+      this.optionsEditor = {
+        step,
+        engine: step.engine,
+        category,
+        text: jsyaml.dump(category ? (selection?.options ?? {}) : (step.options ?? {}), {
+          noRefs: true,
+        }),
+        error: "",
+      };
+    },
+    applyOptionsEditor() {
+      const editor = this.optionsEditor;
+      if (!editor) return;
+      if (!this.cfg.steps.includes(editor.step) || editor.engine !== editor.step.engine) {
+        editor.error = "The step changed. Close this editor and reopen its options.";
+        return;
+      }
+      try {
+        const options = jsyaml.load(editor.text, { schema: jsyaml.JSON_SCHEMA });
+        if (!optionMapping(options)) throw new Error("Options must be a YAML mapping.");
+        JSON.stringify(options, (_key, value) => {
+          if (typeof value === "number" && !Number.isFinite(value)) {
+            throw new Error("Options must contain finite numbers.");
+          }
+          return value;
+        });
+        if (editor.category) {
+          const previous = editor.step.options?.[editor.category];
+          if (previous != null && typeof previous !== "string" && !optionMapping(previous)) {
+            throw new Error("Repair the component selection in the engine options editor.");
+          }
+          editor.step.options = {
+            ...(editor.step.options || {}),
+            [editor.category]: {
+              ...(typeof previous === "object" ? previous : {}),
+              name: this.componentName(editor.step, editor.category),
+              options,
+            },
+          };
+        } else editor.step.options = options;
+        this.optionsEditor = null;
+        this.syncYaml();
+      } catch (error) {
+        editor.error = error.message;
+      }
     },
     setSampleMethod(index, method) {
       if (!method) delete this.cfg.steps[index].sample;

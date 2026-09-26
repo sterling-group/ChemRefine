@@ -3133,8 +3133,184 @@ def test_the_playgrounds_yaml_order_matches_the_servers():
     }
 
 
+def _component_editor_preamble() -> str:
+    """Use the shipped YAML parser and a catalog with both scalar and nested settings."""
+    return (
+        f"global.jsyaml = require({json.dumps(str(STATIC / 'vendor/js-yaml.min.js'))});\n"
+        + """
+      const c = builder();
+      c.schema = {engines: {demo: {
+        options_schema: {properties: {
+          solver: {$ref: '#/$defs/Selection'},
+          active_space: {type: 'object'},
+          backend_python: {type: 'string'},
+        }},
+        component_catalog: {solver: {default: 'first', components: {
+          first: {options_schema: {properties: {
+            iterations: {type: 'integer', default: 10, minimum: 1},
+            nested: {type: 'array'},
+          }}},
+          second: {options_schema: {properties: {enabled: {type: 'boolean', default: true}}}},
+        }}},
+      }}, nms: {properties: {}}};
+      c.cfg = {steps: [{step: 1, engine: 'demo', options: {
+        solver: {name: 'first', options: {
+          iterations: 8, nested: [[1, 2], [3, 4]], custom: {x: false},
+        }},
+        active_space: {orbitals: [1, 3]},
+        backend_python: '/path with spaces/python',
+        untouched: ['keep', null],
+      }}]};
+      c.syncs = 0;
+      c.syncYaml = () => {c.syncs += 1;};
+    """
+    )
+
+
+def test_component_catalog_controls_preserve_nested_options_and_unknown_names():
+    """A scalar edit or component change cannot erase settings the form cannot render."""
+    out = _run_component_in_node(
+        _component_editor_preamble()
+        + """
+      const step = c.cfg.steps[0];
+      const fields = c.componentFields(step, 'solver');
+      c.setComponentOption(0, 'solver', fields[0], '12');
+      const afterScalar = JSON.parse(JSON.stringify(step.options));
+      c.setComponentName(0, 'solver', 'second');
+      const afterName = JSON.parse(JSON.stringify(step.options.solver));
+      c.setComponentName(0, 'solver', 'external');
+      console.log(JSON.stringify({
+        categories: c.componentCategories('demo'),
+        fields: fields.map(f => f.key), afterScalar, afterName,
+        choices: c.componentChoices(step, 'solver'),
+        unknownFields: c.componentFields(step, 'solver'),
+        passthrough: c.passthroughKeys(step),
+      }));
+    """
+    )
+    result = json.loads(out)
+    assert result["categories"] == ["solver"]
+    assert result["fields"] == ["iterations"]
+    assert result["afterScalar"]["solver"]["options"] == {
+        "iterations": 12,
+        "nested": [[1, 2], [3, 4]],
+        "custom": {"x": False},
+    }
+    assert result["afterName"] == {
+        "name": "second",
+        "options": result["afterScalar"]["solver"]["options"],
+    }
+    assert result["afterScalar"]["active_space"] == {"orbitals": [1, 3]}
+    assert result["afterScalar"]["untouched"] == ["keep", None]
+    assert result["choices"] == ["external", "first", "second"]
+    assert result["unknownFields"] == []
+    assert result["passthrough"] == ["untouched"]
+
+
+def test_component_yaml_editor_round_trips_full_nested_mappings():
+    """The explicit YAML editor preserves arrays, nulls, unknown keys and sibling options."""
+    out = _run_component_in_node(
+        _component_editor_preamble()
+        + r"""
+      c.openOptionsEditor(0, 'solver');
+      const original = jsyaml.load(c.optionsEditor.text);
+      c.optionsEditor.text = 'nested: [[0, 2], [1, 3]]\n' +
+        'complex: {real: 1, imag: 2}\ncustom: null\n';
+      c.applyOptionsEditor();
+      const component = JSON.parse(JSON.stringify(c.cfg.steps[0].options));
+      c.openOptionsEditor(0);
+      const edited = jsyaml.load(c.optionsEditor.text);
+      edited.active_space = {orbitals: [2, 5]};
+      edited.new_key = {list: [false, null, 'string']};
+      c.optionsEditor.text = jsyaml.dump(edited);
+      c.applyOptionsEditor();
+      console.log(JSON.stringify({original, component, full: c.cfg.steps[0].options,
+                                 closed: c.optionsEditor === null, syncs: c.syncs}));
+    """
+    )
+    result = json.loads(out)
+    assert result["original"]["nested"] == [[1, 2], [3, 4]]
+    assert result["component"]["solver"] == {
+        "name": "first",
+        "options": {"nested": [[0, 2], [1, 3]], "complex": {"real": 1, "imag": 2}, "custom": None},
+    }
+    assert result["component"]["active_space"] == {"orbitals": [1, 3]}
+    assert result["full"]["active_space"] == {"orbitals": [2, 5]}
+    assert result["full"]["new_key"] == {"list": [False, None, "string"]}
+    assert result["full"]["untouched"] == ["keep", None]
+    assert result["closed"] and result["syncs"] == 2
+
+
+def test_invalid_or_stale_nested_editor_never_modifies_the_workflow():
+    """Parse errors and changed editor targets leave both the draft and saved options intact."""
+    out = _run_component_in_node(
+        _component_editor_preamble()
+        + r"""
+      const before = JSON.stringify(c.cfg);
+      const errors = [];
+      for (const text of ['[1, 2]', 'broken: [', 'x: .inf', 'x: &cycle [*cycle]', 'null']) {
+        c.openOptionsEditor(0, 'solver');
+        c.optionsEditor.text = text;
+        c.applyOptionsEditor();
+        errors.push({error: c.optionsEditor.error, draft: c.optionsEditor.text === text});
+      }
+      const unchanged = JSON.stringify(c.cfg) === before;
+      c.openOptionsEditor(0);
+      c.cfg.steps[0].engine = 'changed';
+      c.applyOptionsEditor();
+      const changedError = c.optionsEditor.error;
+      c.cfg.steps[0].engine = 'demo';
+      c.openOptionsEditor(0);
+      c.cfg.steps = [];
+      c.applyOptionsEditor();
+      console.log(JSON.stringify({errors, unchanged, changedError,
+        removedError: c.optionsEditor.error, syncs: c.syncs}));
+    """
+    )
+    result = json.loads(out)
+    assert all(item["error"] and item["draft"] for item in result["errors"])
+    assert result["unchanged"]
+    assert "step changed" in result["changedError"]
+    assert "step changed" in result["removedError"]
+    assert result["syncs"] == 0
+
+
+def test_component_shorthand_defaults_and_invalid_shapes_stay_editable():
+    """Defaults and name shorthand work without coercing invalid input into empty options."""
+    out = _run_component_in_node(
+        _component_editor_preamble()
+        + """
+      const step = c.cfg.steps[0];
+      delete step.options.solver;
+      const defaultName = c.componentName(step, 'solver');
+      step.options.solver = ' First ';
+      c.setComponentOption(0, 'solver', c.componentFields(step, 'solver')[0], '10');
+      const shorthand = JSON.parse(JSON.stringify(step.options.solver));
+      step.options.solver = ['invalid'];
+      c.setComponentName(0, 'solver', 'second');
+      c.setComponentOption(0, 'solver', {key: 'iterations', kind: 'number'}, '5');
+      c.openOptionsEditor(0, 'solver');
+      c.optionsEditor.text = '{}';
+      c.applyOptionsEditor();
+      const invalidSelection = JSON.parse(JSON.stringify(step.options.solver));
+      const selectionError = c.optionsEditor.error;
+      step.options.solver = {name: 'first', options: [1, 2]};
+      c.setComponentOption(0, 'solver', {key: 'iterations', kind: 'number'}, '5');
+      console.log(JSON.stringify({defaultName, shorthand, invalidSelection, selectionError,
+        invalidOptions: step.options.solver.options, message: c.flash}));
+    """
+    )
+    result = json.loads(out)
+    assert result["defaultName"] == "first"
+    assert result["shorthand"] == {"name": "first", "options": {}}
+    assert result["invalidSelection"] == ["invalid"]
+    assert result["selectionError"]
+    assert result["invalidOptions"] == [1, 2]
+    assert "YAML" in result["message"]
+
+
 def test_every_option_widget_kind_has_an_arm():
-    """Four blocks render a field from a spec, and each must handle every kind fieldSpec emits.
+    """Every options block must handle each scalar kind the schema renderer emits.
 
     A missing arm is silent in both directions: the label renders and the input does not, so
     the knob simply cannot be set and nothing says so. A catch-all is worse — it draws a
@@ -3156,7 +3332,7 @@ def test_every_option_widget_kind_has_an_arm():
     # Each block is a `<template x-for="field in …">`; its arms are the `field.kind === '…'`
     # tests inside it, up to the start of the next block.
     starts = [m.start() for m in re.finditer(r'x-for="field in ', html)]
-    assert len(starts) == 4, f"expected four field-rendering blocks, found {len(starts)}"
+    assert len(starts) == 5, f"expected five field-rendering blocks, found {len(starts)}"
     bounds = [*starts, len(html)]
     for index, (begin, end) in enumerate(itertools.pairwise(bounds)):
         block = html[begin:end]
