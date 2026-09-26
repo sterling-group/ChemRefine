@@ -164,6 +164,8 @@ sampler:
 QNSPSA also works inside VQD and qEOM. The upstream `adapt_vqe` path cannot use this
 fixed-circuit metric because its circuit changes between inner solves. Native
 ffsim optimization has no qubit circuit for this metric and rejects the combination.
+The owned [TETRIS and CEO drivers](qiskit-adaptive.md) rebuild the metric for each
+grown circuit and support QNSPSA with the selected sampler.
 
 ## Budgets and examples
 

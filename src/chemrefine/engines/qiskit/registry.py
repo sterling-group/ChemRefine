@@ -188,22 +188,28 @@ def validate_component_graph(
     for category, selection in options.component_selections().items():
         REGISTRIES[category].options_for(selection)
 
+    from chemrefine.engines.qiskit.components.adaptive import validate_adaptive_options
     from chemrefine.engines.qiskit.components.fermionic_algorithms import validate_ffsim_options
     from chemrefine.engines.qiskit.components.subspace_algorithms import validate_subspace_options
 
     if options.algorithm.name == "ffsim_vqe":
         validate_ffsim_options(options)
+    if options.algorithm.name in {"tetris_adapt", "ceo_adapt"}:
+        validate_adaptive_options(options)
     validate_subspace_options(options)
 
     algorithm = ALGORITHMS.spec(options.algorithm.name)
     ansatz = ANSATZE.spec(options.ansatz.name)
     capabilities = ansatz.capabilities | ({"operator_pool"} if operator_pool_supplied else set())
+    if "rebuilds_optimizer" in algorithm.capabilities:
+        capabilities |= {"circuit"}
     selections = options.component_selections()
     consumed = consumed_component_categories(options)
     if (
         "optimizer" in consumed
         and "circuit" in OPTIMIZERS.spec(options.optimizer.name).requires
         and "circuit" not in algorithm.requires
+        and "rebuilds_optimizer" not in algorithm.capabilities
     ):
         raise ConfigError(
             f"qiskit optimizer {options.optimizer.name!r} requires a fixed-circuit algorithm"
@@ -219,7 +225,7 @@ def validate_component_graph(
                 f"{sorted(ansatz.capabilities)}"
             )
     if (
-        options.algorithm.name == "adapt_vqe"
+        options.algorithm.name in {"adapt_vqe", "tetris_adapt", "ceo_adapt"}
         and not operator_pool_supplied
         and options.ansatz.name in {"uccsd", "ucc", "ucc_ranks"}
         and getattr(ANSATZE.options_for(options.ansatz), "reps", 1) != 1

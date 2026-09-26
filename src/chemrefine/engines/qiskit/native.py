@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from chemrefine.engines.qiskit.determinants import DeterminantState
+    from chemrefine.engines.qiskit.operators import OperatorPool
 
 from chemrefine.engines.qiskit.options import QiskitOptions
 from chemrefine.engines.qiskit.problem import PreparedProblem
@@ -27,6 +28,7 @@ class NativeSolveRequest:
     initial_point: Sequence[float] | None = None
     callback: Callable[[dict[str, Any]], None] | None = None
     reference_energy_hartree: float | None = None
+    operator_pool: OperatorPool | None = None
 
 
 @dataclass(frozen=True)

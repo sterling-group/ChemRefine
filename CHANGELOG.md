@@ -27,6 +27,10 @@ for the full map.
 
 ### Added
 
+- **Adaptive quantum solvers.** TETRIS and coupled-exchange ADAPT support
+  reference-aware tapering, complex exchange quadratures, sector diagnostics,
+  energy-increase rollback and freshly bound QNSPSA resources at each circuit growth.
+
 - **Reference-aware Z₂ tapering.** Molecular mappings discover compatible Pauli
   symmetries and verify sectors against the actual selected reference. Hamiltonians,
   pools, state preparation and observables share one Clifford transformation;

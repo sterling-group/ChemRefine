@@ -5,6 +5,7 @@ Qiskit only when invoked inside the optional backend environment.
 """
 
 from chemrefine.engines.qiskit.components import (
+    adaptive,
     algorithms,
     ansatze,
     ansatze_extended,
@@ -24,6 +25,7 @@ from chemrefine.engines.qiskit.components import (
 )
 
 __all__ = [
+    "adaptive",
     "algorithms",
     "ansatze",
     "ansatze_extended",

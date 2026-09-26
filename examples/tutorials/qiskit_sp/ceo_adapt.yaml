@@ -1,0 +1,32 @@
+template_dir: ./templates
+output_dir: ./outputs_ceo
+input: ./h2.xyz
+charge: 0
+multiplicity: 1
+max_cores: 1
+dispatch: local
+steps:
+  - step: 1
+    name: coupled_exchange_h2
+    engine: qiskit
+    operation: sp
+    options:
+      basis: sto-3g
+      algorithm:
+        name: ceo_adapt
+        options:
+          variant: adaptive
+          tetris: true
+          selection_threshold: 1.0e-12
+          energy_increase_tolerance: 1.0e-7
+          spin_constraint: require
+          max_pool_size: 4096
+      ansatz:
+        name: ceo
+        options: {max_pool_size: 4096}
+      estimator: statevector
+      optimizer:
+        name: slsqp
+        options: {maxiter: 200, ftol: 1.0e-12}
+      initial_point: zeros
+      cores: 1

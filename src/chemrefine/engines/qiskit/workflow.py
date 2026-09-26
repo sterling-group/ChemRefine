@@ -140,8 +140,10 @@ def run_problem(
     """
     started = perf_counter()
     resolved = options if isinstance(options, QiskitOptions) else QiskitOptions.from_raw(options)
-    if operator_pool is not None and resolved.algorithm.name != "adapt_vqe":
-        raise ConfigError("qiskit supplied operator_pool requires algorithm 'adapt_vqe'")
+    if operator_pool is not None and resolved.algorithm.name not in {"adapt_vqe", "tetris_adapt"}:
+        raise ConfigError(
+            "qiskit supplied operator_pool requires algorithm 'adapt_vqe' or 'tetris_adapt'"
+        )
     algorithm_spec = ALGORITHMS.spec(resolved.algorithm.name)
     if (
         initial_point is not None
@@ -163,6 +165,7 @@ def run_problem(
             initial_point=initial_point,
             callback=callback,
             reference_energy_hartree=reference_energy_hartree,
+            operator_pool=operator_pool,
         )
         outcome = ALGORITHMS.build(resolved.algorithm, request=request)
         return summarize_native(outcome, request, runtime_seconds=perf_counter() - started)

@@ -53,6 +53,7 @@ def assemble_components(
     operator_pool: OperatorPool | None = None,
     initial_point: Sequence[float] | None = None,
     callback: Any = None,
+    defer_optimizer: bool = False,
 ) -> Iterator[SolverComponents]:
     """Construct consumed resources once and close each on every exit path.
 
@@ -112,11 +113,24 @@ def assemble_components(
                 sampler_resource.transpiler_options if sampler_resource else None
             ),
         )
-        if "optimizer" in required:
-            extra = (
-                {"context": context, "components": components}
-                if OPTIMIZERS.spec(options.optimizer.name).requires
-                else {}
+        if "optimizer" in required and not defer_optimizer:
+            components = replace(
+                components, optimizer=build_optimizer(context, options, components)
             )
-            components = replace(components, optimizer=OPTIMIZERS.build(options.optimizer, **extra))
         yield components
+
+
+def build_optimizer(
+    context: ElectronicStructureContext, options: QiskitOptions, components: SolverComponents
+) -> Any:
+    """Bind one optimizer to the current circuit and the already acquired primitives.
+
+    Owned adaptive drivers call this after every circuit growth. A metric from a
+    smaller circuit is never reused for a larger parameter space.
+    """
+    extra = (
+        {"context": context, "components": components}
+        if OPTIMIZERS.spec(options.optimizer.name).requires
+        else {}
+    )
+    return OPTIMIZERS.build(options.optimizer, **extra)
