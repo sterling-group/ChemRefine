@@ -286,8 +286,16 @@ class QiskitExperimentEngine:
         return _execution.run_batch(self, inputs, ctx)
 
     def validate_outputs(self, inputs: StepInputs, ctx: StepContext) -> None:
-        """Validate the complete output bundle without executing provider code."""
-        read_bundle(self.artifact(ctx), max_bytes=self._options(ctx).max_output_bytes)
+        """Validate bundle integrity and the selected scientific product without providers."""
+        from chemrefine.engines.qiskit.experiment_outputs import validate_experiment_output
+
+        options = self._options(ctx)
+        bundle = read_bundle(self.artifact(ctx), max_bytes=options.max_output_bytes)
+        validate_experiment_output(
+            options.experiment.name,
+            bundle,
+            EXPERIMENTS.options_for(options.experiment).model_dump(mode="json"),
+        )
 
     def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
         """Validate the product and return the prior structures without new lineage."""

@@ -588,6 +588,10 @@ for the full map.
 
 ### Fixed
 
+- **Quantum artifact completeness.** All eleven experiment products now validate
+  their kind, required arrays, dimensions and scientific metadata during completion,
+  cache reuse and rebuild. Custom experiments declare SDK-free output contracts.
+
 - **Independent quantum acquisition streams.** Shared sampler lifetimes preserve
   cumulative Runtime budgets and retrieval order across shadows, measurement groups
   and sampled evolution. Local requests use distinct reproducible child seeds,

@@ -127,11 +127,44 @@ run directory can be relocated. Numeric payloads never require pickle.
 
 Scratch cleanup preserves JSON, NPZ, QPY, checkpoint directories, and provider-job
 records. A manifest is published only after its payload has been written.
-Missing or corrupt payloads invalidate the output; `rebuild-cache` validates local
-files without executing an experiment. Keep the complete bundle when copying
-results elsewhere.
+Missing or corrupt payloads invalidate the output. Completion, cache reuse and
+`rebuild-cache` also validate the selected experiment's scientific product: its
+kind, required arrays, dimensions, numerical storage types and critical metadata.
+An unrelated or empty integrity-valid bundle cannot satisfy a trajectory or
+measurement step. Resource reports legitimately have no arrays, but must retain
+their typed cost report and assumptions.
+
+| Experiment | Required product checks |
+| --- | --- |
+| `lattice_dynamics` | Selected time grid, encoded state dimension, mode occupations, energies, model, integrator and units. |
+| `variational_dynamics` | Time and parameter grids, observable columns, parameter ordering and five diagnostic columns per actual Euler/RK4 derivative evaluation. |
+| `double_factorized_evolution` | Compatible factors, orbitals, states, occupations and reference populations; retained QPY header and circuit count. |
+| `pauli_measurement` | Complete observable groups, covariance dimensions, packed physical counts and pilot/production shot accounting. |
+| `fermionic_shadows` | Ensemble-specific setting dimensions, RDM order, setting clusters, uncertainty arrays and physical shot intervals. |
+| `rdm_reconstruction` | Matching raw/fitted RDM dimensions, selected constraints and loss, accepted solver verdict and explicit representability limitations. |
+| `spacetime_postselection` | Check registers and identities, circuit header, joint/accepted/rejected physical counts and acceptance accounting. |
+| `circuit_cutting` | Observable and signed QPD coefficients, circuit count and every referenced physical measurement register. |
+| `pauli_resources` | Analytical query-report discriminator, system width, budget, normalization and query counts. |
+| `factorized_resources` | Selected factorization method, provider/version, normalization and positive logical/Toffoli costs. |
+| `surface_code_resources` | Physical-report discriminator, matching explicit machine assumptions, physical qubits, runtime and failure bound. |
+
+These checks run without quantum SDKs or provider calls and do not reopen mutable
+input circuits or integrals. They establish the stored product's structural and
+reporting contract; they do not reproduce the calculation or certify scientific
+accuracy. QPY header validation does not replace decoding when executing a circuit.
+`CACHE_ONLY` reports unusable output without submission; `RESUME` may recompute.
+Keep the complete bundle when copying results elsewhere.
 
 For Python callers, `run_experiment(options, output_path)` executes the same
 registry builder and `read_bundle(output_path)` returns validated, read-only
 arrays. Third-party builders register in `EXPERIMENTS` and return
-`ExperimentResult(kind, arrays, metadata)`.
+`ExperimentResult(kind, arrays, metadata)`. `read_bundle` checks generic integrity;
+Python callers can additionally call `validate_experiment_output(name, bundle,
+resolved_component_options)` from `chemrefine.engines.qiskit.experiment_outputs`.
+
+Third-party components must also call `register_experiment_output(name, kind,
+validator)` in that module. The validator receives a `QuantumBundle` and the
+fully defaulted component options, raises `ValueError` on invalid content, and
+must remain SDK-free and local. Import both registrations in the orchestrator
+and worker. An undeclared output contract fails validation instead of bypassing
+recovery checks.
