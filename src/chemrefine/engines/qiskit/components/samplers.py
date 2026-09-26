@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
+import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
 from chemrefine.engines.api import BackendRequirement
@@ -52,7 +53,13 @@ def build_statevector_sampler(
         raise ConfigError("qiskit sampler 'statevector' supports device: cpu only")
     from qiskit.primitives import StatevectorSampler
 
-    return SamplerResource(StatevectorSampler(seed=options.seed))
+    generator = np.random.default_rng(options.seed)
+
+    def set_seed(seed: int) -> None:
+        """Reset the owned public generator to the session's independent child stream."""
+        generator.bit_generator.state = np.random.default_rng(seed).bit_generator.state
+
+    return SamplerResource(StatevectorSampler(seed=generator), set_sampling_seed=set_seed)
 
 
 @SAMPLERS.register("basic_backend", BackendSamplerOptions)
@@ -68,8 +75,10 @@ def build_basic_sampler(
     from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
 
     backend = BasicSimulator()
+    sampler = BackendSamplerV2(backend=backend, options={"seed_simulator": options.seed_simulator})
     return SamplerResource(
-        BackendSamplerV2(backend=backend, options={"seed_simulator": options.seed_simulator}),
+        sampler,
+        set_sampling_seed=lambda seed: setattr(sampler.options, "seed_simulator", seed),
         transpiler=generate_preset_pass_manager(
             backend=backend,
             optimization_level=options.optimization_level,
@@ -100,8 +109,10 @@ def build_aer_sampler(
         simulation_precision=validated.simulation_precision,
         noise_model=validated.noise_model,
     )
+    sampler = BackendSamplerV2(backend=backend, options={"seed_simulator": options.seed_simulator})
     return SamplerResource(
-        BackendSamplerV2(backend=backend, options={"seed_simulator": options.seed_simulator}),
+        sampler,
+        set_sampling_seed=lambda seed: setattr(sampler.options, "seed_simulator", seed),
         transpiler=generate_preset_pass_manager(
             backend=backend,
             optimization_level=options.optimization_level,

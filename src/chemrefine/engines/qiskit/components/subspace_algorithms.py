@@ -802,7 +802,7 @@ def build_sqd(*, options: SQDOptions, request: NativeSolveRequest) -> NativeOutc
 )
 def build_sqdrift(*, options: SqDRIFTOptions, request: NativeSolveRequest) -> NativeOutcome:
     """Execute seeded Qiskit Fermions qDRIFT circuits and diagonalize their samples."""
-    from chemrefine.engines.qiskit.sampling import sample_circuit
+    from chemrefine.engines.qiskit.sampling import SamplingSession
     from chemrefine.engines.qiskit.sqdrift import sqdrift_circuits
 
     validate_subspace_options(request.options)
@@ -817,22 +817,20 @@ def build_sqdrift(*, options: SqDRIFTOptions, request: NativeSolveRequest) -> Na
     )
     counts: Counter[str] = Counter()
     records = []
-    for circuit, info in sqdrift_circuits(
+    circuits = sqdrift_circuits(
         data,
         times=options.times,
         num_groups=options.num_groups,
         randomizations=options.randomizations,
         seed=options.seed,
-    ):
-        batch = sample_circuit(
-            circuit,
-            request.options.sampler,
-            shots=options.shots,
-            device=request.options.device,
-            cores=request.options.cores,
-        )
-        counts.update(batch.counts)
-        records.append({**info, "shots": batch.shots, "sampling": batch.metadata})
+    )
+    with SamplingSession(
+        request.options.sampler, device=request.options.device, cores=request.options.cores
+    ) as session:
+        for circuit, info in circuits:
+            batch = session.sample(circuit, shots=options.shots)
+            counts.update(batch.counts)
+            records.append({**info, "shots": batch.shots, "sampling": batch.metadata})
     if options.projection == "explicit":
         return solve_explicit_samples(
             request,

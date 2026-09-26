@@ -514,13 +514,23 @@ def build_runtime_resource(
             """Retain sampler isinstance checks used by ComputeUncompute and QNSPSA."""
 
         adapter = JournalEstimator if kind == "estimator" else JournalSampler
-        return resource_type(
-            adapter(
-                primitive, options, journal, kind=kind, backend=backend, service=service, mode=mode
-            ),
+        wrapped = adapter(
+            primitive, options, journal, kind=kind, backend=backend, service=service, mode=mode
+        )
+        resource = resource_type(
+            wrapped,
             close=mode.close if mode is not None and options.close_mode else lambda: None,
             transpiler=transpiler,
         )
+        if isinstance(resource, SamplerResource) and options.fake_backend:
+
+            def set_seed(seed: int) -> None:
+                """Advance local fake-backend streams and fingerprint their actual SDK seed."""
+                primitive.options.update(simulator={"seed_simulator": seed})
+                wrapped.options = wrapped.options.model_copy(update={"seed_simulator": seed})
+
+            resource.set_sampling_seed = set_seed
+        return resource
     except BaseException:
         if mode is not None and options.close_mode:
             mode.close()

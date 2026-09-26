@@ -48,6 +48,14 @@
     "breaks": "number-conserving orbital shadow estimates use the wrong inverse measurement channel"
   },
   {
+    "id": "qiskit-independent-shadow-shot-streams",
+    "path": "src/chemrefine/engines/qiskit/sampling.py",
+    "old": "self._streams.spawn(1)",
+    "new": "np.random.SeedSequence(1).spawn(1)",
+    "tests": "tests/test_engines_qiskit_shadows.py",
+    "breaks": "restarting the same outcome RNG for every random shadow setting invalidates acquisition convergence and setting-level uncertainty"
+  },
+  {
     "id": "qiskit-majorana-shadow-inversion",
     "path": "src/chemrefine/engines/qiskit/shadows.py",
     "old": "inverse_four_majoranas = comb(2 * m, 4) / comb(m, 2)",

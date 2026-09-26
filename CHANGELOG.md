@@ -584,6 +584,11 @@ for the full map.
 
 ### Fixed
 
+- **Independent quantum acquisition streams.** Shared sampler lifetimes preserve
+  cumulative Runtime budgets and retrieval order across shadows, measurement groups
+  and sampled evolution. Local requests use distinct reproducible child seeds,
+  correcting repeated shot randomness and invalid shadow uncertainty estimates.
+
 - **An API key holding a character HTTP headers cannot carry is refused by name.** A
   curly quote or an em dash pasted into the key made `chemrefine agent --check` blame the
   endpoint ("the reply is not a model listing") for a request it never sent; the key is

@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from chemrefine.engines.qiskit.context import SamplerResource
 from chemrefine.engines.qiskit.options import ComponentSelection, QiskitOptions
 from chemrefine.engines.qiskit.registry import SAMPLERS, ComponentSpec, NoComponentOptions
-from chemrefine.engines.qiskit.sampling import SampleBatch, sample_circuit
+from chemrefine.engines.qiskit.sampling import SampleBatch, SamplingSession, sample_circuit
 from chemrefine.engines.qiskit.workflow import validate_options
 from chemrefine.errors import ConfigError
 
@@ -163,3 +164,85 @@ def test_sampler_graph_checks_cuda_methods():
                 algorithm="sqd", sampler={"name": "aer", "options": {"method": "tensor_network"}}
             )
         )
+
+
+@pytest.mark.parametrize(
+    "provider,key",
+    [("statevector", "seed"), ("basic_backend", "seed_simulator"), ("aer", "seed_simulator")],
+)
+def test_sampling_session_advances_reproducible_local_streams(provider, key):
+    """Independent requests differ but repeat exactly when the whole experiment is replayed."""
+    from qiskit import QuantumCircuit
+
+    circuit = QuantumCircuit(1)
+    circuit.h(0)
+    selection = ComponentSelection(name=provider, options={key: 17})
+    results = []
+    for _ in range(2):
+        with SamplingSession(selection, seed=53) as session:
+            results.append([session.sample(circuit, shots=127) for _ in range(8)])
+    assert results[0] == results[1]
+    assert len({tuple(sorted(batch.counts.items())) for batch in results[0]}) > 1
+    assert len({batch.metadata["sampling_seed"] for batch in results[0]}) == 8
+    assert [batch.metadata["request_index"] for batch in results[0]] == list(range(8))
+
+
+def test_session_lifetime_validation_cleanup_and_compiler_options(monkeypatch):
+    """One provider receives all requests, closes on failure, and cannot be reused afterward."""
+    from qiskit import QuantumCircuit
+    from qiskit.primitives import StatevectorSampler
+
+    built, closed, compiled = [], [], []
+
+    def compile(circuit, **options):
+        """Record provider-specific compilation controls and inject a second-request failure."""
+        compiled.append(options)
+        if len(compiled) == 2:
+            raise ValueError("compiler failed")
+        return circuit
+
+    def build(**kwargs):
+        """Own one numerical provider even when a later compilation fails."""
+        built.append(kwargs)
+        return SamplerResource(
+            StatevectorSampler(seed=np.random.default_rng(1)),
+            close=lambda: closed.append(True),
+            transpiler=SimpleNamespace(run=compile),
+            transpiler_options={"example": 2},
+        )
+
+    monkeypatch.setitem(SAMPLERS._specs, "session_test", ComponentSpec(NoComponentOptions, build))
+    circuit = QuantumCircuit(1)
+    session = SamplingSession("session_test", cores=3, device="cuda")
+    session.__exit__()
+    with pytest.raises(ConfigError, match="open SamplingSession"):
+        session.sample(circuit, shots=2)
+    with pytest.raises(ValueError, match="compiler failed"), session:
+        session.sample(circuit, shots=2)
+        session.sample(circuit, shots=2)
+    assert len(built) == 1 and built[0]["cores"] == 3 and built[0]["device"] == "cuda"
+    assert closed == [True] and compiled == [{"example": 2}, {"example": 2}]
+    with pytest.raises(ConfigError, match="entered once"), session:
+        pass
+    with pytest.raises(ConfigError, match="nonnegative"):
+        SamplingSession(seed=-1)
+    with pytest.raises(ConfigError, match="nonnegative"):
+        SamplingSession(seed=True)
+
+
+def test_seeded_custom_provider_requires_explicit_stream_support(monkeypatch):
+    """A provider-specific integer seed cannot silently restart on every request."""
+    from chemrefine.engines.qiskit.components.samplers import StatevectorSamplerOptions
+
+    closed = []
+    spec = ComponentSpec(
+        StatevectorSamplerOptions,
+        lambda **kwargs: SamplerResource(None, close=lambda: closed.append(True)),
+    )
+    monkeypatch.setitem(SAMPLERS._specs, "seeded_custom", spec)
+    with (
+        pytest.raises(ConfigError, match="set_sampling_seed"),
+        SamplingSession(ComponentSelection(name="seeded_custom", options={"seed": 1})),
+    ):
+        pass
+    assert closed == [True]

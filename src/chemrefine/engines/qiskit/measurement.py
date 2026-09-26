@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from chemrefine.engines.qiskit.options import ComponentSelection
 from chemrefine.engines.qiskit.registry import SAMPLERS
-from chemrefine.engines.qiskit.sampling import SampleBatch, sample_circuit
+from chemrefine.engines.qiskit.sampling import SampleBatch, SamplingSession
 from chemrefine.errors import ConfigError
 
 
@@ -140,22 +140,6 @@ def group_statistics(
     return float(group.coefficients @ means), max(0.0, variance), covariance
 
 
-def _selection(
-    selection: ComponentSelection, seed: int, group: int, stage: int
-) -> ComponentSelection:
-    """Give seeded local pilots and production runs independent reproducible streams."""
-    resolved = SAMPLERS.options_for(selection)
-    options = resolved.model_dump(mode="json")
-    for name in ("seed", "seed_simulator"):
-        if name in type(resolved).model_fields:
-            options[name] = int(
-                np.random.SeedSequence([seed, group, stage, options[name] or 0]).generate_state(1)[
-                    0
-                ]
-            )
-    return ComponentSelection(name=selection.name, options=options)
-
-
 def measure_observable(
     circuit: Any,
     observable: Any,
@@ -193,54 +177,46 @@ def measure_observable(
         raise ConfigError(
             "measurement shot budget requires pilots plus two production shots per group"
         )
-    pilots = []
-    for index, group in enumerate(groups):
-        pilot = sample_circuit(
-            circuit.compose(group.circuit),
-            _selection(sampler, options.seed, index, 0),
-            shots=options.pilot_shots,
-            cores=cores,
-            device=device,
-        )
-        pilots.append(group_statistics(group, pilot)[1])
-    scale = np.sqrt(pilots)
-    if not np.any(scale):
-        scale = np.ones(len(groups))
-    fractional = (remaining - 2 * len(groups)) * scale / scale.sum()
-    allocation = np.floor(fractional).astype(int) + 2
-    for index in np.argsort(-(fractional - np.floor(fractional)), kind="stable")[
-        : remaining - sum(allocation)
-    ]:
-        allocation[index] += 1
+    pilots, pilot_metadata = [], []
     records = []
     expectation, variance_of_mean = constant, 0.0
-    for index, (group, shots) in enumerate(zip(groups, allocation, strict=True)):
-        samples = sample_circuit(
-            circuit.compose(group.circuit),
-            _selection(sampler, options.seed, index, 1),
-            shots=int(shots),
-            cores=cores,
-            device=device,
-        )
-        mean, variance, covariance = group_statistics(group, samples)
-        expectation += mean
-        variance_of_mean += variance / int(shots)
-        records.append(
-            {
-                "paulis": list(group.labels),
-                "coefficients": group.coefficients.tolist(),
-                "shots": int(shots),
-                "pilot_shots": options.pilot_shots,
-                "pilot_variance": pilots[index],
-                "expectation": mean,
-                "covariance": covariance.tolist(),
-                "counts": samples.counts,
-                "z_masks": list(group.z_masks),
-                "signs": list(group.signs),
-                "basis_gate_counts": dict(group.circuit.count_ops()),
-                "basis_depth": group.circuit.depth(),
-            }
-        )
+    with SamplingSession(sampler, cores=cores, device=device, seed=options.seed) as session:
+        for group in groups:
+            pilot = session.sample(circuit.compose(group.circuit), shots=options.pilot_shots)
+            pilots.append(group_statistics(group, pilot)[1])
+            pilot_metadata.append(pilot.metadata)
+        scale = np.sqrt(pilots)
+        if not np.any(scale):
+            scale = np.ones(len(groups))
+        fractional = (remaining - 2 * len(groups)) * scale / scale.sum()
+        allocation = np.floor(fractional).astype(int) + 2
+        for index in np.argsort(-(fractional - np.floor(fractional)), kind="stable")[
+            : remaining - sum(allocation)
+        ]:
+            allocation[index] += 1
+        for index, (group, shots) in enumerate(zip(groups, allocation, strict=True)):
+            samples = session.sample(circuit.compose(group.circuit), shots=int(shots))
+            mean, variance, covariance = group_statistics(group, samples)
+            expectation += mean
+            variance_of_mean += variance / int(shots)
+            records.append(
+                {
+                    "paulis": list(group.labels),
+                    "coefficients": group.coefficients.tolist(),
+                    "shots": int(shots),
+                    "pilot_shots": options.pilot_shots,
+                    "pilot_variance": pilots[index],
+                    "pilot_sampling": pilot_metadata[index],
+                    "sampling": samples.metadata,
+                    "expectation": mean,
+                    "covariance": covariance.tolist(),
+                    "counts": samples.counts,
+                    "z_masks": list(group.z_masks),
+                    "signs": list(group.signs),
+                    "basis_gate_counts": dict(group.circuit.count_ops()),
+                    "basis_depth": group.circuit.depth(),
+                }
+            )
     return {
         "expectation": expectation,
         "standard_error": float(np.sqrt(variance_of_mean)),

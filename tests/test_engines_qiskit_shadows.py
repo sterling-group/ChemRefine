@@ -414,21 +414,77 @@ def test_real_aer_shadow_sampling_supports_declared_simulation_methods(sampler_o
 
 def test_sampling_passes_scheduler_grants_to_selected_provider(monkeypatch):
     from qiskit import QuantumCircuit
+    from qiskit.primitives import StatevectorSampler
 
-    from chemrefine.engines.qiskit.sampling import SampleBatch
+    from chemrefine.engines.qiskit.context import SamplerResource
+    from chemrefine.engines.qiskit.registry import SAMPLERS, ComponentSpec, NoComponentOptions
 
-    def sample(circuit, selection, *, shots, device, cores):
-        """Record the execution grant crossing the provider boundary."""
-        assert selection.name == "custom_provider"
+    builds, closed = [], []
+
+    def build(*, options, device, cores):
+        """Record one resource lifetime and the scheduler grant for all settings."""
         assert device == "cuda" and cores == 7
-        return SampleBatch({"01": shots}, circuit.num_qubits, shots)
+        builds.append(options)
+        return SamplerResource(
+            StatevectorSampler(seed=np.random.default_rng(7)), close=lambda: closed.append(True)
+        )
 
-    monkeypatch.setattr("chemrefine.engines.qiskit.sampling.sample_circuit", sample)
+    monkeypatch.setitem(
+        SAMPLERS._specs, "custom_provider", ComponentSpec(NoComponentOptions, build)
+    )
+    preparation = QuantumCircuit(2)
+    preparation.x(0)
     result = collect_fermionic_shadows(
-        QuantumCircuit(2),
+        preparation,
         ComponentSelection(name="custom_provider"),
-        FermionicShadowOptions(num_particles=1, num_settings=1),
+        FermionicShadowOptions(num_particles=1, num_settings=3),
         device="cuda",
         cores=7,
     )
-    assert result.counts == ({"01": 1},)
+    assert len(result.counts) == 3 and all(sum(counts.values()) == 1 for counts in result.counts)
+    assert len(builds) == 1 and closed == [True]
+
+
+def test_seeded_one_shot_orbital_shadows_converge_with_independent_setting_noise():
+    """Restarting the same sampler seed per setting gives 1.25 instead of occupation one."""
+    from qiskit import QuantumCircuit
+
+    preparation = QuantumCircuit(2)
+    preparation.x(0)
+    result = collect_fermionic_shadows(
+        preparation,
+        ComponentSelection(name="statevector", options={"seed": 1}),
+        FermionicShadowOptions(
+            num_particles=1, num_settings=2000, shots_per_setting=1, max_order=1, seed=7
+        ),
+    )
+    assert result.standard_errors_real is not None
+    mean = result.rdms.one_body[0, 0].real
+    error = result.standard_errors_real.one_body[0, 0]
+    assert abs(mean - 1) < 4 * error
+    assert abs(mean - 1) < 0.06
+    seeds = [batch["sampling_seed"] for batch in result.metadata["sampling"]]
+    assert len(set(seeds)) == 2000
+
+
+def test_shadow_uncertainty_tracks_variation_across_independent_acquisitions():
+    """Setting-level errors reflect both random rotations and independent outcome noise."""
+    from qiskit import QuantumCircuit
+
+    preparation = QuantumCircuit(2)
+    preparation.x(0)
+    means, variances = [], []
+    for seed in range(20):
+        result = collect_fermionic_shadows(
+            preparation,
+            ComponentSelection(name="statevector", options={"seed": seed}),
+            FermionicShadowOptions(
+                num_particles=1, num_settings=100, shots_per_setting=1, max_order=1, seed=100 + seed
+            ),
+        )
+        assert result.standard_errors_real is not None
+        means.append(result.rdms.one_body[0, 0].real)
+        variances.append(result.standard_errors_real.one_body[0, 0] ** 2)
+    ratio = np.var(means, ddof=1) / np.mean(variances)
+    assert 0.35 < ratio < 2.5
+    assert abs(np.mean(means) - 1) < 0.04

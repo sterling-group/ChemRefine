@@ -132,7 +132,7 @@ def krylov_circuits(request: NativeSolveRequest, options: SKQDOptions) -> tuple[
 )
 def build_skqd(*, options: SKQDOptions, request: NativeSolveRequest) -> NativeOutcome:
     """Acquire Krylov samples and diagonalize the original active Hamiltonian."""
-    from chemrefine.engines.qiskit.sampling import sample_circuit
+    from chemrefine.engines.qiskit.sampling import SamplingSession
 
     validate_subspace_options(request.options)
     if request.initial_point is not None:
@@ -143,23 +143,21 @@ def build_skqd(*, options: SKQDOptions, request: NativeSolveRequest) -> NativeOu
     )
     counts: Counter[str] = Counter()
     records = []
-    for power, circuit in enumerate(krylov_circuits(request, options)):
-        batch = sample_circuit(
-            circuit,
-            request.options.sampler,
-            shots=options.shots,
-            device=request.options.device,
-            cores=request.options.cores,
-        )
-        counts.update(batch.counts)
-        records.append(
-            {
-                "power": power,
-                "time": power * options.time_step,
-                "shots": batch.shots,
-                "sampling": batch.metadata,
-            }
-        )
+    circuits = krylov_circuits(request, options)
+    with SamplingSession(
+        request.options.sampler, device=request.options.device, cores=request.options.cores
+    ) as session:
+        for power, circuit in enumerate(circuits):
+            batch = session.sample(circuit, shots=options.shots)
+            counts.update(batch.counts)
+            records.append(
+                {
+                    "power": power,
+                    "time": power * options.time_step,
+                    "shots": batch.shots,
+                    "sampling": batch.metadata,
+                }
+            )
     return solve_explicit_samples(
         request,
         dict(counts),

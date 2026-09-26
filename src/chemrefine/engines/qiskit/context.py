@@ -89,6 +89,7 @@ class SamplerResource:
     close: Callable[[], None] = field(default=lambda: None)
     transpiler: Any | None = None
     transpiler_options: dict[str, Any] | None = None
+    set_sampling_seed: Callable[[int], None] | None = None
 
     def __enter__(self) -> Any:
         """Return the sampler while its provider resource is open."""

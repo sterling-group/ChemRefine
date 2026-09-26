@@ -461,7 +461,7 @@ def collect_fermionic_shadows(
     cores: int = 1,
 ) -> ShadowResult:
     """Execute real randomized circuits through the selected local/provider sampler."""
-    from chemrefine.engines.qiskit.sampling import sample_circuit
+    from chemrefine.engines.qiskit.sampling import SamplingSession
 
     if preparation.num_clbits or preparation.num_parameters:
         raise ConfigError("shadow preparation must have no classical bits or unbound parameters")
@@ -482,13 +482,12 @@ def collect_fermionic_shadows(
     if simulation_bytes > options.max_memory_mb * 1024**2:
         raise ConfigError("shadow sampler storage estimate exceeds max_memory_mb")
     counts, sampling = [], []
-    for setting in settings:
-        circuit = preparation.compose(shadow_circuit(setting))
-        batch = sample_circuit(
-            circuit, sampler, shots=options.shots_per_setting, device=device, cores=cores
-        )
-        counts.append(batch.counts)
-        sampling.append(batch.metadata)
+    with SamplingSession(sampler, device=device, cores=cores) as session:
+        for setting in settings:
+            circuit = preparation.compose(shadow_circuit(setting))
+            batch = session.sample(circuit, shots=options.shots_per_setting)
+            counts.append(batch.counts)
+            sampling.append(batch.metadata)
     result = estimate_fermionic_shadows(settings, counts, options)
     result.metadata["sampling"] = sampling
     return result

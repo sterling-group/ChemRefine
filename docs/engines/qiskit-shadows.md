@@ -24,6 +24,13 @@ The selected sampler has the same local device and scheduler core grants as
 other Qiskit components. The combined backend profile must contain the sampler
 and fermionic providers.
 
+One managed sampler remains open for the complete acquisition. Runtime job and
+nominal-shot limits therefore cover all settings, and explicit retrieval consumes
+the saved job IDs in request order. Local simulators use a distinct reproducible
+child seed for every setting; they never restart the same shot stream at each
+rotation. Each sampling record includes its request index and actual child seed.
+The settings seed and shot-stream seed remain separate controls.
+
 ```yaml
 experiment:
   name: fermionic_shadows
@@ -104,6 +111,14 @@ The Python entry points are `collect_fermionic_shadows` for acquisition and
 `estimate_fermionic_shadows` for previously acquired data, in
 `chemrefine.engines.qiskit.shadows`.
 
+Custom acquisition loops should use `SamplingSession` from
+`chemrefine.engines.qiskit.sampling` around all calls to `session.sample(...)`.
+`sample_circuit` remains the convenience function for one request. A custom
+sampler with local seed controls must supply the `SamplerResource.set_sampling_seed`
+callback, applying each request seed through its supported public provider API.
+Providers without local seed controls manage their own measurement randomness.
+Sessions are synchronous and must not be shared across concurrent threads.
+
 ## Scientific checks
 
 Tests compare complex orbital 2-RDM snapshots against Low's independent pair-space
@@ -111,6 +126,10 @@ weights, and average the complete 105 four-mode Majorana matching design for a
 correlated complex state against direct Fock-space RDMs. They also compare every
 Majorana generator under the synthesized circuits, exercise real statevector and
 Aer samplers, and reload/reconstruct complete artifact datasets.
+Seeded one-shot acquisition is checked against a known occupation, with
+independent acquisitions testing the scale of the setting-level uncertainty.
+Offline Runtime adapter tests check whole-acquisition budgets and retrieval,
+and both released Runtime fake-backend APIs exercise per-request child seeds.
 
 The number-conserving inverse follows [Low, arXiv:2208.08964v2](https://arxiv.org/html/2208.08964v2).
 The separate Majorana channel follows [Zhao, Rubin and Miyake,

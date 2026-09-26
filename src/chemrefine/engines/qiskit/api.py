@@ -116,7 +116,7 @@ from chemrefine.engines.qiskit.runtime_options import (
     RuntimeEstimatorOptions,
     RuntimeSamplerOptions,
 )
-from chemrefine.engines.qiskit.sampling import SampleBatch, sample_circuit
+from chemrefine.engines.qiskit.sampling import SampleBatch, SamplingSession, sample_circuit
 from chemrefine.engines.qiskit.shadows import (
     FermionicShadowOptions,
     ShadowResult,
@@ -188,6 +188,7 @@ __all__ = [
     "RuntimeEstimatorOptions",
     "RuntimeSamplerOptions",
     "SampleBatch",
+    "SamplingSession",
     "ShadowResult",
     "ShadowSetting",
     "SpacetimeOptions",
