@@ -940,6 +940,8 @@ def _resolve_step_option_paths(step: StepConfig, *, base: Path) -> StepConfig:
         for key in STEP_OPTION_PATHS
         if isinstance(value := options.get(key), str) and value and not Path(value).is_absolute()
     }
+    if not rewritten and step.source_dir == base.resolve():
+        return step
     result = step.model_copy(update={"options": {**options, **rewritten}})
     result._source_dir = base.resolve()
     return result

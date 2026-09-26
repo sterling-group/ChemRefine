@@ -235,11 +235,11 @@ def test_invalid_format_marks_cycles_and_excess_nesting_fail_cleanly():
     class Values(BaseModel):
         data: Any
 
-    cycle = []
+    cycle: list[Any] = []
     cycle.append(cycle)
     with pytest.raises(ConfigError, match="cyclic"):
         typed_input_references(Values(data=cycle))
-    deep = []
+    deep: list[Any] = []
     for _ in range(66):
         deep = [deep]
     with pytest.raises(ConfigError, match="64 option levels"):

@@ -38,7 +38,7 @@ class _FileEngine(FakeEngine):
     """A file consumer with a manifest grammar owned entirely by the engine."""
 
     options_cls: ClassVar[type[_Options]] = _Options
-    locations = (("problem", "sources", 0, "path"),)
+    locations: tuple[tuple[str | int, ...], ...] = (("problem", "sources", 0, "path"),)
     preflight_refuses = "invalid declared input filenames"
     seen_paths: ClassVar[list[Path]] = []
 
@@ -79,6 +79,16 @@ def _config(base: Path, filename: Any = "./input.json") -> Config:
 def _seeds() -> PipelineState:
     """One real parent supplies the per-structure calculation identity."""
     return PipelineState(structures=(Structure(id="0", atoms=Atoms("H")),))
+
+
+def test_resolving_existing_provenance_is_idempotent(tmp_path):
+    """Repeated validation preserves a resolved config; changing its base remains explicit."""
+    config = _config(tmp_path)
+    assert resolve_relative_paths(config, base=tmp_path) is config
+    relocated = resolve_relative_paths(config, base=tmp_path / "relocated")
+    assert relocated is not config
+    assert relocated.steps[0].source_dir == tmp_path / "relocated"
+    assert config.steps[0].source_dir == tmp_path
 
 
 def _key(config: Config):
@@ -237,10 +247,12 @@ def test_absent_or_wrongly_typed_locations_are_refused(tmp_path, location):
         ("ok", "/a"),
     ],
 )
-def test_dependency_contract_refuses_unstable_names_and_ambiguous_paths(tmp_path, name, path):
+def test_dependency_contract_refuses_unstable_names_and_ambiguous_paths(
+    tmp_path, name, path, monkeypatch
+):
     """Manifest readers return portable identities and already-anchored filesystem paths."""
     engine = _FileEngine()
-    engine.input_file_dependencies = lambda options, files: {name: path}
+    monkeypatch.setattr(engine, "input_file_dependencies", lambda options, files: {name: path})
     with pytest.raises(ConfigError, match="input dependency"):
         declared_input_files(_config(tmp_path).steps[0], engine)
 
