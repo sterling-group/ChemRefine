@@ -459,6 +459,13 @@ for the full map.
 
 ### Fixed
 
+- **A step the scheduler would refuse stops the run before anything runs.** A layout over
+  `max_cores` (a Q-Chem `nprocs` x `cores` step), a CUDA step against `max_gpus: 0`, or
+  several GPUs under `dispatch: local` was refused only when that step's jobs were about
+  to submit — after every step before it had run. The run now checks every step that may
+  submit at its start, beside the engines' own preflight, and `chemrefine validate` warns
+  about the same steps against the budget the config states (a warning, since
+  `--maxcores` and `--maxgpus` can raise it for the run).
 - **A chat turn that fails after your verdicts never offers them again.** In the
   builder's chat panel the allowed calls run before the model is asked anything, so a turn
   that then failed — the model endpoint dropping — had already made its changes, yet the

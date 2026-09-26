@@ -50,6 +50,7 @@ from chemrefine.step import (
     RunPlan,
     StepOutcome,
     halt_if_pending,
+    preflight_batches,
     rebuild_cache_step,
     run_step,
 )
@@ -629,8 +630,9 @@ def run(config: Config, plan: RunPlan | None = None) -> list[StepOutcome]:
         )
         # Fail fast: every step's backend env must be resolvable before ANY job submits,
         # every step's own preflight refusals (a training step without a device, an
-        # open-shell save_tensors) must fire now rather than at that step's turn, and
-        # `dispatch: slurm` must actually have sbatch available.
+        # open-shell save_tensors) must fire now rather than at that step's turn, and so
+        # must the scheduler's (a layout over max_cores, a CUDA step with no GPU to run
+        # on) — and `dispatch: slurm` must actually have sbatch available.
         #
         # The steps checked are the ones that *can* submit, which is `StepMode.may_submit` and
         # nothing else. A guard for something that will not happen is just a wall: it would
@@ -657,7 +659,7 @@ def run(config: Config, plan: RunPlan | None = None) -> list[StepOutcome]:
         for step_cfg in submittable:
             if (silent := undeclared_options(step_cfg)) is not None:
                 logger.warning("step %d: %s", step_cfg.step, silent)
-        slurm.dispatch_locally(config.dispatch)
+        preflight_batches(config, submittable, local=slurm.dispatch_locally(config.dispatch))
         state = bootstrap(config)
         logger.info("bootstrapped pipeline with %d seed structure(s)", len(state.structures))
 

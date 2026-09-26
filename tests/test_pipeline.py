@@ -1514,3 +1514,25 @@ def test_a_dead_local_lease_alone_is_swept_without_asking_the_queue(tmp_path: Pa
 
     assert outcomes
     assert not slurm.lease_path(step_dir).exists()
+
+
+def test_a_step_the_scheduler_would_refuse_stops_the_run_before_any_step_runs(tmp_path: Path):
+    """The scheduler's refusals fire at t=0, beside the engines' own preflight.
+
+    They lived only in the batch about to submit, so step 2's layout over ``max_cores``
+    was refused after step 1 had run — hours of compute in a real run, for a refusal the
+    config decided before anything started.
+    """
+    io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=tmp_path)
+    cfg = _config(
+        tmp_path,
+        input=tmp_path / "step0_seed.xyz",
+        max_cores=8,
+        steps=[
+            StepConfig(step=1, engine="fake", operation="opt_sp"),
+            StepConfig(step=2, engine="qchem", operation="sp", options={"nprocs": 4, "cores": 4}),
+        ],
+    )
+    with pytest.raises(ConfigError, match=r"16 cores, more than max_cores=8"):
+        pipeline.run(cfg)
+    assert not cfg.step_dir(cfg.steps[0]).exists()

@@ -186,8 +186,9 @@ class QchemEngine(JobEngine):
 
         The pure-OpenMP case clamps to ``max_cores`` like every default layout — one
         process can use fewer threads than asked. An MPI layout is **not** clamped: its
-        factorization is the job's shape, so exceeding the budget is refused upstream
-        (:class:`~chemrefine.engines._execution._BatchPlan`) rather than silently reshaped.
+        factorization is the job's shape, so exceeding the budget is refused
+        (:func:`~chemrefine.engines.check_batch`, at the run's start) rather than silently
+        reshaped.
         """
         opts = self._opts(ctx)
         if opts.nprocs is None:

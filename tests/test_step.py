@@ -2242,3 +2242,32 @@ def test_the_orca_engines_template_aux_files_reach_the_step_key(tmp_path: Path):
     after = step.derive_step_key(ctx, cfg.steps[0], engine)
     assert before.fingerprint != after.fingerprint
     assert before.row_keys != after.row_keys
+
+
+# ---------------------------------------------------------------------------
+# preflight_batches — the scheduler's refusals at t=0
+# ---------------------------------------------------------------------------
+
+
+def test_a_cpu_only_run_never_resolves_the_gpu_budget(tmp_path: Path, monkeypatch):
+    """The budget can fork ``nvidia-smi``; a walk with no GPU step has no reason to ask."""
+    from chemrefine import slurm
+    from chemrefine.step import preflight_batches
+
+    def unasked(*_a, **_k):
+        raise AssertionError("the GPU budget was resolved for a CPU-only walk")
+
+    monkeypatch.setattr(slurm, "resolve_gpu_budget", unasked)
+    cfg = _config(tmp_path)
+    steps = [*cfg.steps, StepConfig(step=2, engine="mlip", options={"device": "cpu"})]
+    preflight_batches(cfg, steps, local=True)  # the inline fake is not scheduled at all
+
+
+def test_a_gpu_step_meets_the_budget_the_run_resolves(tmp_path: Path):
+    from chemrefine.errors import ConfigError
+    from chemrefine.step import preflight_batches
+
+    cfg = _config(tmp_path).model_copy(update={"max_gpus": 0})
+    cuda = StepConfig(step=2, engine="mlip", options={"device": "cuda"})
+    with pytest.raises(ConfigError, match=r"step 2 needs 1 GPU\(s\) but the budget is 0"):
+        preflight_batches(cfg, [cuda], local=True)

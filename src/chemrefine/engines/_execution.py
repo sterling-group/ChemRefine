@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import logging
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
 from chemrefine import slurm, throttle
 from chemrefine.engines.api import NULL_SINK, CompletionSink, JobExecutable, sweep
@@ -55,6 +57,77 @@ def _header_path(engine: JobExecutable, ctx: StepContext) -> Path:
     return header_path
 
 
+class BatchShape(NamedTuple):
+    """One job's shape as the scheduler charges it: SLURM tasks x cores each, and GPUs."""
+
+    ntasks: int
+    cpus_per_task: int
+    gpus: int
+
+    @property
+    def cores(self) -> int:
+        """The cores one job is charged against ``max_cores`` — the layout's product."""
+        return self.ntasks * self.cpus_per_task
+
+
+def check_batch(
+    engine: JobExecutable,
+    ctx: StepContext,
+    *,
+    local: bool,
+    gpu_budget: Callable[[], int | None],
+) -> BatchShape:
+    """The scheduler's refusals for one step's jobs — the one place they are decided.
+
+    Each is decidable from the step's configuration alone, so each has three callers: the
+    batch that is about to submit (:meth:`_BatchPlan.of`), the run at t=0 for every step
+    that may submit (:func:`chemrefine.step.preflight_batches`), and ``chemrefine
+    validate`` for the part no host decides (:mod:`chemrefine.validate`). Spelled only at
+    the batch, they fired at the failing step's own turn, after every step before it had
+    run — hours of compute to learn that ``max_gpus: 0`` meets a ``device: cuda`` step.
+
+    The core count is the engine's ``slurm_layout`` product, not a bare ``pal``: the
+    default layout carries the historical ``min(pal, max_cores)`` clamp itself, and a
+    layout that *names* both factors (an MPI x threads step) cannot be clamped by
+    squeezing the product — the factorization is the job's shape — so exceeding the
+    budget is refused outright instead of silently reshaped.
+
+    ``gpu_budget`` is asked only for a step that needs a GPU, and answers ``None`` where
+    no bound is known (``validate`` with ``max_gpus`` unset): resolving it can fork
+    ``nvidia-smi``, which a CPU-only step has no reason to pay for.
+    """
+    ntasks, cpus_per_task = engine.slurm_layout(ctx)
+    if ntasks < 1 or cpus_per_task < 1:
+        raise ChemRefineError(
+            f"step {ctx.step_cfg.step}: engine laid out {ntasks} task(s) x "
+            f"{cpus_per_task} cpu(s); both must be at least 1"
+        )
+    shape = BatchShape(ntasks, cpus_per_task, engine.gpus(ctx))
+    if shape.cores > ctx.max_cores:
+        raise ConfigError(
+            f"step {ctx.step_cfg.step} lays out {ntasks} task(s) x {cpus_per_task} "
+            f"cpu(s) = {shape.cores} cores, more than max_cores={ctx.max_cores}; lower the "
+            f"step's cores/nprocs or raise max_cores"
+        )
+    if local and shape.gpus > 1:
+        # `Throttler.assign_device` hands out a single device index per job and
+        # `_submit_one` exports it as one `CUDA_VISIBLE_DEVICES` value, so a job asking
+        # for several local GPUs (an `mlip-train` step with `gpus: 2`) would be charged
+        # for all of them but pinned to one — refused rather than under-provisioned.
+        raise ConfigError(
+            f"step {ctx.step_cfg.step} requests {shape.gpus} GPUs, but local dispatch pins "
+            f"one device per job; run this step under SLURM or set `options.device: cpu`"
+        )
+    if shape.gpus and (budget := gpu_budget()) is not None and shape.gpus > budget:
+        # A config mistake (e.g. `max_gpus: 0` with a CUDA step) is a ConfigError with
+        # its documented exit code, not the throttler's traceback.
+        raise ConfigError(
+            f"step {ctx.step_cfg.step} needs {shape.gpus} GPU(s) but the budget is "
+            f"{budget}; raise `max_gpus` or set `options.device: cpu`"
+        )
+    return shape
+
+
 @dataclass(frozen=True)
 class _BatchPlan:
     """What :func:`run_batch` resolves once and every job of the batch then reuses.
@@ -81,59 +154,25 @@ class _BatchPlan:
 
         Built before the array/queue fork rather than inside the queue branch, so a step is
         judged by its configuration and not by the path it happens to take. The GPU checks
-        below used to sit after that fork: the same ``max_gpus: 0`` that raised a
+        used to sit after that fork: the same ``max_gpus: 0`` that raised a
         :class:`~chemrefine.errors.ConfigError` per job submitted silently as an array, and
-        ``pal`` and the header were re-resolved in the array branch by hand.
-
-        The core count is the engine's ``slurm_layout`` product, not a bare ``pal``: the
-        default layout carries the historical ``min(pal, max_cores)`` clamp itself, and a
-        layout that *names* both factors (an MPI x threads step) cannot be clamped by
-        squeezing the product — the factorization is the job's shape — so exceeding the
-        budget is refused outright instead of silently reshaped.
+        ``pal`` and the header were re-resolved in the array branch by hand. The checks
+        themselves are :func:`check_batch`'s, which the run already applied at t=0; here
+        they hold against the budget this batch actually runs under.
         """
         # Header first, so a missing template still reports itself before anything about
         # GPUs — the order these were resolved in before they moved here.
         header_path = _header_path(engine, ctx)
-        ntasks, cpus_per_task = engine.slurm_layout(ctx)
-        if ntasks < 1 or cpus_per_task < 1:
-            raise ChemRefineError(
-                f"step {ctx.step_cfg.step}: engine laid out {ntasks} task(s) x "
-                f"{cpus_per_task} cpu(s); both must be at least 1"
-            )
-        pal = ntasks * cpus_per_task
-        if pal > ctx.max_cores:
-            raise ConfigError(
-                f"step {ctx.step_cfg.step} lays out {ntasks} task(s) x {cpus_per_task} "
-                f"cpu(s) = {pal} cores, more than max_cores={ctx.max_cores}; lower the "
-                f"step's cores/nprocs or raise max_cores"
-            )
-        gpus = engine.gpus(ctx)
         gpu_budget = slurm.resolve_gpu_budget(ctx.max_gpus, local=local)
-        if local and gpus > 1:
-            # `Throttler.assign_device` hands out a single device index per job and
-            # `_submit_one` exports it as one `CUDA_VISIBLE_DEVICES` value, so a job
-            # asking for several local GPUs would be charged for all of them but
-            # pinned to one. No bundled engine requests >1 today; fail loudly rather
-            # than silently under-provisioning if one starts to.
-            raise ConfigError(
-                f"step {ctx.step_cfg.step} requests {gpus} GPUs, but local dispatch pins one "
-                f"device per job; run this step under SLURM or set `options.device: cpu`"
-            )
-        if gpus > gpu_budget.count:
-            # Surface a config mistake (e.g. `max_gpus: 0` with a CUDA step) as a
-            # ConfigError with its documented exit code, not the throttler's traceback.
-            raise ConfigError(
-                f"step {ctx.step_cfg.step} needs {gpus} GPU(s) but the budget is "
-                f"{gpu_budget.count}; raise `max_gpus` or set `options.device: cpu`"
-            )
+        shape = check_batch(engine, ctx, local=local, gpu_budget=lambda: gpu_budget.count)
         return cls(
             header_path=header_path,
-            pal=pal,
-            ntasks=ntasks,
-            cpus_per_task=cpus_per_task,
+            pal=shape.cores,
+            ntasks=shape.ntasks,
+            cpus_per_task=shape.cpus_per_task,
             memory_mb=engine.memory_mb(ctx),
             single_node=engine.single_node(ctx),
-            gpus=gpus,
+            gpus=shape.gpus,
             local=local,
             gpu_budget=gpu_budget,
         )

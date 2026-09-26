@@ -19,6 +19,7 @@ other run of a structure set goes through :func:`chemrefine.lifecycle.submit_and
 
 from __future__ import annotations
 
+import functools
 import logging
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -28,7 +29,7 @@ from typing import assert_never
 
 from pydantic import ValidationError
 
-from chemrefine import attempts, cache, filtering, ids, io, lifecycle, nms
+from chemrefine import attempts, cache, filtering, ids, io, lifecycle, nms, slurm
 from chemrefine.config import (
     STEP_OPTION_PATHS,
     Config,
@@ -36,10 +37,12 @@ from chemrefine.config import (
     is_failure_policy,
     policy_stores_backfills,
 )
+from chemrefine.engines import check_batch
 from chemrefine.engines.api import (
     ArtifactEngine,
     AuxFileConsuming,
     CalculationEngine,
+    JobExecutable,
     NmsCapableEngine,
     OptionsDeclaring,
     TemplateDriven,
@@ -121,6 +124,24 @@ def build_context(
         dispatch=config.dispatch,
         job_timeout_seconds=config.job_timeout_seconds,
     )
+
+
+def preflight_batches(config: Config, steps: Iterable[StepConfig], *, local: bool) -> None:
+    """The scheduler's refusals for every step in ``steps``, before any of them runs.
+
+    :func:`~chemrefine.engines.check_batch` against the budget this run has — its
+    ``max_cores``, its dispatch, and, only once some step needs a GPU, its resolved GPU
+    budget — on the context each step will run with, less the structures no layout reads.
+    The batch applies the same checks again when it submits; this is what moves them from
+    the failing step's turn to the start of the run, where the engine's own preflight
+    already fires.
+    """
+    budget = functools.cache(lambda: slurm.resolve_gpu_budget(config.max_gpus, local=local).count)
+    for step_cfg in steps:
+        engine = get_engine(step_cfg.engine)
+        if isinstance(engine, JobExecutable):
+            ctx = build_context(config, step_cfg, PipelineState(), engine)
+            check_batch(engine, ctx, local=local, gpu_budget=budget)
 
 
 class StepMode(StrEnum):

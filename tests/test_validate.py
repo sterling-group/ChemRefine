@@ -551,3 +551,76 @@ def test_a_seed_that_does_not_exist_yet_is_a_warning(tmp_path: Path):
     (tmp_path / "seeds.xyz").write_text("1\n\nH 0 0 0\n", encoding="utf-8")
     present = _validate(tmp_path, input="./seeds.xyz")
     assert not any(w.kind == "input" for w in present.warnings)
+
+
+# ---------------------------------------------------------------------------
+# The scheduler's budget, by the run's own check
+# ---------------------------------------------------------------------------
+
+
+def _budget(report: ValidationReport) -> list[str]:
+    return [w.message for w in report.warnings if w.kind == "budget"]
+
+
+def test_a_cuda_step_against_a_stated_zero_gpu_budget_is_warned_about(tmp_path: Path):
+    """The finding's own case: ``validate`` said OK, and the run refused at step 2's turn.
+
+    A warning rather than an issue: ``--maxgpus`` (or ``start_run(max_gpus=…)``) can raise
+    the budget for the run, and a config meant to run under one is valid as written.
+    """
+    report = _validate(
+        tmp_path,
+        max_gpus=0,
+        steps=[
+            {"step": 1, "engine": "fake"},
+            {"step": 2, "engine": "mlip", "options": {"device": "cuda"}},
+        ],
+    )
+    assert report.ok
+    [warned] = _budget(report)
+    assert "step 2 needs 1 GPU(s) but the budget is 0" in warned
+
+
+def test_a_layout_over_max_cores_is_warned_about(tmp_path: Path):
+    """An MPI x threads layout is refused rather than reshaped — so it is decidable here."""
+    report = _validate(
+        tmp_path, steps=[{"step": 1, "engine": "qchem", "options": {"nprocs": 4, "cores": 4}}]
+    )
+    assert report.ok
+    [warned] = _budget(report)
+    assert "16 cores, more than max_cores=4" in warned
+
+
+def test_several_gpus_under_an_explicit_local_dispatch_are_warned_about(tmp_path: Path):
+    """``dispatch: local`` pins one device per job, and says so without asking the host."""
+    report = _validate(
+        tmp_path,
+        dispatch="local",
+        steps=[
+            {
+                "step": 1,
+                "engine": "mlip-train",
+                "options": {"task_name": "mace_off", "device": "cuda", "gpus": 2},
+            }
+        ],
+    )
+    assert any("local dispatch pins one device" in message for message in _budget(report))
+
+
+def test_what_only_the_host_can_answer_bounds_nothing(tmp_path: Path):
+    """An unset ``max_gpus`` is the host's to resolve; a laptop must not judge the cluster."""
+    report = _validate(
+        tmp_path, steps=[{"step": 1, "engine": "mlip", "options": {"device": "cuda"}}]
+    )
+    assert _budget(report) == []
+
+
+def test_a_step_its_preflight_refuses_is_not_budgeted_as_well(tmp_path: Path):
+    """The preflight's row says what is wrong; the scheduler's words would only repeat it."""
+    report = _validate(
+        tmp_path,
+        max_gpus=0,
+        steps=[{"step": 1, "engine": "qchem", "options": {"device": "cuda"}}],
+    )
+    assert [issue.kind for issue in report.issues] == ["preflight"]
+    assert _budget(report) == []

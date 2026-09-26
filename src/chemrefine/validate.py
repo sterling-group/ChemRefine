@@ -25,7 +25,11 @@ become issues or warnings up front:
 * step templates and SLURM headers that do not exist yet (warnings —
   ``chemrefine scaffold`` creates starters; the header is resolved the way dispatch
   resolves it, per-step override first, cuda header when the step's validated options
-  request a GPU).
+  request a GPU),
+* a step whose jobs the scheduler would refuse against the budget the config states —
+  more cores than ``max_cores``, more GPUs than an explicit ``max_gpus`` — through the
+  run's own :func:`~chemrefine.engines.check_batch` (warnings, because ``--maxcores``
+  and ``--maxgpus`` can raise that budget for the run).
 
 Registry-aware checks live here rather than in :mod:`chemrefine.config` because config
 must stay importable by the engine subsystem — importing the registry from there would
@@ -51,6 +55,7 @@ from chemrefine.config import (
     resolve_relative_paths,
     shell_unsafe_after_resolution,
 )
+from chemrefine.engines import check_batch
 from chemrefine.engines.api import (
     ENGINES,
     CalculationEngine,
@@ -63,9 +68,11 @@ from chemrefine.engines.api import (
     WhitespacePathIntolerant,
     get_engine,
 )
-from chemrefine.errors import ConfigError
+from chemrefine.errors import ChemRefineError, ConfigError
 from chemrefine.ids import step_template_path
 from chemrefine.nms import NmsOptions
+from chemrefine.state import PipelineState
+from chemrefine.step import build_context
 
 
 @dataclasses.dataclass(frozen=True)
@@ -77,7 +84,7 @@ class ValidationIssue:
     agent quotes it verbatim. ``kind`` is a short machine-checkable class of finding
     (``yaml`` / ``legacy`` / a pydantic error type / ``engine`` / ``options`` /
     ``backend`` / ``preflight`` / ``nms`` / ``template`` / ``slurm-header`` /
-    ``input``); the message alone is for humans.
+    ``budget`` / ``input``); the message alone is for humans.
     """
 
     loc: tuple[str | int, ...]
@@ -327,6 +334,7 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
             continue
         engine = get_engine(step.engine)
         options_ok = True
+        preflight_ok = True
         declared = None  # the engine's own reading of the step's options, when it has one
         if isinstance(engine, OptionsDeclaring):
             try:
@@ -348,6 +356,7 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
                     multiplicity=step.effective_multiplicity(config.multiplicity),
                 )
             except ConfigError as e:
+                preflight_ok = False
                 issues.append(
                     ValidationIssue(
                         loc=("steps", index, "options"), kind="preflight", message=str(e)
@@ -456,6 +465,12 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
             # Only scheduler-run engines resolve a header (locally too); an inline engine
             # like the test fake never reads one, and warning about it would be noise.
             headers.setdefault(effective_header(config, step, engine), []).append(step.step)
+        # After the options and the engine's preflight read clean: the layout reads the same
+        # options, and would only repeat those rows in the scheduler's words.
+        if options_ok and preflight_ok and (over := over_budget(config, step, engine)):
+            warnings.append(
+                ValidationIssue(loc=("steps", index, "options"), kind="budget", message=over)
+            )
     for name, steps in sorted(headers.items()):
         path = config.template_dir / name
         if not path.is_file():
@@ -475,6 +490,36 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
         # broken — and a row, because the very next command was otherwise the first to say.
         warnings.append(ValidationIssue(loc=("steps",), kind="template", message=clash))
     return issues, warnings
+
+
+def over_budget(config: Config, step: StepConfig, engine: CalculationEngine) -> str | None:
+    """Why the run would refuse this step's jobs against the budget the config states.
+
+    :func:`~chemrefine.engines.check_batch` — the check the run applies at t=0 and again
+    per batch — against the part of the budget no host decides: ``max_cores``, an explicit
+    ``max_gpus``, an explicit ``dispatch: local``. ``dispatch: auto`` and an unset
+    ``max_gpus`` are for the host to answer, so they bound nothing here; a config authored
+    on a laptop for a cluster must not be judged by the laptop.
+
+    A layout the engine cannot compute from here — an ORCA step whose template does not
+    exist yet (the report's own ``template`` warning) or cannot be read — is left to the
+    run, which refuses it by name; the rest of the step is still checked above. An engine
+    the scheduler does not run (an inline one) has no jobs to budget.
+    """
+    if not isinstance(engine, JobExecutable):
+        return None
+    ctx = build_context(config, step, PipelineState(), engine)
+    try:
+        engine.slurm_layout(ctx)
+    except (ChemRefineError, OSError):
+        return None
+    try:
+        check_batch(
+            engine, ctx, local=config.dispatch == "local", gpu_budget=lambda: config.max_gpus
+        )
+    except ChemRefineError as e:
+        return str(e)
+    return None
 
 
 def effective_header(config: Config, step: StepConfig, engine: CalculationEngine) -> str:

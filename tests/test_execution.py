@@ -173,6 +173,15 @@ def test_a_layout_exceeding_the_budget_is_refused(_submit, _finished, tmp_path: 
         _execution.run_batch(engine, inputs, ctx)
 
 
+def test_a_gpu_step_with_no_known_budget_is_not_refused_for_it(tmp_path: Path):
+    """``None`` is "no bound known" (``validate`` with ``max_gpus`` unset), not zero GPUs."""
+    engine = _FakeJobEngine()
+    engine.gpu_count = 1
+    shape = _execution.check_batch(engine, _ctx(tmp_path), local=True, gpu_budget=lambda: None)
+    assert shape == _execution.BatchShape(ntasks=1, cpus_per_task=1, gpus=1)
+    assert shape.cores == 1
+
+
 def test_a_degenerate_layout_is_an_engine_bug(tmp_path: Path):
     """A zero in either factor is a broken engine, reported as such — not a throttler crash."""
     engine = _ThreadedJobEngine()
