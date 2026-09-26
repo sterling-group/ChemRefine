@@ -459,6 +459,17 @@ for the full map.
 
 ### Fixed
 
+- **An `on_failure: best` step stores its structures in their parents' order.** The
+  backfilled failures were appended after the survivors in the order they failed, which
+  differs between a resume and a `rebuild-cache` of the same step, so the steps after it
+  were re-keyed with no result changed — and an `mlip-train` step retrained on a new
+  split. A `best` cache that holds failures re-orders once on upgrade, and the steps after
+  it re-parse once (an `mlip-train` step retrains once).
+- **Agent chat turns close what they open, on every supported Python.** The terminal
+  chat and the builder's chat panel ran each turn on an event loop left installed on the
+  thread, and an HTTP error answer from a model endpoint, the ExtOpt server or PubChem was
+  never closed; on Python 3.14 both are warnings. Each turn now runs on a loop of its own
+  and closes it, and every error answer is closed where it is caught.
 - **An API key holding a character HTTP headers cannot carry is refused by name.** A
   curly quote or an em dash pasted into the key made `chemrefine agent --check` blame the
   endpoint ("the reply is not a model listing") for a request it never sent; the key is
