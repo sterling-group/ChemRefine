@@ -27,6 +27,10 @@ for the full map.
 
 ### Added
 
+- **Readable boundary-size quantum bundles.** Descriptor limits now count the exact
+  published UTF-8 bytes, including the final newline, and preserve prior outputs
+  when a replacement exceeds that limit.
+
 - **Imported electronic constants.** Integral bundles preserve named scalar offsets
   through active-space molecular energies and double-factorized evolution. DF/THC
   resource reports list these constants separately from query costs.

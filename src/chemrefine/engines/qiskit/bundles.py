@@ -97,6 +97,15 @@ def _array_bytes(description: Mapping[str, ArrayDescription], max_bytes: int) ->
     return total
 
 
+def encode_bundle_descriptor(description: BundleDescription) -> bytes:
+    """Encode the exact published JSON bytes, enforcing the reader's size limit."""
+    document = json.dumps(description.model_dump(mode="json"), allow_nan=False, indent=2)
+    encoded = (document + "\n").encode("utf-8")
+    if len(encoded) > MAX_DESCRIPTOR_BYTES:
+        raise ConfigError("quantum bundle descriptor exceeds its size limit")
+    return encoded
+
+
 def write_bundle(
     path: Path,
     *,
@@ -144,11 +153,9 @@ def write_bundle(
             arrays=descriptions,
             metadata=dict(metadata),
         )
-        document = json.dumps(descriptor.model_dump(mode="json"), allow_nan=False, indent=2)
-        if len(document.encode("utf-8")) > MAX_DESCRIPTOR_BYTES:
-            raise ConfigError("quantum bundle descriptor exceeds its size limit")
-        with temporary.open("x", encoding="utf-8") as stream:
-            stream.write(document + "\n")
+        encoded = encode_bundle_descriptor(descriptor)
+        with temporary.open("xb") as stream:
+            stream.write(encoded)
             stream.flush()
             os.fsync(stream.fileno())
         temporary.replace(path)

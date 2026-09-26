@@ -82,6 +82,51 @@ def test_interrupted_write_keeps_previous_complete_bundle(tmp_path, monkeypatch)
     assert len(list(tmp_path.glob("*.npz"))) == 1
 
 
+def _sized_metadata(path, size):
+    """Fit metadata to an exact descriptor byte count, including its newline."""
+    metadata = {"label": "\u03c0\U0001f331", "padding": ""}
+    description = bundles.BundleDescription(
+        kind="boundary",
+        payload=f"{path.stem}.{'0' * 32}.npz",
+        sha256="0" * 64,
+        arrays={},
+        metadata=metadata,
+    )
+    metadata["padding"] = "x" * (size - len(bundles.encode_bundle_descriptor(description)))
+    return metadata
+
+
+@pytest.mark.parametrize("offset", [-1, 0])
+def test_exact_published_descriptor_limit_roundtrips(tmp_path, offset):
+    """Every accepted boundary descriptor is immediately readable at the same limit."""
+    path = tmp_path / "boundary.json"
+    size = bundles.MAX_DESCRIPTOR_BYTES + offset
+    metadata = _sized_metadata(path, size)
+    bundles.write_bundle(path, kind="boundary", arrays={}, metadata=metadata)
+    document = path.read_bytes()
+    assert len(document) == size
+    assert document.endswith(b"\n")
+    result = bundles.read_bundle(path)
+    assert result.metadata == metadata
+    assert bundles.encode_bundle_descriptor(result.description) == document
+    assert bundles.bundle_dependencies(path)["payload"].is_file()
+
+
+@pytest.mark.parametrize("previous", [False, True])
+def test_oversized_published_descriptor_cleans_up_and_preserves_output(tmp_path, previous):
+    """One extra published byte fails atomically, including when replacing valid output."""
+    path = tmp_path / "boundary.json"
+    if previous:
+        bundles.write_bundle(path, kind="boundary", arrays={}, metadata={"previous": True})
+    before = {entry.name: entry.read_bytes() for entry in tmp_path.iterdir()}
+    metadata = _sized_metadata(path, bundles.MAX_DESCRIPTOR_BYTES + 1)
+    with pytest.raises(ConfigError, match="descriptor exceeds its size limit"):
+        bundles.write_bundle(path, kind="boundary", arrays={}, metadata=metadata)
+    assert {entry.name: entry.read_bytes() for entry in tmp_path.iterdir()} == before
+    if previous:
+        assert bundles.read_bundle(path).metadata == {"previous": True}
+
+
 @pytest.mark.parametrize("name", ["../outside.npz", "/outside.npz", "bad\\file.npz", "", ".", ".."])
 def test_payload_must_stay_beside_descriptor(tmp_path, name):
     """Malformed output paths never permit reading an unrelated file."""
