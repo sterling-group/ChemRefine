@@ -27,6 +27,10 @@ for the full map.
 
 ### Added
 
+- **Quantum resource reports.** General Pauli-LCU/QPE budgets, domain-validated
+  double-factorized and THC estimates, and explicit surface-code/factory assumptions
+  produce versioned artifacts. Resource providers use a separate Python 3.12 worker.
+
 - **Budgeted circuit cutting.** Manual gate/wire cuts, partitions and automated
   width-constrained plans preserve signed reconstruction and physical measurement
   records. Planning runs in an isolated worker; artifacts can be reconstructed

@@ -1,0 +1,30 @@
+input: ../qiskit_experiment/molecule.xyz
+template_dir: ../qiskit_experiment/templates
+output_dir: outputs-df
+charge: 0
+multiplicity: 1
+dispatch: local
+max_cores: 1
+steps:
+  - step: 1
+    engine: qiskit-experiment
+    options:
+      cores: 1
+      experiment:
+        name: factorized_resources
+        options:
+          integral_bundle_path: inputs/integrals.json
+          method: df
+          factorization_threshold: 0.00000001
+          coefficient_bits: 20
+          rotation_bits: 30
+          initial_cost_guess: 20000
+          qualtran_cost_graph: true
+          amplitude_bits_outer: 8
+          amplitude_bits_inner: 8
+          budget:
+            energy_error_hartree: 0.001
+            representation_error_hartree: 0.00000001
+            synthesis_error_hartree: 0.00001
+            failure_probability: 0.01
+            target_overlap: 1.0
