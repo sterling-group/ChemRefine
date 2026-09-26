@@ -169,7 +169,16 @@ def test_declared_provider_and_single_artifact_failure_policy(tmp_path):
 
 def test_registered_python_experiment_uses_same_bundle_contract(tmp_path, monkeypatch):
     """Independent builders can publish reports without fabricating a molecular energy."""
+    from chemrefine.engines.qiskit import experiment_outputs
+
     monkeypatch.setattr(EXPERIMENTS, "_specs", dict(EXPERIMENTS._specs))
+    monkeypatch.setattr(experiment_outputs, "_CONTRACTS", dict(experiment_outputs._CONTRACTS))
+
+    def validate_report(bundle, options):
+        """A report extension declares its local scientific output contract."""
+        assert isinstance(bundle.metadata["cores"], int)
+
+    experiment_outputs.register_experiment_output("report", "report", validate_report)
 
     @EXPERIMENTS.register("report", capabilities=frozenset({"cuda"}))
     def report(**context):

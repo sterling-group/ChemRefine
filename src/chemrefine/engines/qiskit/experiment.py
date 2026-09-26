@@ -141,7 +141,10 @@ def lattice_experiment(*, options: LatticeExperimentOptions, **context: Any) -> 
 
 def validate_experiment(options: QiskitExperimentOptions) -> None:
     """Resolve typed scientific options without importing optional SDKs."""
+    from chemrefine.engines.qiskit.experiment_outputs import require_experiment_output
+
     component = EXPERIMENTS.options_for(options.experiment)
+    require_experiment_output(options.experiment.name)
     for category in EXPERIMENTS.spec(options.experiment.name).requires & REGISTRIES.keys():
         selection = getattr(component, category)
         REGISTRIES[category].options_for(selection)

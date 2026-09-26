@@ -16,7 +16,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from chemrefine.engines.qiskit.bundles import QuantumBundle
-from chemrefine.errors import OutputParseError
+from chemrefine.errors import ConfigError, OutputParseError
 
 OutputValidator = Callable[[QuantumBundle, Mapping[str, Any]], None]
 _CONTRACTS: dict[str, tuple[str, OutputValidator]] = {}
@@ -30,9 +30,26 @@ def register_experiment_output(name: str, kind: str, validator: OutputValidator)
     options. Raise ``ValueError`` for malformed products; no provider calls belong
     in this contract. Existing declarations cannot be silently replaced.
     """
+    name = name.strip().lower().replace("-", "_")
     if not name or not kind or name in _CONTRACTS:
         raise ValueError("experiment output contracts require unique names and nonempty kinds")
     _CONTRACTS[name] = (kind, validator)
+
+
+def _contract(name: str) -> tuple[str, OutputValidator]:
+    """Resolve the declared local contract without executing a provider or callback."""
+    name = name.strip().lower().replace("-", "_")
+    if name not in _CONTRACTS:
+        raise ValueError(f"experiment {name!r} must declare register_experiment_output")
+    return _CONTRACTS[name]
+
+
+def require_experiment_output(name: str) -> None:
+    """Refuse an undeclared extension contract during SDK-free configuration preflight."""
+    try:
+        _contract(name)
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
 
 
 def validate_experiment_output(
@@ -40,9 +57,7 @@ def validate_experiment_output(
 ) -> None:
     """Validate selected scientific output after generic integrity checks."""
     try:
-        if name not in _CONTRACTS:
-            raise ValueError(f"experiment {name!r} must declare register_experiment_output")
-        kind, validator = _CONTRACTS[name]
+        kind, validator = _contract(name)
         _require(bundle.description.kind == kind, f"expected bundle kind {kind!r}")
         validator(bundle, options)
     except (KeyError, TypeError, ValueError, IndexError) as exc:
@@ -126,8 +141,14 @@ def _lattice(bundle: QuantumBundle, options: Mapping[str, Any]) -> None:
     _array(bundle, "energies", (size,), "f")
     metadata = bundle.metadata
     _fields(metadata, {"model": dict, "dynamics": dict, "observations": list, "mode_order": str})
-    _require(metadata["model"] == options["model"], "lattice model disagrees")
-    _require(metadata["dynamics"] == options["dynamics"], "lattice integrator disagrees")
+    _require(
+        FermionicLatticeModel.model_validate(metadata["model"]) == model,
+        "lattice model disagrees",
+    )
+    _require(
+        LatticeIntegratorOptions.model_validate(metadata["dynamics"]) == dynamics,
+        "lattice integrator disagrees",
+    )
     _require(len(metadata["observations"]) == size, "missing lattice observations")
     _require(
         metadata["units"] == {"energy": "model_energy", "time": "hbar/model_energy", "hbar": 1},

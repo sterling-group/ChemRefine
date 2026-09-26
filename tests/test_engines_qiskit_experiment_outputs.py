@@ -14,9 +14,10 @@ from chemrefine.engines.qiskit.bundles import read_bundle, write_bundle
 from chemrefine.engines.qiskit.experiment import EXPERIMENTS, LatticeExperimentOptions
 from chemrefine.engines.qiskit.experiment_outputs import (
     register_experiment_output,
+    require_experiment_output,
     validate_experiment_output,
 )
-from chemrefine.errors import OutputParseError
+from chemrefine.errors import ConfigError, OutputParseError
 
 NAMES = (
     "lattice_dynamics",
@@ -401,14 +402,46 @@ def test_byte_aligned_packing_and_registered_extensions(tmp_path, monkeypatch):
         if bundle.metadata.get("answer") != options["answer"]:
             raise ValueError("answer disagrees")
 
-    register_experiment_output("custom", "report", validate_report)
+    register_experiment_output(" Custom-Report ", "report", validate_report)
+    require_experiment_output("custom_report")
     custom = ("report", {}, {"answer": 42}, {"answer": 42})
-    validate_experiment_output("custom", _bundle(tmp_path, custom), custom[3])
+    validate_experiment_output("custom_report", _bundle(tmp_path, custom), custom[3])
     with pytest.raises(OutputParseError, match="must declare"):
         validate_experiment_output("unregistered", _bundle(tmp_path, custom), custom[3])
-    for name, kind in (("custom", "report"), ("", "report"), ("other", "")):
+    for name, kind in (("custom_report", "report"), (" ", "report"), ("other", "")):
         with pytest.raises(ValueError, match="unique"):
             register_experiment_output(name, kind, validate_report)
+
+
+def test_undeclared_output_contract_is_refused_before_builder_or_submission(monkeypatch, tmp_path):
+    """Provider-free preflight refuses an extension whose completion contract is absent."""
+    from chemrefine.engines.qiskit.experiment import QiskitExperimentEngine, run_experiment
+
+    monkeypatch.setattr(EXPERIMENTS, "_specs", dict(EXPERIMENTS._specs))
+
+    @EXPERIMENTS.register("no_output_contract")
+    def never_build(**context):
+        """A missing local contract must be discovered before executing scientific code."""
+        pytest.fail("preflight invoked experiment builder")
+
+    raw = {"experiment": "no_output_contract"}
+    with pytest.raises(ConfigError, match="must declare"):
+        QiskitExperimentEngine().backend_requirement(raw)
+    with pytest.raises(ConfigError, match="must declare"):
+        run_experiment(raw, tmp_path / "artifact.json")
+    assert not (tmp_path / "artifact.json").exists()
+
+
+def test_archived_lattice_metadata_accepts_omitted_compatible_defaults():
+    """The recorded pre-complex-hopping fixture remains semantically valid after expansion."""
+    from chemrefine.engines.qiskit.experiment import QiskitExperimentOptions
+
+    path = Path(__file__).parent / "data/engines/qiskit-experiment/lattice/artifact.json"
+    bundle = read_bundle(path)
+    selection = QiskitExperimentOptions.from_raw(bundle.metadata["resolved_options"]).experiment
+    validate_experiment_output(
+        selection.name, bundle, EXPERIMENTS.options_for(selection).model_dump(mode="json")
+    )
 
 
 def test_contract_discovery_and_validation_need_no_optional_sdk(tmp_path):

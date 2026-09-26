@@ -1,5 +1,9 @@
 {
-  "tests": ["tests/test_engines_qiskit_experiment.py", "tests/test_engines_qiskit_bundles.py"],
+  "tests": [
+    "tests/test_engines_qiskit_experiment.py",
+    "tests/test_engines_qiskit_bundles.py",
+    "tests/test_engines_qiskit_experiment_outputs.py"
+  ],
   "fixtures": ["lattice/artifact.json"],
-  "note": "Recorded real two-site ideal hopping trajectory; source options are in the manifest."
+  "note": "Recorded real two-site ideal hopping trajectory; source options are in the manifest. The semantic suite covers all 11 experiment kinds, arrays and metadata, real provider products and passive cache/rebuild refusal."
 }

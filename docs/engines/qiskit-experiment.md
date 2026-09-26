@@ -166,5 +166,8 @@ Third-party components must also call `register_experiment_output(name, kind,
 validator)` in that module. The validator receives a `QuantumBundle` and the
 fully defaulted component options, raises `ValueError` on invalid content, and
 must remain SDK-free and local. Import both registrations in the orchestrator
-and worker. An undeclared output contract fails validation instead of bypassing
-recovery checks.
+and worker. An undeclared output contract fails configuration preflight before
+any builder or provider executes, and cannot bypass recovery checks. Contract
+names use the same lowercase/hyphen normalization as component names. Compatible
+omitted default fields in older lattice metadata are normalized before comparison,
+so a valid archived product does not fail merely because the option model grew.
