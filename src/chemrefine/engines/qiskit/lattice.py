@@ -219,3 +219,266 @@ class LatticeDynamicsResult:
                 "imag": self.statevector.imag.tolist(),
             }
         return cast("dict[str, Any]", json.loads(json.dumps(result, allow_nan=False)))
+
+
+def _lattice_blocks(model: FermionicLatticeModel) -> list[Any]:
+    """Build Hermitian, number-conserving physical blocks with commuting Pauli images."""
+    from qiskit_fermions.operators import FermionOperator
+
+    blocks = []
+    spins = (0, model.num_sites) if model.spinful else (0,)
+    for edge in model.edges:
+        if edge.hopping:
+            for offset in spins:
+                first, second = edge.source + offset, edge.target + offset
+                blocks.append(
+                    FermionOperator.from_terms(
+                        [
+                            ([(True, first), (False, second)], -edge.hopping),
+                            ([(True, second), (False, first)], -edge.hopping),
+                        ]
+                    )
+                )
+        if edge.density_interaction:
+            terms = []
+            for first_spin in spins:
+                for second_spin in spins:
+                    first, second = edge.source + first_spin, edge.target + second_spin
+                    terms.append(
+                        (
+                            [(True, first), (False, first), (True, second), (False, second)],
+                            edge.density_interaction,
+                        )
+                    )
+            blocks.append(FermionOperator.from_terms(terms))
+    for site in range(model.num_sites):
+        potential = 0.0 if model.site_potentials is None else model.site_potentials[site]
+        if potential:
+            blocks.append(
+                FermionOperator.from_terms(
+                    [
+                        ([(True, site + offset), (False, site + offset)], potential)
+                        for offset in spins
+                    ]
+                )
+            )
+        if model.onsite_interaction:
+            blocks.append(
+                FermionOperator.from_terms(
+                    [
+                        (
+                            [
+                                (True, site),
+                                (False, site),
+                                (True, site + model.num_sites),
+                                (False, site + model.num_sites),
+                            ],
+                            model.onsite_interaction,
+                        )
+                    ]
+                )
+            )
+    return blocks
+
+
+def _mapper(mapping: str) -> Any:
+    """Return a public Fermions mapper or a Nature-backed generic synthesis mapper."""
+    from qiskit.quantum_info import SparseObservable
+    from qiskit_fermions.mappers.library import jordan_wigner
+
+    if mapping == "jordan_wigner":
+        return jordan_wigner
+    from qiskit_nature.second_q.mappers import BravyiKitaevMapper, ParityMapper
+    from qiskit_nature.second_q.operators import FermionicOp
+
+    nature_mapper = BravyiKitaevMapper() if mapping == "bravyi_kitaev" else ParityMapper()
+
+    def map_operator(operator: Any, num_qubits: int) -> Any:
+        """Translate the released FermionOperator terms without truncation or tapering."""
+        labels: dict[str, complex] = {}
+        for term, coefficient in operator.iter_terms():
+            label = " ".join(f"{'+' if creation else '-'}_{index}" for creation, index in term)
+            labels[label] = labels.get(label, 0.0) + coefficient
+        mapped = nature_mapper.map(FermionicOp(labels, num_spin_orbitals=num_qubits))
+        return SparseObservable.from_sparse_pauli_op(mapped)
+
+    return map_operator
+
+
+def _product_sequence(block_count: int, order: int, interval: float) -> list[tuple[int, float]]:
+    """Return chronological Lie or symmetric Suzuki block intervals through order four."""
+    if order == 1:
+        return [(index, interval) for index in range(block_count)]
+    if order == 2:
+        forward = [(index, interval / 2) for index in range(block_count)]
+        return forward + list(reversed(forward))
+    coefficient = 1 / (4 - 4 ** (1 / 3))
+    outer = _product_sequence(block_count, 2, coefficient * interval)
+    middle = _product_sequence(block_count, 2, (1 - 4 * coefficient) * interval)
+    return outer + outer + middle + outer + outer
+
+
+def build_lattice_dynamics(
+    model: FermionicLatticeModel,
+    *,
+    occupied_modes: Sequence[int],
+    options: LatticeDynamicsOptions | None = None,
+) -> LatticeCircuit:
+    """Prepare actual occupations and synthesize exp(-i H time) approximately.
+
+    Product formulas split Hermitian physical hopping/density blocks. Each
+    block's mapped Paulis commute, so their internal Lie synthesis is exact;
+    only splitting noncommuting physical blocks contributes Trotter error.
+    """
+    options = options or LatticeDynamicsOptions()
+    modes = model.num_modes
+    if modes > options.max_qubits:
+        raise ConfigError(
+            f"lattice requires {modes} qubits, exceeding max_qubits={options.max_qubits}"
+        )
+    if any(isinstance(mode, bool) or not isinstance(mode, Integral) for mode in occupied_modes):
+        raise ConfigError("lattice occupied_modes must contain integer mode indices")
+    occupied = tuple(sorted(int(mode) for mode in occupied_modes))
+    if len(set(occupied)) != len(occupied) or any(mode < 0 or mode >= modes for mode in occupied):
+        raise ConfigError("lattice occupied_modes must be distinct and within the mode count")
+    from qiskit import QuantumCircuit
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit.synthesis import LieTrotter
+    from qiskit_fermions.circuit import FermionicCircuit
+    from qiskit_fermions.circuit.library import Evolution
+    from qiskit_fermions.operators import FermionOperator
+    from qiskit_fermions.transpiler.passes import F2QSynthesis
+    from qiskit_fermions.transpiler.presets import generate_preset_jw_pass_manager
+
+    blocks = _lattice_blocks(model)
+    multiplier = {1: 1, 2: 2, 4: 10}[options.order]
+    block_count = len(blocks) * multiplier * options.steps if options.time else 0
+    if block_count > options.max_evolution_blocks:
+        raise ConfigError(
+            f"lattice requires {block_count} evolution blocks, exceeding max_evolution_blocks"
+        )
+    map_operator = _mapper(options.mapping)
+    hamiltonian = FermionOperator.zero()
+    for block in blocks:
+        mapped_block = SparsePauliOp.from_sparse_observable(map_operator(block, modes)).simplify()
+        if len(mapped_block.group_commuting()) != 1:
+            raise ConfigError("lattice physical block must have commuting mapped Pauli terms")
+        hamiltonian = hamiltonian + block
+    mapped_hamiltonian = SparsePauliOp.from_sparse_observable(
+        map_operator(hamiltonian, modes)
+    ).simplify()
+    initial = QuantumCircuit(modes)
+    if occupied:
+        # All three supported encodings are invertible binary changes of the
+        # occupation basis. XOR their single-creation X masks instead of mapping
+        # a product that would expand into 2**len(occupied) Pauli terms.
+        occupation_mask = np.zeros(modes, dtype=bool)
+        for mode in occupied:
+            creation = FermionOperator.from_terms([([(True, mode)], 1.0)])
+            mapped_creation = SparsePauliOp.from_sparse_observable(map_operator(creation, modes))
+            masks = mapped_creation.paulis.x
+            if not np.all(masks == masks[0]):
+                raise ConfigError(
+                    "selected lattice encoding does not map a determinant to one bitstring"
+                )
+            occupation_mask ^= masks[0]
+        initial.x(np.flatnonzero(occupation_mask).tolist())
+    fermionic = FermionicCircuit(modes)
+    if options.time:
+        sequence = _product_sequence(len(blocks), options.order, options.time / options.steps)
+        for _ in range(options.steps):
+            for index, interval in sequence:
+                fermionic.append(Evolution(modes, blocks[index], time=interval), range(modes))
+    manager = generate_preset_jw_pass_manager(
+        basis_gates=["rz", "sx", "x", "cx"], optimization_level=0
+    )
+    # The preset's layout is one mode per qubit. Replace its synthesis mapper;
+    # reference preparation above already uses the same untapered encoding.
+    manager.synthesis = F2QSynthesis({"Evolution": ("MapperFn", (map_operator, LieTrotter()))})
+    circuit = initial.compose(manager.run(fermionic))
+    numbers = tuple(
+        SparsePauliOp.from_sparse_observable(
+            map_operator(
+                FermionOperator.from_terms([([(True, index), (False, index)], 1.0)]), modes
+            )
+        ).simplify()
+        for index in range(modes)
+    )
+    metadata = {
+        "model": model.model_dump(mode="json"),
+        "options": options.model_dump(mode="json"),
+        "occupied_modes": list(occupied),
+        "num_modes": modes,
+        "num_qubits": modes,
+        "auxiliary_qubits": 0,
+        "stabilizer_constraints": [],
+        "mapping_provider": "qiskit_fermions"
+        if options.mapping == "jordan_wigner"
+        else "qiskit_nature",
+        "encoding": options.mapping,
+        "spin_orbital_order": "alpha_then_beta" if model.spinful else "site_order",
+        "evolution_convention": "exp(-i * time * H), hbar=1",
+        "product_formula_split": "number_conserving_hopping_and_density_blocks",
+        "evolution_blocks": block_count,
+        "circuit_depth": circuit.depth(),
+        "gate_counts": dict(circuit.count_ops()),
+        "execution": "circuit_construction",
+    }
+    return LatticeCircuit(circuit, fermionic, mapped_hamiltonian, numbers, initial, metadata)
+
+
+def simulate_lattice_dynamics(
+    model: FermionicLatticeModel,
+    *,
+    occupied_modes: Sequence[int],
+    options: LatticeDynamicsOptions | None = None,
+) -> LatticeDynamicsResult:
+    """Simulate a bounded ideal circuit and optionally compare with exact evolution.
+
+    Energy units are those of the caller's Hamiltonian; time uses their inverse.
+    The byte limit accounts for four complex statevectors, not total process RSS.
+    The optional exact reference uses sparse exponential action, never a dense
+    matrix exponential, and has its own smaller qubit limit.
+    """
+    options = options or LatticeDynamicsOptions()
+    if model.num_modes > options.max_qubits:
+        raise ConfigError("lattice mode count exceeds max_qubits")
+    working_bytes = 4 * 16 * (1 << model.num_modes)
+    if working_bytes > options.max_statevector_bytes:
+        raise ConfigError("lattice working statevectors exceed max_statevector_bytes")
+    if options.exact_reference and model.num_modes > options.max_exact_qubits:
+        raise ConfigError("lattice exact reference exceeds max_exact_qubits")
+    from qiskit.quantum_info import Statevector
+
+    artifacts = build_lattice_dynamics(model, occupied_modes=occupied_modes, options=options)
+    initial = Statevector.from_instruction(artifacts.initial_circuit)
+    evolved = Statevector.from_instruction(artifacts.circuit)
+    occupations = tuple(
+        float(evolved.expectation_value(number).real) for number in artifacts.number_observables
+    )
+    energy = float(evolved.expectation_value(artifacts.qubit_hamiltonian).real)
+    initial_energy = float(initial.expectation_value(artifacts.qubit_hamiltonian).real)
+    exact_fidelity = None
+    if options.exact_reference:
+        from scipy.sparse.linalg import expm_multiply
+
+        generator = -1j * options.time * artifacts.qubit_hamiltonian.to_matrix(sparse=True)
+        exact = expm_multiply(generator, initial.data, traceA=generator.diagonal().sum())
+        exact_fidelity = float(np.clip(abs(np.vdot(exact, evolved.data)) ** 2, 0.0, 1.0))
+    statevector = np.array(evolved.data, dtype=complex, copy=True)
+    statevector.setflags(write=False)
+    return LatticeDynamicsResult(
+        statevector=statevector,
+        mode_occupations=occupations,
+        particle_number=sum(occupations),
+        energy_expectation=energy,
+        energy_drift=energy - initial_energy,
+        return_probability=float(np.clip(abs(np.vdot(initial.data, evolved.data)) ** 2, 0.0, 1.0)),
+        exact_state_fidelity=exact_fidelity,
+        metadata={
+            **artifacts.metadata,
+            "execution": "ideal_local_statevector",
+            "working_statevector_bytes": working_bytes,
+            "initial_energy": initial_energy,
+        },
+    )

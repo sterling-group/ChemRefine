@@ -6,6 +6,17 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from chemrefine.engines.qiskit.data import ElectronicStructureData, MolecularMetadata
+from chemrefine.engines.qiskit.lattice import (
+    FermionicLatticeModel,
+    LatticeCircuit,
+    LatticeDynamicsOptions,
+    LatticeDynamicsResult,
+    LatticeEdge,
+    build_lattice_dynamics,
+    chain_lattice,
+    simulate_lattice_dynamics,
+    square_lattice,
+)
 from chemrefine.engines.qiskit.mapping import map_problem
 from chemrefine.engines.qiskit.operators import Excitation, OperatorPool
 from chemrefine.engines.qiskit.options import ActiveSpaceOptions, ComponentSelection, QiskitOptions
@@ -22,12 +33,19 @@ __all__ = [
     "ActiveSpaceOptions",
     "CircuitMetrics",
     "ElectronicStructureData",
+    "FermionicLatticeModel",
+    "LatticeCircuit",
+    "LatticeDynamicsOptions",
+    "LatticeDynamicsResult",
+    "LatticeEdge",
     "MolecularMetadata",
     "OperatorPool",
     "PreparedProblem",
     "QiskitOptions",
     "QiskitRunResult",
     "SampleBatch",
+    "build_lattice_dynamics",
+    "chain_lattice",
     "map_problem",
     "prepare_problem",
     "prepare_pyscf_problem",
@@ -36,7 +54,9 @@ __all__ = [
     "run_problem",
     "run_vqe",
     "sample_circuit",
+    "simulate_lattice_dynamics",
     "solve_exact",
+    "square_lattice",
 ]
 
 
