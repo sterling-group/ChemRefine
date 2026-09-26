@@ -504,14 +504,13 @@ def test_the_run_budgets_reach_the_child_and_absence_stays_absent(
 ):
     """The other half of the guard: it must pass a real budget through, and invent none.
 
-    ``_wire_int``'s docstring leaves absence to the caller, and here the callee's "unset"
-    is ``None`` — ``max_gpus`` then auto-resolves (unlimited under SLURM, the detected
-    device count locally). Reaching for ``payload.get(key, default)`` instead, the way the
-    two dashboard counts legitimately do, would put ``--maxgpus 0`` on the argv of every
+    Here the callee's "unset" is ``None`` — ``max_gpus`` then auto-resolves (unlimited
+    under SLURM, the detected device count locally). A default of ``0``, the way the two
+    dashboard counts legitimately default, would put ``--maxgpus 0`` on the argv of every
     run this page launches and serialise every CUDA step against a budget nobody set.
 
     ``0`` is the value that makes this more than a smoke test: it is falsy and valid, so a
-    truthiness check in place of the ``(None, "")`` sentinel drops it silently.
+    truthiness check in place of the ``None``/``""`` rule drops it silently.
     """
     import subprocess
 
@@ -525,8 +524,8 @@ def test_the_run_budgets_reach_the_child_and_absence_stays_absent(
     monkeypatch.setattr(subprocess, "Popen", _Recorded)
     config = _reported_tree(tmp_path)
 
-    # A text box's string and a form pane's JSON int, the two spellings `_wire_int` exists
-    # to accept — then the same call with neither key.
+    # A text box's string and a form pane's JSON int, the two spellings a count accepts —
+    # then the same call with neither key.
     _post(client, "/api/run", {"config_path": str(config), "max_cores": "8", "max_gpus": 0})
     _post(client, "/api/run", {"config_path": str(config)})
 
@@ -543,7 +542,7 @@ def test_an_out_of_range_budget_is_a_400_before_any_child_launches(
 ):
     """A whole number outside the child's floors is refused here, not by the child.
 
-    ``_wire_int`` decides whole-numberness and nothing more, so ``0`` cores and ``-1``
+    The count rule decides whole-numberness and nothing more, so ``0`` cores and ``-1``
     GPUs passed it and reached the detached child's argv, where Typer's ``min=1`` /
     ``min=0`` exited 2 into a log nobody was watching — after this endpoint had answered
     200 with a pid. ``start_run`` now holds the floors itself; this pins that the route
@@ -981,8 +980,8 @@ def test_a_structure_file_opens_on_its_own_with_no_workflow_at_all(client: Any, 
 def test_a_mode_number_that_is_not_one_is_a_400(client: Any, tmp_path: Path, mode: str):
     """The mode box is free text, and a bare ``int()`` on it is a 500.
 
-    The same class ``_step_key`` exists to close, on the sibling argument of the same
-    call: every unusable input to this app is the documented 400, not a traceback.
+    The same class as a step selector ``int()`` cannot read, on the sibling argument of the
+    same call: every unusable input to this app is the documented 400, not a traceback.
     ``--5`` is the case the old ``lstrip("-")`` guard admitted — every dash stripped,
     the remainder decimal, and ``int("--5")`` then raised on the very line whose
     comment promised the 400.
@@ -1331,14 +1330,20 @@ def test_chat_reads_an_approval_as_a_json_boolean_not_by_truthiness(
     assert not (tmp_path / "templates").exists()
 
 
-def test_chat_refuses_approvals_with_nothing_pending(client: Any, chat_env: pytest.MonkeyPatch):
-    from pydantic_ai.models.test import TestModel
-
-    _inject_model(chat_env, TestModel(call_tools=[]))
-    refused = _post(client, "/api/agent/chat", {"approvals": {"x": True}})
+@pytest.mark.parametrize(
+    "settings", [{}, {"model": "not-a-real-model"}], ids=["placeable", "unplaceable-model"]
+)
+def test_chat_refuses_approvals_with_nothing_pending(
+    client: Any, chat_env: pytest.MonkeyPatch, settings: dict[str, str]
+):
+    """Decided before a model is built — a model PydanticAI cannot place does not mask it."""
+    refused = _post(client, "/api/agent/chat", {"approvals": {"x": True}, **settings})
     assert refused.status_code == 400
-    assert "no suspended run" in refused.get_json()["error"]
-    assert refused.get_json()["pending"] is None
+    assert refused.get_json() == {
+        "error": "no suspended run to resume",
+        "exit_code": 2,
+        "pending": None,
+    }
 
 
 def test_a_resume_that_reached_the_run_leaves_nothing_to_answer_again(
@@ -1482,8 +1487,8 @@ def test_a_reset_that_is_not_a_boolean_forgets_nothing(client: Any, chat_env: py
     ("body", "said"),
     [
         ({"approvals": [["call-1", True]]}, "'approvals' must be a JSON object, not list"),
-        ({}, "request body is missing 'message'"),
-        ({"message": None}, "request body is missing 'message'"),
+        ({}, "request is missing 'message'"),
+        ({"message": None}, "request is missing 'message'"),
     ],
     ids=["approvals-as-a-list", "nothing-to-say", "a-null-message"],
 )
@@ -1513,22 +1518,6 @@ def test_a_count_too_long_to_be_one_is_a_400_not_a_500(client: Any, tmp_path: Pa
     for response in (posted, got):
         assert response.status_code == 400
         assert "5000 digits" in response.get_json()["error"]
-
-
-def test_a_request_complaint_with_no_wire_word_keeps_pydantics_own():
-    """The formatter names the shapes this wire has; anything else keeps pydantic's words."""
-    from pydantic import ValidationError
-
-    from chemrefine.gui import app as gui_app
-
-    class Odd(gui_app._Request):
-        """A field of a type no endpoint declares, to reach the fallback."""
-
-        ratio: float
-
-    with pytest.raises(ValidationError) as caught:
-        Odd.model_validate({"ratio": "half"})
-    assert str(gui_app._wire_refusal(caught.value)) == "'ratio': Input should be a valid number"
 
 
 def test_overlapping_chat_turns_contend_on_a_lock_not_on_the_state(
@@ -1609,9 +1598,9 @@ def test_a_string_field_of_the_wrong_json_type_is_a_400(
     Every one of these went straight into ``yaml.safe_load``, ``Path()``, ``.encode`` or
     ``.startswith`` and raised the stdlib's ``TypeError``/``AttributeError`` out of the
     handler — a logged-traceback 500 for the client's mistake, at fifteen sites, while the
-    counts and the step selectors beside them answered the documented 400. ``_field``
-    now carries the type contract ``_wire_int`` always had; ``_optional`` is the same
-    rule for a field a body may omit. The refusal names the field and the shape.
+    counts and the step selectors beside them answered the documented 400. Every body is
+    now a declared model, so a string field refuses a number the way a count refuses a
+    word. The refusal names the field and the shape.
     """
     config = _saved_config(tmp_path)
     payload = {
@@ -1679,19 +1668,16 @@ def test_a_missing_request_field_is_a_400_that_names_it(client: Any):
 def test_a_get_without_its_query_argument_is_a_400_in_the_documented_shape(
     client: Any, url: str, missing: str
 ):
-    """The rule ``_field`` holds for a POST body holds for a GET's query string.
+    """The rule a POST body is held to holds for a GET's query string.
 
     Read bare, an absent argument is Werkzeug's ``BadRequestKeyError`` — an
     ``HTTPException`` that ``surface`` passes through as an HTML page — so the page flashed
-    ``400 error`` with no reason. Every query argument a handler requires now goes through
-    ``_arg``, and the refusal names it in the ``{error, exit_code}`` shape the page reads.
+    ``400 error`` with no reason. A query string is a declared model like a body, and the
+    refusal names the argument in the ``{error, exit_code}`` shape the page reads.
     """
     response = _get(client, url)
     assert response.status_code == 400
-    assert response.get_json() == {
-        "error": f"request is missing the {missing!r} query argument",
-        "exit_code": 2,
-    }
+    assert response.get_json() == {"error": f"request is missing {missing!r}", "exit_code": 2}
 
 
 def test_a_body_that_is_not_a_json_object_is_a_400_at_every_endpoint(client: Any):

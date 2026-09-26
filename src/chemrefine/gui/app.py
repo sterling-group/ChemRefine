@@ -34,7 +34,16 @@ from typing import Annotated, Any, TypeVar
 
 import yaml
 from flask import Flask, jsonify, request, send_from_directory
-from pydantic import BaseModel, BeforeValidator, ConfigDict, ValidationError, ValidationInfo
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+)
+from pydantic_core import PydanticCustomError
 from werkzeug.exceptions import HTTPException
 
 from chemrefine import agent_tools, introspect, io
@@ -56,47 +65,38 @@ class _Suspended:
     cards: list[dict[str, Any]]
 
 
-def _wire_int(value: Any, key: str) -> int:
-    """One whole number off the wire — a JSON int or a decimal string — or the 400.
+@dataclass
+class _Chat:
+    """The one conversation the chat panel holds: its messages, and a run paused on verdicts.
 
-    The two frontends spell the same field differently: the form pane ships JSON
-    numbers, the free-text boxes ship strings, and both are legitimate — a guard that
-    took only one of them would break the other pane. A string gets one optional
-    leading minus and then ``isdecimal`` (``--5`` is not a number, and the
-    ``lstrip("-")`` trimming that admitted it is how a comment promising 400 sat on a
-    line that raised 500). Everything else — ``7a``, ``3.5``, ``null``, a JSON
-    boolean — raises :class:`ConfigError`, which :func:`surface` turns into the
-    documented ``{error, exit_code}`` 400 like every other unusable input to this app.
-    Absence is the caller's business, decided before the call: a request model's default
-    (:data:`_WireInt`, :data:`_WireIntOrUnset`), or the ``not in (None, "")`` sentinel a
-    GET uses for a field whose callee wants ``None``.
+    ``history`` is PydanticAI's own message list; ``pending`` the run waiting for the
+    human's allow/deny cards, if one is.
     """
-    # The bool test precedes the int test it would otherwise vanish under: bool is an
-    # int subclass, and a JSON `true` silently meaning 1 is not a contract anyone wrote.
-    if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    text = str(value)
-    digits = text.removeprefix("-")
-    if isinstance(value, str) and digits and digits.isdecimal():
-        try:
-            return int(text)
-        except ValueError:
-            # Past `sys.get_int_max_str_digits()` `int` refuses the conversion itself —
-            # an escaped ValueError, and so a 500, for a count no request needs.
-            raise ConfigError(f"{key} has {len(digits)} digits; no count is that long") from None
-    raise ConfigError(f"{key} {value!r} is not a whole number")
+
+    history: list[Any] | None = None
+    pending: _Suspended | None = None
+
+    @property
+    def cards(self) -> list[dict[str, Any]] | None:
+        """The cards still answerable — what a failed turn tells the page it may offer again.
+
+        Every chat error carries them, so the page offers cards again only while a suspended
+        run is there for them to answer.
+        """
+        return self.pending.cards if self.pending is not None else None
+
+    def refusal(self, error: ChemRefineError) -> dict[str, Any]:
+        """A chat refusal in the documented shape, with the cards it leaves answerable."""
+        return {**_refusal(error), "pending": self.cards}
 
 
 def _body() -> dict[str, Any]:
     """The request's JSON object, or the 400 for a body that is not one.
 
     ``force=True`` parses a bare list, a string or ``null`` as readily as an object, and a
-    handler that then reads ``.get`` off it raises ``AttributeError`` out of the handler —
-    a logged-traceback 500 for what is the client's mistake. The shape check used to live
-    inside one field reader, which closed it only for the endpoints whose *first* read went
-    through that helper; the four whose first read was a ``.get`` (``/api/run``,
-    ``/api/agent/check``, ``/api/agent/chat``, ``/api/structure-file``) crashed on ``[]``.
-    The one place every POST handler starts is where the shape is decided, before any read.
+    handler reading fields off one would raise ``AttributeError`` — a logged-traceback 500
+    for the client's mistake. Every POST handler starts here, so the shape is decided
+    before any field is read.
     """
     payload = request.get_json(force=True)
     if not isinstance(payload, dict):
@@ -104,33 +104,49 @@ def _body() -> dict[str, Any]:
     return payload
 
 
-def _whole(value: Any, info: ValidationInfo) -> Any:
-    """:func:`_wire_int` as a request field's own reading — the field names itself."""
-    return _wire_int(value, str(info.field_name))
+def _count(value: Any) -> Any:
+    """One whole number off the wire — a JSON int or a decimal string — or the complaint.
+
+    The two frontends spell the same field differently: the form pane ships JSON numbers,
+    the free-text boxes and query strings ship text, and both are legitimate. Text is one
+    optional leading minus and decimal digits (``--5`` is not a number); anything else —
+    ``7a``, ``3.5``, ``null``, a JSON boolean — is refused. A field validator, so the
+    refusal is the model's own complaint, worded by :func:`_wire_refusal` like every other.
+    """
+    # The bool test precedes the int test it would otherwise vanish under: bool is an int
+    # subclass, and a JSON `true` meaning 1 is not a contract anyone wrote.
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.removeprefix("-").isdecimal():
+        try:
+            return int(value)
+        except ValueError:
+            # Past `sys.get_int_max_str_digits()`, `int` refuses the conversion itself.
+            raise PydanticCustomError(
+                "count", "{digits} digits is too long for a count", {"digits": len(value)}
+            ) from None
+    raise PydanticCustomError("count", "{value} is not a whole number", {"value": repr(value)})
 
 
-def _whole_or_unset(value: Any, info: ValidationInfo) -> Any:
-    """:func:`_whole`, with absent, ``null`` and ``""`` all meaning "unset" (``None``)."""
-    return None if value is None or value == "" else _wire_int(value, str(info.field_name))
+def _count_or_unset(value: Any) -> Any:
+    """:func:`_count`, with absent, ``null`` and ``""`` all meaning "unset" (``None``)."""
+    return None if value is None or value == "" else _count(value)
 
 
-_WireInt = Annotated[int, BeforeValidator(_whole)]
-"""A count off the wire: a JSON int or a decimal string, refused by :func:`_wire_int`."""
+_Count = Annotated[int, BeforeValidator(_count)]
+"""A count off the wire: a JSON int or decimal text."""
 
-_WireIntOrUnset = Annotated[int | None, BeforeValidator(_whole_or_unset)]
-"""A count whose callee reads ``None`` as "resolve it yourself" (``/api/run``'s budgets)."""
+_CountOrUnset = Annotated[int | None, BeforeValidator(_count_or_unset)]
+"""A count whose callee reads ``None`` as "resolve it yourself" or "none asked for"."""
 
 
 class _Request(BaseModel):
-    """One endpoint's JSON body, declared: each field's name, JSON type and default.
+    """One endpoint's input — a JSON body or a query string — declared field by field.
 
-    Strict, because the wire's types are the contract: a lax model reads the string
-    ``"false"`` as ``False`` and ``1`` as a string, which is the guessing this layer exists
-    to refuse. ``/api/agent/chat`` once read ``reset`` by truthiness while ``/api/scaffold``
-    typed ``overwrite`` — each field was read by a hand-written helper call, and the one
-    that was not typed was the one that wiped a conversation on ``{"reset": "false"}``.
-    Declared per endpoint, a field cannot be read untyped. Keys a body carries beyond its
-    model are ignored: the page sends its session's ``config_path`` wherever it chats.
+    Strict, because the wire's types are the contract: ``"false"`` is not ``False`` and
+    ``1`` is not a string, and a field declared here cannot be read any other way. Keys
+    beyond the model are ignored: the page sends its session's ``config_path`` wherever it
+    chats.
     """
 
     model_config = ConfigDict(strict=True, frozen=True)
@@ -149,14 +165,14 @@ _WIRE_TYPES: dict[str, str] = {
 def _wire_refusal(error: ValidationError) -> ConfigError:
     """A request model's first complaint as the 400 that names the field and what it needs.
 
-    ``'approvals.call-1' must be a boolean, not str`` / ``request body is missing 'path'``
-    — one sentence a person or an agent can act on, where pydantic's own report is a block
-    written for a developer. A complaint with no wire word falls back to pydantic's message.
+    ``'approvals.call-1' must be a boolean, not str`` / ``request is missing 'path'`` —
+    one sentence a person or an agent can act on, where pydantic's own report is a block
+    written for a developer. A complaint with no wire word (a count's) keeps its message.
     """
     first = error.errors()[0]
     field = ".".join(str(part) for part in first["loc"])
     if first["type"] == "missing":
-        return ConfigError(f"request body is missing {field!r}")
+        return ConfigError(f"request is missing {field!r}")
     expected = _WIRE_TYPES.get(first["type"])
     if expected is None:
         return ConfigError(f"{field!r}: {first['msg']}")
@@ -166,7 +182,7 @@ def _wire_refusal(error: ValidationError) -> ConfigError:
 def _read(model: type[RequestT], payload: dict[str, Any]) -> RequestT:
     """``payload`` as ``model`` declares it, or the :class:`ConfigError` that names the field.
 
-    Takes the payload rather than reading the body, so an endpoint that answers a bad
+    Takes the payload rather than reading the request, so an endpoint that answers a bad
     field as something other than a 400 (``/api/agent/check``'s finding) can still refuse
     a body that is not an object at all, as every POST here does.
     """
@@ -174,6 +190,11 @@ def _read(model: type[RequestT], payload: dict[str, Any]) -> RequestT:
         return model.model_validate(payload)
     except ValidationError as e:
         raise _wire_refusal(e) from e
+
+
+def _query(model: type[RequestT]) -> RequestT:
+    """The GET's query string as ``model`` declares it — :func:`_read` for the other half."""
+    return _read(model, request.args.to_dict())
 
 
 class _ValidateRequest(_Request):
@@ -232,7 +253,7 @@ class _StructureFileRequest(_Request):
 class _StatusRequest(_ConfigRequest):
     """``/api/status``: how much of the driver log to tail."""
 
-    log_tail_lines: _WireInt = 40
+    log_tail_lines: _Count = 40
 
 
 class _FailuresRequest(_ConfigRequest):
@@ -244,8 +265,8 @@ class _FailuresRequest(_ConfigRequest):
 class _ResultsRequest(_FailuresRequest):
     """``/api/results``: one page of ``steps.csv``."""
 
-    limit: _WireInt = 20
-    offset: _WireInt = 0
+    limit: _Count = 20
+    offset: _Count = 0
 
 
 class _RunRequest(_ConfigRequest):
@@ -253,8 +274,8 @@ class _RunRequest(_ConfigRequest):
 
     action: str = "run"
     target: Any = None
-    max_cores: _WireIntOrUnset = None
-    max_gpus: _WireIntOrUnset = None
+    max_cores: _CountOrUnset = None
+    max_gpus: _CountOrUnset = None
 
 
 class _ProviderSettings(_Request):
@@ -267,25 +288,51 @@ class _ProviderSettings(_Request):
 
 
 class _ChatRequest(_ProviderSettings):
-    """``/api/agent/chat``: a reset, a message, or the verdicts that resume a paused run."""
+    """``/api/agent/chat``: a reset, the verdicts that resume a paused run, or a message."""
 
     reset: bool = False
-    message: str | None = None
     approvals: dict[str, bool] | None = None
+    message: str | None = Field(default=None, validate_default=True)
     config_path: str | None = None
 
+    @field_validator("message")
+    @classmethod
+    def _says_something(cls, message: str | None, info: ValidationInfo) -> str | None:
+        """A turn carries a message unless it resets or answers cards."""
+        if message is None and not info.data.get("reset") and not info.data.get("approvals"):
+            raise PydanticCustomError("missing", "Field required")
+        return message
 
-def _arg(key: str) -> str:
-    """One query argument a GET must carry, or the 400 that names it.
 
-    :func:`_read`'s rule for the other half of the API. A query argument is always a
-    string, so presence is the whole contract. Read bare, an absent one is Werkzeug's
-    ``BadRequestKeyError`` — an :class:`HTTPException` that :func:`surface` passes through
-    as an HTML page, which the page's fetch cannot read for a reason.
-    """
-    if key not in request.args:
-        raise ConfigError(f"request is missing the {key!r} query argument")
-    return request.args[key]
+class _PathQuery(_Request):
+    """``GET /api/load``: the config file to open."""
+
+    path: str
+
+
+class _BrowseQuery(_Request):
+    """``GET /api/browse``: the directory to list; absent means the user's home."""
+
+    path: str | None = None
+
+
+class _TemplateQuery(_ConfigRequest):
+    """``GET /api/template``: one step's template, by number or name."""
+
+    step: str
+
+
+class _StepQuery(_ConfigRequest):
+    """``GET /api/structure-list``: one step's structures; no step means the input seeds."""
+
+    step: str | None = None
+
+
+class _StructureQuery(_StepQuery):
+    """``GET /api/structure``: one structure, optionally with a normal mode's displacements."""
+
+    structure_id: str | None = None
+    mode_index: _CountOrUnset = None
 
 
 def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
@@ -379,7 +426,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         :func:`chemrefine.agent_tools.expand_user_path`'s refusal, which :func:`surface`
         answers with the same 400 — every path a user types here goes through it.
         """
-        path = agent_tools.expand_user_path(_arg("path"))
+        path = agent_tools.expand_user_path(_query(_PathQuery).path)
         if not path.is_file():
             return jsonify({"error": f"not a file: {path}"}), 400
         try:
@@ -421,7 +468,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
     @app.get("/api/browse")
     def browse() -> Any:
         """One directory level for the path pickers (local machine, local user)."""
-        requested = request.args.get("path") or str(Path.home())
+        requested = _query(_BrowseQuery).path or str(Path.home())
         path = agent_tools.expand_user_path(requested).resolve()
         if not path.is_dir():
             return jsonify({"error": f"not a directory: {path}"}), 400
@@ -473,15 +520,14 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
     @app.get("/api/template")
     def read_template() -> Any:
         """One step's template text for the inline editor."""
-        return jsonify(agent_tools.read_template(_arg("config_path"), _step_key(_arg("step"))))
+        query = _query(_TemplateQuery)
+        return jsonify(agent_tools.read_template(query.config_path, query.step))
 
     @app.post("/api/template")
     def write_template() -> Any:
         """Save the inline editor's template text."""
         body = _read(_TemplateWriteRequest, _body())
-        return jsonify(
-            agent_tools.write_template(body.config_path, _step_key(body.step), body.text)
-        )
+        return jsonify(agent_tools.write_template(body.config_path, body.step, body.text))
 
     @app.get("/api/structure")
     def structure() -> Any:
@@ -495,14 +541,13 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         ``mode_index`` asks for the structure *with* a normal mode's displacement columns,
         which is what the viewer animates.
         """
-        step = request.args.get("step")
-        mode = request.args.get("mode_index")
+        query = _query(_StructureQuery)
         return jsonify(
             agent_tools.get_structure(
-                _arg("config_path"),
-                _step_key(step) if step not in (None, "") else None,
-                structure_id=request.args.get("structure_id"),
-                mode_index=_wire_int(mode, "mode_index") if mode not in (None, "") else None,
+                query.config_path,
+                query.step or None,
+                structure_id=query.structure_id,
+                mode_index=query.mode_index,
             )
         )
 
@@ -514,13 +559,8 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         above. Offering only what exists is what stops the pane asking for a mode number the
         step never computed — the request that could only ever fail.
         """
-        step = request.args.get("step")
-        return jsonify(
-            agent_tools.list_structures(
-                _arg("config_path"),
-                _step_key(step) if step not in (None, "") else None,
-            )
-        )
+        query = _query(_StepQuery)
+        return jsonify(agent_tools.list_structures(query.config_path, query.step or None))
 
     @app.post("/api/structure-file")
     def structure_file() -> Any:
@@ -571,15 +611,8 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         body = _read(_FailuresRequest, _body())
         return jsonify(agent_tools.get_failures(body.config_path, step=body.step))
 
-    # One user, one browser, one conversation: the chat state lives on the app instance
-    # (history = PydanticAI's own message list; pending = the suspended run awaiting the
-    # human's allow/deny verdicts, a `_Suspended`).
-    chat_state: dict[str, Any] = {"history": None, "pending": None}
-
-    def _still_pending() -> list[dict[str, Any]] | None:
-        """The cards a failed turn leaves answerable — what the page may offer again."""
-        suspended = chat_state["pending"]
-        return suspended.cards if suspended is not None else None
+    # One user, one browser, one conversation: the chat state lives on the app instance.
+    chat = _Chat()
 
     # One conversation, but four waitress threads — and a turn is a read-modify-write
     # around a model call that takes seconds to a minute. Two overlapping POSTs would
@@ -679,7 +712,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
     def agent_chat() -> Any:
         """One agent turn at a time: contend on the lock, then run it.
 
-        A turn is a read-modify-write of ``chat_state`` around the model call, so
+        A turn is a read-modify-write of ``chat`` around the model call, so
         overlapping requests must not interleave — see ``chat_lock`` above for what a
         lost race costs. The contended answer is a 409 in the same ``{error: …}`` shape
         as every other refusal here, so the panel flashes it like any other.
@@ -706,15 +739,18 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         from chemrefine.agent.providers import ProviderConfig
 
         try:
-            # Everything decidable before a model is asked, refused with what is still
-            # pending: nothing here touches the suspended run, so its cards still answer it.
+            # Everything decidable before a model is built: a reset, and every refusal —
+            # answered with what is still pending, since nothing here takes the paused run.
             body = _read(_ChatRequest, _body())
             if body.reset:
-                chat_state["history"] = None
-                chat_state["pending"] = None
+                chat.history = None
+                chat.pending = None
                 return jsonify({"reply": None, "pending": None, "reset": True})
-            if not body.approvals and body.message is None:
-                raise ConfigError("request body is missing 'message'")
+            resume: tuple[_Suspended, DeferredToolResults] | None = None
+            if body.approvals:
+                if chat.pending is None:
+                    raise ConfigError("no suspended run to resume")
+                resume = (chat.pending, DeferredToolResults(approvals=dict(body.approvals)))
             resolved = ProviderConfig.resolve(
                 body.provider or "custom",
                 model=body.model,
@@ -722,7 +758,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
                 api_key=body.api_key,
             )
         except ChemRefineError as e:
-            return jsonify({**_refusal(e), "pending": _still_pending()}), 400
+            return jsonify(chat.refusal(e)), 400
         try:
             # Inside the try, not above it: `Agent("gpt-5-mini")` raises `UserError` at
             # construction for a name PydanticAI cannot place, and that is neither an
@@ -739,31 +775,26 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
                 config_path=body.config_path
                 or (str(config_path) if config_path is not None else None),
             )
-            if body.approvals:
-                suspended = chat_state["pending"]
-                if suspended is None:
-                    return jsonify({"error": "no suspended run to resume", "pending": None}), 400
-                verdicts = DeferredToolResults(approvals=dict(body.approvals))
+            if resume is not None:
+                suspended, verdicts = resume
                 # Taken, not read: the approved calls run before the model is asked anything,
                 # so once the resume starts, a failure — the endpoint dying on the next
-                # request, a refusal the model cannot get past — leaves no run for these
-                # cards to answer, and answering them again would run those calls twice.
-                chat_state["pending"] = None
+                # request — leaves no run for these cards to answer, and answering them
+                # again would run those calls twice.
+                chat.pending = None
                 result = run_turn(
                     agent, message_history=suspended.messages, deferred_tool_results=verdicts
                 )
             else:
-                result = run_turn(agent, body.message, message_history=chat_state["history"])
+                result = run_turn(agent, body.message, message_history=chat.history)
         except ChemRefineError as e:
             # The harness refusing its own settings while the agent is built (an unusable
             # CHEMREFINE_LLM_TIMEOUT), in the documented shape — with what is still pending,
             # so the page offers only cards that can be answered. A tool's refusal never
             # lands here: it is the tool's answer to the model.
-            return jsonify({**_refusal(e), "pending": _still_pending()}), 400
+            return jsonify(chat.refusal(e)), 400
         except Exception as e:  # the model endpoint is the outside world
-            return jsonify(
-                {"error": f"model endpoint failed: {e}", "pending": _still_pending()}
-            ), 502
+            return jsonify({"error": f"model endpoint failed: {e}", "pending": chat.cards}), 502
         # Computed once, before the branch, and reported on both: an approved write and a
         # fresh batch of approval cards arrive in the *same* turn, so a signal attached
         # only to the text branch would be silently dropped exactly when the agent is
@@ -774,10 +805,10 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
                 {"id": call.tool_call_id, "tool": call.tool_name, "args": call.args}
                 for call in result.output.approvals
             ]
-            chat_state["pending"] = _Suspended(result.all_messages(), cards)
+            chat.pending = _Suspended(result.all_messages(), cards)
             return jsonify({"reply": None, "wrote_config": wrote_config, "pending": cards})
-        chat_state["history"] = result.all_messages()
-        chat_state["pending"] = None
+        chat.history = result.all_messages()
+        chat.pending = None
         return jsonify({"reply": result.output, "pending": None, "wrote_config": wrote_config})
 
     @app.post("/api/run")
@@ -837,18 +868,6 @@ def _config_written_by(result: Any) -> str | None:
             ):
                 return str(part.content.get("path"))
     return None
-
-
-def _step_key(value: str | int) -> int | str:
-    """A step selector from the wire: digits mean the step number, anything else a name.
-
-    ``isdecimal``, not ``isdigit``, and for the reason ``StepConfig.matches`` uses it:
-    ``isdigit`` accepts the Unicode ``No`` category that ``int`` rejects, so ``step=²``
-    raised a bare ``ValueError`` here — a 500 with a traceback out of the handler, where
-    every other bad selector is the documented ``{error, exit_code}`` 400.
-    """
-    text = str(value)
-    return int(text) if text.isdecimal() else text
 
 
 def _canonical_order(raw: Any) -> Any:

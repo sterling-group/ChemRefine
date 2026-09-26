@@ -468,7 +468,10 @@ class StepConfig(BaseModel):
         if isinstance(key, int):
             return key == self.step
         if key.isdecimal():
-            return int(key) == self.step
+            try:
+                return int(key) == self.step
+            except ValueError:  # past sys.get_int_max_str_digits(): no step has that number
+                return False
         return key == self.name
 
 

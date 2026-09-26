@@ -326,6 +326,9 @@ def test_find_step_by_number_and_name():
     # Unicode decimals that `int` *does* accept still resolve, which is why the predicate
     # is `isdecimal` rather than an ASCII test.
     assert cfg.find_step("٢") is cfg.steps[1]
+    # Decimal, but past `sys.get_int_max_str_digits()`: `int` refuses it, and it numbers
+    # no step — an answer, not an escaped ValueError.
+    assert cfg.find_step("9" * 5000) is None
 
 
 @pytest.mark.parametrize("selector", [2.5, [2], {"step": 2}, None, True])
