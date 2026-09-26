@@ -22,6 +22,11 @@ from chemrefine.engines.qiskit.double_factorized import (
     build_double_factorized_evolution,
     simulate_double_factorized_evolution,
 )
+from chemrefine.engines.qiskit.dynamics import (
+    VariationalDynamicsOptions,
+    VariationalDynamicsResult,
+    variational_dynamics,
+)
 from chemrefine.engines.qiskit.encodings import (
     FermionicEncoding,
     LocalEncodingOptions,
@@ -121,6 +126,8 @@ __all__ = [
     "ShadowResult",
     "ShadowSetting",
     "TaperingTransform",
+    "VariationalDynamicsOptions",
+    "VariationalDynamicsResult",
     "Z2TaperingOptions",
     "build_double_factorized_evolution",
     "build_lattice_dynamics",
@@ -160,6 +167,7 @@ __all__ = [
     "solve_exact",
     "square_lattice",
     "validate_encoding",
+    "variational_dynamics",
     "vc_flow_diagonalizer",
 ]
 

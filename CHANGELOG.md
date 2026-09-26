@@ -27,6 +27,11 @@ for the full map.
 
 ### Added
 
+- **Variational quantum dynamics.** VarQITE and VarQRTE use the selected estimator
+  for observable, gradient and geometric-tensor circuits, including derivative
+  ancillas and routed layouts. Bounded trajectories retain metric diagnostics and
+  support the Qiskit 1.4 core floor and current providers.
+
 - **Adaptive quantum solvers.** TETRIS and coupled-exchange ADAPT support
   reference-aware tapering, complex exchange quadratures, sector diagnostics,
   energy-increase rollback and freshly bound QNSPSA resources at each circuit growth.

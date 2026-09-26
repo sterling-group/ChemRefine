@@ -330,6 +330,7 @@ class QiskitExperimentEngine:
 # Built-ins register in both the orchestrator and worker without importing SDKs.
 from chemrefine.engines.qiskit import (  # noqa: E402, F401
     experiment_double_factorized,
+    experiment_dynamics,
     experiment_measurement,
     experiment_shadows,
 )

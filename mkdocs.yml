@@ -159,6 +159,7 @@ nav:
       - Sampled quantum states: engines/qiskit-states.md
       - Fermionic shadows: engines/qiskit-shadows.md
       - Double-factorized evolution: engines/qiskit-double-factorized.md
+      - Variational dynamics: engines/qiskit-dynamics.md
       - Quantum spectra: engines/qiskit-spectra.md
       - Adaptive quantum solvers: engines/qiskit-adaptive.md
       - Local fermionic encodings: engines/qiskit-encodings.md

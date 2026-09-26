@@ -32,23 +32,13 @@ def read_circuit(path: Path, *, max_bytes: int = 33554432) -> Any:
     return circuits[0]
 
 
-class MeasurementExperimentOptions(BaseModel):
-    """A QPY state-preparation circuit, Hermitian Pauli observable and shot controls."""
+class PauliCircuitInput(BaseModel):
+    """A bounded QPY circuit and SDK-free Hermitian Pauli input validation."""
 
     model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
     circuit_path: str = Field(min_length=1, json_schema_extra={"input_file": True})
     max_circuit_bytes: int = Field(33554432, ge=1)
     observable: dict[str, float] = Field(min_length=1)
-    measurement: MeasurementOptions = Field(default_factory=MeasurementOptions)
-    sampler: ComponentSelection = Field(
-        default_factory=lambda: ComponentSelection.named("statevector")
-    )
-
-    @field_validator("sampler", mode="before")
-    @classmethod
-    def _sampler_name(cls, value: Any) -> Any:
-        """Use the molecular engine's short component spelling."""
-        return {"name": value} if isinstance(value, str) else value
 
     @model_validator(mode="after")
     def _observable_labels(self) -> Self:
@@ -61,6 +51,21 @@ class MeasurementExperimentOptions(BaseModel):
         ):
             raise ValueError("observable requires equal-width nonempty I/X/Y/Z Pauli labels")
         return self
+
+
+class MeasurementExperimentOptions(PauliCircuitInput):
+    """A QPY state-preparation circuit, Hermitian Pauli observable and shot controls."""
+
+    measurement: MeasurementOptions = Field(default_factory=MeasurementOptions)
+    sampler: ComponentSelection = Field(
+        default_factory=lambda: ComponentSelection.named("statevector")
+    )
+
+    @field_validator("sampler", mode="before")
+    @classmethod
+    def _sampler_name(cls, value: Any) -> Any:
+        """Use the molecular engine's short component spelling."""
+        return {"name": value} if isinstance(value, str) else value
 
 
 @EXPERIMENTS.register(

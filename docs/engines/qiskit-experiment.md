@@ -113,6 +113,10 @@ released-provider restrictions on two-body integrals are validated explicitly.
 
 ## Outputs and recovery
 
+[Variational dynamics](qiskit-dynamics.md) evolves a supplied parameterized QPY
+circuit using VarQITE or VarQRTE. Its selected estimator also measures gradients,
+geometric tensors and additional observables, with bounded Euler/RK4 integration.
+
 The product is `stepN/experiment/artifact.json`, accompanied by its named NPZ
 payload. The manifest records the schema version, content digest, array shapes
 and dtypes, units, model, and resolved options. Paths are relative so a complete
