@@ -27,6 +27,11 @@ for the full map.
 
 ### Added
 
+- **Local fermion encodings.** Graph BKSF and open-square VC/DK mappings include
+  code constraints, actual-reference preparation, complex observables and sample
+  decoding. Flow-set evolution uses verified specialized VC circuits and general
+  commuting synthesis, with particle-number drift and encoded-width budgets.
+
 - **Quantum spectra and natural-gradient optimization.** VQD separates physical
   root energies from deflation penalties and validates root overlaps. Complex
   qEOM reports conditioned response spectra and reconstructed-state diagnostics.

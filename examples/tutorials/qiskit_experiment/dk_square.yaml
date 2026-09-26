@@ -1,0 +1,63 @@
+input: molecule.xyz
+template_dir: templates
+output_dir: outputs_dk_square
+charge: 0
+multiplicity: 1
+max_cores: 2
+dispatch: local
+steps:
+- step: 1
+  engine: qiskit-experiment
+  options:
+    cores: 1
+    max_output_bytes: 268435456
+    experiment:
+      name: lattice_dynamics
+      options:
+        model:
+          num_sites: 4
+          spinful: false
+          edges:
+          - source: 0
+            target: 1
+            hopping: 0.7
+            hopping_imag: 0.2
+            density_interaction: 0.3
+          - source: 0
+            target: 2
+            hopping: 0.7
+            hopping_imag: 0.2
+            density_interaction: 0.3
+          - source: 1
+            target: 3
+            hopping: 0.7
+            hopping_imag: 0.2
+            density_interaction: 0.3
+          - source: 2
+            target: 3
+            hopping: 0.7
+            hopping_imag: 0.2
+            density_interaction: 0.3
+          site_potentials:
+          - 0.1
+          - -0.1
+          - 0.1
+          - -0.1
+        occupied_modes:
+        - 0
+        times:
+        - 0
+        - 0.15
+        - 0.3
+        dynamics:
+          mapping: dk_square
+          encoding:
+            name: dk_square
+            rows: 2
+            columns: 2
+          synthesis: pauli
+          steps: 4
+          order: 2
+          exact_reference: true
+          max_qubits: 12
+          max_exact_qubits: 12

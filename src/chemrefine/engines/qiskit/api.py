@@ -15,14 +15,27 @@ from chemrefine.engines.qiskit.determinants import (
     projected_eigensystem,
     projected_operator,
 )
+from chemrefine.engines.qiskit.encodings import (
+    FermionicEncoding,
+    LocalEncodingOptions,
+    build_local_encoding,
+    validate_encoding,
+)
+from chemrefine.engines.qiskit.flow import (
+    commuting_evolution,
+    partition_flow_edges,
+    vc_flow_diagonalizer,
+)
 from chemrefine.engines.qiskit.lattice import (
     FermionicLatticeModel,
     LatticeCircuit,
     LatticeDynamicsOptions,
     LatticeDynamicsResult,
     LatticeEdge,
+    LatticeIntegratorOptions,
     build_lattice_dynamics,
     chain_lattice,
+    lattice_encoding_qubits,
     simulate_lattice_dynamics,
     square_lattice,
 )
@@ -51,12 +64,15 @@ __all__ = [
     "DeterminantState",
     "ElectronicStructureData",
     "FermionTerm",
+    "FermionicEncoding",
     "FermionicHamiltonian",
     "FermionicLatticeModel",
     "LatticeCircuit",
     "LatticeDynamicsOptions",
     "LatticeDynamicsResult",
     "LatticeEdge",
+    "LatticeIntegratorOptions",
+    "LocalEncodingOptions",
     "MolecularMetadata",
     "OperatorPool",
     "OrbitalOptimizationOptions",
@@ -68,10 +84,14 @@ __all__ = [
     "ReducedDensityMatrices",
     "SampleBatch",
     "build_lattice_dynamics",
+    "build_local_encoding",
     "chain_lattice",
+    "commuting_evolution",
+    "lattice_encoding_qubits",
     "load_states",
     "map_problem",
     "optimize_orbitals",
+    "partition_flow_edges",
     "prepare_problem",
     "prepare_pyscf_problem",
     "projected_eigensystem",
@@ -86,6 +106,8 @@ __all__ = [
     "simulate_lattice_dynamics",
     "solve_exact",
     "square_lattice",
+    "validate_encoding",
+    "vc_flow_diagonalizer",
 ]
 
 

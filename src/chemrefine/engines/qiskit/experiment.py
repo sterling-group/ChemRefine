@@ -27,6 +27,7 @@ from chemrefine.engines.qiskit.lattice import (
     FermionicLatticeModel,
     LatticeDynamicsOptions,
     LatticeIntegratorOptions,
+    lattice_encoding_qubits,
 )
 from chemrefine.engines.qiskit.options import ComponentSelection
 from chemrefine.engines.qiskit.registry import ComponentRegistry
@@ -74,7 +75,7 @@ class LatticeExperimentOptions(BaseModel):
     @model_validator(mode="after")
     def _physical_inputs(self) -> Self:
         """Refuse decidable occupation and allocation errors before scheduling a worker."""
-        if self.model.num_modes > self.dynamics.max_qubits:
+        if lattice_encoding_qubits(self.model, self.dynamics) > self.dynamics.max_qubits:
             raise ValueError("lattice mode count exceeds max_qubits")
         if len(set(self.occupied_modes)) != len(self.occupied_modes) or any(
             mode < 0 or mode >= self.model.num_modes for mode in self.occupied_modes
@@ -93,7 +94,9 @@ def lattice_experiment(*, options: LatticeExperimentOptions, **context: Any) -> 
     from chemrefine.engines.qiskit.lattice import simulate_lattice_dynamics
 
     # Validate the aggregate allocation before constructing any statevector.
-    required = len(options.times) * (1 << options.model.num_modes) * 16
+    required = (
+        len(options.times) * (1 << lattice_encoding_qubits(options.model, options.dynamics)) * 16
+    )
     if required > context["max_output_bytes"]:
         raise ConfigError("lattice trajectory exceeds max_output_bytes")
     outcomes = [
