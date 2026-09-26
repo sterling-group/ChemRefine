@@ -194,7 +194,25 @@ def _recording_class(name: str, *, num_parameters: int = 3) -> type:
 
 def _fake_qiskit_modules(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     """Install the Qiskit names imported lazily by every built-in factory."""
-    quantum_circuit = _recording_class("QuantumCircuit", num_parameters=0)
+
+    class QuantumCircuit(_recording_class("QuantumCircuit", num_parameters=0)):
+        """Record public composition operations used by functional circuit builders."""
+
+        def compose(self, other: Any, *, inplace: bool) -> None:
+            """Keep composition order and track the resulting symbolic parameters."""
+            self.compositions = [*getattr(self, "compositions", []), other]
+            self.num_parameters += getattr(other, "num_parameters", 0)
+
+        def append(self, other: Any, qubits: Any) -> None:
+            """Record the enclosing instruction for a nonflat ansatz."""
+            self.instructions = [*getattr(self, "instructions", []), other]
+            self.num_parameters += getattr(other, "num_parameters", 0)
+
+        def to_gate(self) -> Any:
+            """Return this stand-in as its own inspectable gate representation."""
+            return self
+
+    quantum_circuit = QuantumCircuit
     efficient_su2 = _recording_class("EfficientSU2", num_parameters=5)
     statevector_estimator = _recording_class("StatevectorEstimator")
     backend_estimator = _recording_class("BackendEstimatorV2")
@@ -286,7 +304,7 @@ def _fake_qiskit_modules(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         return "preset-pass-manager"
 
     _install_module(monkeypatch, "qiskit", QuantumCircuit=quantum_circuit)
-    _install_module(monkeypatch, "qiskit.circuit.library", EfficientSU2=efficient_su2)
+    _install_module(monkeypatch, "qiskit.circuit.library", efficient_su2=efficient_su2)
     _install_module(
         monkeypatch,
         "qiskit.primitives",
@@ -921,9 +939,17 @@ def test_lazy_ansatz_and_initial_point_factories(monkeypatch: pytest.MonkeyPatch
         "mapped:excitation-a",
         "mapped:excitation-b",
     )
-    assert isinstance(efficient.circuit, fake.EfficientSU2)
+    assert isinstance(efficient.circuit, fake.QuantumCircuit)
     assert efficient.operator_pool is None
-    assert efficient.circuit.kwargs["initial_state"] is initial_state
+    flat = efficient.circuit.instructions[0]
+    assert flat.compositions[0] is initial_state
+    assert isinstance(flat.compositions[1], fake.EfficientSU2)
+    assert flat.compositions[1].kwargs == {
+        "su2_gates": ["rx"],
+        "entanglement": "linear",
+        "reps": 3,
+        "skip_final_rotation_layer": True,
+    }
 
     zeros = build_zero_initial_point(options=NoComponentOptions(), ansatz=ucc)
     random_a = build_random_initial_point(

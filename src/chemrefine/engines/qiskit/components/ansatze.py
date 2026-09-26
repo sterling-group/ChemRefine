@@ -58,10 +58,12 @@ class EfficientSU2Options(BaseModel):
     flatten: bool = True
 
 
-def _reference_excitation_permutation(context: ElectronicStructureContext) -> tuple[int, ...]:
+def _reference_excitation_permutation(
+    context: ElectronicStructureContext, initial_state: object | None = None
+) -> tuple[int, ...]:
     """Map canonical occupied/virtual blocks onto the supplied reference determinant."""
     permutation: list[int] = []
-    for spin, occupations in enumerate(reference_occupations(context)):
+    for spin, occupations in enumerate(reference_occupations(context, initial_state)):
         offset = spin * context.num_spatial_orbitals
         permutation.extend(offset + index for index, occupied in enumerate(occupations) if occupied)
         permutation.extend(
@@ -94,7 +96,7 @@ def build_uccsd(
         preserve_spin=options.preserve_spin,
         include_imaginary=options.include_imaginary,
     )
-    permutation = _reference_excitation_permutation(context)
+    permutation = _reference_excitation_permutation(context, initial_state)
     if not options.generalized and permutation != tuple(range(2 * context.num_spatial_orbitals)):
         from qiskit_nature.second_q.circuit.library.ansatzes.utils import (
             generate_fermionic_excitations,
@@ -197,16 +199,23 @@ def build_efficient_su2(
     context: ElectronicStructureContext,
     initial_state: object,
 ) -> AnsatzArtifacts:
-    """Build a hardware-efficient circuit for ordinary VQE."""
-    from qiskit.circuit.library import EfficientSU2
+    """Build EfficientSU2 with the functional API, retaining flat or nested representation."""
+    from qiskit import QuantumCircuit
+    from qiskit.circuit.library import efficient_su2
 
-    circuit = EfficientSU2(
+    layers = efficient_su2(
         context.num_qubits,
         su2_gates=options.su2_gates,
         entanglement=options.entanglement,
         reps=options.reps,
         skip_final_rotation_layer=options.skip_final_rotation_layer,
-        initial_state=initial_state,
-        flatten=options.flatten,
     )
-    return AnsatzArtifacts(circuit=circuit)
+    flat = QuantumCircuit(context.num_qubits, name="EfficientSU2")
+    if initial_state is not None:
+        flat.compose(initial_state, inplace=True)
+    flat.compose(layers, inplace=True)
+    if options.flatten:
+        return AnsatzArtifacts(circuit=flat)
+    nested = QuantumCircuit(context.num_qubits)
+    nested.append(flat.to_gate(), range(context.num_qubits))
+    return AnsatzArtifacts(circuit=nested)

@@ -67,7 +67,10 @@ TESTS_ONLY = {
         "skip_final_rotation_layer",
         "su2_gates",
     },
-    "initial_state": set(),
+    "initial_state": {
+        "alpha",
+        "beta",
+    },
     "estimator": {
         "abelian_grouping",
         "backend_name",

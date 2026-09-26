@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import numpy as np
 from pydantic import BaseModel
 
@@ -9,21 +11,33 @@ from chemrefine.engines.qiskit.context import ElectronicStructureContext
 from chemrefine.engines.qiskit.registry import INITIAL_STATES, NoComponentOptions
 from chemrefine.errors import ConfigError
 
+REFERENCE_OCCUPATIONS_KEY = "chemrefine_reference_occupations"
+
 
 def reference_occupations(
-    context: ElectronicStructureContext,
+    context: ElectronicStructureContext, initial_state: object | None = None
 ) -> tuple[tuple[bool, ...], tuple[bool, ...]]:
     """Return validated alpha/beta occupations, preserving supplied orbital order.
 
+    An explicitly prepared determinant takes precedence over problem occupations.
     Problems without occupation metadata use the usual Aufbau prefix. Reference
-    states and excitation builders share this convention so they agree on which
-    orbitals are occupied, including after an explicit orbital permutation.
+    states and excitation builders share this convention, including after an
+    explicit orbital permutation, without mutating the prepared chemistry.
     """
     occupations = (
         getattr(context.problem, "orbital_occupations", None),
         getattr(context.problem, "orbital_occupations_b", None),
     )
-    if all(occupation is None for occupation in occupations):
+    metadata = getattr(initial_state, "metadata", None) or {}
+    if not isinstance(metadata, Mapping):
+        raise ConfigError("qiskit initial-state metadata must be a mapping")
+    explicit = REFERENCE_OCCUPATIONS_KEY in metadata
+    if explicit:
+        supplied = metadata[REFERENCE_OCCUPATIONS_KEY]
+        if not isinstance(supplied, Mapping) or set(supplied) != {"alpha", "beta"}:
+            raise ConfigError("qiskit explicit reference occupations must contain alpha and beta")
+        occupations = supplied["alpha"], supplied["beta"]
+    if not explicit and all(occupation is None for occupation in occupations):
         alpha, beta = context.num_particles
         return (
             tuple(orbital < alpha for orbital in range(context.num_spatial_orbitals)),
@@ -43,10 +57,10 @@ def reference_occupations(
     return spin_occupations[0], spin_occupations[1]
 
 
-def _build_explicit_reference(
+def build_explicit_reference(
     context: ElectronicStructureContext, occupations: tuple[bool, ...]
 ) -> object:
-    """Map an occupied creation product to its encoded computational-basis state."""
+    """Map actual occupations for Hartree-Fock and explicit-reference builders."""
     from qiskit import QuantumCircuit
     from qiskit_nature.second_q.operators import FermionicOp
 
@@ -82,7 +96,7 @@ def build_hartree_fock(*, options: BaseModel, context: ElectronicStructureContex
         for spin, particles in zip(occupations, context.num_particles, strict=True)
         for orbital, occupied in enumerate(spin)
     ):
-        return _build_explicit_reference(context, occupations[0] + occupations[1])
+        return build_explicit_reference(context, occupations[0] + occupations[1])
     from qiskit_nature.second_q.circuit.library import HartreeFock
 
     return HartreeFock(
