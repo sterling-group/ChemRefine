@@ -19,7 +19,8 @@ The phases:
   earned it frees a slot rather than after the batch drains.
 * :func:`run_child_rounds` — the same queue for a caller whose parents finished elsewhere.
 * :func:`apply_failure_policy` — ``stop | skip | best``, and the ledger that records it.
-* :func:`finalize` — the two of those a step always ends with, in the right order.
+* :func:`finalize` — the tail every step ends with: the policy, the parents' order, the cache
+  write.
 
 It does **not** own the order of a whole step. :mod:`chemrefine.step` interleaves phases with
 work of its own — the manifest is written between ``prepare`` and ``submit``, so an interrupted
@@ -763,7 +764,7 @@ def apply_failure_policy(
     failures: list[Failure],
     ctx: StepContext,
     step_cfg: StepConfig,
-) -> StepResults:
+) -> tuple[Structure, ...]:
     """Record failures to the ledger and resolve them per ``step_cfg.on_failure``.
 
     The ``failed_jobs.json`` ledger is **always** written for any failures (so
@@ -775,10 +776,13 @@ def apply_failure_policy(
     halted by :func:`chemrefine.step.halt_if_pending` (from the pipeline)
     *after* the cache is written (so ``resume`` / ``rerun-errors`` re-attempt
     only those failed jobs).
+
+    Returns what the policy keeps, in the order it met them; :func:`finalize` puts that
+    in the parents' order before it is stored.
     """
     if not failures:
         cache.clear_failed_jobs(ctx.step_dir)
-        return StepResults(structures=tuple(successes))
+        return tuple(successes)
 
     cache.save_failure_records(ctx.step_dir, [FailureRecord.of(f) for f in failures])
     for f in failures:
@@ -806,11 +810,11 @@ def apply_failure_policy(
             backfilled = [
                 fallback for f in failures if (fallback := _backfill_for(f, prev_by_id)) is not None
             ]
-            return StepResults(structures=(*successes, *backfilled))
+            return (*successes, *backfilled)
         case "skip" | "stop":
             # `stop` keeps the successes too; the run is halted afterwards by
             # `chemrefine.step.halt_if_pending`, once this cache is written.
-            return StepResults(structures=tuple(successes))
+            return tuple(successes)
 
 
 def _backfill_for(failure: Failure, prev_by_id: dict[str, Structure]) -> Structure | None:
@@ -848,19 +852,22 @@ def _backfill_for(failure: Failure, prev_by_id: dict[str, Structure]) -> Structu
     )
 
 
-def _in_parent_order(structures: Iterable[Structure], parents: PipelineState) -> list[Structure]:
+def _in_parent_order(
+    structures: Iterable[Structure], parents: PipelineState
+) -> tuple[Structure, ...]:
     """``structures`` in the order of the parents they came from — the order a cache holds.
 
     The next step's key is composed from the row keys *in order*
-    (:meth:`chemrefine.cache.StepKey.of`), so the order a step stores its survivors in is
-    part of every downstream fingerprint. :meth:`_ResultLedger.emit` answers in manifest
-    order for a batch, but the recovery paths — :func:`retry_unconverged` under ``resume``
-    or ``rerun-errors``, :func:`chemrefine.nms.reattempt_nms` — merge what they re-ran
-    *after* the ledger, and a batch's own retried fan-out frame lands after its siblings
-    within its origin. Sorted here, at the one point every path ends, the order is a
-    function of the parent order alone: whether a structure converged first time, was
-    retried mid-queue or was retried by a later command cannot move it, and a
-    ``rebuild-cache`` (manifest order) cannot re-key a tail that nothing changed.
+    (:meth:`chemrefine.cache.StepKey.of`), so the order of what a step stores — survivors
+    and ``best`` backfills alike — is part of every downstream fingerprint.
+    :meth:`_ResultLedger.emit` answers in manifest order for a batch, but the recovery paths
+    — :func:`retry_unconverged` under ``resume`` or ``rerun-errors``,
+    :func:`chemrefine.nms.reattempt_nms` — merge what they re-ran *after* the ledger, and a
+    batch's own retried fan-out frame lands after its siblings within its origin. Sorted
+    here, at the one point every path ends, the order is a function of the parent order
+    alone: whether a structure converged first time, was retried mid-queue or was retried by
+    a later command cannot move it, and a ``rebuild-cache`` (manifest order) cannot re-key a
+    tail that nothing changed.
 
     A structure's origin is the parent it was computed for. A 1:1 result keeps the input's
     id, a fan-out frame is ``{input}-{i}`` with ``parent_id`` the input
@@ -883,7 +890,7 @@ def _in_parent_order(structures: Iterable[Structure], parents: PipelineState) ->
         frame = sid[len(origin) + 1 :] if sid.startswith(f"{origin}-") else ""
         return (index.get(origin, len(index)), int(frame) if frame.isdecimal() else -1)
 
-    return sorted(structures, key=rank)
+    return tuple(sorted(structures, key=rank))
 
 
 def finalize(
@@ -909,8 +916,8 @@ def finalize(
     silent re-run or a silent reuse much later. The key is a value
     (:class:`chemrefine.cache.StepKey`), so this takes the one its caller already built.
     """
-    policed = apply_failure_policy(successes, failures, ctx, step_cfg)
-    results = StepResults(structures=tuple(_in_parent_order(policed.structures, ctx.prev_state)))
+    kept = apply_failure_policy(successes, failures, ctx, step_cfg)
+    results = StepResults(structures=_in_parent_order(kept, ctx.prev_state))
     cache.save(
         step_cfg=step_cfg,
         key=key,

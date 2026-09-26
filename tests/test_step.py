@@ -905,8 +905,7 @@ def test_on_failure_best_drops_failure_with_no_fallback(tmp_path: Path):
     ctx = build_context(cfg, cfg.steps[0], _seed_state(["0"]), get_engine(cfg.steps[0].engine))
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
     failures = [Failure(sid="ghost", kind=FailureKind.MISSING_OUTPUT, best=None)]
-    results = apply_failure_policy([], failures, ctx, cfg.steps[0])
-    assert results.structures == ()
+    assert apply_failure_policy([], failures, ctx, cfg.steps[0]) == ()
     assert [(r.structure_id, r.kind) for r in cache.load_failure_records(ctx.step_dir)] == [
         ("ghost", FailureKind.MISSING_OUTPUT)
     ]
@@ -1021,8 +1020,9 @@ def test_a_pending_stop_step_halts_in_every_mode_but_cache_only(
 
     CACHE_ONLY is the mode every step a scoped action isn't targeting runs in; halting
     there would stop `rerun-errors N` before it ever reached step N. The ledger is what
-    makes the exemption observable at all: with none, ``halt_if_pending`` returns before
-    it asks the mode, and a test without one passes whatever ``can_halt`` answers.
+    makes the exemption observable at all: with none, ``halt_if_pending`` asks the mode and
+    then finds nothing to halt on, so a test without one passes whatever ``can_halt``
+    answers.
     """
     cfg = _config(tmp_path, on_failure="stop")
     cache.save_failure_records(

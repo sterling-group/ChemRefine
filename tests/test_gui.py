@@ -991,11 +991,29 @@ def test_a_mode_number_that_is_not_one_is_a_400(client: Any, tmp_path: Path, mod
     response = _get(client, f"/api/structure?config_path={config}&step=1&mode_index={mode}")
     assert response.status_code == 400
     assert "not a whole number" in response.get_json()["error"]
-    # A negative one is a number: the page passes it on, and the refusal is the library's
-    # (the range at both ends is asserted there, in test_agent_tools_chemistry).
-    negative = _get(client, f"/api/structure?config_path={config}&step=1&mode_index=-1")
-    assert negative.status_code == 400
-    assert "needs a structure_id" in negative.get_json()["error"]
+
+
+def test_a_negative_mode_number_reaches_the_library_signed(
+    client: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """``-1`` is a number, so the page hands the library the signed value to judge.
+
+    The range at both ends is the library's rule, asserted in test_agent_tools_chemistry; what
+    this route owns is passing ``-1`` on as ``-1`` — not refused as a non-number, and not
+    with its sign dropped, which would draw mode 1 instead of refusing.
+    """
+    from chemrefine import agent_tools
+
+    seen: dict[str, Any] = {}
+
+    def record(*_args: Any, **kwargs: Any) -> dict[str, Any]:
+        seen.update(kwargs)
+        return {}
+
+    monkeypatch.setattr(agent_tools, "get_structure", record)
+    response = _get(client, "/api/structure?config_path=x.yaml&step=1&mode_index=-1")
+    assert response.status_code == 200
+    assert seen["mode_index"] == -1
 
 
 def test_a_seed_the_config_names_but_that_is_missing_is_a_400(client: Any, tmp_path: Path):

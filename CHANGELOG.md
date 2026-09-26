@@ -501,8 +501,9 @@ for the full map.
   backfilled failures were appended after the survivors in the order they failed, which
   differs between a resume and a `rebuild-cache` of the same step, so the steps after it
   were re-keyed with no result changed — and an `mlip-train` step retrained on a new
-  split. A `best` cache that holds failures re-orders once on upgrade, and the steps after
-  it re-parse once (an `mlip-train` step retrains once).
+  split. A `best` cache that holds failures re-orders the next time that step is finalized
+  (a `rebuild-cache` of it, say), and the steps after it re-parse once (an `mlip-train`
+  step retrains once).
 - **Agent chat turns close what they open, on every supported Python.** The terminal
   chat and the builder's chat panel ran each turn on an event loop left installed on the
   thread, and an HTTP error answer from a model endpoint, the ExtOpt server or PubChem was

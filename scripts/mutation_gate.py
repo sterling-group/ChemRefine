@@ -521,14 +521,14 @@ _BUNDLED: tuple[Mutation, ...] = (
         id="finalize-orders-what-it-stores",
         path="src/chemrefine/lifecycle.py",
         old=(
-            "    policed = apply_failure_policy(successes, failures, ctx, step_cfg)\n"
-            "    results = StepResults(structures=tuple(_in_parent_order(policed.structures, "
-            "ctx.prev_state)))\n"
+            "    kept = apply_failure_policy(successes, failures, ctx, step_cfg)\n"
+            "    results = StepResults(structures=_in_parent_order(kept, ctx.prev_state))\n"
         ),
         new=(
-            "    results = apply_failure_policy(\n"
+            "    kept = apply_failure_policy(\n"
             "        _in_parent_order(successes, ctx.prev_state), failures, ctx, step_cfg\n"
             "    )\n"
+            "    results = StepResults(structures=kept)\n"
         ),
         tests="tests/test_lifecycle.py",
         breaks="`on_failure: best` stores its backfills after the survivors, in whatever "
