@@ -251,3 +251,19 @@ def test_invalid_solver_residual_is_not_returned_as_success(monkeypatch):
     )
     with pytest.raises(ConfigError, match="invalid energy or residual"):
         projected_eigensystem(FermionicHamiltonian(1, ()), [0])
+
+
+def test_natural_occupations_and_number_correlations_use_state_rdm_conventions():
+    state = DeterminantState(4, (5, 10), np.sqrt([0.8, 0.2]))
+    rdms = state.rdms()
+    np.testing.assert_allclose(rdms.natural_occupations(), [0.8, 0.8, 0.2, 0.2])
+    correlations = rdms.number_correlations()
+    assert correlations[0, 2] == pytest.approx(0.8)
+    assert correlations[0, 0] == pytest.approx(0.8)
+    assert correlations[0, 1] == 0
+    np.testing.assert_allclose(np.sum(correlations, axis=1), 2 * np.diag(rdms.one_body))
+    with pytest.raises(ConfigError, match="two-body"):
+        state.rdms(max_order=1).number_correlations()
+    transition = DeterminantState(4, (1,), [1]).rdms(bra=DeterminantState(4, (2,), [1]))
+    with pytest.raises(ConfigError, match="Hermitian state"):
+        transition.natural_occupations()

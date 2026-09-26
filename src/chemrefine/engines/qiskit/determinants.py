@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from itertools import combinations
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -165,6 +165,23 @@ class ReducedDensityMatrices:
     one_body: ComplexArray
     two_body: ComplexArray | None = None
 
+    def natural_occupations(self) -> NDArray[np.float64]:
+        """Return descending one-RDM eigenvalues; transition matrices are not densities."""
+        if not np.allclose(self.one_body, self.one_body.conj().T, atol=1e-10, rtol=0):
+            raise ConfigError("natural occupations require a Hermitian state one-RDM")
+        values = np.array(np.linalg.eigvalsh(self.one_body)[::-1], dtype=float)
+        values.setflags(write=False)
+        return values
+
+    def number_correlations(self) -> ComplexArray:
+        """Return <n_p n_q>, including the n_p squared equals n_p diagonal."""
+        if self.two_body is None:
+            raise ConfigError("number correlations require a two-body RDM")
+        values = np.array(np.einsum("pqpq->pq", self.two_body), dtype=complex)
+        values += np.diag(np.diag(self.one_body))
+        values.setflags(write=False)
+        return values
+
     def spin_blocks(self) -> dict[str, ComplexArray]:
         """Return alpha/beta blocks for the declared alpha-then-beta convention."""
         n = self.one_body.shape[0]
@@ -199,6 +216,7 @@ class DeterminantState:
     num_modes: int
     determinants: tuple[int, ...]
     amplitudes: ComplexArray
+    orbital_rotation: ComplexArray | None = None
 
     def __post_init__(self) -> None:
         """Copy and validate coefficients, preserving their phase and basis order."""
@@ -220,6 +238,25 @@ class DeterminantState:
         amplitudes.setflags(write=False)
         object.__setattr__(self, "determinants", basis)
         object.__setattr__(self, "amplitudes", amplitudes)
+        if self.orbital_rotation is not None:
+            try:
+                rotation = np.array(self.orbital_rotation, dtype=complex, copy=True)
+            except (TypeError, ValueError) as exc:
+                raise ConfigError(
+                    "state orbital_rotation must contain finite complex numbers"
+                ) from exc
+            if (
+                rotation.shape != (self.num_modes, self.num_modes)
+                or not np.isfinite(rotation).all()
+                or not np.allclose(
+                    rotation.conj().T @ rotation, np.eye(self.num_modes), atol=1e-10, rtol=0
+                )
+            ):
+                raise ConfigError(
+                    "state orbital_rotation must be a finite unitary matching num_modes"
+                )
+            rotation.setflags(write=False)
+            object.__setattr__(self, "orbital_rotation", rotation)
 
     @property
     def num_particles(self) -> int:
@@ -228,12 +265,31 @@ class DeterminantState:
 
     def sparse(self) -> dict[int, complex]:
         """Return a detached sparse representation, excluding exact zero amplitudes."""
-        return dict(zip(self.determinants, self.amplitudes.tolist(), strict=True))
+        return {
+            bits: value
+            for bits, value in zip(self.determinants, self.amplitudes.tolist(), strict=True)
+            if value != 0
+        }
 
-    def expectation(self, operator: FermionicHamiltonian, *, max_entries: int = 1_000_000) -> float:
+    def expectation(
+        self,
+        operator: FermionicHamiltonian,
+        *,
+        max_entries: int = 1_000_000,
+        basis: Literal["original", "state"] = "original",
+        max_memory_mb: int = 512,
+    ) -> float:
         """Evaluate an observable on the actual state, including complex integrals."""
         if operator.num_modes != self.num_modes:
             raise ConfigError("observable and state mode counts differ")
+        if basis not in {"original", "state"}:
+            raise ConfigError("observable basis must be original or state")
+        if basis == "original" and self.orbital_rotation is not None:
+            from chemrefine.engines.qiskit.orbitals import rotate_hamiltonian
+
+            operator = rotate_hamiltonian(
+                operator, self.orbital_rotation, max_memory_mb=max_memory_mb
+            )
         state = self.sparse()
         image = operator.apply(state, max_entries=max_entries)
         value = sum(
@@ -247,6 +303,7 @@ class DeterminantState:
         max_order: int = 2,
         max_memory_mb: int = 512,
         bra: DeterminantState | None = None,
+        basis: Literal["original", "state"] = "original",
     ) -> ReducedDensityMatrices:
         """Compute state or transition RDMs using sparse annihilated-state overlaps.
 
@@ -254,8 +311,19 @@ class DeterminantState:
         The storage estimate is conservative and is not an operating-system limit.
         """
         left = self if bra is None else bra
+        if basis not in {"original", "state"}:
+            raise ConfigError("RDM basis must be original or state")
         if left.num_modes != self.num_modes or max_order not in {1, 2}:
             raise ConfigError("RDMs require matching modes and max_order 1 or 2")
+        if left.orbital_rotation is not None or self.orbital_rotation is not None:
+            left_rotation = (
+                np.eye(self.num_modes) if left.orbital_rotation is None else left.orbital_rotation
+            )
+            right_rotation = (
+                np.eye(self.num_modes) if self.orbital_rotation is None else self.orbital_rotation
+            )
+            if not np.allclose(left_rotation, right_rotation, atol=1e-10, rtol=0):
+                raise ConfigError("transition RDMs require states in a common orbital frame")
         n = self.num_modes
         pairs = n * (n - 1) // 2 if max_order == 2 else 0
         estimate = 32 * (n * n + (n**4 if max_order == 2 else 0))
@@ -298,6 +366,20 @@ class DeterminantState:
                     value = pair_values[i, j]
                     two[p, q, r, s] = two[q, p, s, r] = value
                     two[p, q, s, r] = two[q, p, r, s] = -value
+        if basis == "original" and self.orbital_rotation is not None:
+            rotation = self.orbital_rotation
+            one = rotation.conj() @ one @ rotation.T
+            if two is not None:
+                two = np.einsum(
+                    "pi,qj,rk,sl,ijkl->pqrs",
+                    rotation.conj(),
+                    rotation.conj(),
+                    rotation,
+                    rotation,
+                    two,
+                    optimize=True,
+                )
+        if two is not None:
             two.setflags(write=False)
         one.setflags(write=False)
         return ReducedDensityMatrices(one, two)

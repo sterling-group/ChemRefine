@@ -27,6 +27,13 @@ for the full map.
 
 ### Added
 
+- **Orbital optimization and sampled Krylov states.** Explicit SQD, SqDRIFT,
+  SKQD and extended SQD retain complex determinant amplitudes and orbital frames.
+  SKQD samples powers of one fixed approximate evolution operator, including
+  time zero. Extended SQD expands the actual reference excitation space without
+  a Cartesian determinant closure. Root selection and original-basis observables
+  share the molecular result contract.
+
 - **Declared engine file dependencies and output validation.** Nested input file
   options and referenced payloads participate in relocation-safe cache identity.
   Engines can validate required native outputs before cache reuse; missing or

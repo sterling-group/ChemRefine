@@ -29,6 +29,12 @@ from chemrefine.engines.qiskit.lattice import (
 from chemrefine.engines.qiskit.mapping import map_problem
 from chemrefine.engines.qiskit.operators import Excitation, OperatorPool
 from chemrefine.engines.qiskit.options import ActiveSpaceOptions, ComponentSelection, QiskitOptions
+from chemrefine.engines.qiskit.orbitals import (
+    OrbitalOptimizationOptions,
+    OrbitalOptimizationResult,
+    optimize_orbitals,
+    rotate_hamiltonian,
+)
 from chemrefine.engines.qiskit.problem import (
     PreparedProblem,
     prepare_problem,
@@ -52,6 +58,8 @@ __all__ = [
     "LatticeEdge",
     "MolecularMetadata",
     "OperatorPool",
+    "OrbitalOptimizationOptions",
+    "OrbitalOptimizationResult",
     "PreparedProblem",
     "ProjectedEigensystem",
     "QiskitOptions",
@@ -61,10 +69,12 @@ __all__ = [
     "build_lattice_dynamics",
     "chain_lattice",
     "map_problem",
+    "optimize_orbitals",
     "prepare_problem",
     "prepare_pyscf_problem",
     "projected_eigensystem",
     "projected_operator",
+    "rotate_hamiltonian",
     "run_adapt_vqe",
     "run_job",
     "run_problem",

@@ -13,6 +13,7 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 
 from chemrefine.engines.api import BackendRequirement
+from chemrefine.engines.qiskit.orbitals import OrbitalOptimizationOptions
 from chemrefine.engines.qiskit.registry import (
     ALGORITHMS,
     ANSATZE,
@@ -44,6 +45,7 @@ class SubspaceOptions(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 
     projection: Literal["cartesian", "explicit"] = "cartesian"
+    orbital_optimization: OrbitalOptimizationOptions | None = None
     num_roots: int = Field(1, ge=1)
     target_root: int = Field(0, ge=0)
     spin_constraint: Literal["require", "report"] = "require"
@@ -73,8 +75,17 @@ class SubspaceOptions(BaseModel):
             self.num_roots != 1 or self.spin_constraint != "require"
         ):
             raise ValueError("multiple roots or spin reporting require projection: explicit")
+        extra_solves = 0
+        if self.orbital_optimization is not None:
+            if self.projection != "explicit":
+                raise ValueError("orbital_optimization requires projection: explicit")
+            if self.orbital_optimization.spin_mode == "spin_orbital":
+                raise ValueError(
+                    "molecular orbital optimization must preserve alpha/beta populations"
+                )
+            extra_solves = self.orbital_optimization.max_iterations + 1
         iterations = self.max_iterations if self.configuration_recovery else 1
-        if iterations * self.num_batches > self.max_total_diagonalizations:
+        if iterations * self.num_batches + extra_solves > self.max_total_diagonalizations:
             raise ValueError("SQD batch solves exceed max_total_diagonalizations")
         return self
 
@@ -135,12 +146,12 @@ def validate_subspace_options(resolved: QiskitOptions) -> None:
     """Reject explicitly configured components the selected subspace path ignores."""
     from chemrefine.engines.qiskit.options import QiskitOptions
 
-    if resolved.algorithm.name not in {"sqd", "sqdrift"}:
+    if resolved.algorithm.name not in {"sqd", "sqdrift", "skqd", "extended_sqd"}:
         return
     if resolved.mapper.name != "jordan_wigner":
         raise ConfigError("SQD and SqDRIFT require the untapered jordan_wigner mapper")
     if (
-        resolved.algorithm.name == "sqd"
+        resolved.algorithm.name in {"sqd", "extended_sqd"}
         and resolved.algorithm.options.get("counts") is None
         and "circuit" not in ANSATZE.spec(resolved.ansatz.name).capabilities
     ):
@@ -148,6 +159,8 @@ def validate_subspace_options(resolved: QiskitOptions) -> None:
     unused = {"estimator", "optimizer"}
     if resolved.algorithm.name == "sqdrift":
         unused.update({"ansatz", "initial_state", "initial_point"})
+    elif resolved.algorithm.name == "skqd":
+        unused.update({"ansatz", "initial_point"})
     elif resolved.algorithm.options.get("counts") is not None:
         unused.update({"ansatz", "initial_state", "initial_point", "sampler"})
         if resolved.device != "cpu":
@@ -241,7 +254,12 @@ def _check_sampling_memory(
             state_bytes = 32 * 4 ** (2 * data.norb)
         elif method in {"automatic", "statevector"}:
             state_bytes = 32 * 2 ** (2 * data.norb)
-    storage = total_shots * (8 * data.norb + 32) + 32 * data.norb**4
+    integral_storage = (
+        192 * len(request.prepared.fermionic_hamiltonian)
+        if isinstance(data, SpinSector)
+        else 32 * data.norb**4
+    )
+    storage = total_shots * (8 * data.norb + 32) + integral_storage
     if state_bytes + storage > options.max_memory_mb * 1024**2:
         raise ConfigError("SQD sampling storage estimate exceeds max_memory_mb")
 
@@ -582,6 +600,47 @@ def _solve_explicit_samples(
         if stop:
             break
     best = cast("ProjectedEigensystem", best)
+    orbital_metadata = None
+    if options.orbital_optimization is not None:
+        from chemrefine.engines.qiskit.orbitals import optimize_orbitals, rotate_hamiltonian
+
+        threads = (
+            nullcontext()
+            if num_threads() == request.options.cores
+            else with_omp_threads(request.options.cores)
+        )
+        with threads:
+            orbital_result = optimize_orbitals(
+                hamiltonian,
+                best.states[0].determinants,
+                options=options.orbital_optimization,
+                num_roots=options.num_roots,
+                target_root=options.target_root,
+                max_subspace_dimension=options.max_subspace_dimension,
+                max_memory_mb=options.max_memory_mb,
+                eigensolver_tolerance=options.energy_tol,
+                eigensolver_iterations=options.sci_max_cycle,
+                seed=options.seed,
+            )
+        best = orbital_result.eigensystem
+        if spin_operator is not None:
+            spin_operator = rotate_hamiltonian(
+                spin_operator, orbital_result.rotation, max_memory_mb=options.max_memory_mb
+            )
+        diagonal = np.diag(
+            best.states[options.target_root]
+            .rdms(max_order=1, max_memory_mb=options.max_memory_mb)
+            .one_body
+        ).real
+        occupancies = diagonal[:norb], diagonal[norb:]
+        orbital_metadata = {
+            "energy_history_hartree": list(orbital_result.energy_history),
+            "converged": orbital_result.converged,
+            "objective_evaluations": orbital_result.objective_evaluations,
+            "spin_mode": options.orbital_optimization.spin_mode,
+            "state_basis": "optimized_active_orbitals",
+            "orbital_occupancy_basis": "original_active_orbitals",
+        }
     spin = (prepared.multiplicity - 1) / 2
     target_spin = spin * (spin + 1)
     spin_records = []
@@ -618,6 +677,7 @@ def _solve_explicit_samples(
             **sample_metadata,
             "sampling": sampling_metadata,
             "projection": "explicit",
+            "orbital_optimization": orbital_metadata,
             "subspace_dimension": len(best.states[0].determinants),
             "configuration_recovery": options.configuration_recovery,
             "iterations": iteration_records,

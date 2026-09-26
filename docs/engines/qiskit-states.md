@@ -78,3 +78,50 @@ real alpha-beta orbital overlap. The released ffsim/Cartesian SQD and grouped
 SqDRIFT circuit constructors retain their real shared-spatial-orbital domain;
 unsupported inputs fail explicitly. General supplied-count SQD uses the explicit
 projector instead.
+
+## Optimize active orbitals
+
+For explicit SQD and SqDRIFT, set `orbital_optimization: {}` to alternate orbital
+minimization at fixed CI coefficients with rediagonalization of the same
+configuration pool. Controls include `max_iterations`,
+`max_optimizer_iterations`, `energy_tolerance`, `gradient_tolerance`,
+`complex_rotations`, and `spin_mode: shared` or `independent`. Molecular workflows
+preserve alpha/beta populations. The Python `optimize_orbitals` API additionally
+supports unrestricted spin-orbital rotations when that sector interpretation is
+intended.
+
+Only improvements exceeding the energy tolerance are accepted. The result records
+a monotone target-root energy history, optimizer evaluation count, convergence,
+and the accumulated unitary rotation. Numerical states persist that rotation.
+Their `rdms()` and `expectation()` methods default to the original active-orbital
+basis; `basis="state"` selects optimized coordinates. Transition RDMs require a
+common orbital frame. Frozen and inactive orbitals remain outside the optimization.
+`rdms.natural_occupations()` and `rdms.number_correlations()` expose occupation
+spectra and `<n_p n_q>` with the correct diagonal.
+
+## Sample Krylov powers
+
+`algorithm: skqd` samples the reference and successive powers of one fixed
+approximate evolution circuit. Set `time_step`, `num_steps`, `product_formula`
+(`lie` or `suzuki`), `suzuki_order` (2, 4, or 6), and `repetitions`. The circuit at
+power zero is always included. All powers repeat the same synthesized step;
+the final explicit determinant solve uses the original Hamiltonian, so product
+formula error changes the sampled subspace rather than the reported operator.
+The ordinary sampler, initial-state selection, shot budgets, recovery controls,
+root controls, and orbital optimization remain available.
+
+## Expand sampled states for excitations
+
+`algorithm: extended_sqd` applies occupied-to-virtual excitations defined by the
+actual reference occupations to a sampled SQD ground state, then diagonalizes
+the explicit union. It follows the determinant expansion in
+[extended SQD](https://arxiv.org/html/2411.00468v1). No alpha/beta Cartesian closure
+is introduced. `excitation_ranks` defaults to `[1, 2]` and also accepts rank 3;
+`minimum_probability` optionally excludes small source coefficients from the
+expansion. Excitation-pool size, generated configurations, and final subspace
+size have independent bounds that fail explicitly when exceeded.
+
+Physical shot counts retain the source circuit's acquisition totals; generated
+basis elements are reported separately. This method defaults to
+`spin_constraint: report`, exposing roots across total-spin sectors at fixed
+alpha/beta population. Root zero remains the scalar molecular-energy default.
