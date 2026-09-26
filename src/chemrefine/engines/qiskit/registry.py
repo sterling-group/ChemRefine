@@ -100,6 +100,7 @@ ALGORITHMS = ComponentRegistry("algorithm")
 ANSATZE = ComponentRegistry("ansatz")
 INITIAL_STATES = ComponentRegistry("initial_state")
 ESTIMATORS = ComponentRegistry("estimator")
+SAMPLERS = ComponentRegistry("sampler")
 OPTIMIZERS = ComponentRegistry("optimizer")
 INITIAL_POINTS = ComponentRegistry("initial_point")
 
@@ -109,6 +110,7 @@ REGISTRIES: dict[str, ComponentRegistry] = {
     "ansatz": ANSATZE,
     "initial_state": INITIAL_STATES,
     "estimator": ESTIMATORS,
+    "sampler": SAMPLERS,
     "optimizer": OPTIMIZERS,
     "initial_point": INITIAL_POINTS,
 }
@@ -124,7 +126,7 @@ def validate_component_graph(
     algorithm = ALGORITHMS.spec(options.algorithm.name)
     ansatz = ANSATZE.spec(options.ansatz.name)
     estimator = ESTIMATORS.spec(options.estimator.name)
-    component_requirements = {"estimator", "optimizer", "initial_state", "initial_point"}
+    component_requirements = {"estimator", "sampler", "optimizer", "initial_state", "initial_point"}
     capabilities = ansatz.capabilities | ({"operator_pool"} if operator_pool_supplied else set())
     missing = algorithm.requires - capabilities - component_requirements
     if missing:
@@ -144,18 +146,29 @@ def validate_component_graph(
             "fixed circuit; set ansatz.options.reps to 1"
         )
     if options.device == "cuda":
-        if "estimator" not in algorithm.requires:
+        execution_category = "sampler" if "sampler" in algorithm.requires else "estimator"
+        if execution_category not in algorithm.requires:
             raise ConfigError(
                 f"qiskit algorithm {options.algorithm.name!r} is CPU-only; set device: cpu"
             )
-        if "cuda" not in estimator.capabilities:
+        executor = (
+            SAMPLERS.spec(options.sampler.name) if execution_category == "sampler" else estimator
+        )
+        if "cuda" not in executor.capabilities:
+            selected = options.component_selections()[execution_category]
             raise ConfigError(
-                f"qiskit estimator {options.estimator.name!r} does not support device: cuda; "
-                "choose aer_statevector or aer_shots, or set device: cpu"
+                f"qiskit {execution_category} {selected.name!r} does not support device: cuda; "
+                "choose a GPU-capable Aer component, or set device: cpu"
             )
-    if options.estimator.name == "aer_shots":
-        estimator_options = ESTIMATORS.options_for(options.estimator)
-        method = estimator_options.model_dump()["method"]
+    aer_selection = (
+        SAMPLERS.options_for(options.sampler)
+        if "sampler" in algorithm.requires and options.sampler.name == "aer"
+        else ESTIMATORS.options_for(options.estimator)
+        if options.estimator.name == "aer_shots"
+        else None
+    )
+    if aer_selection is not None:
+        method = aer_selection.model_dump()["method"]
         if method == "tensor_network" and options.device != "cuda":
             raise ConfigError("qiskit Aer method 'tensor_network' requires device: cuda")
         if options.device == "cuda" and method not in {

@@ -15,6 +15,7 @@ from chemrefine.engines.qiskit.problem import (
     prepare_pyscf_problem,
 )
 from chemrefine.engines.qiskit.result import CircuitMetrics, QiskitRunResult
+from chemrefine.engines.qiskit.sampling import SampleBatch, sample_circuit
 from chemrefine.engines.qiskit.workflow import EvaluationCallback, run_job, run_problem
 
 __all__ = [
@@ -26,6 +27,7 @@ __all__ = [
     "PreparedProblem",
     "QiskitOptions",
     "QiskitRunResult",
+    "SampleBatch",
     "map_problem",
     "prepare_problem",
     "prepare_pyscf_problem",
@@ -33,6 +35,7 @@ __all__ = [
     "run_job",
     "run_problem",
     "run_vqe",
+    "sample_circuit",
     "solve_exact",
 ]
 

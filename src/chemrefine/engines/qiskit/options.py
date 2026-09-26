@@ -105,6 +105,9 @@ class QiskitOptions(EngineOptions):
     estimator: ComponentSelection = Field(
         default_factory=lambda: ComponentSelection.named("statevector")
     )
+    sampler: ComponentSelection = Field(
+        default_factory=lambda: ComponentSelection.named("statevector")
+    )
     optimizer: ComponentSelection = Field(default_factory=lambda: ComponentSelection.named("slsqp"))
     initial_point: ComponentSelection = Field(
         default_factory=lambda: ComponentSelection.named("zeros")
@@ -145,6 +148,7 @@ class QiskitOptions(EngineOptions):
         "ansatz",
         "initial_state",
         "estimator",
+        "sampler",
         "optimizer",
         "initial_point",
         mode="before",
@@ -164,6 +168,7 @@ class QiskitOptions(EngineOptions):
             "ansatz": self.ansatz,
             "initial_state": self.initial_state,
             "estimator": self.estimator,
+            "sampler": self.sampler,
             "optimizer": self.optimizer,
             "initial_point": self.initial_point,
         }

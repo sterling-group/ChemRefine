@@ -18,25 +18,49 @@ from chemrefine.engines.qiskit.registry import REGISTRIES
 REPO = Path(__file__).resolve().parent.parent
 
 REQUIRED = {
-    "active_space": {"electrons", "orbitals"},
-    "selection": {"name", "options"},
+    "active_space": {
+        "electrons",
+        "orbitals",
+    },
+    "selection": {
+        "name",
+        "options",
+    },
     "mapper": set(),
     "algorithm": set(),
-    "ansatz": {"reps", "preserve_spin"},
+    "ansatz": {
+        "preserve_spin",
+        "reps",
+    },
     "initial_state": set(),
-    "estimator": {"default_precision", "seed"},
-    "optimizer": {"maxiter"},
+    "estimator": {
+        "default_precision",
+        "seed",
+    },
+    "sampler": set(),
+    "optimizer": {
+        "maxiter",
+    },
     "initial_point": set(),
 }
 
 TESTS_ONLY = {
-    "active_space": {"active_orbitals"},
+    "active_space": {
+        "active_orbitals",
+    },
     "selection": set(),
-    "mapper": {"two_qubit_reduction"},
-    "algorithm": {"gradient_threshold", "eigenvalue_threshold", "max_iterations", "reps"},
+    "mapper": {
+        "two_qubit_reduction",
+    },
+    "algorithm": {
+        "eigenvalue_threshold",
+        "gradient_threshold",
+        "max_iterations",
+        "reps",
+    },
     "ansatz": {
-        "excitations",
         "entanglement",
+        "excitations",
         "flatten",
         "generalized",
         "include_imaginary",
@@ -54,6 +78,15 @@ TESTS_ONLY = {
         "seed_transpiler",
         "simulation_precision",
     },
+    "sampler": {
+        "method",
+        "noise_model",
+        "optimization_level",
+        "seed",
+        "seed_simulator",
+        "seed_transpiler",
+        "simulation_precision",
+    },
     "optimizer": {
         "blocking",
         "disp",
@@ -66,7 +99,10 @@ TESTS_ONLY = {
         "tol",
         "trust_region",
     },
-    "initial_point": {"scale", "seed"},
+    "initial_point": {
+        "scale",
+        "seed",
+    },
 }
 
 _UNIVERSE = {

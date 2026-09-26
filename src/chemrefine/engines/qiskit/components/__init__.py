@@ -12,6 +12,7 @@ from chemrefine.engines.qiskit.components import (
     initial_states,
     mappers,
     optimizers,
+    samplers,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "initial_states",
     "mappers",
     "optimizers",
+    "samplers",
 ]

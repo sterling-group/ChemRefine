@@ -15,6 +15,7 @@
   "tests_only": [
     "freeze_core",
     "device",
-    "backend_python"
+    "backend_python",
+    "sampler"
   ]
 }

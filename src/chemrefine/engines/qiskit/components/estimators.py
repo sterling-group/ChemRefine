@@ -122,7 +122,7 @@ def build_basic_backend_estimator(
     )
 
 
-def _aer_backend(
+def build_aer_backend(
     *,
     method: AerShotMethod | Literal["statevector"],
     device: Literal["cpu", "cuda"],
@@ -130,7 +130,7 @@ def _aer_backend(
     simulation_precision: SimulationPrecision,
     noise_model: dict[str, Any] | None = None,
 ) -> Any:
-    """Build and validate one AerSimulator without importing Aer at discovery time."""
+    """Build an AerSimulator shared by estimator and sampler providers lazily."""
     from qiskit_aer import AerError, AerSimulator
 
     backend_options: dict[str, Any] = {
@@ -209,7 +209,7 @@ def build_aer_statevector_estimator(
     """Build Aer's statevector expectation-value EstimatorV2."""
     from qiskit_aer.primitives import EstimatorV2
 
-    backend = _aer_backend(
+    backend = build_aer_backend(
         method="statevector",
         device=device,
         cores=cores,
@@ -250,7 +250,7 @@ def build_aer_shots_estimator(
     """Build a finite-shot BackendEstimatorV2 around AerSimulator."""
     from qiskit.primitives import BackendEstimatorV2
 
-    backend = _aer_backend(
+    backend = build_aer_backend(
         method=options.method,
         device=device,
         cores=cores,

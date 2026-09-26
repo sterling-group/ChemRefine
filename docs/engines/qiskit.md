@@ -215,6 +215,7 @@ values; `ComponentSelection(name="exact", options={})` is equivalent to
 | `algorithm` | `ComponentSelection(name='exact', options={})` | Minimum-eigensolver algorithm component. |
 | `ansatz` | `ComponentSelection(name='uccsd', options={})` | Fixed circuit and/or adaptive operator-pool provider. |
 | `initial_state` | `ComponentSelection(name='hartree_fock', options={})` | Circuit prepended to a variational ansatz or used as ADAPT's starting state. |
+| `sampler` | `ComponentSelection(name='statevector', options={})` | V2 sampler for terminal circuit measurements. |
 | `estimator` | `ComponentSelection(name='statevector', options={})` | Qiskit V2 estimator implementation. |
 | `optimizer` | `ComponentSelection(name='slsqp', options={})` | Classical optimizer for VQE's parameters. |
 | `initial_point` | `ComponentSelection(name='zeros', options={})` | Fixed-VQE parameter initialization. |

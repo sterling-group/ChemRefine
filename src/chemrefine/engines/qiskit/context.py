@@ -76,3 +76,20 @@ class EstimatorResource:
     def __exit__(self, *_exc: object) -> None:
         """Release a provider session when the builder supplied one."""
         self.close()
+
+
+@dataclass
+class SamplerResource:
+    """A V2 sampler with optional target compilation and reliable cleanup."""
+
+    sampler: Any
+    close: Callable[[], None] = field(default=lambda: None)
+    transpiler: Any | None = None
+
+    def __enter__(self) -> Any:
+        """Return the sampler while its provider resource is open."""
+        return self.sampler
+
+    def __exit__(self, *_exc: object) -> None:
+        """Close the provider even when compilation or sampling fails."""
+        self.close()

@@ -403,6 +403,7 @@ def test_component_selection_normalizes_names_and_supports_shorthand() -> None:
         "ansatz": "efficient_su2",
         "initial_state": "zero",
         "estimator": "basic_backend",
+        "sampler": "statevector",
         "optimizer": "cobyla",
         "initial_point": "random",
     }
