@@ -227,20 +227,24 @@ cannot do that last part — GitHub-hosted runners have no ORCA, and
 automating it would mean a self-hosted runner, which is unsafe on a public
 repository: a pull request from a fork can execute arbitrary code on it.
 
-Five CI jobs are deliberately **not** replicated locally, because doing so
-would cost more than it covers: the dependency-floors job and the 3.11–3.14
-matrix both need interpreters most machines lack, and CodeQL, Scorecard and
-dependency-review are GitHub-hosted analyses with no local equivalent. The
-first two run on the tag anyway — `publish.yml` calls `ci.yml`, so nothing
-reaches PyPI without the full matrix having passed. The three analyses never
+The 3.11–3.14 matrix is replicated as far as the machine allows: the gate
+runs the sdist suite under every supported Python it finds (on `PATH` as
+`python3.X`, or listed in `MATRIX_PYTHONS`) and names the ones it could not.
+Four CI jobs are deliberately **not** replicated locally, because doing so
+would cost more than it covers: the dependency-floors job needs a Python
+3.11 most machines lack, and CodeQL, Scorecard and dependency-review are
+GitHub-hosted analyses with no local equivalent. The floors, and any matrix
+leg the machine had no interpreter for, run on the tag anyway — `publish.yml`
+calls `ci.yml`, so nothing reaches PyPI without the full matrix having passed. The three analyses never
 run on a tag: CodeQL and dependency-review run on every pull request, and
 CodeQL and Scorecard on every push to `main`, so a tagged commit has been
 through them as the pull request that landed it.
 
 Nothing machine-specific is baked into the script: it gates with whichever
-venv or conda env is active. Put per-machine paths (`PY`, `LIVE_PY`, `ORCA`)
-in an untracked `scripts/release-check.env` beside it — `LIVE_PY` is the one
-to set when the MLIP and PySCF stacks live in an environment of their own.
+venv or conda env is active. Put per-machine paths (`PY`, `LIVE_PY`, `ORCA`,
+`MATRIX_PYTHONS`) in an untracked `scripts/release-check.env` beside it —
+`LIVE_PY` is the one to set when the MLIP and PySCF stacks live in an
+environment of their own.
 
 That matters because the defects worth catching before a release are the
 ones every structural gate passes. A parser that misreads real output, or a
