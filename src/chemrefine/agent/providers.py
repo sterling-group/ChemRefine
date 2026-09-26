@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from chemrefine import USER_AGENT
-from chemrefine.errors import ENDPOINT_UNREACHABLE, ConfigError
+from chemrefine.errors import ENDPOINT_UNREACHABLE, ConfigError, fetch
 
 if TYPE_CHECKING:
     from pydantic_ai.models import Model
@@ -317,7 +317,7 @@ def check(config: ProviderConfig, *, timeout: float = 5.0) -> CheckReport:
     if not probe.startswith(("http://", "https://")):
         return CheckReport(ok=False, findings=(f"base URL {probe!r} is not HTTP(S)",))
     from urllib.error import HTTPError
-    from urllib.request import Request, urlopen
+    from urllib.request import Request
 
     url = probe.rstrip("/") + "/models"
     # `User-Agent` is not decoration: urllib's default announces `Python-urllib/3.x`, and
@@ -333,10 +333,8 @@ def check(config: ProviderConfig, *, timeout: float = 5.0) -> CheckReport:
         },
     )
     try:
-        with urlopen(request, timeout=timeout) as response:  # noqa: S310 — scheme checked above
-            listing = json.loads(response.read().decode("utf-8"))
+        listing = json.loads(fetch(request, timeout=timeout).decode("utf-8"))
     except HTTPError as e:
-        e.close()  # the error response, closed like the success (see ENDPOINT_UNREACHABLE)
         if e.code in (401, 403):
             return CheckReport(
                 ok=False,

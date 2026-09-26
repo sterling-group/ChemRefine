@@ -33,7 +33,11 @@ Exit code     Meaning
 from __future__ import annotations
 
 from http.client import HTTPException
-from urllib.error import URLError
+from typing import TYPE_CHECKING
+from urllib.error import HTTPError, URLError
+
+if TYPE_CHECKING:
+    from urllib.request import Request
 
 
 class ChemRefineError(Exception):
@@ -164,16 +168,33 @@ indirect subclass, and living beside the classes is what stops a third copy appe
 ENDPOINT_UNREACHABLE: tuple[type[BaseException], ...] = (URLError, OSError, HTTPException)
 """What a :mod:`urllib` fetch raises when an endpoint gives no usable answer — one tuple.
 
-Every fetch this package makes (the PubChem lookup, the model-endpoint check) catches
-this rather than a tuple of its own, because spelled per site the two drifted:
+Every fetch this package makes goes through :func:`fetch` and catches this, after any
+narrower class it words for itself, rather than a tuple of its own: spelled per site,
 ``HTTPException`` — a reply that arrives and then breaks the protocol, ``IncompleteRead``
-on a dropped connection — reached one and not the other. ``URLError`` is DNS and a
+on a dropped connection — reached one fetch and not the other. ``URLError`` is DNS and a
 refused connection (and, as ``HTTPError``, an HTTP status a caller that wants the code
 catches first); ``OSError`` is a socket that fails or times out (``TimeoutError`` is
 one); ``HTTPException`` is the broken protocol. What a *body* that did arrive means —
 undecodable, not JSON, empty — is each caller's own verdict and stays beside it.
-
-An ``HTTPError`` is also the error *response*, a file over the body the server sent, so
-the handler that catches one closes it, as ``with urlopen(...)`` closes a success: left
-to the collector, it is a ``ResourceWarning`` on 3.14.
 """
+
+
+def fetch(request: Request, *, timeout: float) -> bytes:
+    """The body of one HTTP exchange — every fetch this package makes goes through here.
+
+    Raises what :mod:`urllib` raises (:data:`ENDPOINT_UNREACHABLE`, ``HTTPError`` among
+    it), with one thing done first: an ``HTTPError`` is also the error *response*, a file
+    over the body the server sent, and it is closed here the way the ``with`` closes a
+    success. Its ``code`` and ``reason`` survive the close for the caller to word; left to
+    the collector, the open file is a ``ResourceWarning`` on 3.14. The request's scheme is
+    each caller's to vouch for.
+    """
+    from urllib.request import urlopen
+
+    try:
+        with urlopen(request, timeout=timeout) as response:  # noqa: S310 — each caller's scheme
+            body: bytes = response.read()
+    except HTTPError as e:
+        e.close()
+        raise
+    return body

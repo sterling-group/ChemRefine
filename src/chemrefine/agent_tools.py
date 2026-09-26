@@ -51,6 +51,7 @@ from chemrefine.errors import (
     ConfigError,
     JobSubmissionError,
     RunLockError,
+    fetch,
     refusal_text,
 )
 from chemrefine.recovery import Action, resolve_target
@@ -512,9 +513,8 @@ def lookup_smiles(name: str) -> dict[str, Any]:
     an offline compute node; a failed lookup says so and names the offline alternative
     (pass a SMILES to :func:`build_structures` directly).
     """
-    from urllib.error import HTTPError
     from urllib.parse import quote
-    from urllib.request import Request, urlopen
+    from urllib.request import Request
 
     from chemrefine import USER_AGENT
 
@@ -528,11 +528,8 @@ def lookup_smiles(name: str) -> dict[str, Any]:
     # edges (Groq's, for instance) reject that token outright.
     request = Request(url, headers={"User-Agent": USER_AGENT})  # noqa: S310 — scheme is fixed https
     try:
-        with urlopen(request, timeout=15) as response:  # noqa: S310 — scheme is fixed https
-            smiles = response.read().decode("utf-8").strip().splitlines()[0]
+        smiles = fetch(request, timeout=15).decode("utf-8").strip().splitlines()[0]
     except _NO_SMILES as e:
-        if isinstance(e, HTTPError):
-            e.close()  # PubChem's error response — a 404 for a name it does not know
         raise ConfigError(
             f"PubChem lookup for {name!r} failed ({e}); offline or unknown name — "
             "pass a SMILES to build_structures instead"

@@ -459,6 +459,11 @@ for the full map.
 
 ### Fixed
 
+- **An ExtOpt gradient call cut off by a connection reset fails the job by name.** A reset
+  after the server took the request escaped the bridge as a traceback in the runlog, where
+  every other server fault is the classified failure ORCA's step records. Every HTTP fetch
+  ChemRefine makes now goes through one function, and every one catches the same set of
+  endpoint failures.
 - **The builder reads every request field by its declared type.** The chat panel's
   `reset` was read by truthiness, so `{"reset": "false"}` wiped the conversation and any
   pending approvals, where `overwrite` and the approval verdicts were already typed. Each

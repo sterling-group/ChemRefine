@@ -21,7 +21,7 @@ from http.client import HTTPException
 from pathlib import Path
 from typing import Any, cast
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from chemrefine.engines._backend_server import sidecar
 from chemrefine.engines._backend_server.base import (
@@ -32,7 +32,7 @@ from chemrefine.engines._backend_server.base import (
 from chemrefine.engines._backend_server.registry import known_backends, load_calculator
 from chemrefine.engines._options import ExtOptOptions
 from chemrefine.engines.orca.extopt import protocol
-from chemrefine.errors import JobFailureError
+from chemrefine.errors import ENDPOINT_UNREACHABLE, JobFailureError, fetch
 
 DEFAULT_TIMEOUT: float = float(ExtOptOptions.model_fields["gradient_timeout_seconds"].default)
 """Seconds before a single ``/calculate`` request times out.
@@ -145,11 +145,9 @@ def submit_calculation(
         method="POST",
     )
     try:
-        # server wrote to its own sidecar; no user-supplied scheme can reach it.
-        with urlopen(request, timeout=timeout) as response:  # noqa: S310
-            body = response.read()
+        # The server wrote its own sidecar; no user-supplied scheme can reach it.
+        body = fetch(request, timeout=timeout)
     except HTTPError as e:
-        e.close()  # the error response, closed like the success (see ENDPOINT_UNREACHABLE)
         raise JobFailureError(f"ExtOpt server returned HTTP {e.code}: {e.reason}") from e
     except URLError as e:
         if isinstance(e.reason, TimeoutError):
@@ -163,6 +161,10 @@ def submit_calculation(
         # with a traceback in the runlog instead of the classified failure ORCA's step
         # records like every other server fault.
         raise JobFailureError(f"ExtOpt server sent a broken response: {e!r}") from e
+    except ENDPOINT_UNREACHABLE as e:
+        # Every other way the endpoint gives no usable answer — a socket reset after the
+        # server took the request — is the same classified failure, not a traceback.
+        raise JobFailureError(f"ExtOpt server connection to {server_url} failed: {e!r}") from e
     try:
         parsed = json.loads(body)
     except json.JSONDecodeError as e:

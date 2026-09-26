@@ -811,7 +811,7 @@ def _data() -> CalculationData:
 
 def test_submit_calculation_round_trip():
     expected = b'{"energy": -1.5, "gradient": [[0.0, 0.0, 0.0]]}'
-    with patch.object(bridge, "urlopen") as mock_open:
+    with patch("urllib.request.urlopen") as mock_open:
         mock_open.return_value.__enter__.return_value = BytesIO(expected)
         energy, gradient = bridge.submit_calculation(
             server_url="127.0.0.1:54321",
@@ -831,14 +831,14 @@ def test_submit_calculation_round_trip():
 )
 def test_submit_calculation_refuses_a_non_finite_answer(body: bytes):
     """``json.loads`` accepts a bare ``NaN``; the bridge must not hand it to ORCA."""
-    with patch.object(bridge, "urlopen") as mock_open:
+    with patch("urllib.request.urlopen") as mock_open:
         mock_open.return_value.__enter__.return_value = BytesIO(body)
         with pytest.raises(JobFailureError, match="non-finite energy or gradient"):
             bridge.submit_calculation(server_url="127.0.0.1:54321", data=_data())
 
 
 def test_submit_calculation_sends_bearer_token():
-    with patch.object(bridge, "urlopen") as mock_open:
+    with patch("urllib.request.urlopen") as mock_open:
         mock_open.return_value.__enter__.return_value = BytesIO(b'{"energy": -1.0, "gradient": []}')
         bridge.submit_calculation(server_url="x", data=_data(), token="s3cret")
     request = mock_open.call_args[0][0]
@@ -846,7 +846,7 @@ def test_submit_calculation_sends_bearer_token():
 
 
 def test_submit_calculation_omits_header_without_token():
-    with patch.object(bridge, "urlopen") as mock_open:
+    with patch("urllib.request.urlopen") as mock_open:
         mock_open.return_value.__enter__.return_value = BytesIO(b'{"energy": -1.0, "gradient": []}')
         bridge.submit_calculation(server_url="x", data=_data())
     assert mock_open.call_args[0][0].get_header("Authorization") is None
@@ -881,7 +881,7 @@ def test_submit_calculation_http_error_becomes_jobfailure():
 
     err = HTTPError("http://x/calculate", 500, "internal", {}, None)
     with (
-        patch.object(bridge, "urlopen", side_effect=err),
+        patch("urllib.request.urlopen", side_effect=err),
         pytest.raises(JobFailureError, match="HTTP 500"),
     ):
         bridge.submit_calculation(server_url="x", data=_data())
@@ -892,8 +892,22 @@ def test_submit_calculation_url_error_becomes_jobfailure():
     from urllib.error import URLError
 
     with (
-        patch.object(bridge, "urlopen", side_effect=URLError("refused")),
+        patch("urllib.request.urlopen", side_effect=URLError("refused")),
         pytest.raises(JobFailureError, match="unreachable"),
+    ):
+        bridge.submit_calculation(server_url="x", data=_data())
+
+
+def test_submit_calculation_connection_reset_becomes_jobfailure():
+    """A socket reset after the server took the request is a classified failure.
+
+    ``ConnectionResetError`` is an ``OSError`` — none of ``HTTPError``, ``URLError`` or
+    ``HTTPException`` — so it left the wrapper as a traceback in the runlog rather than the
+    failure ORCA's step records for every other server fault.
+    """
+    with (
+        patch("urllib.request.urlopen", side_effect=ConnectionResetError(104, "reset by peer")),
+        pytest.raises(JobFailureError, match="connection to x failed"),
     ):
         bridge.submit_calculation(server_url="x", data=_data())
 
@@ -911,7 +925,7 @@ def test_submit_calculation_timeout_is_named_as_one(expiry: TimeoutError | None)
 
     raised = expiry if expiry is not None else URLError(TimeoutError("timed out"))
     with (
-        patch.object(bridge, "urlopen", side_effect=raised),
+        patch("urllib.request.urlopen", side_effect=raised),
         pytest.raises(JobFailureError, match="no reply within 42s") as excinfo,
     ):
         bridge.submit_calculation(server_url="x", data=_data(), timeout=42.0)
@@ -929,28 +943,28 @@ def test_submit_calculation_truncated_response_becomes_jobfailure():
     from http.client import IncompleteRead
 
     with (
-        patch.object(bridge, "urlopen", side_effect=IncompleteRead(b"{")),
+        patch("urllib.request.urlopen", side_effect=IncompleteRead(b"{")),
         pytest.raises(JobFailureError, match="broken response"),
     ):
         bridge.submit_calculation(server_url="x", data=_data())
 
 
 def test_submit_calculation_non_json_response_becomes_jobfailure():
-    with patch.object(bridge, "urlopen") as mock_open:
+    with patch("urllib.request.urlopen") as mock_open:
         mock_open.return_value.__enter__.return_value = BytesIO(b"<html>")
         with pytest.raises(JobFailureError, match="non-JSON"):
             bridge.submit_calculation(server_url="x", data=_data())
 
 
 def test_submit_calculation_error_field_becomes_jobfailure():
-    with patch.object(bridge, "urlopen") as mock_open:
+    with patch("urllib.request.urlopen") as mock_open:
         mock_open.return_value.__enter__.return_value = BytesIO(b'{"error": "boom"}')
         with pytest.raises(JobFailureError, match="boom"):
             bridge.submit_calculation(server_url="x", data=_data())
 
 
 def test_submit_calculation_missing_fields_becomes_jobfailure():
-    with patch.object(bridge, "urlopen") as mock_open:
+    with patch("urllib.request.urlopen") as mock_open:
         mock_open.return_value.__enter__.return_value = BytesIO(b'{"foo": 1}')
         with pytest.raises(JobFailureError, match="missing fields"):
             bridge.submit_calculation(server_url="x", data=_data())
@@ -974,7 +988,7 @@ def test_submit_calculation_threads_tag_into_payload():
         captured["payload"] = json.loads(req.data.decode())
         return _FakeResp()
 
-    with patch.object(bridge, "urlopen", side_effect=_fake_urlopen):
+    with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
         bridge.submit_calculation(server_url="x", data=_data(), tag="abc-123")
     assert captured["payload"]["tag"] == "abc-123"
 
@@ -1026,7 +1040,7 @@ def test_client_main_writes_engrad(tmp_path: Path, monkeypatch):
     )
 
     expected = b'{"energy": -1.0, "gradient": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]}'
-    with patch.object(bridge, "urlopen") as mock_open:
+    with patch("urllib.request.urlopen") as mock_open:
         mock_open.return_value.__enter__.return_value = BytesIO(expected)
         rc = bridge.main()
     assert rc == 0
@@ -1060,7 +1074,7 @@ def test_client_main_tags_calls_with_extinp_jobname(tmp_path: Path, monkeypatch)
         captured["timeout"] = timeout
         return _Resp(b'{"energy": -1.0, "gradient": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]}')
 
-    with patch.object(bridge, "urlopen", side_effect=_stub):
+    with patch("urllib.request.urlopen", side_effect=_stub):
         rc = bridge.main()
     assert rc == 0
     assert captured["payload"]["tag"] == "step1_structure_0"
