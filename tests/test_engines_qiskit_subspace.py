@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from chemrefine.engines.qiskit.components.subspace_algorithms import (
     SQDOptions,
+    SqDRIFTOptions,
     _check_sampling_memory,
     _checked_counts,
     _spin_diagnostics,
@@ -68,6 +69,21 @@ def _run_sqd(prepared, algorithm_options=None, **kwargs):
 def test_sqd_options_fail_closed(options):
     with pytest.raises(ValidationError):
         SQDOptions(**options)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"times": []},
+        {"times": [-1]},
+        {"times": [float("inf")]},
+        {"times": [1], "randomizations": 257},
+        {"times": [1], "shots": 1001, "randomizations": 1, "max_total_shots": 1000},
+    ],
+)
+def test_sqdrift_options_bound_circuits_and_shots(options):
+    with pytest.raises(ValidationError):
+        SqDRIFTOptions(**options)
 
 
 @pytest.mark.parametrize(
@@ -266,6 +282,7 @@ def test_fixed_parameters_use_the_declared_input_channel(h2_prepared, api_parame
 
 def test_sqd_validates_registered_circuit_capability_and_artifact(h2_prepared, monkeypatch):
     """A provider declaration and its actual artifact must both supply a circuit."""
+    from dataclasses import replace
 
     from chemrefine.engines.qiskit.api import run_problem
     from chemrefine.engines.qiskit.registry import ANSATZE
@@ -316,6 +333,46 @@ def test_sqd_provider_failures_do_not_escape_resource_or_result_checks(
             {"0101": 1},
             SQDOptions(max_memory_mb=1),
             {},
+        )
+
+
+def test_sqd_large_orbital_count_and_sqdrift_parameters_rejected(h2_prepared):
+    """Downstream limits apply to externally supplied samples and randomized circuits."""
+    from chemrefine.engines.qiskit.api import run_problem
+    from chemrefine.engines.qiskit.components.subspace_algorithms import _chemistry, _solve_samples
+    from chemrefine.engines.qiskit.fermionic import fermionic_integrals
+    from chemrefine.engines.qiskit.native import NativeSolveRequest
+
+    request = NativeSolveRequest(h2_prepared, QiskitOptions(algorithm="sqd"))
+    data = replace(fermionic_integrals(h2_prepared), norb=64)
+    with pytest.raises(ConfigError, match="63"):
+        _solve_samples(request, data, {"0" * 63 + "1" + "0" * 63 + "1": 1}, SQDOptions(), {})
+    with pytest.raises(ConfigError, match="untapered"):
+        _chemistry(replace(request, options=QiskitOptions(mapper="parity")))
+    with pytest.raises(ConfigError, match="does not accept"):
+        run_problem(h2_prepared, options={"algorithm": "sqdrift"}, initial_point=[0])
+
+
+def test_sqdrift_rejects_nonfinite_operator_before_sampling(h2_prepared, monkeypatch):
+    """Corrupted coefficients must not define a qDRIFT probability distribution."""
+    pytest.importorskip("qiskit_fermions")
+    import qiskit_fermions.operators.terms.grouping as grouping
+    import qiskit_fermions.operators.terms.ordering as ordering
+
+    from chemrefine.engines.qiskit.fermionic import fermionic_integrals
+    from chemrefine.engines.qiskit.sqdrift import sqdrift_circuits
+
+    monkeypatch.setattr(
+        ordering,
+        "canonical_order",
+        lambda x: SimpleNamespace(get_coeffs=lambda: np.array([np.nan])),
+    )
+    monkeypatch.setattr(grouping, "group_terms_by_electronic_structure", lambda *a, **k: None)
+    with pytest.raises(ConfigError, match="non-finite"):
+        list(
+            sqdrift_circuits(
+                fermionic_integrals(h2_prepared), times=[1], num_groups=1, randomizations=1, seed=0
+            )
         )
 
 
@@ -452,3 +509,63 @@ def test_correct_spin_expectation_does_not_hide_mixed_spin_sectors():
     mean, residual = _spin_diagnostics(state, data, memory_bytes=1_000_000)
     assert mean == pytest.approx(2)
     assert residual == pytest.approx(np.sqrt(8))
+
+
+def test_sqdrift_preserves_particle_sectors_reference_order_and_seed(h2_prepared):
+    pytest.importorskip("qiskit_fermions")
+    from qiskit.quantum_info import Statevector
+
+    from chemrefine.engines.qiskit.fermionic import fermionic_integrals
+    from chemrefine.engines.qiskit.sqdrift import sqdrift_circuits
+
+    data = fermionic_integrals(h2_prepared)
+    data = replace(data, occupations=((1,), (0,)))
+    settings = {"times": [0, 1], "num_groups": 40, "randomizations": 2, "seed": 73}
+    first = list(sqdrift_circuits(data, **settings))
+    second = list(sqdrift_circuits(data, **settings))
+    assert len(first) == 4
+    assert len({metadata["seed"] for _, metadata in first}) == 4
+    assert Statevector.from_instruction(first[0][0]).probabilities_dict() == {"0110": 1.0}
+    for (circuit, metadata), (repeated, repeated_metadata) in zip(first, second, strict=True):
+        assert metadata == repeated_metadata
+        state = Statevector.from_instruction(circuit)
+        np.testing.assert_allclose(
+            state.data, Statevector.from_instruction(repeated).data, atol=1e-14
+        )
+        assert circuit.count_ops() == repeated.count_ops()
+        assert np.linalg.norm(state.data) == pytest.approx(1)
+        for bits, probability in state.probabilities_dict().items():
+            if probability > 1e-12:
+                assert bits[:2].count("1") == bits[2:].count("1") == 1
+
+
+def test_sqdrift_runs_real_qiskit_fermions_sampler_and_sqd(h2_prepared):
+    pytest.importorskip("qiskit_fermions")
+    from chemrefine.engines.qiskit.api import run_problem
+
+    result = run_problem(
+        h2_prepared,
+        options={
+            "algorithm": {
+                "name": "sqdrift",
+                "options": {
+                    "times": [1, 2],
+                    "num_groups": 40,
+                    "randomizations": 3,
+                    "shots": 256,
+                    "num_batches": 1,
+                    "max_iterations": 2,
+                    "seed": 73,
+                },
+            },
+            "sampler": {"name": "statevector", "options": {"seed": 41}},
+        },
+    )
+    assert result.energy_hartree == pytest.approx(-1.1373060357534, abs=1e-10)
+    assert result.converged is None
+    solver = result.metadata["solver"]
+    assert solver["input_shots"] == 1536
+    assert solver["invalid_particle_fraction"] == 0
+    assert solver["sampling"]["experimental"] is True
+    assert solver["sampling"]["diagonal_terms_retained"] is True
+    assert len(solver["sampling"]["circuits"]) == 6

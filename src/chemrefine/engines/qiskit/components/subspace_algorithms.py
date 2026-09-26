@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from contextlib import nullcontext
 from copy import deepcopy
 from math import isqrt
@@ -499,4 +500,61 @@ def build_sqd(*, options: SQDOptions, request: NativeSolveRequest) -> NativeOutc
             **batch.metadata,
         },
         ansatz=request.options.ansatz.name,
+    )
+
+
+@ALGORITHMS.register(
+    "sqdrift",
+    SqDRIFTOptions,
+    execution="native",
+    requires=frozenset({"sampler"}),
+    backend_requirement=BackendRequirement(
+        extra="qiskit-fermionic", import_name="qiskit_addon_sqd"
+    ),
+)
+def build_sqdrift(*, options: SqDRIFTOptions, request: NativeSolveRequest) -> NativeOutcome:
+    """Execute seeded Qiskit Fermions qDRIFT circuits and diagonalize their samples."""
+    from chemrefine.engines.qiskit.sampling import sample_circuit
+    from chemrefine.engines.qiskit.sqdrift import sqdrift_circuits
+
+    validate_subspace_options(request.options)
+    if request.initial_point is not None:
+        raise ConfigError("SqDRIFT does not accept variational initial parameters")
+    data = _chemistry(request)
+    _check_sampling_memory(
+        request,
+        data,
+        options,
+        total_shots=options.shots * len(options.times) * options.randomizations,
+    )
+    counts: Counter[str] = Counter()
+    records = []
+    for circuit, info in sqdrift_circuits(
+        data,
+        times=options.times,
+        num_groups=options.num_groups,
+        randomizations=options.randomizations,
+        seed=options.seed,
+    ):
+        batch = sample_circuit(
+            circuit,
+            request.options.sampler,
+            shots=options.shots,
+            device=request.options.device,
+            cores=request.options.cores,
+        )
+        counts.update(batch.counts)
+        records.append({**info, "shots": batch.shots, "sampling": batch.metadata})
+    return _solve_samples(
+        request,
+        data,
+        dict(counts),
+        options,
+        {
+            "source": "sqdrift",
+            "experimental": True,
+            "diagonal_terms_retained": True,
+            "mode_order": "alpha_then_beta",
+            "circuits": records,
+        },
     )

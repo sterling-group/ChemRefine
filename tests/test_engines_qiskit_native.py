@@ -117,7 +117,7 @@ def test_native_dispatch_does_not_construct_nature_solver(monkeypatch):
     assert result.solver == "native_test"
 
 
-@pytest.mark.parametrize("algorithm", ["ffsim_vqe", "sqd"])
+@pytest.mark.parametrize("algorithm", ["ffsim_vqe", "sqd", "sqdrift"])
 def test_fermionic_algorithms_select_complete_worker_environment(algorithm):
     """Algorithm libraries and sampler providers must coexist in one interpreter."""
     options = {"algorithm": algorithm}
