@@ -194,24 +194,26 @@ tar -xzf dist/*.tar.gz -C "$work"
 "$bin/mkdocs" build --strict -f "$work"/chemrefine-*/mkdocs.yml > /dev/null
 
 step "the sdist suite on every other supported Python found here (CI: test matrix)"
-# One interpreter used to be all this gate ran, and that is how the branch went red on
-# 3.14 with every local check green: a deprecation that only the newest interpreter raises
-# is invisible from any other. The versions are the classifiers' — the claim the matrix
-# exists to test — and each one this machine has runs the same sdist suite as above; the
-# ones it lacks are named at the end rather than silently dropped.
-this_py="$("$PY" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
-missing_pythons=()
-for version in $("$PY" - <<'PY'
+# A deprecation only the newest interpreter raises is invisible from every other, so each
+# supported version this machine has runs the same sdist suite as above. The versions are
+# the classifiers' — the claim the matrix exists to test — and the ones the machine lacks
+# are named at the end rather than dropped. A candidate counts only if it answers with that
+# version: a name on PATH can be a shim for a version that is not selected.
+pyver() { "$1" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || true; }
+versions="$("$PY" - <<'PY'
 import re, tomllib
 classifiers = tomllib.load(open("pyproject.toml", "rb"))["project"]["classifiers"]
 print(*(m[1] for c in classifiers if (m := re.fullmatch(r"Programming Language :: Python :: (3\.\d+)", c))))
 PY
-); do
+)"
+[ -n "$versions" ] || fail "no 'Programming Language :: Python :: 3.x' classifiers in pyproject.toml"
+this_py="$(pyver "$PY")"
+missing_pythons=()
+for version in $versions; do
     [ "$version" = "$this_py" ] && continue
-    other="$(command -v "python$version" || true)"
-    for candidate in ${MATRIX_PYTHONS:-}; do
-        [ "$("$candidate" -c 'import sys; print("%d.%d" % sys.version_info[:2])')" = "$version" ] \
-            && other="$candidate"
+    other=""
+    for candidate in "python$version" ${MATRIX_PYTHONS:-}; do
+        [ "$(pyver "$candidate")" = "$version" ] && other="$candidate"
     done
     if [ -z "$other" ]; then
         missing_pythons+=("$version")

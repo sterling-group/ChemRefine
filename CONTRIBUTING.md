@@ -26,8 +26,8 @@ scripts/release-check.sh --pr
 
 It needs nothing but a `[dev]` install — no ORCA, no MLIP stack — and gates
 the checkout you are standing in, refusing to run against a `chemrefine`
-installed anywhere else. If it passes, CI will too, apart from the four
-things no workstation can do (named at the end of the run, and listed under
+installed anywhere else. If it passes, CI will too, apart from the jobs this
+machine cannot run (named at the end of the run, and explained under
 [Releases](#releases)).
 
 For the inner loop, the individual gates are still the fastest way round:
@@ -208,8 +208,9 @@ pushes, so the token isn't left behind in `.git/config`.
 Pushing a `vX.Y.Z` tag builds the package, creates a GitHub Release, and
 publishes to PyPI; a dev version (`vX.Y.Z.devN`) goes to TestPyPI instead,
 whether its tag is pushed or a release is published for it — the built
-version decides, once (see `.github/workflows/publish.yml`). The version lives only in
-`pyproject.toml`, and the publish jobs refuse a tag that doesn't match it.
+version decides, once (see `.github/workflows/publish.yml`). The version lives
+only in `pyproject.toml`, and the build refuses a tag that doesn't match it,
+before anything is released.
 Before tagging: bump the version, retitle the Unreleased section in
 `CHANGELOG.md`, and start a fresh Unreleased section.
 
@@ -227,18 +228,19 @@ cannot do that last part — GitHub-hosted runners have no ORCA, and
 automating it would mean a self-hosted runner, which is unsafe on a public
 repository: a pull request from a fork can execute arbitrary code on it.
 
-The 3.11–3.14 matrix is replicated as far as the machine allows: the gate
-runs the sdist suite under every supported Python it finds (on `PATH` as
+The supported-Python matrix is replicated as far as the machine allows: the
+gate runs the sdist suite under every supported Python it finds (on `PATH` as
 `python3.X`, or listed in `MATRIX_PYTHONS`) and names the ones it could not.
-Four CI jobs are deliberately **not** replicated locally, because doing so
-would cost more than it covers: the dependency-floors job needs a Python
-3.11 most machines lack, and CodeQL, Scorecard and dependency-review are
-GitHub-hosted analyses with no local equivalent. The floors, and any matrix
-leg the machine had no interpreter for, run on the tag anyway — `publish.yml`
-calls `ci.yml`, so nothing reaches PyPI without the full matrix having passed. The three analyses never
-run on a tag: CodeQL and dependency-review run on every pull request, and
-CodeQL and Scorecard on every push to `main`, so a tagged commit has been
-through them as the pull request that landed it.
+Some CI jobs are deliberately **not** replicated locally, because doing so
+would cost more than it covers: the dependency-floors job needs the oldest
+supported Python, which most machines lack, and CodeQL, Scorecard and
+dependency-review are GitHub-hosted analyses with no local equivalent. The
+floors, and any matrix leg the machine had no interpreter for, run on the tag
+anyway — `publish.yml` calls `ci.yml`, so nothing reaches PyPI without the
+full matrix having passed. The hosted analyses never run on a tag: CodeQL and
+dependency-review run on every pull request, and CodeQL and Scorecard on every
+push to `main`, so a tagged commit has been through them as the pull request
+that landed it.
 
 Nothing machine-specific is baked into the script: it gates with whichever
 venv or conda env is active. Put per-machine paths (`PY`, `LIVE_PY`, `ORCA`,

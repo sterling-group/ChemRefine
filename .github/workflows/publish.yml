@@ -75,13 +75,12 @@ jobs:
           path: chemrefine-sbom.cdx.json
           if-no-files-found: error
 
-      # The routing rule, in one place and read off the artifact rather than the ref. It
-      # was spelled per job as a substring of the tag name, and the published-release
-      # trigger had no spelling of it at all — so a GitHub pre-release published for a
-      # `.devN` tag went to pypi.org, permanently, past one approval click. A dev version
-      # goes to TestPyPI and anything else to PyPI, on either trigger; any other event
-      # (a manual dispatch, a tag without the `v`) releases nothing. After the SBOM so
-      # this interpreter is not the environment that SBOM describes.
+      # Where this run's artifact goes, decided once and read off the artifact. On a v* tag
+      # push or a published release — both run at the tag, so GITHUB_REF_NAME is the tag —
+      # the tag must name the version that was built, and then a dev version goes to
+      # TestPyPI and anything else to PyPI; any other event (a manual dispatch, a tag
+      # without the `v`) releases nothing. After the SBOM so this interpreter is not the
+      # environment that SBOM describes.
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.13"
@@ -99,6 +98,10 @@ jobs:
           channel=none
           if { [ "$EVENT_NAME" = push ] && [[ "$GITHUB_REF" == refs/tags/v* ]]; } \
              || { [ "$EVENT_NAME" = release ] && [ "$EVENT_ACTION" = published ]; }; then
+            if [ "${GITHUB_REF_NAME#v}" != "$VERSION" ]; then
+              echo "::error::tag $GITHUB_REF_NAME does not match the built version $VERSION; bump pyproject.toml first"
+              exit 1
+            fi
             channel="$(python -c "$by_version" "$VERSION")"
           fi
           echo "version $VERSION, $EVENT_NAME at $GITHUB_REF: channel $channel"
@@ -144,16 +147,6 @@ jobs:
           name: Packages-release
           path: dist
 
-      - name: Check tag matches package version
-        run: |
-          tag="${GITHUB_REF_NAME#v}"
-          version="$(basename dist/*.tar.gz .tar.gz)"
-          version="${version#*-}"
-          if [ "$version" != "$tag" ]; then
-            echo "::error::tag ${GITHUB_REF_NAME} does not match the built version ${version}; bump pyproject.toml first"
-            exit 1
-          fi
-
       - name: Upload package to Test PyPI
         uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # v1.14.1
         with:
@@ -191,19 +184,6 @@ jobs:
         with:
           name: Packages-release
           path: dist
-
-      # GITHUB_REF_NAME is the tag on both trigger paths (tag push and
-      # release-published both run at the tag ref), so a v2.1.0 tag can never
-      # publish a wheel whose pyproject.toml still says 2.0.0.
-      - name: Check tag matches package version
-        run: |
-          tag="${GITHUB_REF_NAME#v}"
-          version="$(basename dist/*.tar.gz .tar.gz)"
-          version="${version#*-}"
-          if [ "$version" != "$tag" ]; then
-            echo "::error::tag ${GITHUB_REF_NAME} does not match the built version ${version}; bump pyproject.toml first"
-            exit 1
-          fi
 
       - name: Upload package to PyPI
         uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # v1.14.1
