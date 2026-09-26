@@ -119,15 +119,15 @@ class OrbTrainer(ApiTrainerBase):
         learning_rate: 3e-4            # the script's own defaults
         batch_size: 100
         gradient_clip: 0.5
+
+    ``base_model`` is not a required key: the architecture may arrive as the template's
+    ``base_model`` *or* as the step's ``model_name`` (the driver's ``foundation`` fact), and
+    only the hook can weigh the pair — a flat presence check would refuse a step that named
+    the loader the second way.
     """
 
     label = "ORB"
     driver_task = "orb"
-    required_config_keys = ("train_set", "run_name")
-    """The base's set as is. ``base_model`` is deliberately not on it: the architecture
-    may arrive as the template's ``base_model`` *or* as the step's ``model_name`` (the
-    driver's ``foundation`` fact), and only the hook can weigh the pair — a flat
-    presence check would refuse a step that named the loader the second way."""
     missing_config_hint = (
         "the template must reference $TRAIN_SET and $RUN_NAME (device and seed arrive on "
         "the driver's own command line)"

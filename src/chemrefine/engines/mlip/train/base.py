@@ -181,9 +181,9 @@ class TrainingPlan:
         For the consumers that genuinely want one string — ``$FOUNDATION_MODEL`` for the
         CLI-trainer templates (MACE and SevenNet take either spelling in the same config
         key), and the runlog/sidecar rows. Never for dispatch: a hook that needs to *act*
-        on the value reads the typed fields.
+        on the value reads the typed fields. The rule is :func:`starting_point`'s.
         """
-        return str(self.weights) if self.weights is not None else (self.foundation or None)
+        return starting_point(dict(self.facts()))
 
     launcher: Path
     """The interpreter of the backend's environment, from ``_provision.launcher_for``."""
@@ -209,19 +209,8 @@ class TrainingPlan:
         return self.charge == 0 and self.multiplicity == 1
 
     def facts(self) -> dict[str, str]:
-        """This run's :data:`PLAN_FACTS`, by the key each travels under; unset ones absent.
-
-        The one translation from the plan's fields to the fact vocabulary — the checkpoint
-        is :attr:`weights` here and ``weights_path`` on the wire — so the writer
-        (:meth:`ApiTrainerBase.command`) never spells a fact for itself.
-        """
-        values = {
-            "device": self.device,
-            "seed": str(self.seed),
-            "weights_path": str(self.weights) if self.weights is not None else None,
-            "foundation": self.foundation or None,
-        }
-        return {fact.key: v for fact in PLAN_FACTS if (v := values[fact.key]) is not None}
+        """This run's :data:`PLAN_FACTS` that are set, each as the text its flag carries."""
+        return {fact.key: str(value) for fact in PLAN_FACTS if (value := fact.of(self)) is not None}
 
 
 class PlanFact(NamedTuple):
@@ -230,13 +219,17 @@ class PlanFact(NamedTuple):
     ``key`` is the config key the hooks read, and ``--key`` (dashed) the flag it rides;
     ``option`` is the step option it comes from — what a refusal tells the user to set;
     ``always`` marks a fact every run has, which the command therefore always carries;
-    ``kind`` parses the flag's text back into the value the hooks were handed before.
+    ``of`` reads it off a :class:`TrainingPlan` (``None`` = not set); ``kind`` parses the
+    flag's text into the value the hooks receive; ``start`` marks a fact that says where
+    training starts, in the order :func:`starting_point` prefers them.
     """
 
     key: str
     option: str
     always: bool
+    of: Callable[[TrainingPlan], object]
     kind: Callable[[str], Any] = str
+    start: bool = False
 
     @property
     def flag(self) -> str:
@@ -245,19 +238,30 @@ class PlanFact(NamedTuple):
 
 
 PLAN_FACTS: tuple[PlanFact, ...] = (
-    PlanFact("device", "device", always=True),
-    PlanFact("seed", "seed", always=True, kind=int),
-    PlanFact("weights_path", "model_path", always=False),
-    PlanFact("foundation", "model_name", always=False),
+    PlanFact("device", "device", always=True, of=lambda plan: plan.device),
+    PlanFact("seed", "seed", always=True, of=lambda plan: plan.seed, kind=int),
+    PlanFact("weights_path", "model_path", always=False, of=lambda plan: plan.weights, start=True),
+    PlanFact("foundation", "model_name", always=False, of=lambda plan: plan.foundation, start=True),
 )
 """The plan facts, declared once: what the step decides and the template must not.
 
-The command writer (:meth:`ApiTrainerBase.command`), the driver's parser and its overlay
-(:mod:`chemrefine.engines.mlip.train.driver`) and the hook's key check
-(:meth:`ApiTrainerBase.run_training`) all read this. Spelled per site, the overlay's
-disagreement check listed ``device`` and ``seed`` and not the two keys the hooks actually
-start from, so a template ``weights_path`` trained from a checkpoint the runlog and
-``trained_model.json`` recorded as "scratch"."""
+The plan's reading of them (:meth:`TrainingPlan.facts`), the command writer
+(:meth:`ApiTrainerBase.command`), the driver's parser and its overlay
+(:mod:`chemrefine.engines.mlip.train.driver`), the hook's key check
+(:meth:`ApiTrainerBase.run_training`) and the start-point display (:func:`starting_point`)
+all read this — a fact added here reaches every one of them."""
+
+
+def starting_point(facts: Mapping[str, object]) -> str | None:
+    """What a run starts from, as one string: its first start fact that is set; else scratch.
+
+    A local checkpoint before a released model, in :data:`PLAN_FACTS` order — the display
+    ``$FOUNDATION_MODEL``, the runlog and the sidecar show, and the value the driver holds a
+    template's legacy ``start_from:`` to. ``None`` means training from scratch.
+    """
+    return next(
+        (str(facts[fact.key]) for fact in PLAN_FACTS if fact.start and fact.key in facts), None
+    )
 
 
 class TrainerBase(ABC):
@@ -463,12 +467,9 @@ class ApiTrainerBase(TrainerBase):
 
     Only the template's own: the plan facts every run has (``device``, ``seed`` —
     :data:`PLAN_FACTS`) are checked beside these, because the driver **guarantees** them
-    on its own command line rather than the user's template (:meth:`command`). Read from
-    the template with a silent per-backend fallback, each one was lost whenever the
-    template did not happen to reference its placeholder — a ``device: cuda`` step trained
-    on CPU with the GPU booked, a ``seed`` reached the split but not torch. The
-    orchestrator charges, keys the cache and logs by the declared values; the hook must
-    run by the same ones."""
+    on its own command line rather than the user's template (:meth:`command`). The
+    orchestrator charges, keys the cache and logs by the declared values; the hook runs
+    by the same ones."""
 
     missing_config_hint: ClassVar[str]
     """One sentence naming the fix when a required key is missing — which placeholders

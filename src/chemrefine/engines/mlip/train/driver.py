@@ -19,12 +19,10 @@ render_config` — each trainer's ``run_training`` documents and validates its o
 because the schema is the trainer's (there is no native one to defer to). The **plan
 facts** — device, seed, and the foundation weights — do not travel in it: they arrive on
 this driver's own argv (written by :meth:`~chemrefine.engines.mlip.train.base.
-ApiTrainerBase.command`) and are overlaid onto the parsed config as authoritative. Routed
-through the template as placeholders, each was silently lost whenever a template did not
-reference it — a ``device: cuda`` step trained on CPU with the GPU booked, a declared
-foundation model trained from scratch while the sidecar recorded it. A template value
-for any of them that *disagrees* with the step's own is refused by name, and so is one
-the step does not set at all; silent precedence in either direction is how this started.
+ApiTrainerBase.command`) and are overlaid onto the parsed config as authoritative, so
+they hold whether or not a template references their placeholders. A template value for
+any of them that the step does not state — a different one, or one for a fact the step
+leaves unset — is refused by name rather than silently outranked in either direction.
 Which facts, and under which flags, is
 :data:`~chemrefine.engines.mlip.train.base.PLAN_FACTS` — read here, not restated.
 """
@@ -37,7 +35,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from chemrefine.engines.mlip.train.base import PLAN_FACTS
+from chemrefine.engines.mlip.train.base import PLAN_FACTS, ApiTrainerBase, starting_point
 
 
 def _load_config(path: Path) -> dict[str, Any]:
@@ -73,32 +71,22 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _absent(value: Any) -> bool:
-    """Whether a rendered or parsed value states nothing — ``None`` or empty, never ``0``.
-
-    ``$FOUNDATION_MODEL`` renders empty for a from-scratch step, which YAML reads back as
-    ``None``; a ``seed: 0`` is a value, which a truthiness test would drop.
-    """
-    return value is None or value == ""
-
-
 def _overlay_plan_facts(config: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
     """Overlay the argv plan facts onto the rendered config, refusing a disagreement.
 
-    Every fact in :data:`~chemrefine.engines.mlip.train.base.PLAN_FACTS`, and a value the
-    step does not set counts too: a template ``weights_path`` for a step with no
-    ``model_path`` trained from that checkpoint while the runlog and the sidecar said
-    "scratch". Equality is judged as strings because the template channel only carries
-    strings: a template that rendered ``seed: $SEED`` holds the same digits argv carries,
-    and must keep working — harmless duplication is not a conflict. ``start_from`` is the
-    legacy spelling a pre-channel template may still render; the hooks no longer read it,
-    so a hard-coded value that names something *else* must refuse rather than be silently
-    outranked (the inversion of the silent loss this driver exists to end).
+    Every fact in :data:`~chemrefine.engines.mlip.train.base.PLAN_FACTS`: a rendered value
+    must say what argv says, and for a fact argv does not carry, only an empty one does
+    (``$FOUNDATION_MODEL`` renders empty for a from-scratch step). Equality is judged as
+    strings because the template channel only carries strings: a template that rendered
+    ``seed: $SEED`` holds the same digits argv carries, and harmless duplication is not a
+    conflict. ``start_from`` is the legacy spelling a template may still render; the hooks
+    do not read it, so a value that names something *else* is refused rather than
+    silently outranked.
     """
-    facts = {fact.key: v for fact in PLAN_FACTS if not _absent(v := getattr(args, fact.key))}
+    facts = {fact.key: v for fact in PLAN_FACTS if (v := getattr(args, fact.key)) is not None}
     for fact in PLAN_FACTS:
         rendered = config.get(fact.key)
-        if _absent(rendered) or str(rendered) == str(facts.get(fact.key, "")):
+        if rendered is None or str(rendered) == str(facts.get(fact.key, "")):
             continue
         said = repr(facts[fact.key]) if fact.key in facts else "nothing"
         raise SystemExit(
@@ -107,13 +95,15 @@ def _overlay_plan_facts(config: dict[str, Any], args: argparse.Namespace) -> dic
             f"Remove `{fact.key}:` from the template; the driver hands the trainer the "
             f"step's value itself."
         )
-    display = str(facts.get("weights_path") or facts.get("foundation") or "")
-    if str(config.get("start_from") or "") not in ("", display):
+    shown = starting_point(facts) or ""
+    legacy = config.get("start_from")
+    if legacy is not None and str(legacy) not in ("", shown):
+        options = " or ".join(f"`{fact.option}`" for fact in PLAN_FACTS if fact.start)
         raise SystemExit(
-            f"train_driver: the template renders start_from: {config['start_from']!r} but "
-            f"the step's options name {display or 'nothing'} — the options are "
-            f"authoritative. Set model_path/model_name on the step (or reference "
-            f"$FOUNDATION_MODEL, which renders the same value)."
+            f"train_driver: the template renders start_from: {legacy!r} but the step's "
+            f"options name {shown or 'nothing'} — the options are authoritative. Set "
+            f"{options} on the step (or reference $FOUNDATION_MODEL, which renders the "
+            f"same value)."
         )
     return {**config, **facts}
 
@@ -123,7 +113,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(list(sys.argv[1:] if argv is None else argv))
 
     from chemrefine.engines.mlip.registry import trainer_for
-    from chemrefine.engines.mlip.train.base import ApiTrainerBase
 
     trainer = trainer_for(args.task_name)()
     if not isinstance(trainer, ApiTrainerBase):

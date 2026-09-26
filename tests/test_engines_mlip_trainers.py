@@ -906,8 +906,15 @@ def test_the_driver_refuses_a_template_that_contradicts_the_step(tmp_path: Path,
         ({"foundation": "0.2.0"}, ["--foundation", "0.3.0"], r"`model_name` says '0\.3\.0'"),
         ({"foundation": "0.2.0"}, [], r"`model_name` says nothing"),
         ({"seed": 0}, [], r"`seed` says 7"),
+        ({"device": ""}, [], r"`device` says 'cpu'"),
     ],
-    ids=["checkpoint-the-step-never-named", "other-release", "release-unnamed", "seed-zero"],
+    ids=[
+        "checkpoint-the-step-never-named",
+        "other-release",
+        "release-unnamed",
+        "seed-zero",
+        "empty-for-a-set-fact",
+    ],
 )
 def test_every_plan_fact_refuses_a_template_that_says_otherwise(
     tmp_path: Path, monkeypatch, rendered: dict[str, object], argv: list[str], names: str

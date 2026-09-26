@@ -185,7 +185,8 @@ records them — and how they reach the training program depends only on what ki
 program it is. A library trained through ChemRefine's shared driver (one with no
 training CLI of its own) receives them on the driver's **own command line**, so they
 hold whether or not the template references their placeholders, and a template value
-that *contradicts* the step's options is refused by name. A library run through its own
+the step's options do not state — a different one, or one for a fact the step leaves
+unset — is refused by name. A library run through its own
 CLI reads only the config the template becomes, so there each plan fact the library
 reads from its config is a **required placeholder** — a template that never references
 it is rejected before anything is submitted, instead of the library's own fallback
