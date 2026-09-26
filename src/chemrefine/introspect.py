@@ -29,6 +29,8 @@ from chemrefine.engines.api import (
     ENGINES,
     ArtifactEngine,
     CalculationEngine,
+    ComponentCatalogDeclaring,
+    ComponentCategory,
     NmsCapableEngine,
     OperationsDeclaring,
     OptionsDeclaring,
@@ -78,6 +80,8 @@ class EngineDescriptor:
     """What the engine's preflight refuses before a run starts, in its own words (see
     :class:`~chemrefine.engines.api.PreflightChecking`); ``None`` for an engine without
     the hook."""
+    component_catalog: dict[str, ComponentCategory] | None = None
+    """Registered nested component choices, or ``None`` when the engine declares none."""
 
 
 def _describe(name: str, engine: CalculationEngine) -> EngineDescriptor:
@@ -117,6 +121,9 @@ def _describe(name: str, engine: CalculationEngine) -> EngineDescriptor:
         ),
         preflight_refuses=(
             engine.preflight_refuses if isinstance(engine, PreflightChecking) else None
+        ),
+        component_catalog=(
+            engine.component_catalog() if isinstance(engine, ComponentCatalogDeclaring) else None
         ),
     )
 

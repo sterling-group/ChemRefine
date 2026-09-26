@@ -10,7 +10,7 @@ from chemrefine.config import StepConfig
 from chemrefine.engines._script import ScriptEngine
 from chemrefine.engines._script.contract import SCRIPT_OUTPUT, OutputField
 from chemrefine.engines._script.render import json_placeholder
-from chemrefine.engines.api import register
+from chemrefine.engines.api import ComponentCategory, register
 from chemrefine.engines.qiskit.backend import QiskitBackend
 from chemrefine.engines.qiskit.options import QiskitOptions
 from chemrefine.engines.qiskit.workflow import validate_options
@@ -55,6 +55,16 @@ class QiskitEngine(
         "unknown Qiskit components, invalid component options, or incompatible "
         "algorithm, ansatz and estimator selections"
     )
+
+    def component_catalog(self) -> dict[str, ComponentCategory]:
+        """Describe the current registry using the same defaults as job validation."""
+        from chemrefine.engines.qiskit.registry import REGISTRIES
+
+        defaults = self.options_cls().component_selections()
+        return {
+            category: registry.describe(defaults[category].name)
+            for category, registry in REGISTRIES.items()
+        }
 
     def check_step(self, step_cfg: StepConfig, *, charge: int, multiplicity: int) -> None:
         """Validate the existing component graph before any pipeline step submits."""

@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from chemrefine.engines.api import BackendRequirement
+from chemrefine.engines.api import BackendRequirement, ComponentCategory, ComponentDescriptor
 from chemrefine.engines.qiskit.options import ComponentSelection, QiskitOptions
 from chemrefine.errors import ConfigError
 
@@ -97,6 +97,24 @@ class ComponentRegistry:
         """Return every registered key in this category."""
         return frozenset(self._specs)
 
+    def describe(self, default: str) -> ComponentCategory:
+        """Publish the registered schemas without constructing any provider object."""
+        return ComponentCategory(
+            default=default,
+            components={
+                name: ComponentDescriptor(
+                    options_schema=spec.options_cls.model_json_schema(),
+                    capabilities=tuple(sorted(spec.capabilities)),
+                    requires=tuple(sorted(spec.requires)),
+                    backend_extra=(
+                        spec.backend_requirement.extra if spec.backend_requirement else None
+                    ),
+                    execution=spec.execution,
+                )
+                for name, spec in sorted(self._specs.items())
+            },
+        )
+
 
 MAPPERS = ComponentRegistry("mapper")
 ALGORITHMS = ComponentRegistry("algorithm")
@@ -119,6 +137,39 @@ REGISTRIES: dict[str, ComponentRegistry] = {
 }
 
 
+def consumed_component_categories(options: QiskitOptions) -> frozenset[str]:
+    """Follow resource requirements through every consumed component, without building it.
+
+    For example an optimizer can require a sampler even when the algorithm declares
+    only an estimator. Circuit and pool requirements also consume their reference state.
+    Dependency cycles terminate because each selected category is visited only once.
+    """
+    algorithm = ALGORITHMS.spec(options.algorithm.name)
+    pending = {"algorithm"}
+    if algorithm.execution == "nature":
+        pending.add("mapper")
+    supplied_counts = False
+    if options.algorithm.name == "sqd":
+        from chemrefine.engines.qiskit.components.subspace_algorithms import SQDOptions
+
+        supplied_counts = SQDOptions(**options.algorithm.options).counts is not None
+        if not supplied_counts:
+            pending.update({"mapper", "ansatz", "initial_state", "initial_point"})
+    selections = options.component_selections()
+    consumed: set[str] = set()
+    while pending:
+        category = pending.pop()
+        consumed.add(category)
+        requirements = REGISTRIES[category].spec(selections[category].name).requires
+        resources = set(requirements & REGISTRIES.keys())
+        if category == "algorithm" and supplied_counts:
+            resources.discard("sampler")
+        if requirements & {"circuit", "operator_pool"}:
+            resources.update({"ansatz", "initial_state"})
+        pending.update(resources - consumed)
+    return frozenset(consumed)
+
+
 def validate_component_graph(
     options: QiskitOptions, *, operator_pool_supplied: bool = False
 ) -> None:
@@ -136,15 +187,18 @@ def validate_component_graph(
     algorithm = ALGORITHMS.spec(options.algorithm.name)
     ansatz = ANSATZE.spec(options.ansatz.name)
     estimator = ESTIMATORS.spec(options.estimator.name)
-    component_requirements = {"estimator", "sampler", "optimizer", "initial_state", "initial_point"}
     capabilities = ansatz.capabilities | ({"operator_pool"} if operator_pool_supplied else set())
-    missing = algorithm.requires - capabilities - component_requirements
-    if missing:
-        raise ConfigError(
-            f"qiskit algorithm {options.algorithm.name!r} requires ansatz capabilities "
-            f"{sorted(missing)}, but {options.ansatz.name!r} provides "
-            f"{sorted(ansatz.capabilities)}"
-        )
+    selections = options.component_selections()
+    for category in sorted(consumed_component_categories(options)):
+        selection = selections[category]
+        required = REGISTRIES[category].spec(selection.name).requires
+        missing = required - capabilities - REGISTRIES.keys()
+        if missing:
+            raise ConfigError(
+                f"qiskit {category} {selection.name!r} requires ansatz capabilities "
+                f"{sorted(missing)}, but {options.ansatz.name!r} provides "
+                f"{sorted(ansatz.capabilities)}"
+            )
     if (
         options.algorithm.name == "adapt_vqe"
         and not operator_pool_supplied
