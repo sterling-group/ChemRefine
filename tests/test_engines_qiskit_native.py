@@ -14,6 +14,7 @@ from chemrefine.engines.qiskit.options import QiskitOptions
 from chemrefine.engines.qiskit.registry import (
     ALGORITHMS,
     OPTIMIZERS,
+    SAMPLERS,
     ComponentSpec,
     NoComponentOptions,
 )
@@ -116,13 +117,25 @@ def test_native_dispatch_does_not_construct_nature_solver(monkeypatch):
     assert result.solver == "native_test"
 
 
-@pytest.mark.parametrize("algorithm", ["ffsim_vqe"])
+@pytest.mark.parametrize("algorithm", ["ffsim_vqe", "sqd"])
 def test_fermionic_algorithms_select_complete_worker_environment(algorithm):
     """Algorithm libraries and sampler providers must coexist in one interpreter."""
     options = {"algorithm": algorithm}
     if algorithm != "ffsim_vqe":
         options["sampler"] = "aer"
     assert QiskitBackend().backend_requirement(options).extra == "qiskit-fermionic"
+
+
+def test_native_dependency_conflicts_fail_before_execution(monkeypatch):
+    """An independent custom provider cannot mask the native algorithm's dependency."""
+    requirement = BackendRequirement(extra="custom_sampler", import_name="custom_sampler")
+    monkeypatch.setitem(
+        SAMPLERS._specs,
+        "custom_test",
+        ComponentSpec(NoComponentOptions, lambda: None, backend_requirement=requirement),
+    )
+    with pytest.raises(ConfigError, match="incompatible managed environments"):
+        QiskitBackend().backend_requirement({"algorithm": "sqd", "sampler": "custom_test"})
 
 
 def test_optimizer_provider_is_discovered_when_consumed(monkeypatch):

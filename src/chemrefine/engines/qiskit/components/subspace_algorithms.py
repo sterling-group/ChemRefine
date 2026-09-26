@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+from copy import deepcopy
+from math import isqrt
 from typing import TYPE_CHECKING, Any, Self, cast
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 
+from chemrefine.engines.api import BackendRequirement
 from chemrefine.engines.qiskit.registry import (
+    ALGORITHMS,
     ANSATZE,
+    INITIAL_POINTS,
+    INITIAL_STATES,
     SAMPLERS,
 )
 from chemrefine.errors import ConfigError
@@ -16,7 +23,7 @@ from chemrefine.errors import ConfigError
 if TYPE_CHECKING:
     from chemrefine.engines.qiskit.components.samplers import AerSamplerOptions
     from chemrefine.engines.qiskit.fermionic import FermionicIntegrals
-    from chemrefine.engines.qiskit.native import NativeSolveRequest
+    from chemrefine.engines.qiskit.native import NativeOutcome, NativeSolveRequest
     from chemrefine.engines.qiskit.options import QiskitOptions
 
 
@@ -274,3 +281,222 @@ def _spin_diagnostics(
         )
     )
     return float(expectation.real), float(residual)
+
+
+def _solve_samples(
+    request: NativeSolveRequest,
+    data: FermionicIntegrals,
+    counts: dict[str, int],
+    options: SubspaceOptions,
+    sampling_metadata: dict[str, Any],
+    *,
+    ansatz: str | None = None,
+) -> NativeOutcome:
+    """Use released SQD recovery and SCI APIs with pre-solve resource checks."""
+    from pyscf.lib import num_threads, with_omp_threads
+    from qiskit.primitives.containers import BitArray
+    from qiskit_addon_sqd.fermion import diagonalize_fermionic_hamiltonian, solve_sci_batch
+
+    from chemrefine.engines.qiskit.native import NativeOutcome
+
+    counts, sample_metadata = _checked_counts(counts, data, options)
+    if data.norb > 63:
+        raise ConfigError("the PySCF SQD adapter supports at most 63 spatial orbitals")
+    if options.symmetrize_spin and data.nelec[0] != data.nelec[1]:
+        raise ConfigError("SQD symmetrize_spin requires equal alpha and beta populations")
+    # The addon's max_dim limits each spin factor, not their Cartesian product.
+    side = isqrt(options.max_subspace_dimension)
+    iteration_records: list[dict[str, Any]] = []
+    evaluations: list[dict[str, Any]] = []
+    memory_limit = options.max_memory_mb * 1024**2
+    # The released addon unpacks all shots and calls numpy.unique on boolean
+    # rows. Include copies and indices rather than only packed BitArray bytes.
+    sample_bytes = sum(counts.values()) * (8 * data.norb + 32)
+    sample_bytes += (
+        options.num_batches * min(options.samples_per_batch, len(counts)) * (2 * data.norb + 16)
+    )
+    integral_bytes = 32 * data.norb**4
+    if sample_bytes + integral_bytes > memory_limit:
+        raise ConfigError("SQD sample/integral storage estimate exceeds max_memory_mb")
+
+    def bounded_solver(spaces: Any, h1: Any, h2: Any, norb: int, nelec: tuple[int, int]) -> Any:
+        """Check actual spin-factor dimensions before invoking PySCF."""
+        dimensions = [len(alpha) * len(beta) for alpha, beta in spaces]
+        if not dimensions or any(
+            dim < 1 or dim > options.max_subspace_dimension for dim in dimensions
+        ):
+            raise ConfigError(
+                "SQD diagonalization subspace exceeds its configured dimension budget"
+            )
+        # Account for retained batch vectors and Davidson working vectors. This
+        # is a conservative planning estimate, not an operating-system memory cap.
+        work_bytes = 8 * (sum(dimensions) + max(dimensions) * (2 * options.sci_max_space + 12))
+        if work_bytes + sample_bytes + integral_bytes > memory_limit:
+            raise ConfigError("SQD estimated working storage exceeds max_memory_mb")
+        # Do not reconfigure an already-correct thread count. Serial PySCF
+        # builds warn even when asked to keep their existing single thread.
+        threads = (
+            nullcontext()
+            if num_threads() == request.options.cores
+            else with_omp_threads(request.options.cores)
+        )
+        with threads:
+            return solve_sci_batch(
+                spaces,
+                h1,
+                h2,
+                norb,
+                nelec,
+                spin_sq=data.target_spin_squared,
+                max_cycle=options.sci_max_cycle,
+                max_space=options.sci_max_space,
+                tol=options.energy_tol,
+                max_memory=options.max_memory_mb,
+            )
+
+    def record_iteration(results: Any) -> None:
+        """Record sampled-subspace energies without asserting exact-state convergence."""
+        iteration_records.append(
+            {
+                "iteration": len(iteration_records) + 1,
+                "energies_hartree": [float(result.energy) for result in results],
+                "subspace_dimensions": [
+                    int(result.sci_state.amplitudes.size) for result in results
+                ],
+            }
+        )
+        for batch, result in enumerate(results):
+            record = {
+                "evaluation": len(evaluations) + 1,
+                "objective_value_hartree": float(result.energy),
+                "metadata": {"iteration": len(iteration_records), "batch": batch},
+            }
+            evaluations.append(record)
+            if request.callback is not None:
+                request.callback(deepcopy(record))
+
+    result = diagonalize_fermionic_hamiltonian(
+        data.h1,
+        data.h2,
+        BitArray.from_counts(counts, num_bits=2 * data.norb),
+        options.samples_per_batch,
+        data.norb,
+        data.nelec,
+        num_batches=options.num_batches,
+        energy_tol=options.energy_tol,
+        occupancies_tol=options.occupancies_tol,
+        max_iterations=options.max_iterations if options.configuration_recovery else 1,
+        sci_solver=bounded_solver,
+        max_dim=side,
+        symmetrize_spin=options.symmetrize_spin,
+        callback=record_iteration,
+        seed=options.seed,
+    )
+    energy = float(result.energy)
+    spin_squared, spin_residual = _spin_diagnostics(
+        result.sci_state, data, memory_bytes=memory_limit - sample_bytes - integral_bytes
+    )
+    if not np.isfinite(energy) or not np.isfinite(spin_squared) or not np.isfinite(spin_residual):
+        raise ConfigError("SQD returned a non-finite energy or spin expectation")
+    if spin_residual > options.spin_tolerance:
+        raise ConfigError(
+            f"SQD state has S^2={spin_squared:.8g}, expected {data.target_spin_squared:.8g}, "
+            f"spin residual={spin_residual:.8g}; "
+            "enlarge the sampled subspace or change state preparation"
+        )
+    return NativeOutcome(
+        active_energy_hartree=energy,
+        converged=None,
+        termination_reason="sampled_subspace_completed",
+        num_qubits=2 * data.norb,
+        ansatz=ansatz,
+        evaluations=evaluations,
+        diagnostics={
+            **sample_metadata,
+            "sampling": sampling_metadata,
+            "configuration_recovery": options.configuration_recovery,
+            "iterations": iteration_records,
+            "subspace_dimension": int(result.sci_state.amplitudes.size),
+            "spin_factor_dimension_limit": side,
+            "max_subspace_dimension": options.max_subspace_dimension,
+            "spin_squared": spin_squared,
+            "target_spin_squared": data.target_spin_squared,
+            "spin_eigenstate_residual": spin_residual,
+            "orbital_occupancies": [np.asarray(x).tolist() for x in result.orbital_occupancies],
+            "seed": options.seed,
+            "energy_convention": "active_electronic_without_offsets",
+            "convergence_note": (
+                "Recovery stopping does not certify ground-state or chemical accuracy."
+            ),
+        },
+    )
+
+
+@ALGORITHMS.register(
+    "sqd",
+    SQDOptions,
+    execution="native",
+    requires=frozenset({"sampler"}),
+    backend_requirement=BackendRequirement(
+        extra="qiskit-fermionic", import_name="qiskit_addon_sqd"
+    ),
+)
+def build_sqd(*, options: SQDOptions, request: NativeSolveRequest) -> NativeOutcome:
+    """Sample a fixed registered circuit or consume external counts, then run SQD."""
+    from chemrefine.engines.qiskit.mapping import map_problem
+    from chemrefine.engines.qiskit.sampling import sample_circuit
+
+    validate_subspace_options(request.options)
+    data = _chemistry(request)
+    if options.counts is not None:
+        if request.initial_point is not None:
+            raise ConfigError("SQD supplied counts cannot be combined with an initial point")
+        return _solve_samples(request, data, options.counts, options, {"source": "supplied_counts"})
+    if options.shots > options.max_total_shots:
+        raise ConfigError("SQD shots exceed max_total_shots")
+    _check_sampling_memory(request, data, options, total_shots=options.shots)
+    context = map_problem(request.prepared, request.options.mapper)
+    reference = INITIAL_STATES.build(request.options.initial_state, context=context)
+    ansatz = ANSATZE.build(request.options.ansatz, context=context, initial_state=reference)
+    if ansatz.circuit is None:
+        raise ConfigError("SQD requires an ansatz supplying a circuit when counts are not supplied")
+    if options.parameter_values is not None and request.initial_point is not None:
+        raise ConfigError("SQD parameter_values and explicit initial_point are mutually exclusive")
+    parameters = (
+        options.parameter_values if options.parameter_values is not None else request.initial_point
+    )
+    parameter_source = (
+        "parameter_values" if options.parameter_values is not None else "initial_point"
+    )
+    if parameters is None:
+        parameters = INITIAL_POINTS.build(request.options.initial_point, ansatz=ansatz)
+        parameter_source = "configured_initial_point"
+    try:
+        if np.iscomplexobj(parameters):
+            raise ValueError("complex parameters")
+        values = np.asarray(parameters, dtype=float)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError("SQD parameters must be finite real numbers") from exc
+    if values.shape != (ansatz.circuit.num_parameters,) or not np.all(np.isfinite(values)):
+        raise ConfigError("SQD parameters must be finite and match the ansatz parameter count")
+    batch = sample_circuit(
+        ansatz.circuit,
+        request.options.sampler,
+        shots=options.shots,
+        device=request.options.device,
+        cores=request.options.cores,
+        parameter_values=values.tolist(),
+    )
+    return _solve_samples(
+        request,
+        data,
+        batch.counts,
+        options,
+        {
+            "source": "fixed_ansatz",
+            "parameter_source": parameter_source,
+            "parameter_values": values.tolist(),
+            **batch.metadata,
+        },
+        ansatz=request.options.ansatz.name,
+    )

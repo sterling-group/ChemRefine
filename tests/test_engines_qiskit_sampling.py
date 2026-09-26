@@ -7,9 +7,10 @@ from types import SimpleNamespace
 import pytest
 
 from chemrefine.engines.qiskit.context import SamplerResource
-from chemrefine.engines.qiskit.options import ComponentSelection
+from chemrefine.engines.qiskit.options import ComponentSelection, QiskitOptions
 from chemrefine.engines.qiskit.registry import SAMPLERS, ComponentSpec, NoComponentOptions
 from chemrefine.engines.qiskit.sampling import SampleBatch, sample_circuit
+from chemrefine.engines.qiskit.workflow import validate_options
 from chemrefine.errors import ConfigError
 
 pytestmark = [
@@ -142,3 +143,23 @@ def test_cpu_sampler_rejects_cuda(provider):
     """A CPU provider cannot silently discard a GPU request."""
     with pytest.raises(ConfigError, match="cpu only"):
         SAMPLERS.build(ComponentSelection.named(provider), device="cuda")
+
+
+def test_sampler_graph_checks_cuda_methods():
+    """Preflight rejects unsupported execution before constructing providers."""
+    with pytest.raises(ConfigError, match="device: cuda"):
+        validate_options(QiskitOptions(algorithm="sqd", device="cuda"))
+    with pytest.raises(ConfigError, match="not GPU-compatible"):
+        validate_options(
+            QiskitOptions(
+                algorithm="sqd",
+                device="cuda",
+                sampler={"name": "aer", "options": {"method": "matrix_product_state"}},
+            )
+        )
+    with pytest.raises(ConfigError, match="requires device: cuda"):
+        validate_options(
+            QiskitOptions(
+                algorithm="sqd", sampler={"name": "aer", "options": {"method": "tensor_network"}}
+            )
+        )

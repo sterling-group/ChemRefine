@@ -130,6 +130,9 @@ def validate_component_graph(
 
     if options.algorithm.name == "ffsim_vqe":
         validate_ffsim_options(options)
+    from chemrefine.engines.qiskit.components.subspace_algorithms import validate_subspace_options
+
+    validate_subspace_options(options)
 
     algorithm = ALGORITHMS.spec(options.algorithm.name)
     ansatz = ANSATZE.spec(options.ansatz.name)
