@@ -110,5 +110,13 @@
     "new": "max(residuals) < tolerance",
     "tests": "tests/test_engines_qiskit_rdm_provider.py",
     "breaks": "a solver status can pass RDMs violating particle trace, contraction, Hermiticity or antisymmetry constraints"
+  },
+  {
+    "id": "qiskit-physical-residual-variance",
+    "path": "src/chemrefine/engines/qiskit/spectra.py",
+    "old": "complex(second - energy**2)",
+    "new": "complex(second + energy**2)",
+    "tests": "tests/test_engines_qiskit_spectral_residuals.py",
+    "breaks": "a second Hamiltonian moment is converted into a spurious physical residual even for exact eigenstates"
   }
 ]

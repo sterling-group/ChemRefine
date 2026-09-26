@@ -20,6 +20,9 @@ steps:
           max_excitations: 16
           max_evaluations: 1000
           max_measurements: 1000
+          measure_residuals: true
+          max_residual_product_terms: 1000000
+          residual_variance_tolerance: 1.0e-8
       ansatz:
         name: uccsd
         options: {include_imaginary: true}

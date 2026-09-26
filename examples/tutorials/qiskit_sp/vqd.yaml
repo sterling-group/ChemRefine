@@ -21,6 +21,9 @@ steps:
           fidelity_shots: 32768
           overlap_tolerance: 0.05
           max_evaluations: 1500
+          measure_residuals: true
+          max_residual_product_terms: 1000000
+          residual_variance_tolerance: 1.0e-8
       ansatz: uccsd
       estimator:
         name: statevector

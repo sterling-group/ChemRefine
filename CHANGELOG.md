@@ -27,6 +27,10 @@ for the full map.
 
 ### Added
 
+- **Physical spectrum residuals.** VQD and qEOM can measure bounded Hamiltonian
+  residual diagnostics, retaining signed noisy variances and optimizer stopping
+  facts separately from qEOM response-pencil errors.
+
 - **Molecular-to-experiment handoffs.** Circuit-producing solvers can export their
   retained logical preparations for scheduled measurements and shadows, with
   nested payload hashing, scratch copy-back and SDK-free cache validation.

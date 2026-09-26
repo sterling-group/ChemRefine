@@ -17,7 +17,10 @@ from chemrefine.engines.qiskit.registry import ALGORITHMS
 from chemrefine.engines.qiskit.reporting import jsonable
 from chemrefine.engines.qiskit.spectra import (
     ExpectationSession,
+    energy_residual,
+    optimizer_termination,
     real_value,
+    residual_hamiltonian,
     sector_diagnostics,
     solve_response_problem,
 )
@@ -36,6 +39,9 @@ class SpectrumOptions(BaseModel):
     sector_tolerance: float = Field(1e-3, gt=0)
     target_s2: float | None = Field(None, ge=0)
     spin_tolerance: float = Field(1e-3, gt=0)
+    measure_residuals: bool = False
+    max_residual_product_terms: int = Field(1000000, ge=1)
+    residual_variance_tolerance: float = Field(1e-8, gt=0)
 
 
 class VQDOptions(SpectrumOptions):
@@ -126,6 +132,17 @@ def _root_sector(context: Any, measure: Any, options: SpectrumOptions) -> dict[s
     )
 
 
+def _residual_operator(context: Any, options: SpectrumOptions) -> Any:
+    """Keep expensive second-moment construction and measurements explicitly opt-in."""
+    return (
+        residual_hamiltonian(
+            context.fermionic_hamiltonian, max_product_terms=options.max_residual_product_terms
+        )
+        if options.measure_residuals
+        else None
+    )
+
+
 @ALGORITHMS.register(
     "vqd",
     VQDOptions,
@@ -149,6 +166,7 @@ def build_vqd(*, options: VQDOptions, request: NativeSolveRequest) -> NativeOutc
     context = map_problem(
         request.prepared, request.options.mapper, initial_state=request.options.initial_state
     )
+    squared = _residual_operator(context, options)
     if options.k > comb(context.num_spatial_orbitals, context.num_particles[0]) * comb(
         context.num_spatial_orbitals, context.num_particles[1]
     ):
@@ -189,6 +207,7 @@ def build_vqd(*, options: VQDOptions, request: NativeSolveRequest) -> NativeOutc
             circuit.assign_parameters(parameters) for parameters in result.optimal_parameters
         ]
         energies = []
+        residuals = []
         sectors = []
         measurements = 0
         for state in circuits:
@@ -201,6 +220,14 @@ def build_vqd(*, options: VQDOptions, request: NativeSolveRequest) -> NativeOutc
             )
             energies.append(real_value(session.mapped(context.qubit_hamiltonian), "VQD energy"))
             sectors.append(_root_sector(context, session.fermionic, options))
+            if squared is not None:
+                residuals.append(
+                    energy_residual(
+                        energies[-1],
+                        session.fermionic(squared),
+                        variance_tolerance=options.residual_variance_tolerance,
+                    )
+                )
             measurements += session.measurements
         pairs = [(left, right) for left in range(len(circuits)) for right in range(left)]
         overlaps = np.eye(len(circuits))
@@ -224,12 +251,19 @@ def build_vqd(*, options: VQDOptions, request: NativeSolveRequest) -> NativeOutc
         # Sort by measured physical energy; keep corresponding root facts aligned.
         order = np.argsort(energies, kind="stable")
         roots = tuple(float(energies[index]) for index in order)
+        raw_optimizers = getattr(result, "optimizer_results", None)
+        terminations = [
+            optimizer_termination(None if raw_optimizers is None else raw_optimizers[index])
+            for index in order
+        ]
+        verdicts = [item["converged"] for item in terminations]
         from chemrefine.engines.qiskit.circuit_io import bound_circuit
 
         return NativeOutcome(
             roots[options.target_root],
             active_energies_hartree=roots,
             target_root=options.target_root,
+            converged=None if None in verdicts else all(verdicts),
             num_qubits=context.num_qubits,
             ansatz=request.options.ansatz.name,
             optimizer=request.options.optimizer.name,
@@ -254,6 +288,10 @@ def build_vqd(*, options: VQDOptions, request: NativeSolveRequest) -> NativeOutc
                 "penalized_objectives": np.asarray(result.optimal_values)[order].tolist(),
                 "post_optimization_measurements": measurements,
                 "fidelity_shots": options.fidelity_shots,
+                "optimizer_termination": terminations,
+                "root_hamiltonian_residuals": [residuals[index] for index in order]
+                if options.measure_residuals
+                else None,
             },
         )
 
@@ -335,6 +373,7 @@ def build_qeom(*, options: QEOMOptions, request: NativeSolveRequest) -> NativeOu
     context = map_problem(
         request.prepared, request.options.mapper, initial_state=request.options.initial_state
     )
+    squared = _residual_operator(context, options)
     evaluations, callback = _recorder(request, options)
     with assemble_components(
         context, request.options, initial_point=request.initial_point, callback=callback
@@ -357,6 +396,15 @@ def build_qeom(*, options: QEOMOptions, request: NativeSolveRequest) -> NativeOu
         )
         energy = real_value(session.mapped(context.qubit_hamiltonian), "qEOM reference energy")
         sectors = [_root_sector(context, session.fermionic, options)]
+        residuals = []
+        if squared is not None:
+            residuals.append(
+                energy_residual(
+                    energy,
+                    session.fermionic(squared),
+                    variance_tolerance=options.residual_variance_tolerance,
+                )
+            )
         hamiltonian = context.fermionic_hamiltonian
         hessian = np.zeros((len(basis), len(basis)), dtype=complex)
         metric = np.zeros_like(hessian)
@@ -417,7 +465,16 @@ def build_qeom(*, options: QEOMOptions, request: NativeSolveRequest) -> NativeOu
             rayleigh_energies.append(
                 real_value(root_measure(hamiltonian), "qEOM reconstructed energy")
             )
+            if squared is not None:
+                residuals.append(
+                    energy_residual(
+                        rayleigh_energies[-1],
+                        root_measure(squared),
+                        variance_tolerance=options.residual_variance_tolerance,
+                    )
+                )
         roots = (energy, *(float(energy + gap) for gap in gaps))
+        termination = optimizer_termination(getattr(ground, "optimizer_result", None))
         diagnostics.update(
             {
                 "experimental": True,
@@ -436,12 +493,17 @@ def build_qeom(*, options: QEOMOptions, request: NativeSolveRequest) -> NativeOu
                 "expansion_coefficients_real": vectors.real.tolist(),
                 "expansion_coefficients_imag": vectors.imag.tolist(),
                 "reference_optimal_point": np.asarray(ground.optimal_point).tolist(),
+                "reference_optimizer_termination": termination,
+                "reconstructed_root_hamiltonian_residuals": residuals
+                if options.measure_residuals
+                else None,
             }
         )
         return NativeOutcome(
             roots[options.target_root],
             active_energies_hartree=roots,
             target_root=options.target_root,
+            converged=termination["converged"],
             diagnostics=diagnostics,
             num_qubits=context.num_qubits,
             ansatz=request.options.ansatz.name,

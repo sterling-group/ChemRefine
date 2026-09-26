@@ -13,6 +13,7 @@ from typing import Any
 import numpy as np
 
 from chemrefine.engines.qiskit.context import ElectronicStructureContext, SolverComponents
+from chemrefine.engines.qiskit.reporting import jsonable
 from chemrefine.errors import ConfigError
 
 
@@ -87,6 +88,65 @@ def real_value(value: complex, description: str, tolerance: float = 1e-7) -> flo
     if not np.isfinite(value) or abs(value.imag) > tolerance:
         raise ConfigError(f"qiskit {description} must be finite and real")
     return float(value.real)
+
+
+def residual_hamiltonian(hamiltonian: Any, *, max_product_terms: int) -> Any:
+    """Bound and form the full fermionic H² before mapping or sector projection."""
+    if len(hamiltonian) ** 2 > max_product_terms:
+        raise ConfigError("spectrum H² exceeds max_residual_product_terms before multiplication")
+    squared = (hamiltonian @ hamiltonian).normal_order().simplify(atol=1e-12)
+    if len(squared) > max_product_terms:
+        raise ConfigError("spectrum H² exceeds max_residual_product_terms after normal ordering")
+    return squared
+
+
+def energy_residual(
+    energy: float, second_moment: complex, *, variance_tolerance: float
+) -> dict[str, Any]:
+    """Report an estimated physical residual without hiding negative measured variance.
+
+    A negative estimate has no real square root, even when compatible with rounding
+    or shot noise. Keep the signed estimate and report a null residual in that case.
+    Neither a positive estimate nor this numerical tolerance is a confidence bound.
+    """
+    second = real_value(second_moment, "Hamiltonian second moment")
+    variance = real_value(complex(second - energy**2), "Hamiltonian variance")
+    status = "nonnegative_estimate"
+    residual = None
+    if variance < 0:
+        status = (
+            "negative_beyond_tolerance"
+            if variance < -variance_tolerance
+            else "negative_within_tolerance"
+        )
+    else:
+        residual = float(np.sqrt(variance))
+    return {
+        "energy_reference": "rayleigh_energy",
+        "active_rayleigh_energy_hartree": energy,
+        "second_moment_hartree_squared": second,
+        "variance_hartree_squared": variance,
+        "hamiltonian_residual_hartree": residual,
+        "variance_status": status,
+        "negative_variance_tolerance_hartree_squared": variance_tolerance,
+        "uncertainty": (
+            "not_estimated; finite-shot second moments are not residual confidence bounds"
+        ),
+    }
+
+
+def optimizer_termination(result: Any) -> dict[str, Any]:
+    """Preserve available optimizer stopping facts without inventing a missing verdict."""
+    verdict = getattr(result, "success", None)
+    return {
+        "converged": bool(verdict) if isinstance(verdict, bool | np.bool_) else None,
+        "scope": "optimizer_stopping_status_only",
+        "details": {
+            name: jsonable(value)
+            for name in ("success", "status", "message", "nit", "nfev", "njev")
+            if (value := getattr(result, name, None)) is not None
+        },
+    }
 
 
 def sector_diagnostics(

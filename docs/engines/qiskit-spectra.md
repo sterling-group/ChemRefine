@@ -35,6 +35,45 @@ Solver diagnostics live under `result.metadata["solver"]` and carry
 a global variational optimum; `converged` remains unset when the provider optimizer
 does not supply enough information to make that claim.
 
+Available optimizer `success`, `status`, `message`, and evaluation/iteration
+counts are retained as `optimizer_termination` for VQD roots and
+`reference_optimizer_termination` for qEOM. Their convergence verdict describes
+optimizer stopping only. Missing success information remains unknown.
+
+### Optional physical Hamiltonian residuals
+
+Set `measure_residuals: true` to additionally measure the active Hamiltonian's
+second moment with the selected estimator. The result retains the signed
+variance `v = <H²> - <H>²` and, when nonnegative, its square root in hartree.
+For an exact state expectation this is `||(H - <H>)|psi>||`; scalar nuclear and
+inactive-space offsets leave it unchanged. The default is `false`, so existing
+configurations perform no additional second-moment measurements.
+
+VQD reports `root_hamiltonian_residuals` in physical-energy root order. qEOM
+reports `reconstructed_root_hamiltonian_residuals`, including its reference,
+around each reconstructed state's **Rayleigh energy**. These physical residuals
+are distinct from `generalized_eigenpair_residuals`, which test the response
+matrix equation. A precise solution of an approximate response problem can
+still have substantial physical residuals.
+
+Finite-shot estimates of `v` can be negative. Such results retain the signed
+variance, report a null residual, and distinguish negative values within the
+configured numerical tolerance from those beyond it. They are never silently
+reported as zero residual. Neither the tolerance nor a small positive estimate
+is a statistical confidence bound; no residual uncertainty is inferred from
+independently measured moments. These diagnostics do not change the reported
+energy or certify a particular excited-root index.
+
+| Control | Default | Knob verdict |
+| --- | --- | --- |
+| `measure_residuals` | `false` | Both runnable spectral examples enable it; tests verify no default extra publications and independent dense-Hamiltonian residuals. |
+| `max_residual_product_terms` | `1000000` | Bounds H² product terms before multiplication and after normal ordering; both examples declare it and guard tests reject insufficient budgets before provider execution. |
+| `residual_variance_tolerance` | `1e-8` | Hartree squared threshold classifying negative variance estimates; both examples declare it and tests cover both negative statuses. |
+
+Second-moment publications consume `max_measurements` and `max_pauli_terms`.
+qEOM reconstructed-state products also consume its existing `max_product_terms`
+guard. H² is formed in the full fermionic algebra before mapping or projection.
+
 ## Variational quantum deflation
 
 VQD sequentially optimizes a fixed circuit with overlap penalties against previous

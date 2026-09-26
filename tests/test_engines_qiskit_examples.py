@@ -29,6 +29,9 @@ REQUIRED = {
     "selection": {"name", "options"},
     "mapper": set(),
     "algorithm": {
+        "max_residual_product_terms",
+        "measure_residuals",
+        "residual_variance_tolerance",
         "energy_increase_tolerance",
         "evolution",
         "gradient_norm",
