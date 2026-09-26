@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from chemrefine.config import StepConfig
+from chemrefine.engines._input_files import typed_input_references
 from chemrefine.engines._script import ScriptEngine
 from chemrefine.engines._script.contract import SCRIPT_OUTPUT, OutputField
 from chemrefine.engines._script.render import json_placeholder
@@ -71,6 +73,33 @@ class QiskitEngine(
     def check_step(self, step_cfg: StepConfig, *, charge: int, multiplicity: int) -> None:
         """Validate the existing component graph before any pipeline step submits."""
         validate_options(self.options_cls.from_raw(step_cfg.engine_options()))
+
+    def input_file_options(self, options: Mapping[str, Any]) -> tuple[tuple[str | int, ...], ...]:
+        """Declare molecular integral inputs through the shared typed file capability."""
+        return tuple(
+            reference.location
+            for reference in typed_input_references(self.options_cls.from_raw(options))
+        )
+
+    def input_file_dependencies(
+        self, options: Mapping[str, Any], files: Mapping[str, Path]
+    ) -> Mapping[str, Path]:
+        """Include integral bundle payloads in content-sensitive pipeline identity."""
+        from chemrefine.engines.qiskit.bundles import bundle_dependencies
+        from chemrefine.input_files import option_pointer
+
+        references = typed_input_references(self.options_cls.from_raw(options))
+        pointers = {
+            option_pointer(reference.location)
+            for reference in references
+            if reference.file_format == "quantum_bundle"
+        }
+        return {
+            f"{pointer.lstrip('/')}/{key}": payload
+            for pointer, path in files.items()
+            if pointer in pointers
+            for key, payload in bundle_dependencies(path).items()
+        }
 
     def prepare(self, ctx: StepContext) -> StepInputs:
         """Repeat the preflight checks for recovery callers, then render the inputs."""

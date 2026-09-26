@@ -227,6 +227,7 @@ values; `ComponentSelection(name="exact", options={})` is equivalent to
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `basis` | `sto-3g` | PySCF orbital basis passed to `PySCFDriver`. |
+| `integral_source` | `None` | Optional portable MO bundle with checked molecular identity; bypasses the PySCF geometry driver. |
 | `active_space` | `None` | Optional `{electrons, orbitals, active_orbitals}` reduction applied before mapper construction. `electrons` may be a total integer or `[n_alpha, n_beta]`; optional `active_orbitals` gives explicit zero-based input spatial-orbital indices. |
 | `freeze_core` | `False` | Freeze the conventional doubly occupied atomic core before any explicit active-space reduction. Requires molecular element metadata. |
 | `mapper` | `ComponentSelection(name='jordan_wigner', options={})` | Fermion-to-qubit mapping component. |
@@ -1022,6 +1023,28 @@ The `statevector` or `aer_statevector` estimator with
 deterministic for the built-in unitary circuits. For a shot-based estimator,
 identical seeds improve reproducibility but do not turn a finite-shot answer
 into an exact one.
+
+## Molecular integral inputs
+
+The optional `integral_source` selects a portable MO integral bundle instead of
+running PySCF from XYZ. Its `bundle_path` is relative to the YAML file;
+`max_input_bytes` bounds numeric input storage and `geometry_tolerance_angstrom`
+controls the coordinate comparison (default `1e-7` Å). The descriptor and NPZ
+payload both enter the ordinary pipeline cache identity.
+
+Use `save_integrals` to export `ElectronicStructureData` from an existing
+electronic-structure calculation. A pipeline bundle must include
+`molecular_metadata` (ordered atoms, coordinates and charge), multiplicity and
+nuclear repulsion energy. The worker verifies that they match the incoming
+structure before solving. Standalone `prepare_problem` remains available for
+models without molecular metadata. `basis` applies only to geometry/PySCF input;
+integral inputs already define their orbital basis. Active-space and frozen-core
+controls still apply during preparation.
+
+Run `examples/tutorials/qiskit_integrals/input.yaml` for the stored H₂/STO-3G
+example. A single bundle belongs to one geometry: it is refused for a different
+survivor. This interface does not infer orbitals from an upstream scalar energy
+or add a standalone classical reference solver.
 
 ## Extending the registries
 

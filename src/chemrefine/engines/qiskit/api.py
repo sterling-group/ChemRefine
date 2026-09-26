@@ -76,7 +76,12 @@ from chemrefine.engines.qiskit.measurement import (
     measurement_groups,
 )
 from chemrefine.engines.qiskit.operators import Excitation, OperatorPool
-from chemrefine.engines.qiskit.options import ActiveSpaceOptions, ComponentSelection, QiskitOptions
+from chemrefine.engines.qiskit.options import (
+    ActiveSpaceOptions,
+    ComponentSelection,
+    IntegralSourceOptions,
+    QiskitOptions,
+)
 from chemrefine.engines.qiskit.orbitals import (
     OrbitalOptimizationOptions,
     OrbitalOptimizationResult,
@@ -158,6 +163,7 @@ __all__ = [
     "FermionicHamiltonian",
     "FermionicLatticeModel",
     "FermionicShadowOptions",
+    "IntegralSourceOptions",
     "LatticeCircuit",
     "LatticeDynamicsOptions",
     "LatticeDynamicsResult",

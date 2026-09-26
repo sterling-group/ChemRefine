@@ -2,6 +2,7 @@
   "model": "QiskitOptions",
   "examples": [
     "basis",
+    "integral_source",
     "active_space",
     "mapper",
     "algorithm",

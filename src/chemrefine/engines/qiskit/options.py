@@ -87,12 +87,25 @@ class ActiveSpaceOptions(BaseModel):
         return self
 
 
+class IntegralSourceOptions(BaseModel):
+    """A portable MO integral input explicitly associated with the current geometry."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
+
+    bundle_path: str = Field(
+        min_length=1, json_schema_extra={"input_file": True, "file_format": "quantum_bundle"}
+    )
+    max_input_bytes: StrictInt = Field(536870912, ge=1)
+    geometry_tolerance_angstrom: float = Field(1e-7, gt=0, le=1e-3)
+
+
 class QiskitOptions(EngineOptions):
     """Validated component graph for a Qiskit Nature ground-state calculation."""
 
     basis: str = Field("sto-3g", min_length=1)
     active_space: ActiveSpaceOptions | None = None
     freeze_core: bool = False
+    integral_source: IntegralSourceOptions | None = None
 
     mapper: ComponentSelection = Field(
         default_factory=lambda: ComponentSelection.named("jordan_wigner")

@@ -199,12 +199,19 @@ def run_job(
     started = perf_counter()
     resolved = options if isinstance(options, QiskitOptions) else QiskitOptions.from_raw(options)
     validate_options(resolved)
-    prepared = prepare_pyscf_problem(
-        xyz_path,
-        charge=charge,
-        multiplicity=multiplicity,
-        options=resolved,
-    )
+    if resolved.integral_source is None:
+        prepared = prepare_pyscf_problem(
+            xyz_path,
+            charge=charge,
+            multiplicity=multiplicity,
+            options=resolved,
+        )
+    else:
+        from chemrefine.engines.qiskit.integral_source import prepare_integral_job
+
+        prepared = prepare_integral_job(
+            Path(xyz_path), charge=charge, multiplicity=multiplicity, options=resolved
+        )
     result = run_problem(prepared, options=resolved)
     # Pipeline runtime includes its classical electronic-structure preparation.
     from dataclasses import replace

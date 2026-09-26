@@ -1,0 +1,100 @@
+{
+  "format_version": 1,
+  "kind": "electronic_structure",
+  "payload": "h2_mo.547cb7a46728465fa67e4cff0afaddc5.npz",
+  "sha256": "dffaf2314d919e1d724e069d07be2f9f1d7651542f59dfa7b09da44d01a4f763",
+  "arrays": {
+    "one_body_integrals": {
+      "shape": [
+        2,
+        2
+      ],
+      "dtype": "<f8"
+    },
+    "orbital_occupations": {
+      "shape": [
+        2
+      ],
+      "dtype": "<f8"
+    },
+    "orbital_energies": {
+      "shape": [
+        2
+      ],
+      "dtype": "<f8"
+    },
+    "orbital_occupations_beta": {
+      "shape": [
+        2
+      ],
+      "dtype": "<f8"
+    },
+    "two_body_integrals": {
+      "shape": [
+        2,
+        2,
+        2,
+        2
+      ],
+      "dtype": "<f8"
+    }
+  },
+  "metadata": {
+    "version": 1,
+    "units": "hartree",
+    "orbital_order": "alpha_then_beta",
+    "num_alpha": 1,
+    "num_beta": 1,
+    "num_spatial_orbitals": 2,
+    "two_body_order": "chemist",
+    "nuclear_repulsion_energy": 0.7199689944489797,
+    "multiplicity": 1,
+    "molecular_metadata": {
+      "symbols": [
+        "H",
+        "H"
+      ],
+      "coordinates": [
+        [
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.735
+        ]
+      ],
+      "charge": 0
+    },
+    "provenance": {
+      "source": "stored_pyscf_integrals",
+      "basis": "sto-3g",
+      "geometry_angstrom": [
+        [
+          "H",
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          "H",
+          0.0,
+          0.0,
+          0.735
+        ]
+      ],
+      "method": "RHF",
+      "note": "Generated once via Qiskit Nature 0.8 PySCFDriver; symmetry-zero entries below 1e-15 set to zero. Tests do not require PySCF."
+    },
+    "metadata": {},
+    "arrays": {
+      "one_body_integrals": "one_body_integrals",
+      "orbital_occupations": "orbital_occupations",
+      "orbital_energies": "orbital_energies",
+      "orbital_occupations_beta": "orbital_occupations_beta",
+      "two_body_integrals": "two_body_integrals"
+    }
+  }
+}

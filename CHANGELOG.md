@@ -27,6 +27,10 @@ for the full map.
 
 ### Added
 
+- **Molecular integral handoff.** Qiskit YAML can consume portable MO integral
+  bundles, validating molecular geometry, charge, spin and nuclear-energy identity
+  before solving. Both descriptor and numeric payload participate in caching.
+
 - **IBM Runtime providers.** Registered estimators and samplers support layouts,
   job/batch/session execution, dynamical decoupling, twirling, TREX, ZNE and PEC.
   Credential-free journals support explicit retrieval; offline provider tests
