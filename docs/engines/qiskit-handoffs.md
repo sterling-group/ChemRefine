@@ -48,18 +48,29 @@ save_circuit(Path("root0.circuit.json"), preparation, max_bytes=33554432)
 restored = load_circuit(Path("root0.circuit.json"), max_bytes=33554432)
 ```
 
-Each descriptor preserves parameter names and values, particle populations,
+Each bundle preserves parameter names and values, particle populations,
 alpha-then-beta spin-orbital ordering, mapper and tapering metadata, active-space
 selection, the mapped active Hamiltonian, separately named energy offsets, and
 provenance. Qiskit Pauli labels place qubit zero on the right. The saved circuit is
 bound and has no classical registers. It describes the logical state before
 hardware routing; a later provider can compile it for another layout.
 
+New circuit bundles use interpretation storage version 2: Pauli labels are rows
+of ASCII `IXYZ` bytes in display order, coefficients and parameter values are
+little-endian float64, and parameter names are UTF-8 bytes with little-endian
+uint64 offsets. These arrays share the NPZ with the QPY circuit. Large Hamiltonians
+and long parameter names therefore do not consume the JSON descriptor budget.
+Readers still accept valid version 1 bundles with inline interpretation data;
+`load_circuit` returns the same public `CircuitDescription` for either storage
+version. Every root remains self-contained.
+
 QPY version 13 is stored as a byte array inside the NPZ payload. Its compatibility
 is numerically checked from Qiskit 2.5 to the supported Qiskit 1.4 floor. Older
 Qiskit may warn about the newer producer version. Artifact recovery verifies the
-descriptor, payload digest, byte-array shape and QPY signature without importing
-Qiskit. Full circuit deserialization happens only in the selected worker.
+descriptor, payload digest, array conventions, supported QPY version, complete
+file and circuit headers, program count, register dimensions and declared section
+bounds without importing Qiskit. These structural checks do not decode every
+instruction; full circuit deserialization happens in the selected worker.
 
 For this preparation, the reported energy is the expectation of
 `description.active_hamiltonian` plus the sum of
@@ -71,6 +82,15 @@ measurement of another supplied observable does not automatically include them.
 ## Export and consume in a pipeline
 
 Set `options.circuit_export: {max_bytes: 1048576}` to retain supported preparations.
+`max_bytes` limits the sum of uncompressed numeric arrays for each root, including
+QPY, Hamiltonian and parameter storage. ZIP/NPY framing is accounted for separately
+by the bundle reader. The JSON descriptor has an independent 1 MiB limit, including
+its final newline. Known interpretation size and fixed ansatz parameter storage
+are checked before provider or optimizer construction. Adaptive circuit growth
+and final QPY serialization retain runtime limits; a preflight pass does not
+guarantee that a future circuit will fit. This storage limit is not a scheduler
+memory reservation.
+
 VQE, ADAPT-VQE, TETRIS-ADAPT, CEO-ADAPT and VQD advertise the `bound_circuit`
 capability in their component catalog. VQD exports every computed physical root
 after energy ordering. ADAPT exports the retained circuit after any rollback.

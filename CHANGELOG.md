@@ -27,6 +27,11 @@ for the full map.
 
 ### Added
 
+- **Scalable circuit interpretations.** New circuit bundles store Pauli terms and
+  parameter data in bounded NPZ arrays while reading existing inline bundles.
+  Known export sizes fail before provider acquisition, and each root's byte budget
+  includes all arrays during publication and recovery.
+
 - **Reconstructed measurement recovery.** Version 2 measurement artifacts retain
   signed Clifford certificates and validate configured observables, production
   counts, covariance and uncertainty independently. Older measurement artifacts

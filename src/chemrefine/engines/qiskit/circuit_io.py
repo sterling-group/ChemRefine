@@ -7,10 +7,9 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from struct import error as StructError
-from typing import Any, Literal, Self
+from typing import Any
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
 from chemrefine.engines.qiskit.bundles import (
     QuantumBundle,
@@ -18,48 +17,17 @@ from chemrefine.engines.qiskit.bundles import (
     read_bundle,
     write_bundle,
 )
+from chemrefine.engines.qiskit.circuit_storage import (
+    CircuitDescription as CircuitDescription,
+)
+from chemrefine.engines.qiskit.circuit_storage import (
+    decode_circuit_data,
+    encode_circuit_data,
+    preflight_storage,
+)
 from chemrefine.engines.qiskit.context import ElectronicStructureContext
+from chemrefine.engines.qiskit.qpy_validation import validate_qpy_payload
 from chemrefine.errors import ConfigError, OutputParseError
-
-
-class CircuitDescription(BaseModel):
-    """Scientific interpretation of one logical, bound state-preparation circuit."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
-    version: Literal[1] = 1
-    representation: Literal["logical"] = "logical"
-    orbital_order: Literal["alpha_then_beta"] = "alpha_then_beta"
-    bit_order: Literal["qubit_0_right"] = "qubit_0_right"
-    units: Literal["hartree"] = "hartree"
-    root: StrictInt = Field(ge=0)
-    num_qubits: StrictInt = Field(ge=1)
-    num_spin_orbitals: StrictInt = Field(ge=1)
-    num_particles: tuple[StrictInt, StrictInt]
-    mapping: dict[str, Any]
-    active_space: dict[str, Any]
-    parameter_order: tuple[str, ...]
-    parameter_values: tuple[float, ...]
-    energy_offsets: dict[str, float]
-    active_hamiltonian: dict[str, float]
-    provenance: dict[str, Any] = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def _dimensions(self) -> Self:
-        """Require coherent bindings, a declared mapper and register-sized operators."""
-        if len(self.parameter_order) != len(self.parameter_values):
-            raise ValueError("circuit parameter names and values differ in length")
-        if not self.mapping or not self.active_hamiltonian:
-            raise ValueError("circuit bundle requires mapping and active Hamiltonian metadata")
-        if any(
-            len(label) != self.num_qubits or set(label) - set("IXYZ")
-            for label in self.active_hamiltonian
-        ):
-            raise ValueError("circuit Hamiltonian labels must match the logical register")
-        if self.num_spin_orbitals % 2 or any(
-            count < 0 or count > self.num_spin_orbitals // 2 for count in self.num_particles
-        ):
-            raise ValueError("circuit particle populations do not fit its spin orbitals")
-        return self
 
 
 @dataclass(frozen=True)
@@ -68,6 +36,49 @@ class BoundCircuit:
 
     circuit: Any
     description: CircuitDescription
+
+
+def _description(
+    context: ElectronicStructureContext,
+    order: tuple[str, ...],
+    values: tuple[float, ...],
+    *,
+    root: int,
+) -> CircuitDescription:
+    """Collect the same mapped scientific interpretation before and after solving."""
+    if any(abs(complex(value).imag) > 1e-10 for _, value in context.qubit_hamiltonian.to_list()):
+        raise ConfigError("circuit export requires a Hermitian Pauli Hamiltonian")
+    return CircuitDescription(
+        root=root,
+        num_qubits=context.num_qubits,
+        num_spin_orbitals=2 * context.num_spatial_orbitals,
+        num_particles=context.num_particles,
+        mapping=context.mapping_metadata,
+        active_space=context.active_space_metadata,
+        parameter_order=order,
+        parameter_values=values,
+        energy_offsets={
+            name: float(value) for name, value in context.problem.hamiltonian.constants.items()
+        },
+        active_hamiltonian={
+            label: float(np.real(coefficient))
+            for label, coefficient in context.qubit_hamiltonian.simplify().to_list()
+        },
+        provenance=context.provenance,
+    )
+
+
+def preflight_circuit_export(
+    context: ElectronicStructureContext, *, max_bytes: int, circuit: Any | None = None
+) -> None:
+    """Reject predictable export-budget failures before acquiring provider resources.
+
+    Fixed parameter storage and metadata are known before solving. Adaptive growth
+    and final serialized QPY bytes remain subject to the bounded writer.
+    """
+    order = () if circuit is None else tuple(str(parameter) for parameter in circuit.parameters)
+    description = _description(context, order, (0.0,) * len(order), root=0)
+    preflight_storage(description, max_bytes=max_bytes)
 
 
 def bound_circuit(
@@ -84,28 +95,11 @@ def bound_circuit(
         if isinstance(parameters, Mapping)
         else tuple(float(value) for value in parameters)
     )
-    description = CircuitDescription(
-        root=root,
-        num_qubits=context.num_qubits,
-        num_spin_orbitals=2 * context.num_spatial_orbitals,
-        num_particles=context.num_particles,
-        mapping=context.mapping_metadata,
-        active_space=context.active_space_metadata,
-        parameter_order=tuple(str(parameter) for parameter in order),
-        parameter_values=values,
-        energy_offsets={
-            name: float(value) for name, value in context.problem.hamiltonian.constants.items()
-        },
-        active_hamiltonian={
-            label: float(np.real(coefficient))
-            for label, coefficient in context.qubit_hamiltonian.simplify().to_list()
-        },
-        provenance=context.provenance,
+    description = _description(
+        context, tuple(str(parameter) for parameter in order), values, root=root
     )
     if circuit.num_qubits != description.num_qubits or circuit.num_clbits:
         raise ConfigError("circuit export requires a logical preparation without measurements")
-    if any(abs(complex(value).imag) > 1e-10 for _, value in context.qubit_hamiltonian.to_list()):
-        raise ConfigError("circuit export requires a Hermitian Pauli Hamiltonian")
     bound = circuit.assign_parameters(values)
     bound.metadata = {}
     return BoundCircuit(bound, description)
@@ -135,13 +129,15 @@ def save_circuit(path: Path, value: BoundCircuit, *, max_bytes: int = 33554432) 
         or value.circuit.num_qubits != value.description.num_qubits
     ):
         raise ConfigError("circuit export requires one bound, unmeasured logical preparation")
-    stream = _BoundedStream(max_bytes)
+    remaining = preflight_storage(value.description, max_bytes=max_bytes, path=path)
+    metadata, arrays = encode_circuit_data(value.description)
+    stream = _BoundedStream(remaining)
     qpy.dump(value.circuit, stream, version=13)
     return write_bundle(
         path,
         kind="bound_circuit",
-        arrays={"qpy": np.frombuffer(stream.getvalue(), dtype=np.uint8)},
-        metadata=value.description.model_dump(mode="json"),
+        arrays=arrays | {"qpy": np.frombuffer(stream.getvalue(), dtype=np.uint8)},
+        metadata=metadata,
         max_bytes=max_bytes,
     )
 
@@ -149,14 +145,15 @@ def save_circuit(path: Path, value: BoundCircuit, *, max_bytes: int = 33554432) 
 def validate_circuit_bundle(bundle: QuantumBundle) -> CircuitDescription:
     """Check a circuit artifact locally without importing Qiskit or contacting a provider."""
     try:
-        description = CircuitDescription.model_validate(bundle.metadata)
-        if bundle.description.kind != "bound_circuit" or set(bundle.arrays) != {"qpy"}:
+        description = decode_circuit_data(bundle)
+        if bundle.description.kind != "bound_circuit":
             raise ValueError("expected a bound_circuit artifact with one QPY payload")
-        payload = bundle.arrays["qpy"]
-        if payload.dtype != np.dtype("uint8") or payload.ndim != 1 or payload.size < 7:
-            raise ValueError("circuit QPY payload must be a nonempty byte array")
-        if bytes(payload[:6]) != b"QISKIT":
-            raise ValueError("circuit payload has no QPY header")
+        validate_qpy_payload(
+            bundle.arrays["qpy"],
+            circuits=1,
+            num_qubits=description.num_qubits,
+            num_clbits=0,
+        )
         return description
     except (ValueError, TypeError) as exc:
         raise OutputParseError(f"invalid bound circuit bundle: {exc}") from exc

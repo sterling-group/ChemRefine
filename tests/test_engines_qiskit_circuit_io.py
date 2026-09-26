@@ -233,7 +233,9 @@ def test_reader_independently_rejects_qpy_content_mismatches(tmp_path, retained,
     else:
         circuits = [QuantumCircuit(value.description.num_qubits + 1)]
     path = _raw_qpy_bundle(tmp_path / "invalid.json", circuits, value.description)
-    with pytest.raises(OutputParseError, match=r"exactly one|differ from"):
+    with pytest.raises(
+        OutputParseError, match=r"circuit count disagrees|count disagrees|differ from"
+    ):
         load_circuit(path)
 
 
@@ -247,7 +249,7 @@ def test_reader_normalizes_malformed_qpy_exceptions(tmp_path, retained, payload)
         arrays={"qpy": np.frombuffer(payload, dtype=np.uint8)},
         metadata=value.description.model_dump(mode="json"),
     )
-    with pytest.raises(OutputParseError, match="invalid circuit QPY"):
+    with pytest.raises(OutputParseError, match="invalid bound circuit bundle"):
         load_circuit(path)
 
 
@@ -297,3 +299,91 @@ assert set(circuit_input_dependencies(path)) == {'payload'}
         [sys.executable, "-c", script, str(path)], capture_output=True, text=True, check=False
     )
     assert completed.returncode == 0, completed.stderr
+
+
+def test_large_hamiltonian_and_long_parameters_roundtrip_outside_descriptor(tmp_path):
+    """A realistic sparse interpretation can exceed 1 MiB while its descriptor stays small."""
+    hamiltonian = {
+        format(index, "034b").translate(str.maketrans("01", "IZ")): (index + 1) * 1e-6
+        for index in range(25000)
+    }
+    description = CircuitDescription(
+        root=0,
+        num_qubits=34,
+        num_spin_orbitals=34,
+        num_particles=(1, 1),
+        mapping={"name": "jordan_wigner"},
+        active_space={},
+        parameter_order=("θ" * 600000,),
+        parameter_values=(0.3,),
+        active_hamiltonian=hamiltonian,
+        energy_offsets={"nuclear": 0.5},
+    )
+    circuit = QuantumCircuit(34)
+    circuit.x(0)
+    circuit.x(17)
+    value = BoundCircuit(circuit, description)
+    assert len(json.dumps(description.model_dump(mode="json"))) > 1048576
+    path = save_circuit(tmp_path / "large.json", value)
+    assert path.stat().st_size < 4096
+    bundle = read_bundle(path)
+    assert bundle.metadata["version"] == 2
+    assert bundle.arrays["pauli_labels"].shape == (25000, 34)
+    restored = load_circuit(path)
+    assert restored.description == description
+    assert restored.circuit == circuit
+    # Evaluate the computational-basis energy independently, without a 2**34 statevector.
+    energy = (
+        sum(
+            (-1) ** ((index & ((1 << 17) | 1)).bit_count()) * coefficient
+            for index, coefficient in enumerate(hamiltonian.values())
+        )
+        + 0.5
+    )
+    reconstructed = (
+        sum(
+            (-1) ** (label[-1] == "Z") * (-1) ** (label[-18] == "Z") * coefficient
+            for label, coefficient in restored.description.active_hamiltonian.items()
+        )
+        + 0.5
+    )
+    assert reconstructed == pytest.approx(energy)
+
+
+def test_export_budget_counts_all_arrays_and_preserves_previous_output(tmp_path, retained):
+    """The inclusive per-root limit covers QPY, Pauli terms and parameter arrays together."""
+    value, _circuit, _bindings = retained
+    path = save_circuit(tmp_path / "root.json", value)
+    size = sum(array.nbytes for array in read_bundle(path).arrays.values())
+    save_circuit(path, value, max_bytes=size)
+    previous = {item.name: item.read_bytes() for item in tmp_path.iterdir()}
+    with pytest.raises(ConfigError, match="exceeds max_bytes"):
+        save_circuit(path, value, max_bytes=size - 1)
+    assert {item.name: item.read_bytes() for item in tmp_path.iterdir()} == previous
+    assert load_circuit(path, max_bytes=size).description == value.description
+    with pytest.raises(OutputParseError, match="exceed max_bytes"):
+        load_circuit(path, max_bytes=size - 1)
+
+
+@pytest.mark.parametrize("fault", ["decode", "count", "width", "measured"])
+def test_worker_decoding_remains_authoritative_after_structural_validation(
+    tmp_path, retained, monkeypatch, fault
+):
+    """The cheap SDK-free guard never replaces full worker-side QPY decoding."""
+    value, _circuit, _bindings = retained
+    path = save_circuit(tmp_path / "root.json", value)
+
+    def decode(_stream):
+        """Exercise errors and semantic checks supplied by the SDK boundary."""
+        if fault == "decode":
+            raise TypeError("bad instruction parameter")
+        if fault == "count":
+            return []
+        circuit = QuantumCircuit(value.description.num_qubits + (fault == "width"))
+        if fault == "measured":
+            circuit.measure_all()
+        return [circuit]
+
+    monkeypatch.setattr(qpy, "load", decode)
+    with pytest.raises(OutputParseError, match="invalid circuit QPY"):
+        load_circuit(path)

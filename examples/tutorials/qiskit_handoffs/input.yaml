@@ -17,6 +17,7 @@ steps:
       algorithm: vqe
       ansatz: uccsd
       mapper: jordan_wigner
+      # Per root: uncompressed QPY + Hamiltonian + parameter arrays.
       circuit_export:
         max_bytes: 1048576
       cores: 1

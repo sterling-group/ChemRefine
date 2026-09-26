@@ -103,7 +103,11 @@ class CircuitExportOptions(BaseModel):
     """Retain logical bound preparations for supported circuit-producing algorithms."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
-    max_bytes: StrictInt = Field(33554432, ge=1)
+    max_bytes: StrictInt = Field(
+        33554432,
+        ge=1,
+        description="Per-root uncompressed array budget including QPY, Hamiltonian and parameters",
+    )
 
 
 class QiskitOptions(EngineOptions):

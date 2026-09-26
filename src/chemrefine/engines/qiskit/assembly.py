@@ -18,6 +18,7 @@ from chemrefine.engines.qiskit.context import (
 from chemrefine.engines.qiskit.operators import OperatorPool
 from chemrefine.engines.qiskit.options import QiskitOptions
 from chemrefine.engines.qiskit.registry import (
+    ALGORITHMS,
     ANSATZE,
     ESTIMATORS,
     INITIAL_POINTS,
@@ -61,6 +62,11 @@ def assemble_components(
     An optimizer declaring resource requirements receives the assembled context; legacy
     optimizers retain their options-only builder signature.
     """
+    export = options.circuit_export
+    if export is not None:
+        from chemrefine.engines.qiskit.circuit_io import preflight_circuit_export
+
+        preflight_circuit_export(context, max_bytes=export.max_bytes)
     required = consumed_component_categories(options)
     state = (
         build_selected_reference(context, options.initial_state)
@@ -75,6 +81,15 @@ def assemble_components(
         )
     elif "ansatz" in required:
         ansatz = ANSATZE.build(options.ansatz, context=context, initial_state=state)
+    if export is not None:
+        # Adaptive drivers start from the prepared reference, not the complete
+        # fixed circuit that a pool builder may also return.
+        circuit = (
+            ansatz.circuit
+            if "circuit" in ALGORITHMS.spec(options.algorithm.name).requires
+            else state
+        )
+        preflight_circuit_export(context, max_bytes=export.max_bytes, circuit=circuit)
     point = None
     if "initial_point" in required:
         point = (

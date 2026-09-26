@@ -284,14 +284,14 @@ def test_adapt_export_rebuilds_retained_logical_state_after_energy_rollback(monk
 def test_circuit_recovery_enforces_configured_limit_and_allows_larger_declared_caps(
     h2, tmp_path, monkeypatch
 ):
-    """Recovery uses the same configured QPY budget as publication, without huge allocations."""
+    """Recovery uses the same configured numeric budget as publication, without huge allocations."""
     from chemrefine.engines.qiskit import state_io
     from chemrefine.engines.qiskit.circuit_io import save_circuit
     from chemrefine.errors import OutputParseError
 
     result = run_problem(h2, options={"algorithm": "vqe", "circuit_export": {}})
     path = save_circuit(tmp_path / "root.json", result.circuits[0])
-    size = read_bundle(path).arrays["qpy"].nbytes
+    size = sum(array.nbytes for array in read_bundle(path).arrays.values())
     output = tmp_path / "output.json"
     output.write_text(json.dumps({"engine_metadata": {"quantum_artifacts": [path.name]}}))
     with pytest.raises(OutputParseError, match="circuit_max_bytes"):

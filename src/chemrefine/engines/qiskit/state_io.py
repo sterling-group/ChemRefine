@@ -134,7 +134,7 @@ def validate_state_references(output_path: Path, *, circuit_max_bytes: int = 335
                 from chemrefine.engines.qiskit.circuit_io import validate_circuit_bundle
 
                 validate_circuit_bundle(bundle)
-                if bundle.arrays["qpy"].nbytes > circuit_max_bytes:
+                if sum(array.nbytes for array in bundle.arrays.values()) > circuit_max_bytes:
                     raise ValueError("bound circuit payload exceeds configured circuit_max_bytes")
             else:
                 load_states(path)
