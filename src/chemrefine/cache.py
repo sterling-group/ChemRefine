@@ -299,6 +299,7 @@ def row_key(
     option_digests: Mapping[str, str],
     aux_digests: Mapping[str, str],
     parent_digest: str,
+    input_digests: Mapping[str, str] | None = None,
 ) -> str:
     """One structure's job identity — everything that determines *this row's* result.
 
@@ -333,6 +334,8 @@ def row_key(
         payload["option_digests"] = dict(option_digests)
     if aux_digests:
         payload["aux_digests"] = dict(aux_digests)
+    if input_digests:
+        payload["input_digests"] = dict(input_digests)
     return _hash_payload(payload)
 
 
@@ -990,6 +993,7 @@ class StepKey:
         engine_options: Mapping[str, Any] | None = None,
         resolution: ResolutionSpec | None = None,
         aux_files: Mapping[str, Path] | None = None,
+        input_files: Mapping[str, Path] | None = None,
     ) -> StepKey:
         """Derive the key for ``step_cfg`` run over ``parents`` with ``template``.
 
@@ -1003,11 +1007,14 @@ class StepKey:
         else ``None``; ``aux_files`` is the engine's enumeration of the files the
         template references, written reference → file
         (:class:`chemrefine.engines.api.AuxFileConsuming` — empty for an engine whose
-        templates name none), digested here beside the option files.
+        templates name none), digested here beside the option files. ``input_files``
+        contains declared nested option files and manifest payload dependencies, with
+        relocation-independent logical names supplied by the caller.
         """
         template_dig = template_digest(template)
         option_digs = option_file_digests(step_cfg.options)
         aux_digs = aux_file_digests(aux_files or {})
+        input_digs = aux_file_digests(input_files or {})
         parent_ids = tuple(s.id for s in parents)
         parent_digs = tuple(structure_digest(s) for s in parents)
         rows = tuple(
@@ -1021,6 +1028,7 @@ class StepKey:
                 option_digests=option_digs,
                 aux_digests=aux_digs,
                 parent_digest=digest,
+                input_digests=input_digs,
             )
             for digest in parent_digs
         )

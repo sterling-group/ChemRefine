@@ -65,6 +65,7 @@ from chemrefine.engines.api import (
 )
 from chemrefine.errors import ConfigError
 from chemrefine.ids import step_template_path
+from chemrefine.input_files import resolve_input_file_options
 from chemrefine.nms import NmsOptions
 
 
@@ -326,6 +327,13 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
             )
             continue
         engine = get_engine(step.engine)
+        try:
+            step = resolve_input_file_options(step, engine)
+        except ConfigError as e:
+            issues.append(
+                ValidationIssue(loc=("steps", index, "options"), kind="options", message=str(e))
+            )
+            continue
         options_ok = True
         declared = None  # the engine's own reading of the step's options, when it has one
         if isinstance(engine, OptionsDeclaring):

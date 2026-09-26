@@ -42,6 +42,7 @@ from chemrefine.engines.api import (
     CalculationEngine,
     NmsCapableEngine,
     OptionsDeclaring,
+    OutputValidating,
     TemplateDriven,
     get_engine,
 )
@@ -51,6 +52,13 @@ from chemrefine.errors import (
     ConfigError,
     JobFailureError,
     NoUsableCacheError,
+    OutputParseError,
+)
+from chemrefine.input_files import (
+    declared_input_files,
+    normalized_input_options,
+    resolve_input_file_options,
+    validate_input_files,
 )
 from chemrefine.state import (
     PipelineState,
@@ -104,6 +112,7 @@ def build_context(
     later reader — ``prepare``, ORCA's ``pal`` and run-type detection, the NMS input probe,
     the cache — takes it off the context instead of re-deriving and re-reading the file.
     """
+    step_cfg = resolve_input_file_options(step_cfg, engine)
     return StepContext(
         step_cfg=step_cfg,
         step_dir=step_dir_for(config, step_cfg),
@@ -341,7 +350,8 @@ def derive_step_key(
     """
     engine_options: Mapping[str, object] = {}
     if isinstance(engine, OptionsDeclaring):
-        dumped = engine.options_cls.from_raw_lenient(step_cfg.options).model_dump(mode="json")
+        dumped = engine.options_cls.from_raw_lenient(ctx.step_cfg.options).model_dump(mode="json")
+        dumped = normalized_input_options(ctx.step_cfg, engine, dumped)
         engine_options = {
             key: (
                 Path(value).name if key in STEP_OPTION_PATHS and isinstance(value, str) else value
@@ -366,6 +376,7 @@ def derive_step_key(
         engine_options=engine_options,
         resolution=resolution,
         aux_files=aux_files,
+        input_files=declared_input_files(ctx.step_cfg, engine),
     )
 
 
@@ -556,6 +567,16 @@ def _cached_outcome(
     if cached is None:
         return None
     failed = cache.load_failure_records(ctx.step_dir)
+    try:
+        _validate_cached_outputs(engine, ctx, {record.structure_id for record in failed})
+    except OutputParseError as e:
+        if not may_submit:
+            raise NoUsableCacheError(
+                f"step {step_cfg.step}: cached outputs are unusable: {e}. "
+                "This action cannot submit work; use `chemrefine resume` to repair the step."
+            ) from e
+        logger.warning("step %d: cached outputs are unusable: %s", step_cfg.step, e)
+        return None
     stale_policy = _policy_conflict(cached.on_failure, step_cfg)
     if failed and stale_policy and not may_submit:
         return None
@@ -572,6 +593,25 @@ def _cached_outcome(
         len(cached.results.structures),
     )
     return _step_outcome(ctx, step_cfg, cached.results, cache_hit=True)
+
+
+def _validate_cached_outputs(
+    engine: CalculationEngine, ctx: StepContext, failed_ids: set[str]
+) -> None:
+    """Validate required native products before serving their cached structure records.
+
+    A known failed row has no promised product and follows the existing failure-policy
+    route instead. An artifact step always promises its one product. Additional payload
+    validation is an opt-in engine capability, never a cache-specific engine callback.
+    """
+    if isinstance(engine, ArtifactEngine) and not engine.artifact(ctx).is_file():
+        raise OutputParseError(f"required product is missing: {engine.artifact(ctx)}")
+    if isinstance(engine, OutputValidating):
+        inputs = cache.load_manifest(ctx.step_dir)
+        if inputs is None or not inputs.files:
+            raise OutputParseError("no job manifest identifies the required native products")
+        selected = StepInputs(files=tuple(row for row in inputs.files if row[2] not in failed_ids))
+        engine.validate_outputs(selected, ctx)
 
 
 def _prepare_stamped(
@@ -602,6 +642,7 @@ def _prepare_stamped(
     current stamp unless a route must carry a stored half forward: the incremental resume
     keeps the stored resolution keys until the resolution they describe exists.
     """
+    validate_input_files(ctx.step_cfg, engine)
     attempts.archive_previous(ctx.step_dir, archive)
     inputs = engine.prepare(ctx)
     cache.save_manifest(
@@ -845,6 +886,11 @@ def _finish_artifact_step(
             f"redo this step."
         )
     logger.info("step %d: produced %s", step_cfg.step, artifact)
+    if isinstance(engine, OutputValidating):
+        inputs = cache.load_manifest(ctx.step_dir)
+        if inputs is None or not inputs.files:
+            raise OutputParseError("no job manifest identifies the artifact's native products")
+        engine.validate_outputs(inputs, ctx)
     results = engine.parse(StepInputs(files=()), ctx)
     results = lifecycle.finalize(engine, ctx, step_cfg, key, list(results.structures), [])
     return _step_outcome(ctx, step_cfg, results, cache_hit=False)

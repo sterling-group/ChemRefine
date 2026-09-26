@@ -42,6 +42,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    PrivateAttr,
     TypeAdapter,
     ValidationError,
     field_validator,
@@ -260,6 +261,31 @@ class StepConfig(BaseModel):
     """One stage of the pipeline."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+    _source_dir: Path = PrivateAttr(default_factory=Path.cwd)
+    _input_file_spellings: tuple[tuple[tuple[str | int, ...], str, str], ...] = PrivateAttr(
+        default=()
+    )
+
+    @property
+    def source_dir(self) -> Path:
+        """The config directory anchoring engine-declared input files, never serialized."""
+        return self._source_dir
+
+    @property
+    def input_file_spellings(self) -> tuple[tuple[tuple[str | int, ...], str, str], ...]:
+        """Resolved option locations with their original spelling and absolute filename."""
+        return self._input_file_spellings
+
+    def with_input_files(
+        self,
+        options: dict[str, Any],
+        spellings: tuple[tuple[tuple[str | int, ...], str, str], ...],
+    ) -> StepConfig:
+        """Copy resolved options while retaining portable, non-YAML path provenance."""
+        result = self.model_copy(update={"options": options})
+        result._input_file_spellings = spellings
+        return result
 
     step: int = Field(..., ge=1)
     """Canonical 1-based step number — drives directory naming and ordering."""
@@ -914,9 +940,9 @@ def _resolve_step_option_paths(step: StepConfig, *, base: Path) -> StepConfig:
         for key in STEP_OPTION_PATHS
         if isinstance(value := options.get(key), str) and value and not Path(value).is_absolute()
     }
-    if not rewritten:
-        return step
-    return step.model_copy(update={"options": {**options, **rewritten}})
+    result = step.model_copy(update={"options": {**options, **rewritten}})
+    result._source_dir = base.resolve()
+    return result
 
 
 def load_config(path: str | Path) -> Config:

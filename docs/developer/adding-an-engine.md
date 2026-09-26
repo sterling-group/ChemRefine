@@ -204,6 +204,28 @@ engine mirrors the *shape* above without importing a line of another engine's pa
 
 ## Tests
 
+### Declared files and artifact validation
+
+Engines with nested file-valued options implement `InputFileOptions` to enumerate
+their dictionary-key/list-index locations. The shared resolver uses the configuration
+directory, retains the written spelling, and supplies absolute paths to workers.
+`InputFileDependencies` enumerates any manifest payloads by stable logical name.
+The step/cache layers digest those files; engines must not import cache machinery.
+Files produced by upstream steps need not exist during preflight, but must exist
+before the consuming step prepares work.
+
+Implement `OutputValidating.validate_outputs(inputs, ctx)` when a native result
+references required payloads. It raises `OutputParseError` for missing or corrupt
+products and must only read local outputs. The lifecycle invokes it on completion,
+cache consumption, and rebuild. It must never fetch provider results or submit jobs.
+
+For nested registry selections, implement `ComponentCatalogDeclaring` and derive
+component schemas and requirements from the same declarations used to validate
+options. Introspection and the GUI consume that catalog without importing SDKs.
+
+Artifact engines file an `artifact_contract.json` naming executable contract tests
+and recorded fixtures. Per-structure engines retain the parsed-result cases below.
+
 Add `tests/test_engines_<name>*.py`, mirroring the existing engine tests. New code ships at 100%
 line+branch coverage with a docstring on every public symbol.
 

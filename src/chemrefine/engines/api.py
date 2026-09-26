@@ -294,6 +294,38 @@ class AuxFileConsuming(Protocol):
 
 
 @runtime_checkable
+class InputFileOptions(Protocol):
+    """An engine that declares file-valued leaves in its nested options.
+
+    Paths are tuples of dictionary keys and list indices, relative to ``options``.
+    Declare only present, nonempty file references, not output destinations or backend
+    interpreters. The core resolves them against the config directory and fingerprints
+    their contents; the engine neither imports the cache nor rewrites user options.
+    """
+
+    def input_file_options(self, options: Mapping[str, Any]) -> tuple[tuple[str | int, ...], ...]:
+        """Return the option paths whose values are input filenames."""
+        ...
+
+
+@runtime_checkable
+class InputFileDependencies(Protocol):
+    """An engine that reads payload references from declared input manifests.
+
+    The core supplies existing declared files keyed by JSON-pointer option location.
+    Return all transitive payloads, keyed by stable logical names and with absolute
+    paths resolved relative to their owning manifest. Missing upstream manifests are
+    omitted from the input mapping: existence is a preparation-time requirement, not
+    a reason to reject a config before an earlier step has produced them. Engines own
+    their manifest grammar; the core owns content hashing.
+    """
+
+    def input_file_dependencies(self, files: Mapping[str, Path]) -> Mapping[str, Path]:
+        """Enumerate transitive input payloads without hashing or mutating them."""
+        ...
+
+
+@runtime_checkable
 class OptionsDeclaring(Protocol):
     """An engine that declares the Pydantic model validating its ``step.options``.
 
@@ -317,6 +349,39 @@ class OptionsDeclaring(Protocol):
 
     options_cls: ClassVar[type[EngineOptions]]
     """The model validating this engine's ``step.options`` — the engine's one reader."""
+
+
+@dataclass(frozen=True)
+class ComponentDescriptor:
+    """One selectable component, described without importing its compute provider."""
+
+    options_schema: dict[str, Any]
+    capabilities: tuple[str, ...] = ()
+    requires: tuple[str, ...] = ()
+    backend_extra: str | None = None
+    execution: str | None = None
+
+
+@dataclass(frozen=True)
+class ComponentCategory:
+    """Choices for one engine option accepting ``{name, options}`` or a name string."""
+
+    default: str
+    components: dict[str, ComponentDescriptor]
+
+
+@runtime_checkable
+class ComponentCatalogDeclaring(Protocol):
+    """An engine publishing its registered nested component options for consumers.
+
+    Keys name fields in the engine's options model. Each field accepts a component name
+    or a mapping with ``name`` and ``options``. The catalog is derived from the same
+    registries runtime validation uses; producing it must not load compute providers.
+    """
+
+    def component_catalog(self) -> dict[str, ComponentCategory]:
+        """Return current categories, defaults, schemas and component requirements."""
+        ...
 
 
 @runtime_checkable
@@ -481,6 +546,22 @@ class StructureArtifacts(Protocol):
 
     def artifact_paths(self, ctx: StepContext, structure_id: str) -> tuple[Path, Path]:
         """This structure's ``(input, output)`` paths under ``ctx.step_dir``."""
+        ...
+
+
+@runtime_checkable
+class OutputValidating(Protocol):
+    """An engine whose native outputs reference required external payloads.
+
+    This read-only hook validates complete native products, including descriptor/payload
+    pairing, on completion, cache consumption and rebuild. It must not fetch provider
+    results, submit work, rewrite files, or inspect ChemRefine's cache. Raise
+    :class:`~chemrefine.errors.OutputParseError` for missing, corrupt or inconsistent
+    products. ``inputs`` can contain one job or the whole completed step.
+    """
+
+    def validate_outputs(self, inputs: StepInputs, ctx: StepContext) -> None:
+        """Validate the native products for these jobs, or raise ``OutputParseError``."""
         ...
 
 
@@ -795,8 +876,11 @@ def preflight_steps(steps: Sequence[StepConfig], *, charge: int, multiplicity: i
     so a hook always sees the effective values its step would run with — the same
     resolution :func:`chemrefine.step.build_context` performs for the run itself.
     """
+    from chemrefine.input_files import resolve_input_file_options
+
     for step_cfg in steps:
         engine = get_engine(step_cfg.engine)
+        step_cfg = resolve_input_file_options(step_cfg, engine)
         if isinstance(engine, PreflightChecking):
             engine.check_step(
                 step_cfg,

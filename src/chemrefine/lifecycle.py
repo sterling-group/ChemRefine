@@ -36,7 +36,7 @@ from typing import Protocol
 
 from chemrefine import __version__, attempts, cache
 from chemrefine.config import StepConfig
-from chemrefine.engines.api import CalculationEngine, StreamingSubmit, sweep
+from chemrefine.engines.api import CalculationEngine, OutputValidating, StreamingSubmit, sweep
 from chemrefine.errors import ChemRefineError, OutputParseError, OutputTerminationError
 from chemrefine.state import (
     Failure,
@@ -96,7 +96,10 @@ def _parse_job(
     if not out.is_file():
         return [], Failure(sid, FailureKind.MISSING_OUTPUT, None)
     try:
-        parsed = list(engine.parse(StepInputs(files=(triple,)), ctx).structures)
+        inputs = StepInputs(files=(triple,))
+        if isinstance(engine, OutputValidating):
+            engine.validate_outputs(inputs, ctx)
+        parsed = list(engine.parse(inputs, ctx).structures)
     except OutputTerminationError as e:
         return [], Failure(sid, FailureKind.NOT_TERMINATED_NORMALLY, None, detail=str(e))
     except OutputParseError as e:
