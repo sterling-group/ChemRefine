@@ -157,6 +157,7 @@ nav:
       - Qiskit ground-state calculations: engines/qiskit.md
       - Quantum experiments: engines/qiskit-experiment.md
       - Sampled quantum states: engines/qiskit-states.md
+      - Quantum spectra: engines/qiskit-spectra.md
       - Installing engines & backends: engines/installing.md
   - Running a workflow:
       - Command line: running/cli.md

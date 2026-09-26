@@ -149,10 +149,10 @@ def consumed_component_categories(options: QiskitOptions) -> frozenset[str]:
     if algorithm.execution == "nature":
         pending.add("mapper")
     supplied_counts = False
-    if options.algorithm.name == "sqd":
-        from chemrefine.engines.qiskit.components.subspace_algorithms import SQDOptions
-
-        supplied_counts = SQDOptions(**options.algorithm.options).counts is not None
+    if options.algorithm.name in {"sqd", "extended_sqd"}:
+        supplied_counts = (
+            ALGORITHMS.options_for(options.algorithm).model_dump()["counts"] is not None
+        )
         if not supplied_counts:
             pending.update({"mapper", "ansatz", "initial_state", "initial_point"})
     selections = options.component_selections()
@@ -186,10 +186,18 @@ def validate_component_graph(
 
     algorithm = ALGORITHMS.spec(options.algorithm.name)
     ansatz = ANSATZE.spec(options.ansatz.name)
-    estimator = ESTIMATORS.spec(options.estimator.name)
     capabilities = ansatz.capabilities | ({"operator_pool"} if operator_pool_supplied else set())
     selections = options.component_selections()
-    for category in sorted(consumed_component_categories(options)):
+    consumed = consumed_component_categories(options)
+    if (
+        "optimizer" in consumed
+        and "circuit" in OPTIMIZERS.spec(options.optimizer.name).requires
+        and "circuit" not in algorithm.requires
+    ):
+        raise ConfigError(
+            f"qiskit optimizer {options.optimizer.name!r} requires a fixed-circuit algorithm"
+        )
+    for category in sorted(consumed):
         selection = selections[category]
         required = REGISTRIES[category].spec(selection.name).requires
         missing = required - capabilities - REGISTRIES.keys()
@@ -209,30 +217,22 @@ def validate_component_graph(
             "qiskit ADAPT-VQE consumes the UCC operator pool rather than its repeated "
             "fixed circuit; set ansatz.options.reps to 1"
         )
-    if options.device == "cuda":
-        execution_category = "sampler" if "sampler" in algorithm.requires else "estimator"
-        if execution_category not in algorithm.requires:
-            raise ConfigError(
-                f"qiskit algorithm {options.algorithm.name!r} is CPU-only; set device: cpu"
-            )
-        executor = (
-            SAMPLERS.spec(options.sampler.name) if execution_category == "sampler" else estimator
+    executors = consumed & {"estimator", "sampler"}
+    if options.device == "cuda" and not executors:
+        raise ConfigError(
+            f"qiskit algorithm {options.algorithm.name!r} is CPU-only; set device: cpu"
         )
-        if "cuda" not in executor.capabilities:
-            selected = options.component_selections()[execution_category]
+    for category in sorted(executors):
+        selection = selections[category]
+        executor = REGISTRIES[category].spec(selection.name)
+        if options.device == "cuda" and "cuda" not in executor.capabilities:
             raise ConfigError(
-                f"qiskit {execution_category} {selected.name!r} does not support device: cuda; "
+                f"qiskit {category} {selection.name!r} does not support device: cuda; "
                 "choose a GPU-capable Aer component, or set device: cpu"
             )
-    aer_selection = (
-        SAMPLERS.options_for(options.sampler)
-        if "sampler" in algorithm.requires and options.sampler.name == "aer"
-        else ESTIMATORS.options_for(options.estimator)
-        if options.estimator.name == "aer_shots"
-        else None
-    )
-    if aer_selection is not None:
-        method = aer_selection.model_dump()["method"]
+        if (category, selection.name) not in {("sampler", "aer"), ("estimator", "aer_shots")}:
+            continue
+        method = REGISTRIES[category].options_for(selection).model_dump()["method"]
         if method == "tensor_network" and options.device != "cuda":
             raise ConfigError("qiskit Aer method 'tensor_network' requires device: cuda")
         if options.device == "cuda" and method not in {

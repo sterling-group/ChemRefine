@@ -1,0 +1,35 @@
+template_dir: ./templates
+output_dir: ./outputs_qeom
+input: ./h2.xyz
+charge: 0
+multiplicity: 1
+max_cores: 1
+dispatch: local
+steps:
+  - step: 1
+    name: complex_response_spectrum
+    engine: qiskit
+    operation: sp
+    options:
+      basis: sto-3g
+      algorithm:
+        name: qeom
+        options:
+          excitation_ranks: [1, 2]
+          target_root: 1
+          max_excitations: 16
+          max_evaluations: 1000
+          max_measurements: 1000
+      ansatz:
+        name: uccsd
+        options: {include_imaginary: true}
+      estimator:
+        name: statevector
+        options: {default_precision: 0.0}
+      optimizer:
+        name: slsqp
+        options: {maxiter: 300, ftol: 1.0e-12}
+      initial_point:
+        name: random
+        options: {seed: 31}
+      cores: 1

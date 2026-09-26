@@ -26,7 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from chemrefine.config import Config, StepConfig, load_config
 from chemrefine.engines import known_backend_extras, preflight_backends
 from chemrefine.engines.api import BackendRequirement, ProvisionableEngine, get_engine
-from chemrefine.engines.qiskit import problem, reporting, workflow
+from chemrefine.engines.qiskit import assembly, problem, reporting, workflow
 from chemrefine.engines.qiskit.components.algorithms import (
     AdaptVQEOptions,
     _require,
@@ -1415,8 +1415,8 @@ def test_run_job_builds_and_closes_a_full_variational_graph(
         "state",
         "ansatz:state",
         "point:True",
-        "optimizer",
         "estimator",
+        "optimizer",
         "algorithm",
         "closed",
     ]
@@ -1537,11 +1537,11 @@ def supplied_problem_runner(monkeypatch):
         build,
         requires=frozenset({"operator_pool", "initial_state", "optimizer", "estimator"}),
     )
-    monkeypatch.setattr(workflow.INITIAL_STATES, "build", lambda *_args, **_kwargs: object())
-    monkeypatch.setattr(workflow.ANSATZE, "build", lambda *_args, **_kwargs: ansatz)
-    monkeypatch.setattr(workflow.OPTIMIZERS, "build", optimizer)
+    monkeypatch.setattr(assembly.INITIAL_STATES, "build", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(assembly.ANSATZE, "build", lambda *_args, **_kwargs: ansatz)
+    monkeypatch.setattr(assembly.OPTIMIZERS, "build", optimizer)
     monkeypatch.setattr(
-        workflow.ESTIMATORS,
+        assembly.ESTIMATORS,
         "build",
         lambda *_args, **_kwargs: EstimatorResource(object(), close=lambda: calls.append("closed")),
     )
@@ -1561,7 +1561,7 @@ def test_supplied_initial_points_validate_before_provider_creation(supplied_prob
 
 
 def test_supplied_initial_point_requires_a_circuit(supplied_problem_runner, monkeypatch):
-    monkeypatch.setattr(workflow.ANSATZE, "build", lambda *_args, **_kwargs: AnsatzArtifacts())
+    monkeypatch.setattr(assembly.ANSATZE, "build", lambda *_args, **_kwargs: AnsatzArtifacts())
     with pytest.raises(ConfigError, match="per ansatz parameter"):
         workflow.run_problem(object(), options={"algorithm": "vqe"}, initial_point=[])
 
@@ -1610,7 +1610,7 @@ def test_external_pool_replaces_configured_ansatz(supplied_problem_runner, monke
     def unexpected_ansatz(*_args, **_kwargs):
         pytest.fail("external operators replace the ansatz builder")
 
-    monkeypatch.setattr(workflow.ANSATZE, "build", unexpected_ansatz)
+    monkeypatch.setattr(assembly.ANSATZE, "build", unexpected_ansatz)
     result = workflow.run_problem(
         object(),
         options={"algorithm": "adapt_vqe", "ansatz": "efficient_su2"},

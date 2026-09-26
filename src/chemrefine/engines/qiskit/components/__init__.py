@@ -17,7 +17,9 @@ from chemrefine.engines.qiskit.components import (
     mappers,
     optimizers,
     optimizers_extended,
+    qnspsa,
     samplers,
+    spectra,
     subspace_algorithms,
 )
 
@@ -34,6 +36,8 @@ __all__ = [
     "mappers",
     "optimizers",
     "optimizers_extended",
+    "qnspsa",
     "samplers",
+    "spectra",
     "subspace_algorithms",
 ]

@@ -50,6 +50,9 @@ class SolverComponents:
     callback: Callable[[int, NDArray[np.float64], float, dict[str, Any]], None] | None = None
     transpiler: Any | None = None
     transpiler_options: dict[str, Any] | None = None
+    sampler: Any | None = None
+    sampler_transpiler: Any | None = None
+    sampler_transpiler_options: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -85,6 +88,7 @@ class SamplerResource:
     sampler: Any
     close: Callable[[], None] = field(default=lambda: None)
     transpiler: Any | None = None
+    transpiler_options: dict[str, Any] | None = None
 
     def __enter__(self) -> Any:
         """Return the sampler while its provider resource is open."""

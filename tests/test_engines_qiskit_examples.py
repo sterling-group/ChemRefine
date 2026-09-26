@@ -21,12 +21,26 @@ REQUIRED = {
     "active_space": {"electrons", "orbitals"},
     "selection": {"name", "options"},
     "mapper": set(),
-    "algorithm": set(),
+    "algorithm": {
+        "betas",
+        "excitation_ranks",
+        "fidelity_shots",
+        "k",
+        "max_excitations",
+        "max_measurements",
+        "overlap_tolerance",
+        "num_roots",
+        "num_steps",
+        "projection",
+        "spin_constraint",
+        "target_root",
+        "time_step",
+    },
     "ansatz": {"reps", "preserve_spin"},
     "initial_state": set(),
     "estimator": {"default_precision", "seed"},
     "sampler": {"seed"},
-    "optimizer": {"maxiter"},
+    "optimizer": {"maxiter", "fidelity_shots"},
     "initial_point": set(),
 }
 
@@ -39,6 +53,21 @@ TESTS_ONLY = {
         "two_qubit_reduction",
     },
     "algorithm": {
+        "conditioning_tolerance",
+        "frequency_tolerance",
+        "initial_points",
+        "max_excitation_operators",
+        "max_generated_determinants",
+        "max_pauli_terms",
+        "max_product_terms",
+        "minimum_probability",
+        "orbital_optimization",
+        "product_formula",
+        "repetitions",
+        "residual_tolerance",
+        "sector_tolerance",
+        "suzuki_order",
+        "target_s2",
         "ansatz",
         "configuration_recovery",
         "counts",
@@ -110,6 +139,10 @@ TESTS_ONLY = {
         "simulation_precision",
     },
     "optimizer": {
+        "allowed_increase",
+        "hessian_delay",
+        "regularization",
+        "resamplings",
         "adaptive",
         "blocking",
         "disp",
@@ -154,7 +187,10 @@ def _example_options() -> list[dict[str, Any]]:
     """The raw options of each shipped Qiskit example, before defaults are filled in."""
     return [
         step.get("options") or {}
-        for path in sorted(REPO.glob("examples/**/input.yaml"))
+        for path in sorted(
+            set(REPO.glob("examples/**/input.yaml"))
+            | set(REPO.glob("examples/tutorials/qiskit_sp/*.yaml"))
+        )
         for step in yaml.safe_load(path.read_text(encoding="utf-8")).get("steps", [])
         if step.get("engine") == "qiskit"
     ]

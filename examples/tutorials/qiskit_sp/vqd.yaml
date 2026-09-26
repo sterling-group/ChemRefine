@@ -1,0 +1,37 @@
+template_dir: ./templates
+output_dir: ./outputs_vqd
+input: ./h2.xyz
+charge: 0
+multiplicity: 1
+max_cores: 1
+dispatch: local
+steps:
+  - step: 1
+    name: sampled_deflation_spectrum
+    engine: qiskit
+    operation: sp
+    options:
+      basis: sto-3g
+      algorithm:
+        name: vqd
+        options:
+          k: 2
+          target_root: 1
+          betas: [3.0]
+          fidelity_shots: 32768
+          overlap_tolerance: 0.05
+          max_evaluations: 1500
+      ansatz: uccsd
+      estimator:
+        name: statevector
+        options: {default_precision: 0.0}
+      sampler:
+        name: statevector
+        options: {seed: 8}
+      optimizer:
+        name: cobyla
+        options: {maxiter: 500, tol: 0.0001}
+      initial_point:
+        name: random
+        options: {seed: 31}
+      cores: 1

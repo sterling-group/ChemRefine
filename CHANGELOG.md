@@ -27,6 +27,12 @@ for the full map.
 
 ### Added
 
+- **Quantum spectra and natural-gradient optimization.** VQD separates physical
+  root energies from deflation penalties and validates root overlaps. Complex
+  qEOM reports conditioned response spectra and reconstructed-state diagnostics.
+  QNSPSA uses the selected sampler for fidelity, with declared transitive provider
+  requirements and shared resource lifecycle management.
+
 - **Recoverable quantum states.** Molecular workers persist determinant states
   and orbital frames in validated JSON/NPZ bundles. Scratch copy-back includes
   numeric payloads and circuit files; cache reuse checks referenced states before

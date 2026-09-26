@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping, Sequence
-from contextlib import nullcontext
 from copy import deepcopy
 from numbers import Real
 from pathlib import Path
@@ -14,12 +13,8 @@ from typing import Any
 import numpy as np
 
 from chemrefine.engines.qiskit import components as _builtins  # noqa: F401
-from chemrefine.engines.qiskit.context import (
-    AnsatzArtifacts,
-    ElectronicStructureContext,
-    EstimatorResource,
-    SolverComponents,
-)
+from chemrefine.engines.qiskit.assembly import assemble_components
+from chemrefine.engines.qiskit.context import ElectronicStructureContext
 from chemrefine.engines.qiskit.mapping import map_problem
 from chemrefine.engines.qiskit.native import NativeSolveRequest, summarize_native
 from chemrefine.engines.qiskit.operators import OperatorPool
@@ -27,11 +22,6 @@ from chemrefine.engines.qiskit.options import QiskitOptions
 from chemrefine.engines.qiskit.problem import PreparedProblem, prepare_pyscf_problem
 from chemrefine.engines.qiskit.registry import (
     ALGORITHMS,
-    ANSATZE,
-    ESTIMATORS,
-    INITIAL_POINTS,
-    INITIAL_STATES,
-    OPTIMIZERS,
     validate_component_graph,
 )
 from chemrefine.engines.qiskit.reporting import jsonable, summarize_result
@@ -58,46 +48,6 @@ def _solve_context(
     started: float,
 ) -> QiskitRunResult:
     """Assemble components once and own the estimator lifecycle for a single solve."""
-    requirements = ALGORITHMS.spec(resolved.algorithm.name).requires
-
-    initial_state: Any | None = None
-    ansatz = AnsatzArtifacts()
-    initial_point: Any | None = None
-    optimizer: Any | None = None
-    if requirements & {"initial_state", "circuit", "operator_pool"}:
-        initial_state = INITIAL_STATES.build(resolved.initial_state, context=context)
-    if operator_pool is not None:
-        operator_pool.validate(context.num_qubits)
-        ansatz = AnsatzArtifacts(
-            operator_pool=operator_pool.operators, pool_metadata=operator_pool.metadata
-        )
-    elif requirements & {"circuit", "operator_pool"}:
-        ansatz = ANSATZE.build(
-            resolved.ansatz,
-            context=context,
-            initial_state=initial_state,
-        )
-    if "initial_point" in requirements:
-        if supplied_initial_point is None:
-            initial_point = INITIAL_POINTS.build(resolved.initial_point, ansatz=ansatz)
-        else:
-            try:
-                if np.iscomplexobj(supplied_initial_point):
-                    raise ValueError("complex initial point")
-                initial_point = np.asarray(supplied_initial_point, dtype=float)
-            except (TypeError, ValueError) as exc:
-                raise ConfigError("qiskit initial point must contain finite real numbers") from exc
-            if (
-                ansatz.circuit is None
-                or initial_point.shape != (int(ansatz.circuit.num_parameters),)
-                or not np.isfinite(initial_point).all()
-            ):
-                raise ConfigError(
-                    "qiskit initial point must have one finite value per ansatz parameter"
-                )
-    if "optimizer" in requirements:
-        optimizer = OPTIMIZERS.build(resolved.optimizer)
-
     evaluations: list[dict[str, Any]] = []
     previous_algorithm_evaluation: int | None = None
     inner_run = 0
@@ -133,35 +83,13 @@ def _solve_context(
         if user_callback is not None:
             user_callback(deepcopy(evaluations[-1]))
 
-    estimator_resource: EstimatorResource | nullcontext[None]
-    if "estimator" in requirements:
-        estimator_resource = ESTIMATORS.build(
-            resolved.estimator,
-            device=resolved.device,
-            cores=resolved.cores,
-        )
-    else:
-        estimator_resource = nullcontext(None)
-
-    transpiler = (
-        estimator_resource.transpiler if isinstance(estimator_resource, EstimatorResource) else None
-    )
-    transpiler_options = (
-        estimator_resource.transpiler_options
-        if isinstance(estimator_resource, EstimatorResource)
-        else None
-    )
-    with estimator_resource as estimator:
-        assembled = SolverComponents(
-            estimator=estimator,
-            optimizer=optimizer,
-            initial_state=initial_state,
-            ansatz=ansatz,
-            initial_point=initial_point,
-            callback=callback,
-            transpiler=transpiler,
-            transpiler_options=transpiler_options,
-        )
+    with assemble_components(
+        context,
+        resolved,
+        operator_pool=operator_pool,
+        initial_point=supplied_initial_point,
+        callback=callback,
+    ) as assembled:
         algorithm = ALGORITHMS.build(
             resolved.algorithm,
             context=context,
@@ -176,11 +104,11 @@ def _solve_context(
         options=resolved,
         context=context,
         evaluations=evaluations,
-        ansatz=ansatz,
+        ansatz=assembled.ansatz,
         algorithm=algorithm,
         runtime_seconds=perf_counter() - started,
         reference_energy_hartree=reference_energy_hartree,
-        was_transpiled=transpiler is not None,
+        was_transpiled=assembled.transpiler is not None,
         operator_pool_supplied=operator_pool is not None,
     )
     logger.info(
