@@ -50,6 +50,14 @@ TESTS_ONLY = {
     },
     "selection": set(),
     "mapper": {
+        "base_mapper",
+        "generators",
+        "max_qubits",
+        "max_statevector_bytes",
+        "max_symmetries",
+        "min_qubits",
+        "sectors",
+        "tolerance",
         "two_qubit_reduction",
     },
     "algorithm": {

@@ -166,7 +166,7 @@ def run_problem(
         )
         outcome = ALGORITHMS.build(resolved.algorithm, request=request)
         return summarize_native(outcome, request, runtime_seconds=perf_counter() - started)
-    context = map_problem(prepared, resolved.mapper)
+    context = map_problem(prepared, resolved.mapper, initial_state=resolved.initial_state)
     logger.info(
         "Qiskit %s starting: ansatz=%s optimizer=%s",
         resolved.algorithm.name,

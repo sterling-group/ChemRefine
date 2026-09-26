@@ -13,17 +13,28 @@ logger = logging.getLogger(__name__)
 
 
 def map_problem(
-    prepared: PreparedProblem, mapper: ComponentSelection | str = "jordan_wigner"
+    prepared: PreparedProblem,
+    mapper: ComponentSelection | str = "jordan_wigner",
+    *,
+    initial_state: ComponentSelection | str | None = None,
 ) -> ElectronicStructureContext:
     """Expose both Hamiltonians and the before/after qubit counts for one mapping.
 
     The initial register has one qubit per active spin orbital. The mapped
     register may be smaller (for example, parity's particle-aware reduction).
-    Additional mapper factories can return their own reduced implementation;
-    no symmetry detection or tapering is inferred here.
+    Reference-aware factories receive the selected initial-state component before
+    symmetry reduction. Other mapper factories retain their original contract.
     """
     selection = ComponentSelection.named(mapper) if isinstance(mapper, str) else mapper
-    implementation = MAPPERS.build(selection, problem=prepared.problem)
+    if "reference_aware" in MAPPERS.spec(selection.name).capabilities:
+        implementation = MAPPERS.build(
+            selection,
+            problem=prepared.problem,
+            reference_selection=initial_state,
+            prepared=prepared,
+        )
+    else:
+        implementation = MAPPERS.build(selection, problem=prepared.problem)
     hamiltonian = implementation.map(prepared.fermionic_hamiltonian).simplify()
     qubits = int(hamiltonian.num_qubits)
     mapping_metadata = {
@@ -31,7 +42,9 @@ def map_problem(
         "options": MAPPERS.options_for(selection).model_dump(mode="json"),
         "num_qubits_before_reduction": prepared.num_spin_orbitals,
         "num_qubits_after_reduction": qubits,
-        "symmetry_tapering": None,
+        "symmetry_tapering": getattr(
+            getattr(implementation, "chemrefine_tapering", None), "metadata", None
+        ),
     }
     logger.info(
         "Qiskit mapper %s: %d qubits, %d Pauli terms", selection.name, qubits, len(hamiltonian)

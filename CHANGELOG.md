@@ -27,6 +27,11 @@ for the full map.
 
 ### Added
 
+- **Reference-aware Z₂ tapering.** Molecular mappings discover compatible Pauli
+  symmetries and verify sectors against the actual selected reference. Hamiltonians,
+  pools, state preparation and observables share one Clifford transformation;
+  expectation projection remains distinct from strict generator reduction.
+
 - **Distinct fermionic shadow ensembles.** Quantum experiments acquire complex
   fixed-number orbital Haar shadows or signed Majorana-Clifford shadows with their
   respective inverse channels. Native datasets preserve settings, physical counts,

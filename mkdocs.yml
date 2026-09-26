@@ -160,6 +160,7 @@ nav:
       - Fermionic shadows: engines/qiskit-shadows.md
       - Quantum spectra: engines/qiskit-spectra.md
       - Local fermionic encodings: engines/qiskit-encodings.md
+      - Reference-aware tapering: engines/qiskit-tapering.md
       - Installing engines & backends: engines/installing.md
   - Running a workflow:
       - Command line: running/cli.md

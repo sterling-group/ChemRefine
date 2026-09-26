@@ -7,6 +7,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict
 
 from chemrefine.engines.qiskit.registry import MAPPERS, NoComponentOptions
+from chemrefine.engines.qiskit.tapering import Z2TaperingOptions
 
 
 class ParityMapperOptions(BaseModel):
@@ -42,3 +43,28 @@ def build_parity_mapper(*, options: ParityMapperOptions, problem: Any) -> object
 
     num_particles = problem.num_particles if options.two_qubit_reduction else None
     return ParityMapper(num_particles=num_particles)
+
+
+@MAPPERS.register(
+    "z2_tapered",
+    Z2TaperingOptions,
+    capabilities=frozenset({"reference_aware"}),
+    status="experimental",
+    supported_domains=(
+        "reference-compatible molecular Pauli symmetries",
+        "automatic Clifford reference or explicitly verified general reference",
+    ),
+)
+def build_z2_tapered_mapper(
+    *,
+    options: Z2TaperingOptions,
+    problem: Any,
+    reference_selection: Any = None,
+    prepared: Any = None,
+) -> object:
+    """Taper only symmetries with verified eigenvalues in the actual selected reference."""
+    from chemrefine.engines.qiskit.tapering import build_reference_tapered_mapper
+
+    return build_reference_tapered_mapper(
+        problem, options=options, reference_selection=reference_selection, prepared=prepared
+    )

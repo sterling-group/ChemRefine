@@ -8,10 +8,20 @@ import numpy as np
 from pydantic import BaseModel
 
 from chemrefine.engines.qiskit.context import ElectronicStructureContext
+from chemrefine.engines.qiskit.options import ComponentSelection
 from chemrefine.engines.qiskit.registry import INITIAL_STATES, NoComponentOptions
 from chemrefine.errors import ConfigError
 
 REFERENCE_OCCUPATIONS_KEY = "chemrefine_reference_occupations"
+
+
+def build_selected_reference(
+    context: ElectronicStructureContext, selection: ComponentSelection
+) -> object:
+    """Reuse the actual reference transformed by a reference-aware mapper, when present."""
+    if getattr(context.mapper, "chemrefine_reference_selection", None) == selection:
+        return context.mapper.chemrefine_reference.copy()
+    return INITIAL_STATES.build(selection, context=context)
 
 
 def reference_occupations(
@@ -61,6 +71,9 @@ def build_explicit_reference(
     context: ElectronicStructureContext, occupations: tuple[bool, ...]
 ) -> object:
     """Map actual occupations for Hartree-Fock and explicit-reference builders."""
+    tapered_preparation = getattr(context.mapper, "prepare_occupation_reference", None)
+    if tapered_preparation is not None:
+        return tapered_preparation(occupations)
     from qiskit import QuantumCircuit
     from qiskit_nature.second_q.operators import FermionicOp
 
@@ -91,6 +104,8 @@ def build_hartree_fock(*, options: BaseModel, context: ElectronicStructureContex
     """Prepare the reference occupation dictated by the transformed problem."""
     del options
     occupations = reference_occupations(context)
+    if hasattr(context.mapper, "prepare_occupation_reference"):
+        return build_explicit_reference(context, occupations[0] + occupations[1])
     if any(
         occupied != (orbital < particles)
         for spin, particles in zip(occupations, context.num_particles, strict=True)

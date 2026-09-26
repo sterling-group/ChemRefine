@@ -168,8 +168,11 @@ def consumed_component_categories(options: QiskitOptions) -> frozenset[str]:
     while pending:
         category = pending.pop()
         consumed.add(category)
-        requirements = REGISTRIES[category].spec(selections[category].name).requires
+        component = REGISTRIES[category].spec(selections[category].name)
+        requirements = component.requires
         resources = set(requirements & REGISTRIES.keys())
+        if category == "mapper" and "reference_aware" in component.capabilities:
+            resources.add("initial_state")
         if category == "algorithm" and supplied_counts:
             resources.discard("sampler")
         if requirements & {"circuit", "operator_pool"}:

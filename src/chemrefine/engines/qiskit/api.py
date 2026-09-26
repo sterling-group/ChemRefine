@@ -73,6 +73,11 @@ from chemrefine.engines.qiskit.shadows import (
     shadow_circuit,
 )
 from chemrefine.engines.qiskit.state_io import load_states, save_states
+from chemrefine.engines.qiskit.tapering import (
+    TaperingTransform,
+    Z2TaperingOptions,
+    build_tapering_transform,
+)
 from chemrefine.engines.qiskit.workflow import EvaluationCallback, run_job, run_problem
 
 __all__ = [
@@ -104,8 +109,11 @@ __all__ = [
     "SampleBatch",
     "ShadowResult",
     "ShadowSetting",
+    "TaperingTransform",
+    "Z2TaperingOptions",
     "build_lattice_dynamics",
     "build_local_encoding",
+    "build_tapering_transform",
     "chain_lattice",
     "collect_fermionic_shadows",
     "commuting_evolution",

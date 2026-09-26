@@ -9,6 +9,7 @@ from typing import Any
 
 import numpy as np
 
+from chemrefine.engines.qiskit.components.initial_states import build_selected_reference
 from chemrefine.engines.qiskit.context import (
     AnsatzArtifacts,
     ElectronicStructureContext,
@@ -20,7 +21,6 @@ from chemrefine.engines.qiskit.registry import (
     ANSATZE,
     ESTIMATORS,
     INITIAL_POINTS,
-    INITIAL_STATES,
     OPTIMIZERS,
     SAMPLERS,
     consumed_component_categories,
@@ -62,7 +62,7 @@ def assemble_components(
     """
     required = consumed_component_categories(options)
     state = (
-        INITIAL_STATES.build(options.initial_state, context=context)
+        build_selected_reference(context, options.initial_state)
         if "initial_state" in required
         else None
     )

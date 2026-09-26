@@ -72,7 +72,8 @@ class ExpectationSession:
 
     def fermionic(self, operator: Any) -> complex:
         """Map a composed molecular observable using the configured chemistry mapping."""
-        mapped = self.context.mapper.map(operator.normal_order().simplify(atol=1e-12))
+        project = getattr(self.context.mapper, "map_observable", self.context.mapper.map)
+        mapped = project(operator.normal_order().simplify(atol=1e-12))
         if mapped is None:
             raise ConfigError(
                 "qiskit spectrum observable leaves the selected tapering sector; "

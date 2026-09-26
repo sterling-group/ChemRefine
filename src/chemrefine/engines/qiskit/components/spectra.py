@@ -145,7 +145,9 @@ def build_vqd(*, options: VQDOptions, request: NativeSolveRequest) -> NativeOutc
 
     if request.initial_point is not None and options.initial_points is not None:
         raise ConfigError("supply either initial_point or VQD initial_points, not both")
-    context = map_problem(request.prepared, request.options.mapper)
+    context = map_problem(
+        request.prepared, request.options.mapper, initial_state=request.options.initial_state
+    )
     if options.k > comb(context.num_spatial_orbitals, context.num_particles[0]) * comb(
         context.num_spatial_orbitals, context.num_particles[1]
     ):
@@ -321,7 +323,9 @@ def build_qeom(*, options: QEOMOptions, request: NativeSolveRequest) -> NativeOu
     """
     from qiskit_algorithms import VQE
 
-    context = map_problem(request.prepared, request.options.mapper)
+    context = map_problem(
+        request.prepared, request.options.mapper, initial_state=request.options.initial_state
+    )
     evaluations, callback = _recorder(request, options)
     with assemble_components(
         context, request.options, initial_point=request.initial_point, callback=callback

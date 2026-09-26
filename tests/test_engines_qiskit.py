@@ -1537,7 +1537,7 @@ def supplied_problem_runner(monkeypatch):
         build,
         requires=frozenset({"operator_pool", "initial_state", "optimizer", "estimator"}),
     )
-    monkeypatch.setattr(assembly.INITIAL_STATES, "build", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(INITIAL_STATES, "build", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(assembly.ANSATZE, "build", lambda *_args, **_kwargs: ansatz)
     monkeypatch.setattr(assembly.OPTIMIZERS, "build", optimizer)
     monkeypatch.setattr(

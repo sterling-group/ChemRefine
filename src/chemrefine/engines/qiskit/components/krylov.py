@@ -86,7 +86,9 @@ def krylov_circuits(request: NativeSolveRequest, options: SKQDOptions) -> tuple[
 
     from chemrefine.engines.qiskit.mapping import map_problem
 
-    context = map_problem(request.prepared, request.options.mapper)
+    context = map_problem(
+        request.prepared, request.options.mapper, initial_state=request.options.initial_state
+    )
     reference = INITIAL_STATES.build(request.options.initial_state, context=context)
     synthesis = (
         LieTrotter(reps=options.repetitions)
