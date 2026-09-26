@@ -360,6 +360,8 @@ class ComponentDescriptor:
     requires: tuple[str, ...] = ()
     backend_extra: str | None = None
     execution: str | None = None
+    status: str = "standard"
+    supported_domains: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

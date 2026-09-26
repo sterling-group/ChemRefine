@@ -31,6 +31,8 @@ class ComponentSpec:
     requires: frozenset[str] = frozenset()
     backend_requirement: BackendRequirement | None = None
     execution: Literal["nature", "native"] = "nature"
+    status: Literal["standard", "experimental"] = "standard"
+    supported_domains: tuple[str, ...] = ()
 
 
 class ComponentRegistry:
@@ -49,6 +51,8 @@ class ComponentRegistry:
         requires: frozenset[str] = frozenset(),
         backend_requirement: BackendRequirement | None = None,
         execution: Literal["nature", "native"] = "nature",
+        status: Literal["standard", "experimental"] = "standard",
+        supported_domains: tuple[str, ...] = (),
     ) -> Callable[[ComponentBuilder], ComponentBuilder]:
         """Decorate a builder and register its complete declaration exactly once."""
         key = name.strip().lower().replace("-", "_")
@@ -63,6 +67,8 @@ class ComponentRegistry:
                 requires=requires,
                 backend_requirement=backend_requirement,
                 execution=execution,
+                status=status,
+                supported_domains=supported_domains,
             )
             return builder
 
@@ -110,6 +116,8 @@ class ComponentRegistry:
                         spec.backend_requirement.extra if spec.backend_requirement else None
                     ),
                     execution=spec.execution,
+                    status=spec.status,
+                    supported_domains=spec.supported_domains,
                 )
                 for name, spec in sorted(self._specs.items())
             },

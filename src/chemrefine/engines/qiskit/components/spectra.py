@@ -129,6 +129,12 @@ def _root_sector(context: Any, measure: Any, options: SpectrumOptions) -> dict[s
 @ALGORITHMS.register(
     "vqd",
     VQDOptions,
+    status="experimental",
+    supported_domains=(
+        "fixed parameterized circuits",
+        "fixed molecular particle/magnetization sector",
+        "complex Hamiltonians",
+    ),
     execution="native",
     requires=frozenset({"mapper", "estimator", "sampler", "optimizer", "circuit", "initial_point"}),
 )
@@ -296,6 +302,12 @@ def _commutator(left: Any, right: Any, options: QEOMOptions) -> Any:
 @ALGORITHMS.register(
     "qeom",
     QEOMOptions,
+    status="experimental",
+    supported_domains=(
+        "stable nonsingular response pencils",
+        "reference-relative molecular excitations",
+        "complex Hamiltonians",
+    ),
     execution="native",
     requires=frozenset({"mapper", "estimator", "optimizer", "circuit", "initial_point"}),
 )

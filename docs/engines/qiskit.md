@@ -18,6 +18,15 @@ experimental SqDRIFT, and a separate Python API for lattice dynamics. See
 combinations and limitations. Availability is explicit; the toolkit does not
 claim to implement every published quantum algorithm.
 
+`chemrefine schema` publishes each component's option schema, requirements,
+provider profile, research `status`, and `supported_domains` without loading a
+quantum SDK. `experimental` marks research implementations whose supported
+domains and numerical tests are documented; successful execution does not certify
+chemical accuracy. An empty domain list means no structured domain declaration,
+not universal applicability. The [spectra](qiskit-spectra.md),
+[sampled-state](qiskit-states.md), [local-encoding](qiskit-encodings.md) and
+[experiment](qiskit-experiment.md) pages give method-specific limitations.
+
 ## Install and run the example
 
 Install the optional stack in the current environment:

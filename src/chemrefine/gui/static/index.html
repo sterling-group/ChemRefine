@@ -257,11 +257,12 @@
               <select @change="setComponentName(index, category, $event.target.value)">
                 <template x-for="choice in componentChoices(step, category)" :key="choice">
                   <option :value="choice" :selected="choice === componentName(step, category)"
-                          x-text="choice"></option>
+                          x-text="choice + (componentCatalog(step.engine)[category]?.components[choice]?.status === 'experimental' ? ' (experimental)' : '')"></option>
                 </template>
               </select>
             </label>
             <p class="muted">Changing the component keeps its existing settings. Validate after editing.</p>
+            <p class="muted" x-text="(componentCatalog(step.engine)[category]?.components[componentName(step, category)]?.supported_domains || []).join('; ')"></p>
             <div class="fields">
               <template x-for="field in componentFields(step, category)" :key="field.key">
                 <label :title="field.doc">

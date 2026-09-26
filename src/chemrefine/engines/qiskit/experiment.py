@@ -93,6 +93,12 @@ class LatticeExperimentOptions(BaseModel):
 @EXPERIMENTS.register(
     "lattice_dynamics",
     LatticeExperimentOptions,
+    status="experimental",
+    supported_domains=(
+        "number-conserving complex lattice Hamiltonians",
+        "bounded ideal statevector trajectories",
+        "graph BKSF or open-square VC/DK local encodings",
+    ),
     backend_requirement=BackendRequirement(extra="qiskit-fermionic", import_name="qiskit_fermions"),
 )
 def lattice_experiment(*, options: LatticeExperimentOptions, **context: Any) -> ExperimentResult:

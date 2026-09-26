@@ -116,6 +116,12 @@ def krylov_circuits(request: NativeSolveRequest, options: SKQDOptions) -> tuple[
 @ALGORITHMS.register(
     "skqd",
     SKQDOptions,
+    status="experimental",
+    supported_domains=(
+        "number-conserving molecular Hamiltonians",
+        "fixed alpha/beta sector",
+        "complex integrals",
+    ),
     execution="native",
     requires=frozenset({"sampler", "initial_state", "mapper"}),
     backend_requirement=BackendRequirement(
@@ -210,6 +216,12 @@ def _reference_excitations(
 @ALGORITHMS.register(
     "extended_sqd",
     ExtendedSQDOptions,
+    status="experimental",
+    supported_domains=(
+        "sampled molecular determinants",
+        "reference singles/doubles/triples",
+        "complex explicit projection",
+    ),
     execution="native",
     requires=frozenset({"sampler"}),
     backend_requirement=BackendRequirement(

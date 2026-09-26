@@ -50,6 +50,8 @@ def test_catalog_matches_all_registered_models_and_defaults():
             assert described.options_schema == spec.options_cls.model_json_schema()
             assert described.requires == tuple(sorted(spec.requires))
             assert described.capabilities == tuple(sorted(spec.capabilities))
+            assert described.status == spec.status
+            assert described.supported_domains == spec.supported_domains
             assert described.backend_extra == (
                 spec.backend_requirement.extra if spec.backend_requirement else None
             )
@@ -59,6 +61,9 @@ def test_catalog_matches_all_registered_models_and_defaults():
     }
     assert document["engines"]["orca"]["component_catalog"] is None
     json.dumps(document)
+    for name in ("skqd", "extended_sqd", "vqd", "qeom"):
+        assert catalog["algorithm"].components[name].status == "experimental"
+        assert catalog["algorithm"].components[name].supported_domains
 
 
 def test_catalog_is_generic_and_reflects_registration(monkeypatch):
