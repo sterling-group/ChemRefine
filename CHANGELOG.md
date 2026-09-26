@@ -27,6 +27,10 @@ for the full map.
 
 ### Added
 
+- **Durable quantum provider records.** Local and array workers keep credential-free
+  request intents and returned job IDs outside scratch. Bounded, validated journals
+  retain ambiguous submissions and support explicit retrieval from archived attempts.
+
 - **Typed nested quantum inputs.** File dependencies now traverse nested validated
   models, containers and selected union branches. Bundle payload hashing uses the
   selected component's format declaration, preserving relocated cache identity

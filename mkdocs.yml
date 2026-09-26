@@ -164,6 +164,7 @@ nav:
       - Adaptive quantum solvers: engines/qiskit-adaptive.md
       - Local fermionic encodings: engines/qiskit-encodings.md
       - Reference-aware tapering: engines/qiskit-tapering.md
+      - Quantum provider recovery: engines/qiskit-recovery.md
       - Installing engines & backends: engines/installing.md
   - Running a workflow:
       - Command line: running/cli.md

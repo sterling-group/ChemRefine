@@ -295,7 +295,8 @@ class QiskitExperimentEngine:
         interpreter = _provision.launcher_for(self, ctx.step_cfg.options)
         input_word = '"$INP_NAME"' if inp_path.name == "$INP_NAME" else shlex.quote(inp_path.name)
         return RunBlock(
-            body=f"export OMP_NUM_THREADS={cores}\n"
+            body='export CHEMREFINE_PROVIDER_JOURNAL_DIR="$OUTPUT_DIR/provider_jobs"\n'
+            f"export OMP_NUM_THREADS={cores}\n"
             f"export MKL_NUM_THREADS={cores}\nexport OPENBLAS_NUM_THREADS={cores}\n"
             f"{shlex.quote(interpreter)} {input_word}"
         )

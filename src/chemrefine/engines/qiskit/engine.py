@@ -10,7 +10,7 @@ from chemrefine.config import StepConfig
 from chemrefine.engines._script import ScriptEngine
 from chemrefine.engines._script.contract import SCRIPT_OUTPUT, OutputField
 from chemrefine.engines._script.render import json_placeholder
-from chemrefine.engines.api import ComponentCategory, register
+from chemrefine.engines.api import ComponentCategory, RunBlock, register
 from chemrefine.engines.qiskit.backend import QiskitBackend
 from chemrefine.engines.qiskit.options import QiskitOptions
 from chemrefine.engines.qiskit.workflow import validate_options
@@ -87,6 +87,15 @@ class QiskitEngine(
     def output_dirs(self, ctx: StepContext) -> tuple[str, ...]:
         """Preserve reusable states, checkpoints and provider records from scratch."""
         return ("checkpoints", "provider_jobs")
+
+    def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> RunBlock:
+        """Keep provider job records in the durable directory before scratch copy-back."""
+        block = super().run_block(ctx, inp_path, out_path)
+        return replace(
+            block,
+            body='export CHEMREFINE_PROVIDER_JOURNAL_DIR="$OUTPUT_DIR/provider_jobs"\n'
+            + block.body,
+        )
 
     def build_input(
         self,
