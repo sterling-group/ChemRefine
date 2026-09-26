@@ -27,6 +27,11 @@ for the full map.
 
 ### Added
 
+- **Typed nested quantum inputs.** File dependencies now traverse nested validated
+  models, containers and selected union branches. Bundle payload hashing uses the
+  selected component's format declaration, preserving relocated cache identity
+  without letting unrelated components reinterpret a same-named file.
+
 - **Variational quantum dynamics.** VarQITE and VarQRTE use the selected estimator
   for observable, gradient and geometric-tensor circuits, including derivative
   ancillas and routed layouts. Bounded trajectories retain metric diagnostics and

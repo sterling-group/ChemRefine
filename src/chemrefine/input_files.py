@@ -138,7 +138,8 @@ def declared_input_files(step: StepConfig, engine: CalculationEngine) -> dict[st
         files[f"option:{pointer}:{portable}"] = path
     if isinstance(engine, InputFileDependencies):
         dependencies = engine.input_file_dependencies(
-            {name: path for name, path in roots.items() if path.is_file()}
+            resolved.engine_options(),
+            {name: path for name, path in roots.items() if path.is_file()},
         )
         for name, path in dependencies.items():
             if not isinstance(name, str) or not name or Path(name).is_absolute():

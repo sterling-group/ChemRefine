@@ -61,6 +61,9 @@ circuit, a real-coefficient `observable` mapping Pauli labels to weights, and a
 `sampler` component. File paths resolve relative to the configuration file; input
 bytes participate in cache identity. `max_circuit_bytes` defaults to 33554432.
 Declared bundle inputs also include their referenced NPZ payloads in cache identity.
+Typed file declarations may occur inside nested models, lists or dictionaries;
+format selection follows the selected experiment and selected union branch. A
+same-named field in another registered component does not change the input parser.
 
 ```yaml
 experiment:

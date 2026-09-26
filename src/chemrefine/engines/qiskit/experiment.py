@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, m
 
 from chemrefine.config import StepConfig
 from chemrefine.engines import _provision
+from chemrefine.engines._input_files import typed_input_references
 from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.api import BackendRequirement, ComponentCategory, RunBlock, register
 from chemrefine.engines.qiskit.bundles import (
@@ -216,24 +217,25 @@ class QiskitExperimentEngine:
         )
 
     def input_file_options(self, options: Mapping[str, Any]) -> tuple[tuple[str | int, ...], ...]:
-        """Declare file-valued fields from the selected experiment's typed schema."""
+        """Discover all nested input leaves of the selected typed experiment."""
         component = EXPERIMENTS.options_for(self.options_cls.from_raw(options).experiment)
         return tuple(
-            ("experiment", "options", name)
-            for name, field in type(component).model_fields.items()
-            if isinstance(field.json_schema_extra, dict)
-            and field.json_schema_extra.get("input_file")
-            and getattr(component, name) is not None
+            reference.location
+            for reference in typed_input_references(component, prefix=("experiment", "options"))
         )
 
-    def input_file_dependencies(self, files: Mapping[str, Path]) -> Mapping[str, Path]:
-        """Enumerate manifest payloads by declared format, never by filename guessing."""
+    def input_file_dependencies(
+        self, options: Mapping[str, Any], files: Mapping[str, Path]
+    ) -> Mapping[str, Path]:
+        """Interpret manifest payloads using only selected-component format declarations."""
+        from chemrefine.input_files import option_pointer
+
+        component = EXPERIMENTS.options_for(self.options_cls.from_raw(options).experiment)
+        references = typed_input_references(component, prefix=("experiment", "options"))
         bundle_fields = {
-            f"/experiment/options/{field_name}"
-            for name in EXPERIMENTS.names()
-            for field_name, field in EXPERIMENTS.spec(name).options_cls.model_fields.items()
-            if isinstance(field.json_schema_extra, dict)
-            and field.json_schema_extra.get("file_format") == "quantum_bundle"
+            option_pointer(reference.location)
+            for reference in references
+            if reference.file_format == "quantum_bundle"
         }
         return {
             f"{pointer.lstrip('/')}/{key}": payload

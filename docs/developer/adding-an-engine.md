@@ -209,7 +209,23 @@ engine mirrors the *shape* above without importing a line of another engine's pa
 Engines with nested file-valued options implement `InputFileOptions` to enumerate
 their dictionary-key/list-index locations. The shared resolver uses the configuration
 directory, retains the written spelling, and supplies absolute paths to workers.
-`InputFileDependencies` enumerates any manifest payloads by stable logical name.
+`InputFileDependencies.input_file_dependencies(options, files)` receives the
+resolved engine options and existing direct files keyed by JSON-pointer option
+location. It enumerates manifest payloads by stable logical name. Interpret each
+format using the selected component's declaration; a similarly named field in
+another registered component must not determine its parser.
+
+The SDK-free `typed_input_references` helper in `engines._input_files` walks
+validated nested Pydantic models, selected union branches, lists, tuples and
+string-keyed dictionaries. Mark required filenames (or optional filenames defaulting
+to `None`) with `Field(json_schema_extra={"input_file": True})`. Mark a filename
+container to declare all its non-`None` leaves. Add `file_format: quantum_bundle`
+for native JSON/NPZ bundles. Each returned reference has its full canonical option
+location and format. Declare fields inside nested models individually; unmarked
+strings remain ordinary data. Input option dictionaries use canonical model field
+names, matching `model_dump()`. The helper rejects cycles and nesting beyond 64
+option levels.
+
 The step/cache layers digest those files; engines must not import cache machinery.
 Files produced by upstream steps need not exist during preflight, but must exist
 before the consuming step prepares work.

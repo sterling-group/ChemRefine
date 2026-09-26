@@ -66,11 +66,12 @@ def test_double_factorized_worker_preserves_complex_states_and_executable_circui
     from pathlib import Path
 
     dependencies = engine.input_file_dependencies(
+        options,
         {
             "/experiment/options/integral_bundle_path": Path(
                 options["experiment"]["options"]["integral_bundle_path"]
             )
-        }
+        },
     )
     assert any(path.suffix == ".npz" for path in dependencies.values())
     assert engine.backend_requirement(options).extra == "qiskit-fermionic"

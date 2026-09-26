@@ -138,7 +138,10 @@ def test_declared_bundle_payloads_are_transitive_inputs(tmp_path, monkeypatch):
         {"experiment": {"name": "consume", "options": {"state_path": str(path)}}}
     )
     assert pointers == (("experiment", "options", "state_path"),)
-    dependencies = engine.input_file_dependencies({"/experiment/options/state_path": path})
+    dependencies = engine.input_file_dependencies(
+        {"experiment": {"name": "consume", "options": {"state_path": str(path)}}},
+        {"/experiment/options/state_path": path},
+    )
     assert len(dependencies) == 1
     assert next(iter(dependencies.values())).suffix == ".npz"
 

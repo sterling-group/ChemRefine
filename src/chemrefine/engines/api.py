@@ -312,7 +312,8 @@ class InputFileOptions(Protocol):
 class InputFileDependencies(Protocol):
     """An engine that reads payload references from declared input manifests.
 
-    The core supplies existing declared files keyed by JSON-pointer option location.
+    The core supplies resolved options and existing declared files keyed by JSON-pointer
+    option location. Interpret formats using only the selected component's typed model.
     Return all transitive payloads, keyed by stable logical names and with absolute
     paths resolved relative to their owning manifest. Missing upstream manifests are
     omitted from the input mapping: existence is a preparation-time requirement, not
@@ -320,8 +321,10 @@ class InputFileDependencies(Protocol):
     their manifest grammar; the core owns content hashing.
     """
 
-    def input_file_dependencies(self, files: Mapping[str, Path]) -> Mapping[str, Path]:
-        """Enumerate transitive input payloads without hashing or mutating them."""
+    def input_file_dependencies(
+        self, options: Mapping[str, Any], files: Mapping[str, Path]
+    ) -> Mapping[str, Path]:
+        """Interpret payloads with the selected options, without hashing or mutation."""
         ...
 
 

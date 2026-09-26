@@ -46,7 +46,7 @@ class _FileEngine(FakeEngine):
         """Declare the one nested filename, including its list index."""
         return self.locations
 
-    def input_file_dependencies(self, files):
+    def input_file_dependencies(self, options, files):
         """Read a manifest and enumerate its payload, tolerating not-yet-produced inputs."""
         result = {}
         for name, path in files.items():
@@ -240,7 +240,7 @@ def test_absent_or_wrongly_typed_locations_are_refused(tmp_path, location):
 def test_dependency_contract_refuses_unstable_names_and_ambiguous_paths(tmp_path, name, path):
     """Manifest readers return portable identities and already-anchored filesystem paths."""
     engine = _FileEngine()
-    engine.input_file_dependencies = lambda files: {name: path}
+    engine.input_file_dependencies = lambda options, files: {name: path}
     with pytest.raises(ConfigError, match="input dependency"):
         declared_input_files(_config(tmp_path).steps[0], engine)
 
