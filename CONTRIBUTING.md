@@ -206,8 +206,9 @@ pushes, so the token isn't left behind in `.git/config`.
 ## Releases
 
 Pushing a `vX.Y.Z` tag builds the package, creates a GitHub Release, and
-publishes to PyPI; a `vX.Y.Z.devN` tag publishes to TestPyPI instead
-(see `.github/workflows/publish.yml`). The version lives only in
+publishes to PyPI; a dev version (`vX.Y.Z.devN`) goes to TestPyPI instead,
+whether its tag is pushed or a release is published for it — the built
+version decides, once (see `.github/workflows/publish.yml`). The version lives only in
 `pyproject.toml`, and the publish jobs refuse a tag that doesn't match it.
 Before tagging: bump the version, retitle the Unreleased section in
 `CHANGELOG.md`, and start a fresh Unreleased section.

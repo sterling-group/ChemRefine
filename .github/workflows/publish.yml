@@ -36,6 +36,11 @@ jobs:
       attestations: write
       id-token: write
 
+    # Where this run's artifact goes, decided once, below, and read by every job that
+    # releases anything: `pypi`, `testpypi`, or `none`.
+    outputs:
+      channel: ${{ steps.route.outputs.channel }}
+
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -49,6 +54,7 @@ jobs:
       # duplicate name, so one of the two jobs fails and every publish job below, which
       # needs them both, is skipped.
       - uses: hynek/build-and-inspect-python-package@d44ca7d91762de7a7d5436ddae667c6da6d1c3df # v2.18.0
+        id: baipp
         with:
           attest-build-provenance-github: true
           upload-name-suffix: "-release"
@@ -69,10 +75,39 @@ jobs:
           path: chemrefine-sbom.cdx.json
           if-no-files-found: error
 
-  # Create a GitHub Release automatically when a non-dev tag is pushed
+      # The routing rule, in one place and read off the artifact rather than the ref. It
+      # was spelled per job as a substring of the tag name, and the published-release
+      # trigger had no spelling of it at all — so a GitHub pre-release published for a
+      # `.devN` tag went to pypi.org, permanently, past one approval click. A dev version
+      # goes to TestPyPI and anything else to PyPI, on either trigger; any other event
+      # (a manual dispatch, a tag without the `v`) releases nothing. After the SBOM so
+      # this interpreter is not the environment that SBOM describes.
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.13"
+      - name: Route the release by the version that was built
+        id: route
+        env:
+          VERSION: ${{ steps.baipp.outputs.package_version }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+        run: |
+          python -m pip install --quiet packaging
+          # Printed rather than an exit status, so a version that does not parse fails
+          # this step instead of reading as "not a dev release" and routing to PyPI.
+          by_version='import sys; from packaging.version import Version as V; print("testpypi" if V(sys.argv[1]).is_devrelease else "pypi")'
+          channel=none
+          if { [ "$EVENT_NAME" = push ] && [[ "$GITHUB_REF" == refs/tags/v* ]]; } \
+             || { [ "$EVENT_NAME" = release ] && [ "$EVENT_ACTION" = published ]; }; then
+            channel="$(python -c "$by_version" "$VERSION")"
+          fi
+          echo "version $VERSION, $EVENT_NAME at $GITHUB_REF: channel $channel"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+  # Create a GitHub Release automatically when a tag bound for PyPI is pushed
   create-release:
     name: Create GitHub Release
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, 'dev')
+    if: github.event_name == 'push' && needs.build-package.outputs.channel == 'pypi'
     runs-on: ubuntu-latest
     needs: [ci, build-package]
     permissions:
@@ -93,10 +128,10 @@ jobs:
           generate_release_notes: true
           files: chemrefine-sbom.cdx.json
 
-  # Publish dev tags (e.g. v4.0.0.dev1) to TestPyPI
+  # Publish dev versions (e.g. v4.0.0.dev1) to TestPyPI, by tag push or published release
   release-test-pypi:
     name: Publish to test.pypi.org
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && contains(github.ref, 'dev')
+    if: needs.build-package.outputs.channel == 'testpypi'
     runs-on: ubuntu-latest
     needs: [ci, build-package]
     permissions:
@@ -125,15 +160,13 @@ jobs:
           repository-url: https://test.pypi.org/legacy/
 
   # Publish to real PyPI on a non-dev tag push, or on a manually published
-  # Release. The tag-push condition is load-bearing: the Release that
-  # `create-release` makes is authored by GITHUB_TOKEN, and events created by
-  # GITHUB_TOKEN never trigger workflows — so `release: published` alone would
-  # mean automated releases silently never reach PyPI.
+  # Release of a non-dev version. The tag-push trigger is load-bearing: the
+  # Release that `create-release` makes is authored by GITHUB_TOKEN, and events
+  # created by GITHUB_TOKEN never trigger workflows — so `release: published`
+  # alone would mean automated releases silently never reach PyPI.
   release-pypi:
     name: Publish to pypi.org
-    if: >-
-      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, 'dev'))
-      || github.event.action == 'published'
+    if: needs.build-package.outputs.channel == 'pypi'
     runs-on: ubuntu-latest
     needs: [ci, build-package]
     # An upload to PyPI is permanent: a version can be yanked, but the filename can
