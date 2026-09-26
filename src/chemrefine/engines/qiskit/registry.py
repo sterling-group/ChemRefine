@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -30,6 +30,7 @@ class ComponentSpec:
     capabilities: frozenset[str] = frozenset()
     requires: frozenset[str] = frozenset()
     backend_requirement: BackendRequirement | None = None
+    execution: Literal["nature", "native"] = "nature"
 
 
 class ComponentRegistry:
@@ -47,6 +48,7 @@ class ComponentRegistry:
         capabilities: frozenset[str] = frozenset(),
         requires: frozenset[str] = frozenset(),
         backend_requirement: BackendRequirement | None = None,
+        execution: Literal["nature", "native"] = "nature",
     ) -> Callable[[ComponentBuilder], ComponentBuilder]:
         """Decorate a builder and register its complete declaration exactly once."""
         key = name.strip().lower().replace("-", "_")
@@ -60,6 +62,7 @@ class ComponentRegistry:
                 capabilities=capabilities,
                 requires=requires,
                 backend_requirement=backend_requirement,
+                execution=execution,
             )
             return builder
 

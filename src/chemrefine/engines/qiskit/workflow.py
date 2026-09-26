@@ -21,6 +21,7 @@ from chemrefine.engines.qiskit.context import (
     SolverComponents,
 )
 from chemrefine.engines.qiskit.mapping import map_problem
+from chemrefine.engines.qiskit.native import NativeSolveRequest, summarize_native
 from chemrefine.engines.qiskit.operators import OperatorPool
 from chemrefine.engines.qiskit.options import QiskitOptions
 from chemrefine.engines.qiskit.problem import PreparedProblem, prepare_pyscf_problem
@@ -213,7 +214,12 @@ def run_problem(
     resolved = options if isinstance(options, QiskitOptions) else QiskitOptions.from_raw(options)
     if operator_pool is not None and resolved.algorithm.name != "adapt_vqe":
         raise ConfigError("qiskit supplied operator_pool requires algorithm 'adapt_vqe'")
-    if initial_point is not None and resolved.algorithm.name != "vqe":
+    algorithm_spec = ALGORITHMS.spec(resolved.algorithm.name)
+    if (
+        initial_point is not None
+        and resolved.algorithm.name != "vqe"
+        and algorithm_spec.execution != "native"
+    ):
         raise ConfigError("qiskit supplied initial_point requires algorithm 'vqe'")
     if reference_energy_hartree is not None and (
         isinstance(reference_energy_hartree, bool)
@@ -222,6 +228,16 @@ def run_problem(
     ):
         raise ConfigError("qiskit reference energy must be a finite number in hartree")
     validate_component_graph(resolved, operator_pool_supplied=operator_pool is not None)
+    if algorithm_spec.execution == "native":
+        request = NativeSolveRequest(
+            prepared=prepared,
+            options=resolved,
+            initial_point=initial_point,
+            callback=callback,
+            reference_energy_hartree=reference_energy_hartree,
+        )
+        outcome = ALGORITHMS.build(resolved.algorithm, request=request)
+        return summarize_native(outcome, request, runtime_seconds=perf_counter() - started)
     context = map_problem(prepared, resolved.mapper)
     logger.info(
         "Qiskit %s starting: ansatz=%s optimizer=%s",

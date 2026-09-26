@@ -308,7 +308,7 @@ def test_reporting_rejects_missing_ground_state_energy(report_boundary, totals):
 )
 def test_real_energy_rejects_malformed_nonfinite_or_complex_values(value, message):
     with pytest.raises(ConfigError, match=message):
-        reporting._real_energy(value, "test energy")
+        reporting.real_energy(value, "test energy")
 
 
 def test_json_conversion_preserves_numeric_and_container_diagnostics():

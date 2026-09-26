@@ -91,8 +91,8 @@ def result_metadata(
     }
 
 
-def _real_energy(value: Any, label: str) -> float:
-    """Require one finite real energy instead of silently accepting solver failure."""
+def real_energy(value: Any, label: str) -> float:
+    """Validate finite real energy for both Nature and native solver reporting."""
     try:
         if isinstance(value, bool | np.bool_):
             raise ValueError("boolean energy")
@@ -125,15 +125,15 @@ def summarize_result(
     totals = getattr(result, "total_energies", None)
     if totals is None or len(totals) == 0:
         raise ConfigError("Qiskit solver returned no total ground-state energy")
-    energy = _real_energy(totals[0], "total energy")
+    energy = real_energy(totals[0], "total energy")
     electronic = getattr(result, "electronic_energies", None)
     electronic_energy = (
-        _real_energy(electronic[0], "electronic energy")
+        real_energy(electronic[0], "electronic energy")
         if electronic is not None and len(electronic)
         else None
     )
     nuclear = getattr(result, "nuclear_repulsion_energy", None)
-    nuclear = _real_energy(nuclear, "nuclear repulsion energy") if nuclear is not None else None
+    nuclear = real_energy(nuclear, "nuclear repulsion energy") if nuclear is not None else None
     raw = getattr(result, "raw_result", None)
     termination = getattr(raw, "termination_criterion", None)
     reason = getattr(termination, "name", str(termination)) if termination is not None else None
