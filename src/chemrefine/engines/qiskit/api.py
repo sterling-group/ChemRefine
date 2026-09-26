@@ -106,6 +106,11 @@ from chemrefine.engines.qiskit.resources import (
     qpe_queries,
 )
 from chemrefine.engines.qiskit.result import CircuitMetrics, QiskitRunResult
+from chemrefine.engines.qiskit.runtime import build_runtime_resource
+from chemrefine.engines.qiskit.runtime_options import (
+    RuntimeEstimatorOptions,
+    RuntimeSamplerOptions,
+)
 from chemrefine.engines.qiskit.sampling import SampleBatch, sample_circuit
 from chemrefine.engines.qiskit.shadows import (
     FermionicShadowOptions,
@@ -174,6 +179,8 @@ __all__ = [
     "RDMReconstructionOptions",
     "RDMReconstructionResult",
     "ReducedDensityMatrices",
+    "RuntimeEstimatorOptions",
+    "RuntimeSamplerOptions",
     "SampleBatch",
     "ShadowResult",
     "ShadowSetting",
@@ -190,6 +197,7 @@ __all__ = [
     "build_double_factorized_evolution",
     "build_lattice_dynamics",
     "build_local_encoding",
+    "build_runtime_resource",
     "build_spacetime_circuit",
     "build_tapering_transform",
     "chain_lattice",

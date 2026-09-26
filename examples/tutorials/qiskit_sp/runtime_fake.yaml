@@ -1,0 +1,40 @@
+template_dir: ./templates
+output_dir: ./outputs_runtime_fake
+input: ./h2.xyz
+charge: 0
+multiplicity: 1
+max_cores: 1
+dispatch: local
+steps:
+  - step: 1
+    name: offline_runtime_trex
+    engine: qiskit
+    operation: sp
+    options:
+      basis: sto-3g
+      mapper:
+        name: parity
+        options: {two_qubit_reduction: true}
+      algorithm: vqe
+      ansatz: uccsd
+      estimator:
+        name: ibm_runtime
+        options:
+          implementation: executor
+          fake_backend: FakeManilaV2
+          initial_layout: [3, 4]
+          default_shots: 2048
+          seed_simulator: 7
+          seed_transpiler: 7
+          trex: true
+          twirling:
+            enable_measure: true
+            num_randomizations: 8
+            shots_per_randomization: 256
+          max_jobs: 100
+          max_nominal_shots: 1000000
+      optimizer:
+        name: spsa
+        options: {maxiter: 10, learning_rate: 0.1, perturbation: 0.1, seed: 7}
+      initial_point: zeros
+      cores: 1

@@ -27,6 +27,11 @@ for the full map.
 
 ### Added
 
+- **IBM Runtime providers.** Registered estimators and samplers support layouts,
+  job/batch/session execution, dynamical decoupling, twirling, TREX, ZNE and PEC.
+  Credential-free journals support explicit retrieval; offline provider tests
+  distinguish signed mitigation estimates from physical counts and shot budgets.
+
 - **Quantum resource reports.** General Pauli-LCU/QPE budgets, domain-validated
   double-factorized and THC estimates, and explicit surface-code/factory assumptions
   produce versioned artifacts. Resource providers use a separate Python 3.12 worker.

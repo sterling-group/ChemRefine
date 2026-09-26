@@ -217,7 +217,9 @@ The four built-in estimators all run locally and need no cloud credentials:
 `aer_statevector`, and finite-shot `aer_shots`. The first two use `[qiskit]`;
 the Aer estimators require `[qiskit-aer]`. ChemRefine resolves their managed
 backend names accordingly, so a mixed pipeline may provision both `qiskit` and
-`qiskit-aer`. IBM Runtime and quantum-hardware submission are not included.
+`qiskit-aer`. The optional `runtime` estimator and sampler use
+`qiskit-runtime`; see [Runtime execution](qiskit-runtime.md) for explicit
+provider selection and credential-free recovery.
 
 Aer GPU wheels are a separate Linux distribution and require a compatible CUDA
 stack. Build a managed or custom backend environment in which
