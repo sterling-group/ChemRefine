@@ -27,6 +27,10 @@ for the full map.
 
 ### Added
 
+- **Portable quantum preparations.** Bound logical circuits retain parameters,
+  mapping, particle sectors, active Hamiltonians, energy offsets and provenance in
+  integrity-checked JSON/NPZ artifacts, using QPY compatible with Qiskit 1.4.
+
 - **Shared quantum provenance.** Molecular results and experiment artifacts record
   consumed component graphs, selected provider dependency versions, interpreter and
   platform facts, and sanitized source identifiers through one collector.

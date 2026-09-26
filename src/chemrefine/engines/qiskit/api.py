@@ -5,6 +5,13 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from chemrefine.engines.qiskit.circuit_io import (
+    BoundCircuit,
+    CircuitDescription,
+    bound_circuit,
+    load_circuit,
+    save_circuit,
+)
 from chemrefine.engines.qiskit.cutting import (
     CuttingOptions,
     CuttingPlan,
@@ -147,7 +154,9 @@ from chemrefine.engines.qiskit.workflow import EvaluationCallback, run_job, run_
 
 __all__ = [
     "ActiveSpaceOptions",
+    "BoundCircuit",
     "CheckedCircuit",
+    "CircuitDescription",
     "CircuitMetrics",
     "CuttingOptions",
     "CuttingPlan",
@@ -201,6 +210,7 @@ __all__ = [
     "WalkOracleCost",
     "WireCut",
     "Z2TaperingOptions",
+    "bound_circuit",
     "build_double_factorized_evolution",
     "build_lattice_dynamics",
     "build_local_encoding",
@@ -219,6 +229,7 @@ __all__ = [
     "estimate_surface_code",
     "execute_cutting",
     "lattice_encoding_qubits",
+    "load_circuit",
     "load_integrals",
     "load_states",
     "load_thc_factors",
@@ -247,6 +258,7 @@ __all__ = [
     "run_problem",
     "run_vqe",
     "sample_circuit",
+    "save_circuit",
     "save_integrals",
     "save_states",
     "save_thc_factors",
