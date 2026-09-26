@@ -27,6 +27,11 @@ for the full map.
 
 ### Added
 
+- **Distinct fermionic shadow ensembles.** Quantum experiments acquire complex
+  fixed-number orbital Haar shadows or signed Majorana-Clifford shadows with their
+  respective inverse channels. Native datasets preserve settings, physical counts,
+  complex RDMs and uncertainty grouped by randomized setting for provider-free replay.
+
 - **Grouped quantum measurement.** YAML and Python workflows support ungrouped,
   qubit-wise commuting and general commuting Pauli measurements. Independent pilot
   allocation, joint-shot covariance, physical counts, input-file cache identity and

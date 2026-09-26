@@ -94,6 +94,14 @@ signed Z images and shot allocations make uncertainty reconstruction reproducibl
 The same implementation is available as `measure_observable` in the public Python
 API. The complete `measurement.yaml` example includes a small QPY input.
 
+## Fermionic shadow datasets
+
+The experimental `fermionic_shadows` component acquires either fixed-N complex
+orbital Haar shadows or signed Majorana-Clifford shadows. It retains settings,
+physical counts, complex RDMs and uncertainty clustered by randomized setting.
+See [fermionic shadows](qiskit-shadows.md) for the distinct channel domains,
+controls and runnable examples.
+
 ## Outputs and recovery
 
 The product is `stepN/experiment/artifact.json`, accompanied by its named NPZ

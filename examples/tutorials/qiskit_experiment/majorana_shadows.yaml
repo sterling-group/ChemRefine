@@ -1,0 +1,27 @@
+input: molecule.xyz
+template_dir: templates
+output_dir: outputs_majorana_shadows
+charge: 0
+multiplicity: 1
+max_cores: 2
+dispatch: local
+steps:
+  - step: 1
+    engine: qiskit-experiment
+    options:
+      cores: 2
+      experiment:
+        name: fermionic_shadows
+        options:
+          circuit_path: one_particle.qpy
+          max_circuit_bytes: 33554432
+          sampler: {name: statevector, options: {seed: 7}}
+          shadows:
+            ensemble: majorana_clifford
+            num_settings: 200
+            shots_per_setting: 8
+            max_order: 1
+            postselect_particles: false
+            max_total_shots: 10000
+            max_memory_mb: 512
+            seed: 13
