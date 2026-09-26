@@ -968,8 +968,9 @@ def test_a_structure_file_opens_on_its_own_with_no_workflow_at_all(client: Any, 
     assert dropped.get_json()["path"] == "POSCAR"
 
     # Neither is a 400 that says what to send, not a traceback.
-    assert _post(client, "/api/structure-file", {}).status_code == 400
-    assert "path" in _post(client, "/api/structure-file", {}).get_json()["error"]
+    neither = _post(client, "/api/structure-file", {})
+    assert neither.status_code == 400
+    assert neither.get_json() == {"error": "send either a path, or a name and text", "exit_code": 2}
     # And a library refusal keeps the documented shape, like every other endpoint here.
     gone = _post(client, "/api/structure-file", {"path": str(tmp_path / "nope.xyz")})
     assert gone.status_code == 400
@@ -1477,6 +1478,84 @@ def test_chat_reset_forgets_the_conversation(client: Any, chat_env: pytest.Monke
     assert reset["reset"] is True
     _post(client, "/api/agent/chat", {"message": "two"})
     assert seen[0] == seen[1]  # the second conversation started fresh
+
+
+def test_a_reset_that_is_not_a_boolean_forgets_nothing(client: Any, chat_env: pytest.MonkeyPatch):
+    """``{"reset": "false"}`` was read by truthiness and wiped the conversation.
+
+    ``overwrite`` on ``/api/scaffold`` and every verdict in ``approvals`` were already typed;
+    ``reset`` was the wire boolean read untyped, because each field had its own hand-written
+    read. The body is a declared model now, so no field can be read any other way.
+    """
+    from pydantic_ai.messages import ModelResponse, TextPart
+    from pydantic_ai.models.function import FunctionModel
+
+    seen: list[int] = []
+
+    def script(messages: Any, info: Any) -> ModelResponse:
+        seen.append(len(messages))
+        return ModelResponse(parts=[TextPart("ok")])
+
+    _inject_model(chat_env, FunctionModel(script))
+    _post(client, "/api/agent/chat", {"message": "one"})
+    refused = _post(client, "/api/agent/chat", {"reset": "false"})
+    assert refused.status_code == 400
+    assert refused.get_json()["error"] == "'reset' must be a boolean, not str"
+    _post(client, "/api/agent/chat", {"message": "two"})
+    assert seen[1] > seen[0]  # the conversation carried on
+
+
+@pytest.mark.parametrize(
+    ("body", "said"),
+    [
+        ({"approvals": [["call-1", True]]}, "'approvals' must be a JSON object, not list"),
+        ({}, "request body is missing 'message'"),
+        ({"message": None}, "request body is missing 'message'"),
+    ],
+    ids=["approvals-as-a-list", "nothing-to-say", "a-null-message"],
+)
+def test_a_chat_body_that_says_nothing_usable_is_refused_by_name(
+    client: Any, chat_env: pytest.MonkeyPatch, body: dict[str, Any], said: str
+):
+    """Refused before a model is built, so the answer names the field, not the endpoint."""
+    from pydantic_ai.models.test import TestModel
+
+    _inject_model(chat_env, TestModel(call_tools=[]))
+    refused = _post(client, "/api/agent/chat", body)
+    assert refused.status_code == 400
+    assert refused.get_json() == {"error": said, "exit_code": 2, "pending": None}
+
+
+def test_a_count_too_long_to_be_one_is_a_400_not_a_500(client: Any, tmp_path: Path):
+    """``int`` itself refuses a decimal string past ``sys.get_int_max_str_digits()``.
+
+    ``isdecimal`` passed it, and the conversion's ``ValueError`` left the handler as a
+    logged-traceback 500 — on the body's counts and on the Structure pane's ``mode_index``.
+    """
+    huge = "9" * 5000
+    config = tmp_path / "input.yaml"
+    config.write_text(yaml.safe_dump({"steps": [{"step": 1, "engine": "fake"}]}), "utf-8")
+    posted = _post(client, "/api/results", {"config_path": str(config), "limit": huge})
+    got = _get(client, f"/api/structure?config_path={config}&step=1&mode_index={huge}")
+    for response in (posted, got):
+        assert response.status_code == 400
+        assert "5000 digits" in response.get_json()["error"]
+
+
+def test_a_request_complaint_with_no_wire_word_keeps_pydantics_own():
+    """The formatter names the shapes this wire has; anything else keeps pydantic's words."""
+    from pydantic import ValidationError
+
+    from chemrefine.gui import app as gui_app
+
+    class Odd(gui_app._Request):
+        """A field of a type no endpoint declares, to reach the fallback."""
+
+        ratio: float
+
+    with pytest.raises(ValidationError) as caught:
+        Odd.model_validate({"ratio": "half"})
+    assert str(gui_app._wire_refusal(caught.value)) == "'ratio': Input should be a valid number"
 
 
 def test_overlapping_chat_turns_contend_on_a_lock_not_on_the_state(

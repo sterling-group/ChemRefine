@@ -459,6 +459,12 @@ for the full map.
 
 ### Fixed
 
+- **The builder reads every request field by its declared type.** The chat panel's
+  `reset` was read by truthiness, so `{"reset": "false"}` wiped the conversation and any
+  pending approvals, where `overwrite` and the approval verdicts were already typed. Each
+  endpoint's body is now declared once, field by field, and a value of the wrong JSON type
+  is the usual 400 naming the field. A count too long for Python's integer conversion is
+  that 400 too, rather than a 500.
 - **A CHGNet or ORB training template cannot name a different start point than the step.**
   The driver refused a template `device` or `seed` that disagreed with the step, but not
   the two keys training actually starts from: a template `weights_path` for a step with

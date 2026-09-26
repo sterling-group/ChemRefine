@@ -30,10 +30,11 @@ import secrets
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, TypeVar
 
 import yaml
 from flask import Flask, jsonify, request, send_from_directory
+from pydantic import BaseModel, BeforeValidator, ConfigDict, ValidationError, ValidationInfo
 from werkzeug.exceptions import HTTPException
 
 from chemrefine import agent_tools, introspect, io
@@ -66,9 +67,9 @@ def _wire_int(value: Any, key: str) -> int:
     line that raised 500). Everything else — ``7a``, ``3.5``, ``null``, a JSON
     boolean — raises :class:`ConfigError`, which :func:`surface` turns into the
     documented ``{error, exit_code}`` 400 like every other unusable input to this app.
-    Absence is the caller's business, decided before the call the way ``_step_key``'s
-    callers decide it (``payload.get(key, default)``, or the ``not in (None, "")``
-    sentinel for a field whose callee wants ``None``).
+    Absence is the caller's business, decided before the call: a request model's default
+    (:data:`_WireInt`, :data:`_WireIntOrUnset`), or the ``not in (None, "")`` sentinel a
+    GET uses for a field whose callee wants ``None``.
     """
     # The bool test precedes the int test it would otherwise vanish under: bool is an
     # int subclass, and a JSON `true` silently meaning 1 is not a contract anyone wrote.
@@ -77,7 +78,12 @@ def _wire_int(value: Any, key: str) -> int:
     text = str(value)
     digits = text.removeprefix("-")
     if isinstance(value, str) and digits and digits.isdecimal():
-        return int(text)
+        try:
+            return int(text)
+        except ValueError:
+            # Past `sys.get_int_max_str_digits()` `int` refuses the conversion itself —
+            # an escaped ValueError, and so a 500, for a count no request needs.
+            raise ConfigError(f"{key} has {len(digits)} digits; no count is that long") from None
     raise ConfigError(f"{key} {value!r} is not a whole number")
 
 
@@ -87,7 +93,7 @@ def _body() -> dict[str, Any]:
     ``force=True`` parses a bare list, a string or ``null`` as readily as an object, and a
     handler that then reads ``.get`` off it raises ``AttributeError`` out of the handler —
     a logged-traceback 500 for what is the client's mistake. The shape check used to live
-    inside :func:`_field`, which closed it only for the endpoints whose *first* read went
+    inside one field reader, which closed it only for the endpoints whose *first* read went
     through that helper; the four whose first read was a ``.get`` (``/api/run``,
     ``/api/agent/check``, ``/api/agent/chat``, ``/api/structure-file``) crashed on ``[]``.
     The one place every POST handler starts is where the shape is decided, before any read.
@@ -98,49 +104,181 @@ def _body() -> dict[str, Any]:
     return payload
 
 
-_KIND_NAMES: dict[type, str] = {str: "string", dict: "JSON object", bool: "boolean"}
+def _whole(value: Any, info: ValidationInfo) -> Any:
+    """:func:`_wire_int` as a request field's own reading — the field names itself."""
+    return _wire_int(value, str(info.field_name))
+
+
+def _whole_or_unset(value: Any, info: ValidationInfo) -> Any:
+    """:func:`_whole`, with absent, ``null`` and ``""`` all meaning "unset" (``None``)."""
+    return None if value is None or value == "" else _wire_int(value, str(info.field_name))
+
+
+_WireInt = Annotated[int, BeforeValidator(_whole)]
+"""A count off the wire: a JSON int or a decimal string, refused by :func:`_wire_int`."""
+
+_WireIntOrUnset = Annotated[int | None, BeforeValidator(_whole_or_unset)]
+"""A count whose callee reads ``None`` as "resolve it yourself" (``/api/run``'s budgets)."""
+
+
+class _Request(BaseModel):
+    """One endpoint's JSON body, declared: each field's name, JSON type and default.
+
+    Strict, because the wire's types are the contract: a lax model reads the string
+    ``"false"`` as ``False`` and ``1`` as a string, which is the guessing this layer exists
+    to refuse. ``/api/agent/chat`` once read ``reset`` by truthiness while ``/api/scaffold``
+    typed ``overwrite`` — each field was read by a hand-written helper call, and the one
+    that was not typed was the one that wiped a conversation on ``{"reset": "false"}``.
+    Declared per endpoint, a field cannot be read untyped. Keys a body carries beyond its
+    model are ignored: the page sends its session's ``config_path`` wherever it chats.
+    """
+
+    model_config = ConfigDict(strict=True, frozen=True)
+
+
+RequestT = TypeVar("RequestT", bound=_Request)
+
+_WIRE_TYPES: dict[str, str] = {
+    "string_type": "string",
+    "bool_type": "boolean",
+    "dict_type": "JSON object",
+}
 """How a refusal names the shape a field must have — the wire's words, not Python's."""
 
 
-def _typed(value: Any, key: str, kind: type) -> Any:
-    """``value`` if it is a ``kind``, else the 400 naming the field and the shape it needs.
+def _wire_refusal(error: ValidationError) -> ConfigError:
+    """A request model's first complaint as the 400 that names the field and what it needs.
 
-    The type contract used to hold for the counts (:func:`_wire_int`) and the step
-    selectors and for nothing else: a JSON number, list or object in a *string* field went
-    straight into ``yaml.safe_load``, ``Path()`` or ``.encode`` and raised the stdlib's
-    ``TypeError``/``AttributeError`` out of the handler — a logged-traceback 500 for the
-    client's mistake, at fifteen sites. ``kind=object`` accepts every JSON value, for the
-    fields whose shape is judged downstream (a step selector, the raw config mapping).
+    ``'approvals.call-1' must be a boolean, not str`` / ``request body is missing 'path'``
+    — one sentence a person or an agent can act on, where pydantic's own report is a block
+    written for a developer. A complaint with no wire word falls back to pydantic's message.
     """
-    if not isinstance(value, kind):
-        expected = _KIND_NAMES.get(kind, kind.__name__)
-        raise ConfigError(f"{key!r} must be a {expected}, not {type(value).__name__}")
-    return value
+    first = error.errors()[0]
+    field = ".".join(str(part) for part in first["loc"])
+    if first["type"] == "missing":
+        return ConfigError(f"request body is missing {field!r}")
+    expected = _WIRE_TYPES.get(first["type"])
+    if expected is None:
+        return ConfigError(f"{field!r}: {first['msg']}")
+    return ConfigError(f"{field!r} must be a {expected}, not {type(first['input']).__name__}")
 
 
-def _field(payload: dict[str, Any], key: str, kind: type = str) -> Any:
-    """One field a JSON body must carry, of the shape it must have, or the 400 that names it.
+def _read(model: type[RequestT], payload: dict[str, Any]) -> RequestT:
+    """``payload`` as ``model`` declares it, or the :class:`ConfigError` that names the field.
 
-    The page's own JavaScript sends every key its endpoint reads, so a body without one
-    is a hand-made request — and it used to be a ``KeyError`` that :func:`surface`
-    re-raised as a logged-traceback 500, pinned by a test as "a genuine bug must stay a
-    loud bug". The newer endpoints on this app took the other side for the same class of
-    input: ``/api/structure-file`` answers ``{}`` with a 400 that says what to send, and
-    :func:`_wire_int` refuses a malformed count the same way. One rule now: a missing
-    field, or one of the wrong JSON type (:func:`_typed`), is the client's mistake,
-    refused as a :class:`ConfigError` in the documented ``{error, exit_code}`` shape. The
-    body is already an object — :func:`_body` refused every other shape before the
-    handler read anything.
+    Takes the payload rather than reading the body, so an endpoint that answers a bad
+    field as something other than a 400 (``/api/agent/check``'s finding) can still refuse
+    a body that is not an object at all, as every POST here does.
     """
-    if key not in payload:
-        raise ConfigError(f"request body is missing {key!r}")
-    return _typed(payload[key], key, kind)
+    try:
+        return model.model_validate(payload)
+    except ValidationError as e:
+        raise _wire_refusal(e) from e
+
+
+class _ValidateRequest(_Request):
+    """``/api/validate``: the editor's text, and the directory its relative paths mean."""
+
+    yaml_text: str
+    base_dir: str | None = None
+
+
+class _YamlRequest(_Request):
+    """``/api/yaml``: the form's raw mapping — its shape is the emitter's to judge."""
+
+    config: Any
+
+
+class _ParseRequest(_Request):
+    """``/api/parse``: YAML text, for the form."""
+
+    yaml_text: str
+
+
+class _SaveRequest(_Request):
+    """``/api/save``: where the editor's text goes, and the text."""
+
+    path: str
+    yaml_text: str
+
+
+class _ConfigRequest(_Request):
+    """A request about one saved config — ``/api/summary``, and the base of the rest."""
+
+    config_path: str
+
+
+class _ScaffoldRequest(_ConfigRequest):
+    """``/api/scaffold``: ``overwrite`` replaces every existing template with a starter."""
+
+    overwrite: bool = False
+
+
+class _TemplateWriteRequest(_ConfigRequest):
+    """``POST /api/template``: one step's template text; the step is the config's to find."""
+
+    step: Any
+    text: str
+
+
+class _StructureFileRequest(_Request):
+    """``/api/structure-file``: a ``path`` on this machine, or a dropped file's name and text."""
+
+    path: str | None = None
+    name: str | None = None
+    text: str | None = None
+
+
+class _StatusRequest(_ConfigRequest):
+    """``/api/status``: how much of the driver log to tail."""
+
+    log_tail_lines: _WireInt = 40
+
+
+class _FailuresRequest(_ConfigRequest):
+    """``/api/failures``: the ledger, optionally of one step (a selector the config judges)."""
+
+    step: Any = None
+
+
+class _ResultsRequest(_FailuresRequest):
+    """``/api/results``: one page of ``steps.csv``."""
+
+    limit: _WireInt = 20
+    offset: _WireInt = 0
+
+
+class _RunRequest(_ConfigRequest):
+    """``/api/run``: the action, its step target, and the two budgets a child's argv carries."""
+
+    action: str = "run"
+    target: Any = None
+    max_cores: _WireIntOrUnset = None
+    max_gpus: _WireIntOrUnset = None
+
+
+class _ProviderSettings(_Request):
+    """The chat panel's settings — every one may be blank, falling back as the CLI's does."""
+
+    provider: str | None = None
+    model: str | None = None
+    base_url: str | None = None
+    api_key: str | None = None
+
+
+class _ChatRequest(_ProviderSettings):
+    """``/api/agent/chat``: a reset, a message, or the verdicts that resume a paused run."""
+
+    reset: bool = False
+    message: str | None = None
+    approvals: dict[str, bool] | None = None
+    config_path: str | None = None
 
 
 def _arg(key: str) -> str:
     """One query argument a GET must carry, or the 400 that names it.
 
-    :func:`_field`'s rule for the other half of the API. A query argument is always a
+    :func:`_read`'s rule for the other half of the API. A query argument is always a
     string, so presence is the whole contract. Read bare, an absent one is Werkzeug's
     ``BadRequestKeyError`` — an :class:`HTTPException` that :func:`surface` passes through
     as an HTML page, which the page's fetch cannot read for a reason.
@@ -148,17 +286,6 @@ def _arg(key: str) -> str:
     if key not in request.args:
         raise ConfigError(f"request is missing the {key!r} query argument")
     return request.args[key]
-
-
-def _optional(payload: dict[str, Any], key: str, kind: type = str) -> Any:
-    """A field a body may omit — ``None`` when absent or null, else typed like :func:`_field`.
-
-    Absence stays absent, because every callee here reads ``None`` as "unset" (a base
-    directory to resolve against, a provider preset's own URL); what must not pass is a
-    present value of the wrong shape, which is the same 500 :func:`_field` closes.
-    """
-    value = payload.get(key)
-    return None if value is None else _typed(value, key, kind)
 
 
 def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
@@ -263,12 +390,8 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
     @app.post("/api/validate")
     def validate() -> Any:
         """The structured validation report for the current editor text."""
-        payload = _body()
-        return jsonify(
-            agent_tools.validate_config(
-                _field(payload, "yaml_text"), _optional(payload, "base_dir")
-            )
-        )
+        body = _read(_ValidateRequest, _body())
+        return jsonify(agent_tools.validate_config(body.yaml_text, body.base_dir))
 
     @app.post("/api/yaml")
     def to_yaml() -> Any:
@@ -279,18 +402,16 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         reads like every shipped example regardless of the order the user clicked
         things together in.
         """
-        payload = _body()
-        text = yaml.safe_dump(
-            _canonical_order(_field(payload, "config", object)), sort_keys=False, allow_unicode=True
-        )
+        body = _read(_YamlRequest, _body())
+        text = yaml.safe_dump(_canonical_order(body.config), sort_keys=False, allow_unicode=True)
         return jsonify({"yaml_text": text})
 
     @app.post("/api/parse")
     def parse() -> Any:
         """YAML text → the raw mapping the form edits (or the reason it cannot)."""
-        payload = _body()
+        body = _read(_ParseRequest, _body())
         try:
-            raw = yaml.safe_load(_field(payload, "yaml_text"))
+            raw = yaml.safe_load(body.yaml_text)
         except yaml.YAMLError as e:
             return jsonify({"error": f"malformed YAML: {e}"}), 400
         if not isinstance(raw, dict):
@@ -329,10 +450,10 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         write: a kill mid-save must not truncate the config a run is pointed at. An
         unwritable destination is a plain 400, like every other bad input here.
         """
-        payload = _body()
-        destination = agent_tools.expand_user_path(_field(payload, "path"))
+        body = _read(_SaveRequest, _body())
+        destination = agent_tools.expand_user_path(body.path)
         try:
-            atomic_write(destination, _field(payload, "yaml_text").encode("utf-8"))
+            atomic_write(destination, body.yaml_text.encode("utf-8"))
         except OSError as e:
             return jsonify({"error": f"cannot write {destination}: {e}"}), 400
         return jsonify({"path": str(destination)})
@@ -341,19 +462,13 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
     def scaffold() -> Any:
         """Fill the saved config's template gaps with starters (kept/written report).
 
-        ``overwrite`` is the one boolean on the wire and is typed like every other field
-        — a JSON ``true``/``false``, never Python truthiness. Coerced with ``bool()``, the
-        string ``"false"`` is true, and true here replaces every existing template with a
-        starter: the one request on this app that can destroy a user's edits must refuse
-        a value it cannot read rather than guess.
+        ``overwrite`` is typed like every other field — a JSON ``true``/``false``, never
+        Python truthiness. Coerced with ``bool()``, the string ``"false"`` is true, and true
+        here replaces every existing template with a starter: the one request on this app
+        that can destroy a user's edits must refuse a value it cannot read rather than guess.
         """
-        payload = _body()
-        return jsonify(
-            agent_tools.scaffold_templates(
-                _field(payload, "config_path"),
-                overwrite=_typed(payload.get("overwrite", False), "overwrite", bool),
-            )
-        )
+        body = _read(_ScaffoldRequest, _body())
+        return jsonify(agent_tools.scaffold_templates(body.config_path, overwrite=body.overwrite))
 
     @app.get("/api/template")
     def read_template() -> Any:
@@ -363,13 +478,9 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
     @app.post("/api/template")
     def write_template() -> Any:
         """Save the inline editor's template text."""
-        payload = _body()
+        body = _read(_TemplateWriteRequest, _body())
         return jsonify(
-            agent_tools.write_template(
-                _field(payload, "config_path"),
-                _step_key(_field(payload, "step", object)),
-                _field(payload, "text"),
-            )
+            agent_tools.write_template(body.config_path, _step_key(body.step), body.text)
         )
 
     @app.get("/api/structure")
@@ -425,55 +536,40 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         and conflating "show me this molecule" with "open this project" is how one of them
         ends up doing the other by accident.
         """
-        payload = _body()
-        path = _optional(payload, "path")
-        if path:
-            return jsonify(agent_tools.read_structure_file(path))
-        if "text" not in payload:
-            return jsonify({"error": "send either a path, or a name and text"}), 400
-        return jsonify(
-            agent_tools.read_structure_text(
-                _optional(payload, "name") or "structure", _field(payload, "text")
-            )
-        )
+        body = _read(_StructureFileRequest, _body())
+        if body.path:
+            return jsonify(agent_tools.read_structure_file(body.path))
+        if body.text is None:
+            raise ConfigError("send either a path, or a name and text")
+        return jsonify(agent_tools.read_structure_text(body.name or "structure", body.text))
 
     @app.post("/api/summary")
     def summary() -> Any:
         """The dry-run-style execution summary for a saved config."""
-        payload = _body()
-        return jsonify(agent_tools.summarize_config(_field(payload, "config_path")))
+        body = _read(_ConfigRequest, _body())
+        return jsonify(agent_tools.summarize_config(body.config_path))
 
     @app.post("/api/status")
     def status() -> Any:
         """Where the tree stands — lock holder, per-step progress, log tail."""
-        payload = _body()
-        return jsonify(
-            agent_tools.run_status(
-                _field(payload, "config_path"),
-                log_tail_lines=_wire_int(payload.get("log_tail_lines", 40), "log_tail_lines"),
-            )
-        )
+        body = _read(_StatusRequest, _body())
+        return jsonify(agent_tools.run_status(body.config_path, log_tail_lines=body.log_tail_lines))
 
     @app.post("/api/results")
     def results() -> Any:
         """A paginated slice of steps.csv for the dashboard's results table."""
-        payload = _body()
+        body = _read(_ResultsRequest, _body())
         return jsonify(
             agent_tools.get_results(
-                _field(payload, "config_path"),
-                step=payload.get("step"),
-                limit=_wire_int(payload.get("limit", 20), "limit"),
-                offset=_wire_int(payload.get("offset", 0), "offset"),
+                body.config_path, step=body.step, limit=body.limit, offset=body.offset
             )
         )
 
     @app.post("/api/failures")
     def failures() -> Any:
         """The failure ledger plus the suggested recovery action."""
-        payload = _body()
-        return jsonify(
-            agent_tools.get_failures(_field(payload, "config_path"), step=payload.get("step"))
-        )
+        body = _read(_FailuresRequest, _body())
+        return jsonify(agent_tools.get_failures(body.config_path, step=body.step))
 
     # One user, one browser, one conversation: the chat state lives on the app instance
     # (history = PydanticAI's own message list; pending = the suspended run awaiting the
@@ -562,16 +658,17 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
 
         payload = _body()
         try:
-            # The four reads sit inside the try for the reason the resolve does: a
+            # The settings are read inside the try for the reason the resolve is: a
             # provider, model, URL or key of the wrong JSON type is a verdict about the
             # panel's settings, answered as a finding like every other unusable value
             # here. A key that cannot be a header is `resolve`'s refusal too — judged on
             # the resolved key, so a blank box means what it means at every entry point.
+            settings = _read(_ProviderSettings, payload)
             resolved = providers.ProviderConfig.resolve(
-                _optional(payload, "provider") or "custom",
-                model=_optional(payload, "model"),
-                base_url=_optional(payload, "base_url"),
-                api_key=_optional(payload, "api_key"),
+                settings.provider or "custom",
+                model=settings.model,
+                base_url=settings.base_url,
+                api_key=settings.api_key,
             )
         except ChemRefineError as e:
             return jsonify({"ok": False, "findings": [str(e)]})
@@ -608,17 +705,24 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         from chemrefine.agent.harness import build_web_agent, run_turn
         from chemrefine.agent.providers import ProviderConfig
 
-        payload = _body()
-        if payload.get("reset"):
-            chat_state["history"] = None
-            chat_state["pending"] = None
-            return jsonify({"reply": None, "pending": None, "reset": True})
-        resolved = ProviderConfig.resolve(
-            _optional(payload, "provider") or "custom",
-            model=_optional(payload, "model"),
-            base_url=_optional(payload, "base_url"),
-            api_key=_optional(payload, "api_key"),
-        )
+        try:
+            # Everything decidable before a model is asked, refused with what is still
+            # pending: nothing here touches the suspended run, so its cards still answer it.
+            body = _read(_ChatRequest, _body())
+            if body.reset:
+                chat_state["history"] = None
+                chat_state["pending"] = None
+                return jsonify({"reply": None, "pending": None, "reset": True})
+            if not body.approvals and body.message is None:
+                raise ConfigError("request body is missing 'message'")
+            resolved = ProviderConfig.resolve(
+                body.provider or "custom",
+                model=body.model,
+                base_url=body.base_url,
+                api_key=body.api_key,
+            )
+        except ChemRefineError as e:
+            return jsonify({**_refusal(e), "pending": _still_pending()}), 400
         try:
             # Inside the try, not above it: `Agent("gpt-5-mini")` raises `UserError` at
             # construction for a name PydanticAI cannot place, and that is neither an
@@ -632,19 +736,14 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
             # falls back rather than becoming a config_path of "".
             agent = build_web_agent(
                 resolved.build_model(),
-                config_path=payload.get("config_path")
+                config_path=body.config_path
                 or (str(config_path) if config_path is not None else None),
             )
-            if payload.get("approvals"):
+            if body.approvals:
                 suspended = chat_state["pending"]
                 if suspended is None:
                     return jsonify({"error": "no suspended run to resume", "pending": None}), 400
-                verdicts = DeferredToolResults(
-                    approvals={
-                        k: _typed(v, f"approvals.{k}", bool)
-                        for k, v in _field(payload, "approvals", dict).items()
-                    }
-                )
+                verdicts = DeferredToolResults(approvals=dict(body.approvals))
                 # Taken, not read: the approved calls run before the model is asked anything,
                 # so once the resume starts, a failure — the endpoint dying on the next
                 # request, a refusal the model cannot get past — leaves no run for these
@@ -654,9 +753,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
                     agent, message_history=suspended.messages, deferred_tool_results=verdicts
                 )
             else:
-                result = run_turn(
-                    agent, _field(payload, "message"), message_history=chat_state["history"]
-                )
+                result = run_turn(agent, body.message, message_history=chat_state["history"])
         except ChemRefineError as e:
             # The documented {error, exit_code} shape, for a refusal the model could not
             # get past (run_turn ends the turn on it) and for a request this panel refuses —
@@ -690,28 +787,20 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         ``{error, exit_code: 10}`` shape; the browser confirmed the action already,
         and the child outlives this server exactly as it outlives an agent session.
 
-        The two budgets are wire numbers and go through :func:`_wire_int` like the
-        rest of them.
+        The two budgets are wire numbers (:data:`_WireIntOrUnset`) like the rest of them, and
+        the two that reach a *child process*: ``start_run`` renders them onto its argv,
+        where one Typer cannot read is exit 2 into a log nobody is watching — after this
+        call has already returned a pid and a log path. Unset stays unset, because the
+        callee reads ``None`` as "resolve it yourself".
         """
-        payload = _body()
-        # These are the two numbers that reach a *child process*: `start_run` renders
-        # them onto its argv, where one Typer cannot read is exit 2 into a log nobody is
-        # watching — after this call has already returned a pid and a log path. That is
-        # the failure `start_run`'s own docstring promises to refuse here rather than
-        # there, and the guard the rest of this app's numbers already have.
-        #
-        # The `not in (None, "")` sentinel rather than `payload.get(key, default)`: the
-        # callee's "unset" is `None` (auto-resolve), so absence has to stay absent — the
-        # same shape `/api/structure` uses for `mode_index`.
-        cores = payload.get("max_cores")
-        gpus = payload.get("max_gpus")
+        body = _read(_RunRequest, _body())
         return jsonify(
             agent_tools.start_run(
-                _field(payload, "config_path"),
-                action=payload.get("action", "run"),
-                target=payload.get("target"),
-                max_cores=_wire_int(cores, "max_cores") if cores not in (None, "") else None,
-                max_gpus=_wire_int(gpus, "max_gpus") if gpus not in (None, "") else None,
+                body.config_path,
+                action=body.action,
+                target=body.target,
+                max_cores=body.max_cores,
+                max_gpus=body.max_gpus,
             )
         )
 
