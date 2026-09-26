@@ -907,3 +907,38 @@ def test_a_structure_from_no_known_parent_sorts_last_and_keeps_its_order():
     ordered = lifecycle._in_parent_order([orphan, b, stranger, a], parents)
 
     assert [s.id for s in ordered] == ["a", "b", "z", "y-0"]
+
+
+def test_best_backfills_are_stored_in_parent_order_whatever_order_they_failed_in(
+    tmp_path: Path,
+):
+    """``best`` stores ``0, 1, 2, 3`` whether the failures arrive as ``1, 3`` or ``3, 1``.
+
+    The failure list is in the recovery path's order — manifest order on a full run or a
+    ``rebuild-cache``, not-retried then retried after :func:`lifecycle.retry_unconverged`
+    — and the backfills are what ``best`` adds to the survivors. Stored in that order, a
+    resume and a later ``rebuild-cache`` of the same step disagreed about where they sit,
+    and the next step's key, composed from the row keys in order, moved with no result
+    changed: an ordinary step re-parsed, an ``mlip-train`` step retrained on a new split.
+    """
+    from chemrefine import cache
+    from chemrefine.engines.api import get_engine
+
+    parents = PipelineState(structures=tuple(Structure(id=i, atoms=Atoms("H")) for i in "0123"))
+    step_cfg = StepConfig(step=1, engine="fake", operation="opt_sp", on_failure="best")
+    after = StepConfig(step=2, engine="fake", operation="opt_sp")
+    unconverged = Failure("1", FailureKind.NOT_CONVERGED, None)
+    missing = Failure("3", FailureKind.MISSING_OUTPUT, None)
+
+    def stored(failures: list[Failure], where: str) -> tuple[list[str], str]:
+        ctx = replace(_ctx(tmp_path / where), step_cfg=step_cfg, prev_state=parents)
+        ctx.step_dir.mkdir()
+        key = cache.StepKey.of(step_cfg, parents.structures, None)
+        successes = [parents.structures[2], parents.structures[0]]
+        results = lifecycle.finalize(get_engine("fake"), ctx, step_cfg, key, successes, failures)
+        downstream = cache.StepKey.of(after, results.structures, None)
+        return [s.id for s in results.structures], downstream.fingerprint
+
+    manifest_order = stored([unconverged, missing], "rebuild")
+    assert manifest_order[0] == ["0", "1", "2", "3"]
+    assert stored([missing, unconverged], "resume") == manifest_order

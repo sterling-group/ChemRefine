@@ -848,7 +848,7 @@ def _backfill_for(failure: Failure, prev_by_id: dict[str, Structure]) -> Structu
     )
 
 
-def _in_parent_order(structures: list[Structure], parents: PipelineState) -> list[Structure]:
+def _in_parent_order(structures: Iterable[Structure], parents: PipelineState) -> list[Structure]:
     """``structures`` in the order of the parents they came from — the order a cache holds.
 
     The next step's key is composed from the row keys *in order*
@@ -896,9 +896,10 @@ def finalize(
 ) -> StepResults:
     """Resolve a step's failures and persist the result — the one way a step ends.
 
-    Every path that finishes a step does the same things in the same order: put the
-    survivors in their parents' order (:func:`_in_parent_order`), apply ``on_failure``
-    (:func:`apply_failure_policy`), then write the cache (:func:`chemrefine.cache.save`).
+    Every path that finishes a step does the same things in the same order: apply
+    ``on_failure`` (:func:`apply_failure_policy`), put everything it keeps — survivors and
+    ``best`` backfills alike — in their parents' order (:func:`_in_parent_order`), then write
+    the cache (:func:`chemrefine.cache.save`).
     Four callers need it — the full run, ``rebuild-cache``, the failed-job resubmit, and the
     NMS re-attempt — and how they *reach* this point differs (some retry unconverged
     structures first, some run NMS, some filter afterwards and some return the raw
@@ -909,8 +910,8 @@ def finalize(
     silent re-run or a silent reuse much later. The key is a value
     (:class:`chemrefine.cache.StepKey`), so this takes the one its caller already built.
     """
-    successes = _in_parent_order(successes, ctx.prev_state)
-    results = apply_failure_policy(successes, failures, ctx, step_cfg)
+    policed = apply_failure_policy(successes, failures, ctx, step_cfg)
+    results = StepResults(structures=tuple(_in_parent_order(policed.structures, ctx.prev_state)))
     cache.save(
         step_cfg=step_cfg,
         key=key,

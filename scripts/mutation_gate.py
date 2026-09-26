@@ -491,6 +491,24 @@ _BUNDLED: tuple[Mutation, ...] = (
         "computed",
     ),
     Mutation(
+        id="finalize-orders-what-it-stores",
+        path="src/chemrefine/lifecycle.py",
+        old=(
+            "    policed = apply_failure_policy(successes, failures, ctx, step_cfg)\n"
+            "    results = StepResults(structures=tuple(_in_parent_order(policed.structures, "
+            "ctx.prev_state)))\n"
+        ),
+        new=(
+            "    results = apply_failure_policy(\n"
+            "        _in_parent_order(successes, ctx.prev_state), failures, ctx, step_cfg\n"
+            "    )\n"
+        ),
+        tests="tests/test_lifecycle.py",
+        breaks="`on_failure: best` stores its backfills after the survivors, in whatever "
+        "order the recovery path failed them — a resume and a rebuild-cache of one step "
+        "re-key every step after it, and an mlip-train step retrains on a new split",
+    ),
+    Mutation(
         id="orca-scan-block-bound",
         path="src/chemrefine/engines/orca/inspect.py",
         old='_GEOM_BLOCK_RE = re.compile(r"%geom\\b([^%*!]*)", re.IGNORECASE)',
