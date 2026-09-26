@@ -52,6 +52,7 @@ def test_native_restores_each_energy_offset_once(nuclear):
     assert result.nuclear_repulsion_energy_hartree == nuclear
     assert result.energy_error_hartree == result.energy_hartree + 5
     assert result.converged is None
+    assert result.active_space is not None
     assert result.active_space["active_orbitals"] == [1, 3]
     assert result.as_dict()["metadata"]["energy_convention"] == (
         "electronic" if nuclear is None else "total"

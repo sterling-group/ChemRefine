@@ -195,7 +195,8 @@ def _recording_class(name: str, *, num_parameters: int = 3) -> type:
 def _fake_qiskit_modules(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     """Install the Qiskit names imported lazily by every built-in factory."""
 
-    class QuantumCircuit(_recording_class("QuantumCircuit", num_parameters=0)):
+    # The test factory deliberately creates SDK-shaped recording classes dynamically.
+    class QuantumCircuit(_recording_class("QuantumCircuit", num_parameters=0)):  # type: ignore[misc]
         """Record public composition operations used by functional circuit builders."""
 
         def compose(self, other: Any, *, inplace: bool) -> None:

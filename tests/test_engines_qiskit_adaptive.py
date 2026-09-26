@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 import pytest
@@ -71,7 +72,7 @@ def options(algorithm="tetris_adapt", ansatz="uccsd", **extra):
     ],
 )
 def test_h2_adaptive_energy_offsets_convergence_and_circuit_cost(h2, algorithm, ansatz, cx):
-    records = []
+    records: list[dict[str, Any]] = []
     result = run_problem(h2, options=options(algorithm, ansatz), callback=records.append)
     assert result.energy_hartree == pytest.approx(-1.1373060357534, abs=2e-10)
     assert result.converged
@@ -100,6 +101,7 @@ def test_tapered_actual_reference_pool_and_observables(h2, ansatz):
     algorithm = "tetris_adapt" if ansatz == "uccsd" else "ceo_adapt"
     result = run_problem(h2, options=options(algorithm, ansatz, mapper="z2_tapered"))
     assert result.energy_hartree == pytest.approx(-1.1373060357534, abs=2e-10)
+    assert result.num_qubits is not None
     assert result.num_qubits < 4
     assert result.metadata["solver"]["final_sector"]["ParticleNumber"] == pytest.approx(2)
 

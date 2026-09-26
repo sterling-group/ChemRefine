@@ -5,6 +5,7 @@ from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 import pytest
@@ -84,7 +85,7 @@ def _options(algorithm, **extra):
 
 def test_qeom_h2_all_roots_match_exact_sector_with_offsets_and_triplet(h2):
     """The response pencil recovers the full four-state H2 sector, including S=1."""
-    records = []
+    records: list[dict[str, Any]] = []
     result = run_problem(
         h2,
         options=_options({"name": "qeom", "options": {"target_root": 2}}),
@@ -94,6 +95,7 @@ def test_qeom_h2_all_roots_match_exact_sector_with_offsets_and_triplet(h2):
     indices = [5, 6, 9, 10]  # one alpha and one beta in alpha-then-beta JW ordering
     exact = np.linalg.eigvalsh(matrix[np.ix_(indices, indices)]) + sum(h2.energy_offsets.values())
     np.testing.assert_allclose(result.root_energies_hartree, exact, atol=1e-8)
+    assert result.root_energies_hartree is not None
     assert result.energy_hartree == result.root_energies_hartree[2]
     solver = result.metadata["solver"]
     np.testing.assert_allclose(
@@ -139,6 +141,7 @@ def test_vqd_complex_spectrum_uses_selected_sampler_and_physical_energies(comple
     )
     result = run_problem(prepared, options=options)
     np.testing.assert_allclose(result.root_energies_hartree, np.linalg.eigvalsh(h), atol=2e-3)
+    assert result.root_energies_hartree is not None
     assert result.energy_hartree == result.root_energies_hartree[1]
     assert result.metadata["solver"]["root_overlap_matrix"][0][1] < 0.01
     assert result.metadata["solver"]["root_sectors"][1]["ParticleNumber"] == pytest.approx(1)
@@ -503,4 +506,5 @@ def test_qnspsa_runs_through_standard_vqe_component_graph(complex_problem):
     )
     assert result.energy_hartree < -1.07
     assert result.optimizer == "qnspsa"
+    assert result.energy_evaluation_count is not None
     assert result.energy_evaluation_count >= 40

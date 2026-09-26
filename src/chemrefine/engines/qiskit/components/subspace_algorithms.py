@@ -229,14 +229,14 @@ def _checked_counts(
     return (dict(counts) if options.configuration_recovery else valid), metadata
 
 
-def _check_sampling_memory(
+def check_sampling_memory(
     request: NativeSolveRequest,
     data: FermionicIntegrals | SpinSector,
     options: SubspaceOptions,
     *,
     total_shots: int,
 ) -> None:
-    """Check dense simulation and retained-shot estimates before any circuit executes."""
+    """Guard SQD and Krylov dense simulation and shot storage before execution."""
     if options.projection == "cartesian" and data.norb > 63:
         raise ConfigError("the PySCF SQD adapter supports at most 63 spatial orbitals")
     if options.symmetrize_spin and data.nelec[0] != data.nelec[1]:
@@ -483,7 +483,7 @@ def _retained_state(state: Any, norb: int) -> Any:
     return DeterminantState(2 * norb, determinants, np.asarray(state.amplitudes).ravel())
 
 
-def _solve_explicit_samples(
+def solve_explicit_samples(
     request: NativeSolveRequest,
     counts: dict[str, int],
     options: SubspaceOptions,
@@ -491,7 +491,7 @@ def _solve_explicit_samples(
     *,
     ansatz: str | None = None,
 ) -> NativeOutcome:
-    """Recover and diagonalize explicit determinants without a spin-factor closure."""
+    """Project SQD and Krylov samples without a Cartesian expansion of spin sectors."""
     from pyscf.lib import num_threads, with_omp_threads
     from qiskit_addon_sqd.configuration_recovery import recover_configurations
 
@@ -718,7 +718,7 @@ def build_sqd(*, options: SQDOptions, request: NativeSolveRequest) -> NativeOutc
         if request.initial_point is not None:
             raise ConfigError("SQD supplied counts cannot be combined with an initial point")
         if options.projection == "explicit":
-            return _solve_explicit_samples(
+            return solve_explicit_samples(
                 request, options.counts, options, {"source": "supplied_counts"}
             )
         return _solve_samples(
@@ -730,7 +730,7 @@ def build_sqd(*, options: SQDOptions, request: NativeSolveRequest) -> NativeOutc
         )
     if options.shots > options.max_total_shots:
         raise ConfigError("SQD shots exceed max_total_shots")
-    _check_sampling_memory(request, data, options, total_shots=options.shots)
+    check_sampling_memory(request, data, options, total_shots=options.shots)
     context = map_problem(request.prepared, request.options.mapper)
     reference = INITIAL_STATES.build(request.options.initial_state, context=context)
     ansatz = ANSATZE.build(request.options.ansatz, context=context, initial_state=reference)
@@ -764,7 +764,7 @@ def build_sqd(*, options: SQDOptions, request: NativeSolveRequest) -> NativeOutc
         parameter_values=values.tolist(),
     )
     if options.projection == "explicit":
-        return _solve_explicit_samples(
+        return solve_explicit_samples(
             request,
             batch.counts,
             options,
@@ -809,7 +809,7 @@ def build_sqdrift(*, options: SqDRIFTOptions, request: NativeSolveRequest) -> Na
     if request.initial_point is not None:
         raise ConfigError("SqDRIFT does not accept variational initial parameters")
     data = _chemistry(request)
-    _check_sampling_memory(
+    check_sampling_memory(
         request,
         data,
         options,
@@ -834,7 +834,7 @@ def build_sqdrift(*, options: SqDRIFTOptions, request: NativeSolveRequest) -> Na
         counts.update(batch.counts)
         records.append({**info, "shots": batch.shots, "sampling": batch.metadata})
     if options.projection == "explicit":
-        return _solve_explicit_samples(
+        return solve_explicit_samples(
             request,
             dict(counts),
             options,

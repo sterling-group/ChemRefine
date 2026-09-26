@@ -4,6 +4,7 @@ import json
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 import pytest
@@ -12,9 +13,9 @@ from pydantic import ValidationError
 from chemrefine.engines.qiskit.components.subspace_algorithms import (
     SQDOptions,
     SqDRIFTOptions,
-    _check_sampling_memory,
     _checked_counts,
     _spin_diagnostics,
+    check_sampling_memory,
     validate_subspace_options,
 )
 from chemrefine.engines.qiskit.options import QiskitOptions
@@ -193,7 +194,7 @@ def test_dense_sampling_budget_is_checked_before_execution():
     request = SimpleNamespace(options=QiskitOptions.from_raw({"algorithm": "sqd"}))
     data = SimpleNamespace(norb=20, nelec=(1, 1))
     with pytest.raises(ConfigError, match="sampling storage"):
-        _check_sampling_memory(request, data, SQDOptions(), total_shots=10)
+        check_sampling_memory(request, data, SQDOptions(), total_shots=10)
 
 
 @pytest.mark.parametrize(
@@ -209,7 +210,7 @@ def test_dense_sampling_budget_is_checked_before_execution():
 def test_aer_sampling_memory_respects_simulation_representation(sampler):
     """Density matrices need a different storage estimate from pure statevectors."""
     request = SimpleNamespace(options=QiskitOptions(algorithm="sqd", sampler=sampler))
-    _check_sampling_memory(
+    check_sampling_memory(
         request, SimpleNamespace(norb=2, nelec=(1, 1)), SQDOptions(), total_shots=10
     )
 
@@ -224,7 +225,7 @@ def test_aer_sampling_memory_respects_simulation_representation(sampler):
 def test_sampling_rejects_unsupported_dimensions_and_spin(data, options, message):
     """Sampling does not start when the downstream SCI kernel cannot accept it."""
     with pytest.raises(ConfigError, match=message):
-        _check_sampling_memory(
+        check_sampling_memory(
             SimpleNamespace(options=QiskitOptions(algorithm="sqd")), data, options, total_shots=10
         )
 
@@ -267,7 +268,7 @@ def test_fixed_parameters_use_the_declared_input_channel(h2_prepared, api_parame
     """Both supported channels sample the supplied vector without implicit optimization."""
     from chemrefine.engines.qiskit.api import run_problem
 
-    opts = {"shots": 32, "num_batches": 1, "max_iterations": 1}
+    opts: dict[str, Any] = {"shots": 32, "num_batches": 1, "max_iterations": 1}
     if not api_parameters:
         opts["parameter_values"] = [0, 0, 0]
     result = run_problem(

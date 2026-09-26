@@ -209,7 +209,10 @@ def reconstruct_rdms(
     if not np.any(one_weights) and not np.any(two_weights):
         raise ConfigError("RDM reconstruction requires at least one measured entry")
     try:
-        import cvxpy as cp
+        from importlib import import_module
+
+        # CVXPY exposes dynamically assembled atoms across supported provider versions.
+        cp: Any = import_module("cvxpy")
     except ImportError as exc:
         raise ConfigError(
             "RDM reconstruction requires the optional cvxpy and SCS providers"
@@ -247,7 +250,7 @@ def reconstruct_rdms(
     for index, (p, q) in enumerate(pairs):
         embedding[p * m + q, index] = 1
         embedding[q * m + p, index] = -1
-    full_two = (
+    full_two: Any = (
         embedding @ particle @ embedding.T
         if particle is not None
         else cp.Constant(np.zeros((m * m, m * m)))
@@ -294,7 +297,7 @@ def reconstruct_rdms(
         np.sqrt(two_weights.reshape(m * m, m * m)), full_two - two_data.reshape(m * m, m * m)
     )
     if options.loss == "frobenius":
-        fit = sum(
+        fit: Any = sum(
             cp.sum_squares(part(error))
             for part in (cp.real, cp.imag)
             for error in (first_error, second_error)
@@ -326,8 +329,8 @@ def reconstruct_rdms(
         raise ConfigError(
             f"RDM reconstruction did not return an accepted solution: {problem.status}"
         )
-    reconstructed_one = np.asarray(one.value, dtype=complex)
-    reconstructed_two = np.asarray(full_two.value, dtype=complex).reshape((m,) * 4)
+    reconstructed_one = np.asarray(one.value, dtype=np.complex128)
+    reconstructed_two = np.asarray(full_two.value, dtype=np.complex128).reshape((m,) * 4)
     reconstructed = ReducedDensityMatrices(reconstructed_one, reconstructed_two)
     checks = rdm_constraint_diagnostics(reconstructed, options.num_particles)
     tolerance = options.feasibility_tolerance

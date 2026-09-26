@@ -58,10 +58,10 @@ class EfficientSU2Options(BaseModel):
     flatten: bool = True
 
 
-def _reference_excitation_permutation(
+def reference_excitation_permutation(
     context: ElectronicStructureContext, initial_state: object | None = None
 ) -> tuple[int, ...]:
-    """Map canonical occupied/virtual blocks onto the supplied reference determinant."""
+    """Map occupied/virtual blocks for both ansatz pools and excited-state operators."""
     permutation: list[int] = []
     for spin, occupations in enumerate(reference_occupations(context, initial_state)):
         offset = spin * context.num_spatial_orbitals
@@ -96,7 +96,7 @@ def build_uccsd(
         preserve_spin=options.preserve_spin,
         include_imaginary=options.include_imaginary,
     )
-    permutation = _reference_excitation_permutation(context, initial_state)
+    permutation = reference_excitation_permutation(context, initial_state)
     if not options.generalized and permutation != tuple(range(2 * context.num_spatial_orbitals)):
         from qiskit_nature.second_q.circuit.library.ansatzes.utils import (
             generate_fermionic_excitations,

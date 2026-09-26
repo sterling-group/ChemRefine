@@ -318,6 +318,8 @@ def test_flow_refinement_converges_with_code_constraints_and_reports_particle_dr
         )
         for steps in (1, 4)
     ]
+    assert results[0].exact_state_fidelity is not None
+    assert results[1].exact_state_fidelity is not None
     assert 1 - results[1].exact_state_fidelity < 1 - results[0].exact_state_fidelity
     for result in results:
         assert result.metadata["code_constraint_expectations"] == pytest.approx(
@@ -404,7 +406,7 @@ def test_custom_gauge_and_measurement_basis_validation():
     """Custom encodings expose gauge fixing and refuse silent computational-basis decoding."""
     from dataclasses import replace
 
-    from chemrefine.engines.qiskit.encodings import _independent, _pauli
+    from chemrefine.engines.qiskit.encodings import independent_paulis, pauli_product
 
     encoding = validate_encoding([SparsePauliOp("IX")], {})
     with pytest.raises(ConfigError, match="basis change"):
@@ -412,10 +414,10 @@ def test_custom_gauge_and_measurement_basis_validation():
     with pytest.raises(ConfigError, match="unexplained reference"):
         replace(encoding, gauge_fixers=()).prepare_reference([])
     with pytest.raises(ConfigError, match="too many"):
-        _independent([SparsePauliOp("X"), SparsePauliOp("Z")], 1)
+        independent_paulis([SparsePauliOp("X"), SparsePauliOp("Z")], 1)
     for vertices, edges, options, message in [
         ([], {}, {}, "no modes"),
-        ([_pauli(0)], {}, {}, "at least one"),
+        ([pauli_product(0)], {}, {}, "at least one"),
         ([SparsePauliOp("Z")], {(0, 0): SparsePauliOp("X")}, {}, "ordered endpoints"),
         ([SparsePauliOp("Z")], {}, {"max_generators": 0}, "max_generators"),
         ([SparsePauliOp("I")], {}, {"component_parities": (2,)}, "one parity"),

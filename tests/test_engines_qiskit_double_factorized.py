@@ -225,7 +225,7 @@ def test_double_factorized_options_forbid_unknown_fields_and_nonphysical_order()
             DoubleFactorizedOptions.model_validate(patch)
     options = DoubleFactorizedOptions()
     with pytest.raises(ValidationError):
-        options.steps = 2
+        options.__setattr__("steps", 2)
 
 
 def test_reported_factorization_bound_limits_independent_full_fock_generator_error():

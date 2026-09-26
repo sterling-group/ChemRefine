@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from chemrefine.engines.qiskit.encodings import _rref, _vector
+from chemrefine.engines.qiskit.encodings import binary_rref, pauli_binary_vector
 from chemrefine.errors import ConfigError
 
 
@@ -63,9 +63,9 @@ def commuting_evolution(operator: Any, time: float, *, diagonalizer: Any = None)
         selected = []
         vectors: list[np.ndarray] = []
         for pauli in operator.paulis:
-            vector = _vector(SparsePauliOp(pauli)).astype(np.uint8)
+            vector = pauli_binary_vector(SparsePauliOp(pauli)).astype(np.uint8)
             candidate = [*vectors, vector]
-            rank = len(_rref(np.array(candidate))[1])
+            rank = len(binary_rref(np.array(candidate))[1])
             if rank > len(vectors):
                 selected.append(pauli.to_label())
                 vectors.append(vector)

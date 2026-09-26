@@ -64,6 +64,7 @@ def test_spinful_hubbard_maps_have_same_physical_dynamics(mapping):
     assert sum(result.mode_occupations[:2]) == pytest.approx(1, abs=1e-11)
     assert sum(result.mode_occupations[2:]) == pytest.approx(1, abs=1e-11)
     assert result.metadata["initial_energy"] == pytest.approx(2.5)
+    assert result.exact_state_fidelity is not None
     assert result.exact_state_fidelity > 1 - 1e-8
     payload = result.as_dict(include_statevector=True)
     assert json.loads(json.dumps(payload, allow_nan=False)) == payload
@@ -86,7 +87,10 @@ def test_suzuki_orders_and_step_refinement_reduce_real_trotter_error():
         )
         for order, steps in [(1, 1), (2, 1), (4, 1), (2, 8)]
     ]
-    errors = [1 - result.exact_state_fidelity for result in results]
+    errors = []
+    for result in results:
+        assert result.exact_state_fidelity is not None
+        errors.append(1 - result.exact_state_fidelity)
     assert errors[0] > errors[1] > errors[2] > 0
     assert errors[3] < errors[1]
 

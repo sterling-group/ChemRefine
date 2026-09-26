@@ -6,6 +6,7 @@ import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 import pytest
@@ -98,7 +99,7 @@ def test_barriers_do_not_force_artificial_connectivity():
     assert [instruction.operation.name for instruction in clean] == ["h", "x"]
 
 
-def budget_inputs():
+def budget_inputs() -> tuple[dict[str, Any], list[Any], dict[str, int]]:
     """Small algebraic QPD data tests allocation math independently of the provider."""
     measurement = SimpleNamespace(name="qpd_measure")
     identity = SimpleNamespace(name="id")
@@ -240,11 +241,12 @@ def test_planning_timeout_and_failure_are_config_errors(monkeypatch):
 
     def timed_out(command, **kwargs):
         """Inject a timeout at the process boundary."""
+        assert kwargs["timeout"] == 1.25
         raise subprocess.TimeoutExpired(command, 0.01)
 
     monkeypatch.setattr(subprocess, "run", timed_out)
     with pytest.raises(ConfigError, match="worker_timeout"):
-        plan_cutting(QuantumCircuit(1), {"Z": 1})
+        plan_cutting(QuantumCircuit(1), {"Z": 1}, CuttingOptions(worker_timeout_seconds=1.25))
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=1))
     with pytest.raises(ConfigError, match="planner failed"):
         plan_cutting(QuantumCircuit(1), {"Z": 1})
@@ -356,6 +358,7 @@ def test_public_plan_execution_cannot_bypass_count_limits(monkeypatch, shape):
     from dataclasses import replace
 
     original = physical_plan()
+    circuits: dict[str, Any]
     changes = {"shots": 1, "max_subexperiments": 2000}
     if shape == "empty":
         circuits = {"p0": []}

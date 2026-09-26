@@ -13,7 +13,12 @@ from typing import Any, Literal, Self
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
-from chemrefine.engines.qiskit.encodings import _independent, _nullspace, _rref, _vector
+from chemrefine.engines.qiskit.encodings import (
+    binary_nullspace,
+    binary_rref,
+    independent_paulis,
+    pauli_binary_vector,
+)
 from chemrefine.errors import ConfigError
 
 
@@ -195,7 +200,7 @@ class TaperingTransform:
             self.project_transformed(SparsePauliOp(pauli), check_commutes=False)
             for pauli in full.to_labels(mode="S")
         ]
-        constraints = _independent(generators, self.num_reduced_qubits)
+        constraints = independent_paulis(generators, self.num_reduced_qubits)
         labels = [
             ("-" if operator.coeffs[0].real < 0 else "+") + operator.paulis[0].to_label()
             for operator in constraints
@@ -235,7 +240,7 @@ def build_tapering_transform(
             hamiltonian.paulis.evolve(reference_clifford, frame="h"), coeffs=hamiltonian.coeffs
         ).simplify(atol=0, rtol=0)
         nonzero = transformed.coeffs != 0
-        basis = _nullspace(transformed.paulis.x[nonzero].astype(np.uint8))
+        basis = binary_nullspace(transformed.paulis.x[nonzero].astype(np.uint8))
         candidates = len(basis)
         for vector in basis[:allowed]:
             pauli = Pauli((vector.astype(bool), np.zeros(width, dtype=bool)))
@@ -258,7 +263,7 @@ def build_tapering_transform(
                 ) from exc
             if operator.num_qubits != width:
                 raise ConfigError("symmetry generator has the wrong qubit width")
-            _vector(operator)
+            pauli_binary_vector(operator)
             generators.append(operator)
     if reference_clifford is None:
         _state_budget(width, options.max_statevector_bytes)
@@ -268,7 +273,7 @@ def build_tapering_transform(
     constraints = []
     sectors = []
     for index, generator in enumerate(generators):
-        vector = _vector(generator)
+        vector = pauli_binary_vector(generator)
         if not np.any(vector):
             raise ConfigError("identity is not an independent tapering generator")
         if not np.all(generator.paulis.commutes(hamiltonian.paulis)):
@@ -288,7 +293,7 @@ def build_tapering_transform(
         constraints.append(eigenvalue * generator)
         sectors.append(eigenvalue)
     if generators and len(
-        _rref(np.array([_vector(operator) for operator in generators]))[1]
+        binary_rref(np.array([pauli_binary_vector(operator) for operator in generators]))[1]
     ) != len(generators):
         raise ConfigError("symmetry generators must be independent")
     signed_labels = [

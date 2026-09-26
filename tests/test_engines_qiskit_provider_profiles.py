@@ -22,7 +22,8 @@ PROFILES = tuple(sorted(BACKEND_PROFILES.names()))
 def installed_closure(extra: str, python_version: str = "3.12") -> tuple[set[str], set[str]]:
     """Follow marked self-references exactly as an extras-aware installer would."""
     environment = default_environment()
-    environment.update(python_version=python_version, python_full_version=f"{python_version}.0")
+    environment["python_version"] = python_version
+    environment["python_full_version"] = f"{python_version}.0"
     visited: set[str] = set()
     distributions: set[str] = set()
 

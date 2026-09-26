@@ -10,7 +10,7 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from chemrefine.engines.qiskit.assembly import assemble_components, validated_initial_point
-from chemrefine.engines.qiskit.components.ansatze import _reference_excitation_permutation
+from chemrefine.engines.qiskit.components.ansatze import reference_excitation_permutation
 from chemrefine.engines.qiskit.mapping import map_problem
 from chemrefine.engines.qiskit.native import NativeOutcome, NativeSolveRequest
 from chemrefine.engines.qiskit.registry import ALGORITHMS
@@ -265,7 +265,7 @@ def _response_basis(
     )
     if not 1 <= count <= options.max_excitations:
         raise ConfigError("qEOM requires 1..max_excitations reference-relative excitations")
-    permutation = _reference_excitation_permutation(context, initial_state)
+    permutation = reference_excitation_permutation(context, initial_state)
     excitations = [
         (tuple(permutation[i] for i in occupied), tuple(permutation[i] for i in virtual))
         for rank in options.excitation_ranks

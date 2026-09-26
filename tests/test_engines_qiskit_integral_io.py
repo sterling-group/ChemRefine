@@ -1,6 +1,7 @@
 """Portable typed integral bundles preserve complex and unrestricted scientific data."""
 
 from dataclasses import fields
+from typing import Any
 
 import numpy as np
 import pytest
@@ -20,7 +21,7 @@ def _data(unrestricted=False):
     one = np.array([[-1, 0.2j], [-0.2j, 0.3]])
     two = np.zeros((2,) * 4)
     two[0, 0, 0, 0] = 0.7
-    kwargs = {}
+    kwargs: dict[str, Any] = {}
     if unrestricted:
         kwargs.update(
             one_body_integrals_beta=one * 0.8,

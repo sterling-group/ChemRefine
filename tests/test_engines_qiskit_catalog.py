@@ -8,6 +8,7 @@ import subprocess
 import sys
 
 import pytest
+from fake_engine import FakeEngine
 
 from chemrefine.engines.api import (
     ENGINES,
@@ -70,7 +71,7 @@ def test_catalog_is_generic_and_reflects_registration(monkeypatch):
     """Introspection detects the capability rather than naming Qiskit specially."""
     category = ComponentCategory("demo", {"demo": ComponentDescriptor({"type": "object"})})
 
-    class CatalogEngine(type(get_engine("fake"))):
+    class CatalogEngine(FakeEngine):
         """A third-party engine with its own nested selection."""
 
         def component_catalog(self):

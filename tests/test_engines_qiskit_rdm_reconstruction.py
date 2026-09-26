@@ -1,6 +1,6 @@
 """Independent complex CAR and bounded convex reconstruction regressions."""
 
-import builtins
+import sys
 from itertools import combinations, product
 
 import numpy as np
@@ -127,15 +127,8 @@ def test_invalid_entry_weights_fail_before_solver_import(weights):
 
 
 def test_missing_convex_solver_provider_has_actionable_error(monkeypatch):
-    original = builtins.__import__
-
-    def without_cvxpy(name, *args, **kwargs):
-        """Simulate the lean worker rather than importing any optional solver."""
-        if name == "cvxpy":
-            raise ImportError("optional provider absent")
-        return original(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", without_cvxpy)
+    # Python treats a None module entry as an unavailable optional distribution.
+    monkeypatch.setitem(sys.modules, "cvxpy", None)
     with pytest.raises(ConfigError, match="optional cvxpy and SCS"):
         reconstruct_rdms(_complex_state().rdms(), RDMReconstructionOptions(num_particles=2))
 
@@ -146,7 +139,7 @@ def test_reconstruction_options_are_frozen_strict_and_finite():
         with pytest.raises(ValidationError):
             RDMReconstructionOptions.model_validate({"num_particles": 2, **patch})
     with pytest.raises(ValidationError):
-        options.num_particles = 1
+        options.__setattr__("num_particles", 1)
 
 
 def test_reconstruction_artifact_preflight_is_sdk_free_and_never_solves_bad_inputs(tmp_path):
@@ -165,6 +158,7 @@ def test_reconstruction_artifact_preflight_is_sdk_free_and_never_solves_bad_inpu
             max_output_bytes=10000,
         )
     raw = DeterminantState(2, (1,), [1]).rdms()
+    assert raw.two_body is not None
     path = write_bundle(
         tmp_path / "valid.json",
         kind="measured_rdms",

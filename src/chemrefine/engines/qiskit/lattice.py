@@ -440,7 +440,7 @@ def _build_local_dynamics(
     """Build a code-preserving local-encoding product formula with explicit gauge fixing."""
     from qiskit_fermions.operators import FermionOperator
 
-    from chemrefine.engines.qiskit.encodings import _pauli, build_local_encoding
+    from chemrefine.engines.qiskit.encodings import build_local_encoding, pauli_product
     from chemrefine.engines.qiskit.flow import commuting_evolution
 
     configuration = options.encoding or LocalEncodingOptions(name="bksf_graph")
@@ -456,7 +456,7 @@ def _build_local_dynamics(
         model.num_modes, support, options=configuration, occupied_modes=occupied
     )
     physical = _lattice_blocks(model)
-    hamiltonian = FermionOperator.zero()
+    hamiltonian: Any = FermionOperator.zero()
     for block in physical:
         hamiltonian += block
     mapped_hamiltonian = encoding.map_operator(hamiltonian)
@@ -484,7 +484,9 @@ def _build_local_dynamics(
         for _ in range(options.steps):
             for index, interval in sequence:
                 circuit.compose(evolutions[index, interval], inplace=True)
-    numbers = tuple((_pauli(encoding.num_qubits) - vertex) / 2 for vertex in encoding.vertices)
+    numbers = tuple(
+        (pauli_product(encoding.num_qubits) - vertex) / 2 for vertex in encoding.vertices
+    )
     constraints = (*encoding.stabilizers, *encoding.gauge_fixers)
     metadata = {
         "model": model.model_dump(mode="json"),

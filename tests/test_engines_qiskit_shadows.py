@@ -118,10 +118,12 @@ def test_orbital_two_rdm_inverse_matches_lows_independent_diagonal_pair_formula(
             weights = [([1, -1.5, 6][sum(bool(bits & (1 << i)) for i in pair)]) for pair in pairs]
             expected = (exterior.conj().T @ (np.array(weights)[:, None] * exterior)).T
             actual = orbital_shadow_snapshot(setting, bits, num_particles=2).two_body
+            assert actual is not None
             extracted = np.array([[actual[*p, *q] for q in pairs] for p in pairs])
             np.testing.assert_allclose(extracted, expected, atol=1e-12)
     full = orbital_shadow_snapshot(ShadowSetting("orbital_haar", np.eye(3)), 7, num_particles=3)
     np.testing.assert_allclose(full.one_body, np.eye(3))
+    assert full.two_body is not None
     assert full.two_body[0, 1, 0, 1] == 1
 
 
@@ -132,7 +134,7 @@ def test_majorana_inverse_matches_complete_matching_design_for_complex_correlate
     vector = np.zeros(16, dtype=complex)
     vector[[5, 10]] = state.amplitudes
     settings, counts = [], []
-    populations = set()
+    populations: set[int] = set()
     for pairs in _matchings(tuple(range(8))):
         permutation = tuple(mode for pair in pairs for mode in pair)
         parity = (-1) ** sum(
@@ -166,6 +168,7 @@ def test_majorana_inverse_matches_complete_matching_design_for_complex_correlate
     )
     estimate = result.observable(observable)
     assert estimate["mean"] == pytest.approx(state.expectation(observable))
+    assert estimate["standard_error"] is not None
     assert estimate["standard_error"] > 0
 
 
@@ -190,6 +193,7 @@ def test_particle_postselection_is_explicit_and_majorana_accepts_every_populatio
     for bits in (0, 1):
         snapshot = majorana_shadow_snapshot(ShadowSetting("majorana_clifford", np.eye(2)), bits)
         assert snapshot.one_body[0, 0] == bits
+        assert snapshot.two_body is not None
         assert snapshot.two_body[0, 0, 0, 0] == 0
         assert (
             majorana_shadow_snapshot(
@@ -237,7 +241,7 @@ def test_shadow_options_enforce_distinct_domains_and_work_budget(options):
         FermionicShadowOptions.model_validate(options)
     immutable = FermionicShadowOptions(num_particles=1)
     with pytest.raises(ValidationError):
-        immutable.num_settings = 1
+        immutable.__setattr__("num_settings", 1)
 
 
 @pytest.mark.parametrize(

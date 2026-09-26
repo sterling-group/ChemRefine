@@ -45,15 +45,17 @@ class LocalEncodingOptions(BaseModel):
         return self
 
 
-def _pauli(width: int, letters: str = "", indices: Sequence[int] = (), sign: float = 1) -> Any:
-    """Construct one sparse Pauli with qubit zero on the right in its printed label."""
+def pauli_product(
+    width: int, letters: str = "", indices: Sequence[int] = (), sign: float = 1
+) -> Any:
+    """Construct a Pauli shared with lattice evolution; qubit zero prints on the right."""
     from qiskit.quantum_info import SparsePauliOp
 
     return SparsePauliOp.from_sparse_list([(letters, list(indices), sign)], num_qubits=width)
 
 
-def _vector(operator: Any) -> np.ndarray:
-    """Return the binary symplectic coordinates of one Hermitian unit Pauli."""
+def pauli_binary_vector(operator: Any) -> np.ndarray:
+    """Return binary Pauli coordinates used by encodings, graph flows and tapering."""
     operator = operator.simplify()
     if len(operator) != 1 or not np.isclose(abs(operator.coeffs[0]), 1):
         raise ConfigError("encoding generators must be single unit Pauli operators")
@@ -68,8 +70,8 @@ def _symplectic(first: np.ndarray, second: np.ndarray) -> bool:
     return bool((int(first[:half] @ second[half:]) + int(first[half:] @ second[:half])) % 2)
 
 
-def _rref(matrix: np.ndarray) -> tuple[np.ndarray, list[int]]:
-    """Reduce a binary matrix without floating-point rank decisions."""
+def binary_rref(matrix: np.ndarray) -> tuple[np.ndarray, list[int]]:
+    """Reduce binary matrices for encodings, graph flows and tapering without float ranks."""
     result = np.array(matrix, dtype=np.uint8, copy=True)
     pivots: list[int] = []
     row = 0
@@ -89,9 +91,9 @@ def _rref(matrix: np.ndarray) -> tuple[np.ndarray, list[int]]:
     return result[:row], pivots
 
 
-def _nullspace(matrix: np.ndarray) -> list[np.ndarray]:
-    """Compute a deterministic GF(2) kernel basis."""
-    reduced, pivots = _rref(matrix)
+def binary_nullspace(matrix: np.ndarray) -> list[np.ndarray]:
+    """Compute a deterministic GF(2) kernel basis shared with symmetry tapering."""
+    reduced, pivots = binary_rref(matrix)
     result = []
     for column in range(matrix.shape[1]):
         if column in pivots:
@@ -104,13 +106,13 @@ def _nullspace(matrix: np.ndarray) -> list[np.ndarray]:
     return result
 
 
-def _independent(operators: Sequence[Any], width: int) -> tuple[Any, ...]:
-    """Remove redundant commuting constraints while refusing a negative identity."""
+def independent_paulis(operators: Sequence[Any], width: int) -> tuple[Any, ...]:
+    """Filter encoding and tapering constraints, rejecting a negative identity."""
     rows: dict[int, tuple[np.ndarray, Any]] = {}
     result: list[Any] = []
     for original in operators:
         operator = original.simplify()
-        vector = _vector(operator).astype(np.uint8)
+        vector = pauli_binary_vector(operator).astype(np.uint8)
         for pivot, (basis, pauli) in sorted(rows.items()):
             if vector[pivot]:
                 vector ^= basis
@@ -196,7 +198,7 @@ class FermionicEncoding:
         if (target, source) in self.edges:
             return -self.edges[target, source]
         path = _path(self.edges, source, target)
-        result = _pauli(self.num_qubits) * (1j ** (len(path) - 2))
+        result = pauli_product(self.num_qubits) * (1j ** (len(path) - 2))
         for first, second in pairwise(path):
             result = result @ self.edge_operator(first, second)
         return result.simplify()
@@ -207,7 +209,7 @@ class FermionicEncoding:
         right, b = divmod(second, 2)
         if left == right:
             if a == b:
-                return _pauli(self.num_qubits)
+                return pauli_product(self.num_qubits)
             return (1j if a == 0 else -1j) * self.vertices[left]
         result = (1j ** (1 + a + b)) * self.edge_operator(left, right)
         if a:
@@ -234,7 +236,7 @@ class FermionicEncoding:
         component_of = {
             mode: index for index, component in enumerate(self.components) for mode in component
         }
-        result = 0 * _pauli(self.num_qubits)
+        result = 0 * pauli_product(self.num_qubits)
         for term, coefficient in fermion_to_majorana(operator).iter_terms():
             # Pair within components, retaining the CAR sign of every inter-component swap.
             groups = [component_of[mode // 2] for mode in term]
@@ -244,7 +246,7 @@ class FermionicEncoding:
                 raise ConfigError(
                     "operator changes a fixed component parity; connect the encoding graph"
                 )
-            mapped = _pauli(self.num_qubits) * (coefficient * (-1) ** inversions)
+            mapped = pauli_product(self.num_qubits) * (coefficient * (-1) ** inversions)
             for index in range(0, len(ordered), 2):
                 mapped = mapped @ self._majorana_pair(ordered[index][1], ordered[index + 1][1])
             result += mapped
@@ -272,7 +274,7 @@ class FermionicEncoding:
         constraints.extend(
             (-1 if mode in occupied else 1) * vertex for mode, vertex in enumerate(self.vertices)
         )
-        independent = _independent(constraints, self.num_qubits)
+        independent = independent_paulis(constraints, self.num_qubits)
         if len(independent) != self.num_qubits:
             raise ConfigError("encoding leaves unexplained reference-state degrees of freedom")
         labels = []
@@ -328,7 +330,7 @@ def validate_encoding(
     if any(not (0 <= first < second < modes) for first, second in edges):
         raise ConfigError("encoding edges must use distinct ordered endpoints within the modes")
     operators = [*vertices, *edges.values()]
-    vectors = [_vector(operator).astype(np.uint8) for operator in operators]
+    vectors = [pauli_binary_vector(operator).astype(np.uint8) for operator in operators]
     supports = [(index,) for index in range(modes)] + list(edges)
     for index, first_vector in enumerate(vectors):
         for other in range(index):
@@ -345,11 +347,11 @@ def validate_encoding(
         except ConfigError:
             forest[first, second] = operator
             continue
-        loop = _pauli(width) * (1j ** len(path))
+        loop = pauli_product(width) * (1j ** len(path))
         for source, target in pairwise(path):
             loop = loop @ (forest[source, target] if source < target else -forest[target, source])
         cycles.append((loop @ -operator).simplify())
-    stabilizers = _independent(cycles, width)
+    stabilizers = independent_paulis(cycles, width)
     components = _components(modes, list(edges))
     if component_parities is not None and (
         len(component_parities) != len(components)
@@ -360,7 +362,9 @@ def validate_encoding(
     # Commutation checks alone would accept a representation with spurious fixed
     # occupations or undeclared component-parity restrictions.
     vertex_rank = len(
-        _rref(np.array([_vector(operator) for operator in (*stabilizers, *vertices)]))[1]
+        binary_rref(
+            np.array([pauli_binary_vector(operator) for operator in (*stabilizers, *vertices)])
+        )[1]
     )
     physical_bits = modes - (len(components) if component_parities is not None else 0)
     if vertex_rank != len(stabilizers) + physical_bits:
@@ -369,15 +373,15 @@ def validate_encoding(
         )
     if component_parities is not None:
         for component, parity in zip(components, component_parities, strict=True):
-            product = _pauli(width) * (-1) ** parity
+            product = pauli_product(width) * (-1) ** parity
             for mode in component:
                 product = product @ vertices[mode]
             # The rank and edge algebra already enforce parity independence;
             # signed reduction verifies that the declared eigenvalue is consistent.
-            _independent((*stabilizers, product), width)
+            independent_paulis((*stabilizers, product), width)
     # The centralizer of generator rows x|z solves [z|x] g = 0.
     matrix = np.array([np.concatenate((vector[width:], vector[:width])) for vector in vectors])
-    commutant = _nullspace(matrix)
+    commutant = binary_nullspace(matrix)
     gauge = []
     while commutant:
         first_vector = commutant.pop(0)
@@ -464,7 +468,8 @@ def build_local_encoding(
             for mode in range(num_modes)
         }
         vertices = [
-            _pauli(width, "Z" * len(incident[mode]), incident[mode]) for mode in range(num_modes)
+            pauli_product(width, "Z" * len(incident[mode]), incident[mode])
+            for mode in range(num_modes)
         ]
         for component, parity in zip(components, parities, strict=True):
             vertices[component[0]] *= (-1) ** parity
@@ -473,7 +478,7 @@ def build_local_encoding(
             previous = [
                 other for mode in (first, second) for other in incident[mode] if other < index
             ]
-            mapped_edges[first, second] = _pauli(
+            mapped_edges[first, second] = pauli_product(
                 width, "X" + "Z" * len(previous), [index, *previous]
             )
     else:
@@ -509,7 +514,7 @@ def build_local_encoding(
         width = num_modes + auxiliaries * (num_modes // sites)
         if width > options.max_qubits:
             raise ConfigError("local encoding exceeds max_qubits")
-        vertices = [_pauli(width, "Z", [mode]) for mode in range(num_modes)]
+        vertices = [pauli_product(width, "Z", [mode]) for mode in range(num_modes)]
         mapped_edges = {}
         for offset in range(0, num_modes, sites):
             aux_start = num_modes + (offset // sites) * auxiliaries
@@ -531,7 +536,7 @@ def build_local_encoding(
                         if vertical
                         else ("XXZ", [first + offset, second + offset, aux_start + first])
                     )
-                    transfer = _pauli(width, letters, indices, 0.5)
+                    transfer = pauli_product(width, letters, indices, 0.5)
                     edge = (-2j * vertices[first + offset] @ transfer).simplify()
                 else:
                     forward = column % 2 == 0 if vertical else row % 2 == 0
@@ -549,7 +554,7 @@ def build_local_encoding(
                         letters += "X" if vertical else "Y"
                         indices.append(face)
                     sign = -1 if vertical and not forward else 1
-                    edge = _pauli(width, letters, indices, sign * (1 if forward else -1))
+                    edge = pauli_product(width, letters, indices, sign * (1 if forward else -1))
                 mapped_edges[first + offset, second + offset] = edge
     result = validate_encoding(
         vertices,

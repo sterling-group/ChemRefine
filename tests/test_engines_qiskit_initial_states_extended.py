@@ -28,9 +28,9 @@ def test_determinant_indices_are_distinct_nonnegative_integers(indices):
 def test_determinant_requires_both_spin_lists_and_rejects_unknown_options():
     """The two populations are always explicit, including empty spin sectors."""
     with pytest.raises(ValidationError):
-        DeterminantOptions(alpha=[0])
+        DeterminantOptions.model_validate({"alpha": [0]})
     with pytest.raises(ValidationError):
-        DeterminantOptions(alpha=[0], beta=[], occupations=[1, 0])
+        DeterminantOptions.model_validate({"alpha": [0], "beta": [], "occupations": [1, 0]})
 
 
 def test_custom_reference_rejects_nonmapping_metadata():

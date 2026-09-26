@@ -133,7 +133,7 @@ def variational_dynamics(
             )
     storage = 64 * size * size + 8 * (controls.steps + 1) * (size + len(operators) + 21)
     if selection.name in {"statevector", "basic_backend", "aer_statevector", "aer_shots"}:
-        method = ESTIMATORS.options_for(selection).model_dump().get("method", "statevector")
+        method = getattr(ESTIMATORS.options_for(selection), "method", "statevector")
         if method in {"automatic", "statevector", "density_matrix"}:
             storage += 64 * (
                 1 << ((circuit.num_qubits + 1) * (2 if method == "density_matrix" else 1))

@@ -1,6 +1,7 @@
 """Provider-independent Runtime contracts tested with actual Qiskit PUB containers."""
 
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 import pytest
@@ -28,6 +29,7 @@ from qiskit.providers.basic_provider import BasicSimulator
 
 def _adapter(tmp_path, *, kind="estimator", settings=None):
     """Use real ideal primitives behind the journal adapter, without a Runtime SDK import."""
+    options: RuntimeEstimatorOptions | RuntimeSamplerOptions
     if kind == "estimator":
         options = RuntimeEstimatorOptions(fake_backend="FakeManilaV2", **(settings or {}))
         primitive = StatevectorEstimator(seed=2)
@@ -130,6 +132,7 @@ def test_explicit_retrieval_uses_matching_journal_and_never_submits(tmp_path):
 def test_preflight_budget_errors_do_not_create_provider_jobs(tmp_path, settings, pubs, run, match):
     adapter = _adapter(tmp_path, settings=settings)
     circuit = QuantumCircuit(1)
+    publications: list[Any]
     if pubs == "two_bindings":
         circuit.ry(Parameter("x"), 0)
         publications = [(circuit, {"Z": 1}, [[0], [0.1]])]
@@ -635,6 +638,7 @@ def test_remote_mode_failure_retains_recovery_state(
     from chemrefine.engines.qiskit import runtime
 
     events, root = mocked_runtime_sdk
+    error: type[Exception]
 
     if failure == "create":
 

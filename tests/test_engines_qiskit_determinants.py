@@ -93,6 +93,7 @@ def test_rdms_and_transition_matrices_match_direct_operator_expectations():
                 .to_matrix()
             )
             assert rdms.one_body[p, q] == pytest.approx(np.vdot(bra, matrix @ ket), abs=1e-13)
+        assert rdms.two_body is not None
         for p, q, r, s in product(range(4), repeat=4):
             matrix = (
                 JordanWignerMapper()

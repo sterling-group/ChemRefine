@@ -11,7 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from chemrefine.engines.qiskit.registry import OPTIMIZERS
 
-_SPSA_RANDOM_LOCK = RLock()
+# SPSA and QNSPSA share one lock because Qiskit uses a process-global RNG.
+SPSA_RANDOM_LOCK = RLock()
 
 
 class SLSQPOptions(BaseModel):
@@ -97,7 +98,7 @@ def build_spsa(*, options: SPSAOptions) -> object:
 
         def minimize(self, fun: Any, x0: Any, jac: Any = None, bounds: Any = None) -> Any:
             """Advance this optimizer's stream without consuming ambient random state."""
-            with _SPSA_RANDOM_LOCK:
+            with SPSA_RANDOM_LOCK:
                 upstream = algorithm_globals.random
                 previous_state = deepcopy(upstream.bit_generator.state)
                 upstream.bit_generator.state = random.bit_generator.state

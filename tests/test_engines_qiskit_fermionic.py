@@ -4,6 +4,7 @@ import json
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 import pytest
@@ -152,7 +153,7 @@ def test_unrestricted_integrals_are_rejected_instead_of_coerced(h2_data):
 
 
 def test_lucj_vqe_reaches_h2_exact_energy_with_seeded_numeric_initialization(h2_data):
-    records = []
+    records: list[dict[str, Any]] = []
     prepared = prepare_problem(h2_data)
     options = QiskitOptions(
         algorithm="ffsim_vqe",

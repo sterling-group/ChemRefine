@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from typing import Any
 
 import numpy as np
 import pytest
@@ -99,7 +100,7 @@ def test_changed_qpy_input_invalidates_artifact_cache(tmp_path):
 def test_sampler_profile_is_resolved_from_the_experiment_component(tmp_path):
     """A configured Aer sampler selects a worker that contains Aer, before execution."""
     engine = QiskitExperimentEngine()
-    options = {
+    options: dict[str, Any] = {
         "experiment": {
             "name": "pauli_measurement",
             "options": {
@@ -174,7 +175,7 @@ def test_measurement_device_validation_and_constant_bundle(tmp_path):
     """Provider capabilities decide GPU grants and constants need no shot arrays."""
     source = tmp_path / "state.qpy"
     _circuit(source)
-    raw = {
+    raw: dict[str, Any] = {
         "experiment": {
             "name": "pauli_measurement",
             "options": {

@@ -205,6 +205,7 @@ def test_reconstruction_worker_preserves_raw_arrays_weights_and_energy_offsets(t
     )
     integrals = save_integrals(tmp_path / "integrals.json", data)
     raw = DeterminantState(2, (1,), [1]).rdms()
+    assert raw.two_body is not None
     source = write_bundle(
         tmp_path / "measured.json",
         kind="measured_rdms",
@@ -240,6 +241,7 @@ def test_reconstruction_worker_preserves_raw_arrays_weights_and_energy_offsets(t
 
 def test_reconstruction_worker_without_hamiltonian_has_no_energy_claim(tmp_path):
     raw = _state().rdms()
+    assert raw.two_body is not None
     source = write_bundle(
         tmp_path / "measured.json",
         kind="fermionic_shadows",

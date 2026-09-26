@@ -16,9 +16,9 @@ from chemrefine.engines.qiskit.components.subspace_algorithms import (
     SpinSector,
     SQDOptions,
     SubspaceOptions,
-    _check_sampling_memory,
-    _solve_explicit_samples,
     build_sqd,
+    check_sampling_memory,
+    solve_explicit_samples,
     validate_subspace_options,
 )
 from chemrefine.engines.qiskit.determinants import apply_operators
@@ -138,7 +138,7 @@ def build_skqd(*, options: SKQDOptions, request: NativeSolveRequest) -> NativeOu
     if request.initial_point is not None:
         raise ConfigError("SKQD does not accept variational initial parameters")
     data = SpinSector(request.prepared.num_spatial_orbitals, request.prepared.num_particles)
-    _check_sampling_memory(
+    check_sampling_memory(
         request, data, options, total_shots=(options.num_steps + 1) * options.shots
     )
     counts: Counter[str] = Counter()
@@ -160,7 +160,7 @@ def build_skqd(*, options: SKQDOptions, request: NativeSolveRequest) -> NativeOu
                 "sampling": batch.metadata,
             }
         )
-    return _solve_explicit_samples(
+    return solve_explicit_samples(
         request,
         dict(counts),
         options,
@@ -277,7 +277,7 @@ def build_extended_sqd(
             "max_total_shots": max(options.max_total_shots, len(basis)),
         }
     )
-    outcome = _solve_explicit_samples(
+    outcome = solve_explicit_samples(
         request,
         generated,
         final_options,

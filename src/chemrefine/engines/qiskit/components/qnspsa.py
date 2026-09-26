@@ -8,7 +8,7 @@ from typing import Any, Self
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from chemrefine.engines.qiskit.components.optimizers import _SPSA_RANDOM_LOCK
+from chemrefine.engines.qiskit.components.optimizers import SPSA_RANDOM_LOCK
 from chemrefine.engines.qiskit.context import SolverComponents
 from chemrefine.engines.qiskit.registry import OPTIMIZERS
 from chemrefine.errors import ConfigError
@@ -75,7 +75,7 @@ def build_qnspsa(*, options: QNSPSAOptions, components: SolverComponents, **cont
 
         def minimize(self, fun: Any, x0: Any, jac: Any = None, bounds: Any = None) -> Any:
             """Restore the process-global stream even when a provider or callback fails."""
-            with _SPSA_RANDOM_LOCK:
+            with SPSA_RANDOM_LOCK:
                 upstream = algorithm_globals.random
                 previous = deepcopy(upstream.bit_generator.state)
                 upstream.bit_generator.state = random.bit_generator.state

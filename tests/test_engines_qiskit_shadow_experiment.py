@@ -1,5 +1,7 @@
 """Native artifact contracts for real orbital and Majorana shadow workers."""
 
+from typing import Any
+
 import numpy as np
 import pytest
 from pydantic import ValidationError
@@ -125,7 +127,7 @@ def test_shadow_worker_validates_output_budget_before_sampling(preparation, monk
 
 
 def test_shadow_catalog_declares_nested_controls_domains_and_file_dependencies():
-    options = {
+    options: dict[str, Any] = {
         "experiment": {
             "name": "fermionic_shadows",
             "options": {"circuit_path": "state.qpy", "shadows": {"ensemble": "majorana_clifford"}},

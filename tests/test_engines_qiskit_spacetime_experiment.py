@@ -93,7 +93,7 @@ def test_noise_requirement_and_sampler_shorthand(tmp_path):
         with pytest.raises(ValidationError, match="nonideal"):
             SpacetimeExperimentOptions(**{**raw, "sampler": sampler})
     with pytest.raises(ValidationError):
-        SpacetimeExperimentOptions(**raw, mystery=3)
+        SpacetimeExperimentOptions.model_validate({**raw, "mystery": 3})
 
 
 def test_all_public_knobs_are_explicit_in_the_runnable_example():
