@@ -196,6 +196,22 @@ complete worker environment; mixing unrelated provider environments fails
 preflight rather than dropping a dependency. The core remains usable with
 Qiskit 1.4. The Fermions integrations require the 2.5 stack.
 
+Optional provider profiles declare their complete dependency sets:
+
+| Managed backend / install extra | Additional provider |
+| --- | --- |
+| `qiskit-runtime` | IBM Runtime, Qiskit Mitigation, Samplomatic |
+| `qiskit-cutting` | Qiskit Addon Cutting |
+| `qiskit-rdm` | CVXPY and SCS |
+| `qiskit-toolkit` | Fermionic, Runtime, cutting and RDM providers together |
+| `qiskit-resources` | OpenFermion resource estimates and Qualtran |
+
+The component graph selects one profile containing all consumed providers.
+The catalog exposes these inclusion relationships without importing SDKs.
+Resource estimation uses a separate worker; install it explicitly with
+`chemrefine backends install qiskit-resources --python 3.12`. Its packaging
+minimum-version marker excludes older interpreters but does not select Python.
+
 The four built-in estimators all run locally and need no cloud credentials:
 `statevector`, the lightweight shot-based `basic_backend`, exact-expectation
 `aer_statevector`, and finite-shot `aer_shots`. The first two use `[qiskit]`;

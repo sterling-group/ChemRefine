@@ -92,3 +92,23 @@ BACKEND_PROFILES.register(
     BackendRequirement(extra="qiskit-fermionic", import_name="ffsim"),
     includes=frozenset({"qiskit-aer"}),
 )
+BACKEND_PROFILES.register(
+    BackendRequirement(extra="qiskit-resources", import_name="openfermion"),
+    includes=frozenset({"qiskit"}),
+)
+BACKEND_PROFILES.register(
+    BackendRequirement(extra="qiskit-runtime", import_name="qiskit_ibm_runtime"),
+    includes=frozenset({"qiskit-aer"}),
+)
+BACKEND_PROFILES.register(
+    BackendRequirement(extra="qiskit-cutting", import_name="qiskit_addon_cutting"),
+    includes=frozenset({"qiskit-aer"}),
+)
+BACKEND_PROFILES.register(
+    BackendRequirement(extra="qiskit-rdm", import_name="cvxpy"),
+    includes=frozenset({"qiskit"}),
+)
+BACKEND_PROFILES.register(
+    BackendRequirement(extra="qiskit-toolkit", import_name="qiskit_ibm_runtime"),
+    includes=frozenset({"qiskit-fermionic", "qiskit-runtime", "qiskit-cutting", "qiskit-rdm"}),
+)

@@ -251,6 +251,30 @@ qiskit-fermionic = [
     "qiskit-addon-sqd>=0.13.1,<0.14",
     "chemrefine[qiskit-aer]",
 ]
+# Resource SDKs use a separate worker. The floor excludes Python 3.11; it does
+# not select an interpreter. Provision with `backends install ... --python 3.12`.
+qiskit-resources = [
+    "openfermion[resources]>=1.8.1,<2; python_version >= '3.12'",
+    "qualtran>=0.7.0,<0.8; python_version >= '3.12'",
+    "chemrefine[qiskit]; python_version >= '3.12'",
+]
+qiskit-runtime = [
+    "qiskit-ibm-runtime>=0.50,<0.51",
+    "qiskit-mitigation>=0.1.1,<0.2",
+    "samplomatic>=0.21,<0.22",
+    "chemrefine[qiskit-aer]",
+]
+qiskit-cutting = [
+    "qiskit-addon-cutting>=0.10,<0.11",
+    "chemrefine[qiskit-aer]",
+]
+qiskit-rdm = [
+    "cvxpy>=1.6.5,<2",
+    "scs>=3.2.7.post2,<4",
+    "chemrefine[qiskit]",
+]
+# One declared environment for graphs combining optional research providers.
+qiskit-toolkit = ["chemrefine[qiskit-fermionic,qiskit-runtime,qiskit-cutting,qiskit-rdm]"]
 
 [project.urls]
 Homepage = "https://github.com/sterling-group/ChemRefine"
@@ -406,6 +430,9 @@ untyped_calls_exclude = [
     "qiskit_aer",
     "qiskit_nature",
     "qiskit_algorithms",
+    "qiskit_ibm_runtime",
+    "ibm_quantum_schemas",
+    "ffsim",
 ]
 # Annotation requirements are relaxed here and re-imposed on `chemrefine.*` below, rather
 # than the other way round. Tests are worth type-checking for the calls they make *into*
@@ -476,6 +503,14 @@ module = [
     "ffsim.*",
     "qiskit_fermions.*",
     "qiskit_addon_sqd.*",
+    "qiskit_ibm_runtime.*",
+    "ibm_quantum_schemas.*",
+    "qiskit_addon_cutting.*",
+    "qiskit_mitigation.*",
+    "samplomatic.*",
+    "cvxpy.*",
+    "openfermion.*",
+    "qualtran.*",
     "scipy.*",
 ]
 ignore_missing_imports = true
