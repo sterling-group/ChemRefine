@@ -116,6 +116,37 @@ def test_explicit_retrieval_uses_matching_journal_and_never_submits(tmp_path):
         replay.run([(circuit, {"Z": 1}, None, 0.1)])
 
 
+def test_runtime_restart_refuses_ambiguous_submission_and_allows_explicit_policy(tmp_path):
+    """Identical PUB fingerprints are guarded across adapter restarts, before provider execution."""
+    first = _adapter(tmp_path)
+    calls = []
+
+    def fail(_pubs):
+        calls.append("lost response")
+        raise TimeoutError("simulated accepted request without returned ID")
+
+    first.primitive = SimpleNamespace(run=fail)
+    circuit = QuantumCircuit(1)
+    pubs = [(circuit, {"Z": 1}, None, 0.1)]
+    with pytest.raises(TimeoutError):
+        first.run(pubs)
+    restarted = _adapter(tmp_path)
+    restarted.primitive = SimpleNamespace(run=lambda _pubs: calls.append("unexpected"))
+    with pytest.raises(ConfigError, match="submission_unknown"):
+        restarted.run(pubs)
+    assert calls == ["lost response"]
+    acknowledged = _adapter(tmp_path, settings={"resubmission_policy": "allow_unresolved"})
+    assert len(acknowledged.run(pubs).result()) == 1
+    assert sorted(record.state for record in read_journal(tmp_path)) == [
+        "completed",
+        "submission_unknown",
+    ]
+    for model in (RuntimeEstimatorOptions, RuntimeSamplerOptions):
+        with pytest.raises(ValidationError, match="resubmission_policy"):
+            model(fake_backend="FakeManilaV2", resubmission_policy="retry")
+    assert "resubmission_policy" not in sdk_options(acknowledged.options)
+
+
 @pytest.mark.parametrize(
     "settings,pubs,run,match",
     [

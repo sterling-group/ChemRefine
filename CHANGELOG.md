@@ -27,6 +27,10 @@ for the full map.
 
 ### Added
 
+- **Runtime restart protection.** Matching unresolved current or archived journal
+  requests refuse resubmission by default. An explicit acknowledgement can permit
+  new work; bounded, serialized intent publication preserves recovery evidence.
+
 - **Molecular integral handoff.** Qiskit YAML can consume portable MO integral
   bundles, validating molecular geometry, charge, spin and nuclear-energy identity
   before solving. Both descriptor and numeric payload participate in caching.

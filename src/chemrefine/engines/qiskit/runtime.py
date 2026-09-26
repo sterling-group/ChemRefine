@@ -218,7 +218,9 @@ class RuntimePrimitive:
             if self.service is None:
                 raise ConfigError("Runtime retrieval requires a remote service")
             return JournaledJob(self.service.job(identifier), self.journal, record)
-        return self.journal.submit(digest, summary, operation)
+        return self.journal.submit(
+            digest, summary, operation, resubmission_policy=self.options.resubmission_policy
+        )
 
     def _summary(self, pubs: list[Any], nominal: int) -> RequestSummary:
         """Describe execution volume without persisting circuits, account names or raw inputs."""
@@ -468,7 +470,9 @@ def build_runtime_resource(
                     backend=backend.name,
                     max_execution_time=options.max_execution_time,
                 )
-                record = journal.begin(digest, summary)
+                record = journal.begin(
+                    digest, summary, resubmission_policy=options.resubmission_policy
+                )
                 try:
                     mode = mode_cls(backend=backend, max_time=options.max_time)
                 except BaseException as exc:

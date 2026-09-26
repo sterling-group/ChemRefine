@@ -85,10 +85,22 @@ messages. Intents are flushed before provider creation; returned IDs are flushed
 immediately afterward. Reading journals makes no provider calls.
 
 A process can fail between provider acceptance and receipt or durable storage of the
-ID. Such an intent remains unresolved. The adapter makes **no exactly-once execution
-claim** and never resubmits an unresolved request automatically. If an ID was returned
-but could not be written, the error reports it for manual provider recovery; an
-absent-ID record cannot be matched automatically.
+ID. Such an intent remains unresolved. The default
+`resubmission_policy: refuse_unresolved` checks current and archived request digests
+and refuses a new submission matching an unresolved prior request, including a known
+job whose result was not recovered. Completed requests and repeated asynchronous
+PUBs owned by the same live adapter remain usable. If an ID was returned but could
+not be written, the error reports it for manual provider recovery.
+
+Use explicit retrieval for known IDs. `resubmission_policy: allow_unresolved` instead
+acknowledges that a fresh submission may duplicate already accepted work. It does not
+cancel or resolve earlier jobs. The runnable local-only
+`examples/tutorials/qiskit_sp/runtime_fake.yaml` example declares the default policy;
+change that field to `allow_unresolved` only when deliberately repeating a request.
+These local safeguards make **no exactly-once execution claim**. Separate journal
+directories, provider-side retries and lost durable storage remain outside their
+scope. See [provider recovery](qiskit-recovery.md) for claim-file crash recovery and
+the distinction between resuming a pipeline and retrieving provider work.
 
 To retrieve known requests, provide `retrieve_job_ids` in the original submission
 order with `mode: job`. Include calibration IDs before their corresponding energy

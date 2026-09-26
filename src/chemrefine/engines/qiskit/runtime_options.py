@@ -7,6 +7,8 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
+from chemrefine.engines.qiskit.journal import ResubmissionPolicy
+
 
 class RuntimeModel(BaseModel):
     """Strict immutable controls shared by Runtime execution and mitigation."""
@@ -155,6 +157,7 @@ class RuntimeOptions(RuntimeModel):
     journal_history_dirs: tuple[str, ...] = Field(default=(), max_length=128)
     max_journal_records: StrictInt = Field(10000, ge=1)
     retrieve_job_ids: tuple[str, ...] = ()
+    resubmission_policy: ResubmissionPolicy = "refuse_unresolved"
     max_jobs: StrictInt = Field(1000, ge=1)
     max_pubs_per_job: StrictInt = Field(128, ge=1)
     max_parameter_sets: StrictInt = Field(10000, ge=1)

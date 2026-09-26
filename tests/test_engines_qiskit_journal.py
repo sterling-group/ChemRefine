@@ -262,3 +262,89 @@ def test_explicit_retrieval_finds_readonly_archived_attempts(tmp_path):
 def test_history_directory_and_combined_record_budgets(tmp_path, history, maximum, match):
     with pytest.raises(ConfigError, match=match):
         RequestJournal(tmp_path, history_directories=history, max_records=maximum)
+
+
+@pytest.mark.parametrize(
+    "state", ["intent", "submission_unknown", "submitted", "result_unavailable"]
+)
+@pytest.mark.parametrize("archived", [False, True])
+def test_restart_refuses_unresolved_requests_unless_resubmission_acknowledged(
+    tmp_path, state, archived
+):
+    """A new journal owner cannot silently repeat possibly accepted current or archived work."""
+    previous_dir = tmp_path / "attempt0" if archived else tmp_path / "current"
+    previous = RequestJournal(previous_dir)
+    digest = request_digest(b"same execution")
+    record = previous.begin(digest, summary())
+    if state == "submission_unknown":
+        record = previous.update(record, state, error_kind="TimeoutError")
+    elif state in {"submitted", "result_unavailable"}:
+        record = previous.update(record, "submitted", job_id="existing_job")
+        if state == "result_unavailable":
+            previous.update(record, state, error_kind="TimeoutError")
+    current = RequestJournal(
+        tmp_path / "current", history_directories=(previous_dir,) if archived else ()
+    )
+    calls = []
+
+    def submit():
+        calls.append(True)
+        return SimpleNamespace(job_id=lambda: "acknowledged_new_job")
+
+    with pytest.raises(ConfigError, match="matching provider request remains"):
+        current.submit(digest, summary(), submit)
+    assert calls == []
+    job = current.submit(digest, summary(), submit, resubmission_policy="allow_unresolved")
+    assert calls == [True] and job.job_id() == "acknowledged_new_job"
+    assert not (current.directory / ".submission.lock").exists()
+
+
+def test_live_owner_allows_repeated_pubs_and_completed_history_allows_new_work(tmp_path):
+    """Repeated asynchronous PUBs are intentional; completed replay supersedes archived state."""
+    archive = tmp_path / "archive"
+    store = RequestJournal(archive)
+    digest = request_digest(b"same request")
+    first = store.submit(digest, summary(), lambda: SimpleNamespace(job_id=lambda: "first"))
+    second = store.submit(digest, summary(), lambda: SimpleNamespace(job_id=lambda: "second"))
+    store.update(first.record, "completed")
+    current = RequestJournal(tmp_path / "current", history_directories=(archive,))
+    with pytest.raises(ConfigError, match="known job ID 'second'"):
+        current.begin(digest, summary())
+    current.update(second.record, "completed")
+    assert current.begin(digest, summary()).state == "intent"
+
+
+@pytest.mark.parametrize("kind", ["session", "batch"])
+def test_known_created_modes_do_not_block_new_modes(tmp_path, kind):
+    """A known mode ID resolves creation; unfinished quantum jobs remain guarded separately."""
+    store = RequestJournal(tmp_path)
+    digest = request_digest(b"same mode")
+    record = store.begin(digest, summary().model_copy(update={"kind": kind}))
+    store.update(record, "submitted", job_id="created_mode")
+    assert RequestJournal(tmp_path).begin(digest, summary()).state == "intent"
+
+
+def test_submission_guard_enforces_record_budget_and_explicit_policy(tmp_path):
+    """Acknowledgement does not bypass finite storage or accept unknown policy spellings."""
+    store = RequestJournal(tmp_path, max_records=1)
+    with pytest.raises(ConfigError, match="invalid provider resubmission_policy"):
+        store.begin(request_digest(b"first"), summary(), resubmission_policy="retry")
+    store.begin(request_digest(b"first"), summary())
+    with pytest.raises(ConfigError, match="beyond max_records"):
+        store.begin(request_digest(b"second"), summary(), resubmission_policy="allow_unresolved")
+    assert not (tmp_path / ".submission.lock").exists()
+
+
+def test_journal_claim_serializes_independent_writers_and_fails_closed_after_crash(tmp_path):
+    """A second owner cannot inspect an empty journal while the first publishes its intent."""
+    first, second = RequestJournal(tmp_path), RequestJournal(tmp_path)
+    digest = request_digest(b"concurrent")
+    with (
+        first._submission_claim(),
+        pytest.raises(ConfigError, match="claimed by another writer"),
+    ):
+        second.begin(digest, summary())
+    (tmp_path / ".submission.lock").write_text("interrupted writer")
+    with pytest.raises(ConfigError, match="remove it only after all writers have stopped"):
+        second.begin(digest, summary(), resubmission_policy="allow_unresolved")
+    assert read_journal(tmp_path) == ()

@@ -33,6 +33,7 @@ steps:
             shots_per_randomization: 256
           max_jobs: 100
           max_nominal_shots: 1000000
+          resubmission_policy: refuse_unresolved
       optimizer:
         name: spsa
         options: {maxiter: 10, learning_rate: 0.1, perturbation: 0.1, seed: 7}

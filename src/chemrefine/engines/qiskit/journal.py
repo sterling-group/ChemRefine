@@ -11,7 +11,8 @@ import hashlib
 import os
 import tempfile
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -25,6 +26,7 @@ JournalKind = Literal["estimator", "sampler", "noise_learner", "session", "batch
 JournalState = Literal[
     "intent", "submitted", "submission_unknown", "completed", "result_unavailable"
 ]
+ResubmissionPolicy = Literal["refuse_unresolved", "allow_unresolved"]
 
 
 class RequestSummary(BaseModel):
@@ -134,6 +136,60 @@ class RequestJournal:
         )
         self.max_records = max_records
         self._lock = threading.RLock()
+        self._owned_requests: set[str] = set()
+
+    @contextmanager
+    def _submission_claim(self) -> Iterator[None]:
+        """Serialize scan-and-intent publication across owners of this journal directory.
+
+        Exclusive file creation works on shared filesystems without advisory locking.
+        A crash can leave the claim behind: fail closed until an operator verifies no
+        writer remains and removes it. Historical directories are read-only and are
+        expected to be quiescent; independent current directories are not coordinated.
+        """
+        claim = self.directory / ".submission.lock"
+        try:
+            stream = claim.open("x", encoding="utf-8")
+        except FileExistsError as exc:
+            raise ConfigError(
+                "provider journal submission is claimed by another writer or an interrupted "
+                f"process; inspect {claim} and remove it only after all writers have stopped"
+            ) from exc
+        try:
+            with stream:
+                stream.write("scan-and-intent publication in progress\n")
+            yield
+        finally:
+            claim.unlink()
+
+    def _records(self) -> tuple[JournalRecord, ...]:
+        """Read a bounded current/history snapshot without making provider calls."""
+        records: list[JournalRecord] = []
+        for directory in (self.directory, *self.history_directories):
+            records.extend(read_journal(directory, max_records=self.max_records))
+            if len(records) > self.max_records:
+                raise ConfigError("provider journal history exceeds max_records")
+        return tuple(records)
+
+    def _check_resubmission(self, records: tuple[JournalRecord, ...], digest: str) -> None:
+        """Reject unresolved prior requests while allowing completed and live owned work."""
+        completed = {record.request_id for record in records if record.state == "completed"}
+        for record in records:
+            if record.request_digest != digest or record.request_id in completed:
+                continue
+            if record.state == "submitted" and (
+                record.request_id in self._owned_requests
+                or record.summary.kind in {"session", "batch"}
+            ):
+                # An active adapter may legitimately submit repeated PUBs before
+                # retrieving them. A known mode ID means mode creation succeeded.
+                continue
+            identifier = f"; known job ID {record.job_id!r}" if record.job_id else ""
+            raise ConfigError(
+                f"matching provider request remains {record.state}{identifier}; retrieve a known "
+                "job explicitly or set resubmission_policy: allow_unresolved to acknowledge "
+                "that a new submission may duplicate accepted work"
+            )
 
     def _write(self, record: JournalRecord) -> None:
         """Flush the temporary file before atomic replacement and directory synchronization."""
@@ -154,8 +210,16 @@ class RequestJournal:
         finally:
             Path(temporary).unlink(missing_ok=True)
 
-    def begin(self, digest: str, summary: RequestSummary) -> JournalRecord:
-        """Persist intent before calling any operation that may create a provider job."""
+    def begin(
+        self,
+        digest: str,
+        summary: RequestSummary,
+        *,
+        resubmission_policy: ResubmissionPolicy = "refuse_unresolved",
+    ) -> JournalRecord:
+        """Check prior unresolved work and durably claim a new request before submission."""
+        if resubmission_policy not in {"refuse_unresolved", "allow_unresolved"}:
+            raise ConfigError("invalid provider resubmission_policy")
         now = datetime.now(UTC).isoformat()
         record = JournalRecord(
             request_id=uuid4().hex,
@@ -164,8 +228,14 @@ class RequestJournal:
             created_at=now,
             updated_at=now,
         )
-        with self._lock:
+        with self._lock, self._submission_claim():
+            records = self._records()
+            if len(records) >= self.max_records:
+                raise ConfigError("provider journal cannot add a request beyond max_records")
+            if resubmission_policy == "refuse_unresolved":
+                self._check_resubmission(records, digest)
             self._write(record)
+            self._owned_requests.add(record.request_id)
         return record
 
     def update(self, record: JournalRecord, state: JournalState, **changes: Any) -> JournalRecord:
@@ -194,10 +264,15 @@ class RequestJournal:
         return updated
 
     def submit(
-        self, digest: str, summary: RequestSummary, operation: Callable[[], Any]
+        self,
+        digest: str,
+        summary: RequestSummary,
+        operation: Callable[[], Any],
+        *,
+        resubmission_policy: ResubmissionPolicy = "refuse_unresolved",
     ) -> JournaledJob:
         """Record IDs before returning control; failed calls remain explicitly ambiguous."""
-        record = self.begin(digest, summary)
+        record = self.begin(digest, summary, resubmission_policy=resubmission_policy)
         try:
             job = operation()
             identifier = job.job_id()
@@ -223,11 +298,7 @@ class RequestJournal:
 
     def matching_job(self, identifier: str, digest: str) -> JournalRecord:
         """Require an explicit known job and exactly matching request before retrieval."""
-        records: list[JournalRecord] = []
-        for directory in (self.directory, *self.history_directories):
-            records.extend(read_journal(directory, max_records=self.max_records))
-            if len(records) > self.max_records:
-                raise ConfigError("provider journal history exceeds max_records")
+        records = self._records()
         identified = [record for record in records if record.job_id == identifier]
         if len({(record.request_id, record.request_digest) for record in identified}) > 1:
             raise ConfigError("provider job ID has conflicting journal requests")
