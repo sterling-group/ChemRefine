@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from numbers import Real
 from typing import Any, Literal
@@ -60,6 +61,9 @@ class ElectronicStructureData:
     inputs supply all three beta blocks and the alpha-beta orbital overlap
     required for the spin observable. Spin orbitals are alpha then beta.
     Default occupations fill the lowest orbitals independently for each spin.
+    ``energy_offsets`` names electronic scalar constants excluded from the supplied
+    integral tensors. Nuclear repulsion remains its own separate field. Preparation
+    namespaces these constants as ``input:<name>`` to preserve transformation offsets.
     """
 
     num_alpha: int
@@ -81,6 +85,7 @@ class ElectronicStructureData:
     molecular_metadata: MolecularMetadata | None = None
     provenance: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+    energy_offsets: dict[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Reject inconsistent sizes, populations, spin blocks, and integral tensors."""
@@ -181,6 +186,21 @@ class ElectronicStructureData:
             if not isinstance(value, dict):
                 raise ConfigError(f"qiskit {name} must be a mapping")
             object.__setattr__(self, name, value)
+        if not isinstance(self.energy_offsets, Mapping) or any(
+            not isinstance(name, str)
+            or not name.strip()
+            or name == "nuclear_repulsion_energy"
+            or isinstance(value, bool)
+            or not isinstance(value, Real)
+            or not np.isfinite(value)
+            for name, value in self.energy_offsets.items()
+        ):
+            raise ConfigError("qiskit energy_offsets require named finite non-nuclear constants")
+        object.__setattr__(
+            self,
+            "energy_offsets",
+            {name: float(value) for name, value in self.energy_offsets.items()},
+        )
 
     @property
     def num_particles(self) -> tuple[int, int]:

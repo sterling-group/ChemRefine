@@ -355,6 +355,7 @@ def estimate_factorized_resources(
         **metrics,
         "normalization_convention": "shifted DF/THC LCU; T computed from reconstructed ERI",
         "nuclear_repulsion_energy_hartree": data.nuclear_repulsion_energy,
+        "input_energy_offsets_hartree": dict(data.energy_offsets),
         "identity_offsets_in_query_cost": False,
         "provider_toffoli_per_step": int(step_cost),
         "provider_toffoli_total_single_run": int(total_cost),

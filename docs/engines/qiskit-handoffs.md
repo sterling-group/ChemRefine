@@ -14,6 +14,13 @@ incoming structure, and an explicit nuclear repulsion energy. The default geomet
 tolerance is `1e-7` angstrom. `basis` remains a driver option and does not transform
 supplied integrals; the bundle declares its own basis and tensor conventions.
 
+`ElectronicStructureData.energy_offsets` carries named, finite electronic constants
+for already reduced inputs. They are distinct from `nuclear_repulsion_energy`.
+The molecular solver namespaces these constants as `input:<name>`, preserving them
+alongside any new active-space or frozen-core contributions. Double-factorized
+evolution includes them in energies and global phases; resource reports list them
+separately from the nonconstant normalization.
+
 `save_integrals` and `load_integrals` are the Python exchange functions. A producing
 engine must explicitly supply valid MO tensors; this feature does not extract them
 automatically from an ORCA/PySCF output or track orbital changes after a geometry
@@ -54,9 +61,11 @@ Qiskit may warn about the newer producer version. Artifact recovery verifies the
 descriptor, payload digest, byte-array shape and QPY signature without importing
 Qiskit. Full circuit deserialization happens only in the selected worker.
 
-For this preparation, the total molecular energy is the expectation of
+For this preparation, the reported energy is the expectation of
 `description.active_hamiltonian` plus the sum of
-`description.energy_offsets.values()`. Add those constants exactly once. A
+`description.energy_offsets.values()`. It is a total molecular energy only when
+the offsets include known nuclear repulsion; driver-independent inputs without
+that constant retain an electronic-energy convention. Add constants exactly once. A
 measurement of another supplied observable does not automatically include them.
 
 ## Export and consume in a pipeline
@@ -73,7 +82,7 @@ payload beside the raw result, and records their descriptors in
 `engine_metadata.quantum_artifacts`. Scratch copy-back preserves both files.
 Completion and cache reuse validate the required bundles locally. A malformed or
 missing payload invalidates reuse; parsing and cache rebuilding do not contact a
-provider. In the Python API, `run_problem(..., options={"circuit_export": {}})`
+provider. In the Python API, `run_problem(..., options={"algorithm": "vqe", "circuit_export": {}})`
 returns transient `result.circuits`; call `save_circuit` to persist them.
 
 The [two-step example](https://github.com/Sterling-Group/ChemRefine/tree/main/examples/tutorials/qiskit_handoffs)

@@ -87,7 +87,9 @@ whose bound exceeds `representation_error_hartree` fails. This sufficient bound
 can be much stricter than a molecule-specific energy error. The shifted
 one-body term and normalization are consistently calculated from the approximate
 tensor while retaining the input one-body integrals. Nuclear energy is reported
-separately; scalar offsets do not consume queries.
+separately; scalar offsets do not consume queries. Named electronic constants
+from an integral bundle are preserved in `input_energy_offsets_hartree`, alongside
+the separate nuclear repulsion field, without changing normalization or query costs.
 
 OpenFermion's public cost functions return per-step Toffolis, their own single-run
 QPE Toffoli total, and logical qubits **including the system and phase register**.

@@ -107,3 +107,39 @@ def test_integral_source_declares_descriptor_and_payload(source):
     assert engine.input_file_options({}) == ()
     assert engine.input_file_dependencies({}, {"/unrelated": path}) == {}
     assert engine.input_file_dependencies(step.options, {"/unrelated": path}) == {}
+
+
+@pytest.mark.parametrize(
+    "offsets",
+    [
+        None,
+        {"": 1},
+        {3: 1},
+        {"nuclear_repulsion_energy": 1},
+        {"core": True},
+        {"core": 1j},
+        {"core": float("inf")},
+    ],
+)
+def test_invalid_input_energy_offsets_are_refused(source, offsets):
+    """Nuclear constants remain separate and every electronic offset is finite and named."""
+    with pytest.raises(ConfigError, match="energy_offsets"):
+        replace(source[0], energy_offsets=offsets)
+
+
+def test_input_offsets_survive_bundle_and_enter_each_energy_once(source):
+    """Inactive constants use a separate namespace from later Nature transformations."""
+    data, path, xyz = source
+    offsets = {"ActiveSpaceTransformer": -2.0, "user_core": 0.25}
+    save_integrals(path, replace(data, energy_offsets=offsets))
+    offsets["user_core"] = 900
+    result = run_job(
+        xyz,
+        charge=0,
+        multiplicity=1,
+        options={"integral_source": {"bundle_path": str(path)}, "algorithm": "exact"},
+    )
+    assert result.energy_hartree == pytest.approx(-1.1373060357534 - 1.75)
+    assert result.electronic_energy_hartree == pytest.approx(
+        result.energy_hartree - data.nuclear_repulsion_energy
+    )

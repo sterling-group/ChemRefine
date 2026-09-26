@@ -90,6 +90,11 @@ inactive-space contribution. The original constant components and the internally
 shifted factorized constant are reported separately, including when the Z
 representation changes normal ordering.
 
+Named electronic `energy_offsets` in the integral bundle are also added once,
+alongside nuclear repulsion and `energy_shift_hartree`. They are recorded as
+`input:<name>` entries in the offset metadata. Do not repeat a bundle constant
+in `energy_shift_hartree`; that option represents an additional scalar shift.
+
 ## Controls and knob verdicts
 
 The experiment requires `integral_bundle_path`. `max_input_bytes` defaults to

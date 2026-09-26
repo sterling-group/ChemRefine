@@ -88,6 +88,31 @@ def test_thc_normalization_is_invariant_to_leaf_rescaling():
     assert other["normalization_hartree"] == pytest.approx(result["normalization_hartree"])
 
 
+@pytest.mark.parametrize("method", ["df", "thc"])
+def test_imported_scalar_offsets_are_reported_without_changing_resource_queries(method):
+    """Known scalar energy translations do not change the nonidentity LCU cost."""
+    from dataclasses import replace
+
+    data, factors = problem()
+    kwargs = {"thc_factors": factors} if method == "thc" else {}
+    first = estimate_factorized_resources(data, options(method=method), **kwargs)
+    second = estimate_factorized_resources(
+        replace(data, nuclear_repulsion_energy=0.7, energy_offsets={"core": -2.0}),
+        options(method=method),
+        **kwargs,
+    )
+    assert second["input_energy_offsets_hartree"] == {"core": -2.0}
+    assert second["nuclear_repulsion_energy_hartree"] == 0.7
+    assert not second["identity_offsets_in_query_cost"]
+    for key in (
+        "normalization_hartree",
+        "provider_toffoli_per_step",
+        "provider_toffoli_total_single_run",
+        "conservative_standard_qpe",
+    ):
+        assert second[key] == first[key]
+
+
 def test_factorization_cannot_spend_unallocated_error():
     """A low-quality supplied THC approximation fails before publishing cost estimates."""
     data, factors = problem()

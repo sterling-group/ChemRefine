@@ -136,6 +136,7 @@ def prepare_problem(
     )
     if data.nuclear_repulsion_energy is not None:
         energy.nuclear_repulsion_energy = data.nuclear_repulsion_energy
+    energy.constants.update({f"input:{name}": value for name, value in data.energy_offsets.items()})
     problem = ElectronicStructureProblem(energy)
     problem.basis = ElectronicBasis.MO
     problem.num_particles = data.num_particles

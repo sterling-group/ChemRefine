@@ -27,6 +27,10 @@ for the full map.
 
 ### Added
 
+- **Imported electronic constants.** Integral bundles preserve named scalar offsets
+  through active-space molecular energies and double-factorized evolution. DF/THC
+  resource reports list these constants separately from query costs.
+
 - **Physical spectrum residuals.** VQD and qEOM can measure bounded Hamiltonian
   residual diagnostics, retaining signed noisy variances and optimizer stopping
   facts separately from qEOM response-pencil errors.

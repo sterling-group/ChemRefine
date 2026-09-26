@@ -112,6 +112,14 @@
     "breaks": "a solver status can pass RDMs violating particle trace, contraction, Hermiticity or antisymmetry constraints"
   },
   {
+    "id": "qiskit-input-energy-offsets",
+    "path": "src/chemrefine/engines/qiskit/problem.py",
+    "old": "{f\"input:{name}\": value for name, value in data.energy_offsets.items()}",
+    "new": "{f\"input:{name}\": 0.0 for name, value in data.energy_offsets.items()}",
+    "tests": "tests/test_engines_qiskit_energy_offsets.py",
+    "breaks": "supplied inactive-space electronic constants disappear from molecular canonical energies and every reported physical root"
+  },
+  {
     "id": "qiskit-physical-residual-variance",
     "path": "src/chemrefine/engines/qiskit/spectra.py",
     "old": "complex(second - energy**2)",

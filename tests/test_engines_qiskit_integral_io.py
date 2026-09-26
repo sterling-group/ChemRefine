@@ -43,6 +43,7 @@ def _data(unrestricted=False):
         molecular_metadata=MolecularMetadata(("H",), ((0, 0, 0),)),
         provenance={"source": "independent example"},
         metadata={"label": "complex doublet"},
+        energy_offsets={"inactive_core": -1.2},
         **kwargs,
     )
 

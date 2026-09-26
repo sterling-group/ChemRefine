@@ -111,7 +111,7 @@ def build_double_factorized_evolution(
     from qiskit import QuantumCircuit, transpile
 
     nuclear = data.nuclear_repulsion_energy or 0.0
-    constant = nuclear + options.energy_shift_hartree
+    constant = nuclear + sum(data.energy_offsets.values()) + options.energy_shift_hartree
     original = ffsim.MolecularHamiltonian(one, two, constant=constant)
     with with_omp_threads(cores):
         if options.factorization == "cholesky":
@@ -202,6 +202,7 @@ def build_double_factorized_evolution(
             "energy_offsets_hartree": {
                 "nuclear_repulsion": nuclear,
                 "supplied_shift": options.energy_shift_hartree,
+                **{f"input:{name}": value for name, value in data.energy_offsets.items()},
             },
             "one_body_max_absolute_error": one_error,
             "two_body_max_absolute_error": two_error,
@@ -254,7 +255,7 @@ def simulate_double_factorized_evolution(
         reference.x(int(mode))
     prepared = prepare_problem(data)
     operator = JordanWignerMapper().map(prepared.fermionic_hamiltonian)
-    constant = (data.nuclear_repulsion_energy or 0) + options.energy_shift_hartree
+    constant = sum(prepared.energy_offsets.values()) + options.energy_shift_hartree
     with with_omp_threads(cores):
         state = Statevector.from_instruction(reference.compose(result.circuit))
         vector = np.asarray(state.data, dtype=complex)

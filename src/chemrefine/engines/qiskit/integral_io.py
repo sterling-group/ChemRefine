@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Literal, Self, cast
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, model_validator
 
 from chemrefine.engines.qiskit.bundles import DEFAULT_MAX_BYTES, read_bundle, write_bundle
 from chemrefine.engines.qiskit.data import ElectronicStructureData, MolecularMetadata
@@ -41,6 +41,7 @@ class IntegralDescription(BaseModel):
     num_spatial_orbitals: StrictInt = Field(ge=1)
     two_body_order: Literal["chemist", "physicist"]
     nuclear_repulsion_energy: float | None = Field(None, ge=0)
+    energy_offsets: dict[str, StrictFloat] = Field(default_factory=dict)
     multiplicity: StrictInt = Field(ge=1)
     molecular_metadata: dict[str, Any] | None = None
     provenance: dict[str, Any] = Field(default_factory=dict)
@@ -74,6 +75,7 @@ def save_integrals(
         num_spatial_orbitals=data.num_spatial_orbitals,
         two_body_order=data.two_body_order,
         nuclear_repulsion_energy=data.nuclear_repulsion_energy,
+        energy_offsets=data.energy_offsets,
         multiplicity=cast("int", data.multiplicity),
         molecular_metadata=None
         if data.molecular_metadata is None

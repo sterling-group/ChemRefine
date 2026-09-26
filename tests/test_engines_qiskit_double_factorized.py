@@ -91,6 +91,31 @@ def test_offsets_are_applied_exactly_once_in_zero_time_and_nonzero_time_circuits
     np.testing.assert_allclose(Operator(zero.circuit).data, np.eye(16), atol=1e-12)
 
 
+def test_imported_electronic_offsets_shift_df_phase_and_energy_once():
+    """Bundle constants and an additional execution shift share the same physical generator."""
+    options = DoubleFactorizedOptions(time=0.3, exact_reference=True, energy_shift_hartree=0.2)
+    data = _data()
+    first = simulate_double_factorized_evolution(data, options)
+    second = simulate_double_factorized_evolution(
+        replace(data, energy_offsets={"core": -2.0, "environment": 0.25}), options
+    )
+    np.testing.assert_allclose(
+        second.statevector, np.exp(0.3j * 1.75) * first.statevector, atol=1e-12
+    )
+    assert second.metadata["total_energy_hartree"] == pytest.approx(
+        first.metadata["total_energy_hartree"] - 1.75
+    )
+    assert second.metadata["reference_state_error"] == pytest.approx(
+        first.metadata["reference_state_error"], abs=1e-12
+    )
+    assert second.metadata["energy_offsets_hartree"] == {
+        "nuclear_repulsion": 0.7,
+        "supplied_shift": 0.2,
+        "input:core": -2.0,
+        "input:environment": 0.25,
+    }
+
+
 def test_open_shell_reordered_reference_and_physicist_integrals():
     data = _data()
     data = replace(
