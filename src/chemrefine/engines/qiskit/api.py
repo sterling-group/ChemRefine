@@ -5,6 +5,16 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from chemrefine.engines.qiskit.cutting import (
+    CuttingOptions,
+    CuttingPlan,
+    CuttingResult,
+    WireCut,
+    collect_cutting_samples,
+    execute_cutting,
+    plan_cutting,
+    reconstruct_cutting_records,
+)
 from chemrefine.engines.qiskit.data import ElectronicStructureData, MolecularMetadata
 from chemrefine.engines.qiskit.determinants import (
     DeterminantState,
@@ -112,6 +122,9 @@ __all__ = [
     "ActiveSpaceOptions",
     "CheckedCircuit",
     "CircuitMetrics",
+    "CuttingOptions",
+    "CuttingPlan",
+    "CuttingResult",
     "DeterminantState",
     "DoubleFactorizedEvolution",
     "DoubleFactorizedIntegratorOptions",
@@ -148,6 +161,7 @@ __all__ = [
     "TaperingTransform",
     "VariationalDynamicsOptions",
     "VariationalDynamicsResult",
+    "WireCut",
     "Z2TaperingOptions",
     "build_double_factorized_evolution",
     "build_lattice_dynamics",
@@ -155,11 +169,13 @@ __all__ = [
     "build_spacetime_circuit",
     "build_tapering_transform",
     "chain_lattice",
+    "collect_cutting_samples",
     "collect_fermionic_shadows",
     "collect_spacetime_counts",
     "commuting_evolution",
     "dqg_matrices",
     "estimate_fermionic_shadows",
+    "execute_cutting",
     "lattice_encoding_qubits",
     "load_integrals",
     "load_states",
@@ -170,6 +186,7 @@ __all__ = [
     "optimize_orbitals",
     "orbital_shadow_snapshot",
     "partition_flow_edges",
+    "plan_cutting",
     "postselect_spacetime_counts",
     "prepare_problem",
     "prepare_pyscf_problem",
@@ -178,6 +195,7 @@ __all__ = [
     "random_shadow_settings",
     "rdm_constraint_diagnostics",
     "rdm_expectation",
+    "reconstruct_cutting_records",
     "reconstruct_rdms",
     "rotate_hamiltonian",
     "run_adapt_vqe",

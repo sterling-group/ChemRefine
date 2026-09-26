@@ -27,6 +27,11 @@ for the full map.
 
 ### Added
 
+- **Budgeted circuit cutting.** Manual gate/wire cuts, partitions and automated
+  width-constrained plans preserve signed reconstruction and physical measurement
+  records. Planning runs in an isolated worker; artifacts can be reconstructed
+  locally without submitting another experiment.
+
 - **Experimental endpoint Pauli checks.** Clifford payloads support signed,
   noncommuting user checks with explicit Aer noise. Artifacts preserve physical
   data/syndrome counts, accepted and rejected samples, Wilson acceptance intervals,

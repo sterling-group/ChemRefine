@@ -1,0 +1,28 @@
+input: ../qiskit_experiment/molecule.xyz
+template_dir: ../qiskit_experiment/templates
+output_dir: outputs-partition
+charge: 0
+multiplicity: 1
+dispatch: local
+max_cores: 1
+steps:
+  - step: 1
+    engine: qiskit-experiment
+    options:
+      cores: 1
+      experiment:
+        name: circuit_cutting
+        options:
+          circuit_path: inputs/ghz.qpy
+          observable: {XXX: 1.0, ZZI: 0.5, ZIZ: 0.5}
+          cutting:
+            mode: partition
+            partition_labels: [A, A, B]
+            max_subcircuit_qubits: 2
+            num_samples: exact
+            shots: 4096
+            seed: 53
+            max_sampling_overhead: 32
+          sampler:
+            name: basic_backend
+            options: {seed_simulator: 53, seed_transpiler: 53, optimization_level: 1}
