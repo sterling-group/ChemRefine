@@ -1,0 +1,36 @@
+input: molecule.xyz
+template_dir: templates
+output_dir: outputs_double_factorized
+charge: 0
+multiplicity: 1
+max_cores: 2
+dispatch: local
+steps:
+  - step: 1
+    engine: qiskit-experiment
+    options:
+      cores: 2
+      max_output_bytes: 268435456
+      experiment:
+        name: double_factorized_evolution
+        options:
+          integral_bundle_path: double_factorized_integrals.json
+          max_input_bytes: 268435456
+          times: [0.0, 0.25, 0.5]
+          evolution:
+            steps: 4
+            order: 2
+            factorization: eigh
+            factorization_tolerance: 1.0e-8
+            max_factors: null
+            max_optimizer_iterations: 100
+            max_integral_error: 1.0e-6
+            z_representation: true
+            givens_tolerance: 1.0e-12
+            energy_shift_hartree: 0.0
+            optimization_level: 1
+            seed_transpiler: 7
+            max_operations: 1000000
+            max_memory_mb: 512
+            max_statevector_qubits: 8
+            exact_reference: true

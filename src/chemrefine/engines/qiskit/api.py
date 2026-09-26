@@ -15,6 +15,13 @@ from chemrefine.engines.qiskit.determinants import (
     projected_eigensystem,
     projected_operator,
 )
+from chemrefine.engines.qiskit.double_factorized import (
+    DoubleFactorizedEvolution,
+    DoubleFactorizedIntegratorOptions,
+    DoubleFactorizedOptions,
+    build_double_factorized_evolution,
+    simulate_double_factorized_evolution,
+)
 from chemrefine.engines.qiskit.encodings import (
     FermionicEncoding,
     LocalEncodingOptions,
@@ -26,6 +33,7 @@ from chemrefine.engines.qiskit.flow import (
     partition_flow_edges,
     vc_flow_diagonalizer,
 )
+from chemrefine.engines.qiskit.integral_io import load_integrals, save_integrals
 from chemrefine.engines.qiskit.lattice import (
     FermionicLatticeModel,
     LatticeCircuit,
@@ -84,6 +92,9 @@ __all__ = [
     "ActiveSpaceOptions",
     "CircuitMetrics",
     "DeterminantState",
+    "DoubleFactorizedEvolution",
+    "DoubleFactorizedIntegratorOptions",
+    "DoubleFactorizedOptions",
     "ElectronicStructureData",
     "FermionTerm",
     "FermionicEncoding",
@@ -111,6 +122,7 @@ __all__ = [
     "ShadowSetting",
     "TaperingTransform",
     "Z2TaperingOptions",
+    "build_double_factorized_evolution",
     "build_lattice_dynamics",
     "build_local_encoding",
     "build_tapering_transform",
@@ -119,6 +131,7 @@ __all__ = [
     "commuting_evolution",
     "estimate_fermionic_shadows",
     "lattice_encoding_qubits",
+    "load_integrals",
     "load_states",
     "majorana_shadow_snapshot",
     "map_problem",
@@ -139,8 +152,10 @@ __all__ = [
     "run_problem",
     "run_vqe",
     "sample_circuit",
+    "save_integrals",
     "save_states",
     "shadow_circuit",
+    "simulate_double_factorized_evolution",
     "simulate_lattice_dynamics",
     "solve_exact",
     "square_lattice",

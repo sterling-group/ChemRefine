@@ -102,6 +102,15 @@ physical counts, complex RDMs and uncertainty clustered by randomized setting.
 See [fermionic shadows](qiskit-shadows.md) for the distinct channel domains,
 controls and runnable examples.
 
+## Double-factorized molecular trajectories
+
+The experimental `double_factorized_evolution` component reads a portable
+integral bundle, builds executable ffsim circuits and evolves the declared
+occupied orbitals. Its [domain and accuracy controls](qiskit-double-factorized.md)
+distinguish integral truncation, product-formula order, Givens synthesis and
+constant phases. Complex shared hopping and open-shell references are supported;
+released-provider restrictions on two-body integrals are validated explicitly.
+
 ## Outputs and recovery
 
 The product is `stepN/experiment/artifact.json`, accompanied by its named NPZ

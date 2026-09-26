@@ -1,0 +1,58 @@
+{
+  "format_version": 1,
+  "kind": "electronic_structure",
+  "payload": "double_factorized_integrals.8976779d999b43959c8a0d5e0fe903ca.npz",
+  "sha256": "7d50846f228acb30f2f3cf7874eab7760bc8310fee1acf5d1bdc0da0904ef588",
+  "arrays": {
+    "orbital_occupations": {
+      "shape": [
+        2
+      ],
+      "dtype": "<f8"
+    },
+    "one_body_integrals": {
+      "shape": [
+        2,
+        2
+      ],
+      "dtype": "<c16"
+    },
+    "two_body_integrals": {
+      "shape": [
+        2,
+        2,
+        2,
+        2
+      ],
+      "dtype": "<f8"
+    },
+    "orbital_occupations_beta": {
+      "shape": [
+        2
+      ],
+      "dtype": "<f8"
+    }
+  },
+  "metadata": {
+    "version": 1,
+    "units": "hartree",
+    "orbital_order": "alpha_then_beta",
+    "num_alpha": 1,
+    "num_beta": 1,
+    "num_spatial_orbitals": 2,
+    "two_body_order": "chemist",
+    "nuclear_repulsion_energy": 0.7,
+    "multiplicity": 1,
+    "molecular_metadata": null,
+    "provenance": {
+      "source": "Explicit two-orbital complex hopping model with real shared-spin interactions"
+    },
+    "metadata": {},
+    "arrays": {
+      "orbital_occupations": "orbital_occupations",
+      "one_body_integrals": "one_body_integrals",
+      "two_body_integrals": "two_body_integrals",
+      "orbital_occupations_beta": "orbital_occupations_beta"
+    }
+  }
+}

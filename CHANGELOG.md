@@ -31,6 +31,12 @@ for the full map.
   reference-aware tapering, complex exchange quadratures, sector diagnostics,
   energy-increase rollback and freshly bound QNSPSA resources at each circuit growth.
 
+- **Double-factorized quantum evolution.** Portable complex/unrestricted integral
+  bundles feed domain-validated ffsim factorization and real compiled circuits.
+  Supported complex hopping trajectories retain declared open-shell references,
+  constant phases, tensor-compression diagnostics, independent evolution checks
+  and reusable QPY circuits in native artifacts.
+
 - **Reference-aware Z₂ tapering.** Molecular mappings discover compatible Pauli
   symmetries and verify sectors against the actual selected reference. Hamiltonians,
   pools, state preparation and observables share one Clifford transformation;
