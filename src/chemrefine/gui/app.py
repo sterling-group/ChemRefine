@@ -736,7 +736,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         """
         from pydantic_ai import DeferredToolRequests, DeferredToolResults
 
-        from chemrefine.agent.harness import TurnFailed, build_web_agent, run_turn
+        from chemrefine.agent.harness import TurnFailed, answerable, build_web_agent, run_turn
         from chemrefine.agent.providers import ProviderConfig
 
         try:
@@ -747,15 +747,25 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
                 chat.history = None
                 chat.pending = None
                 return jsonify({"reply": None, "pending": None, "reset": True})
-            # The conversation this turn continues: the suspended run's, when verdicts
-            # resume it. A config save is this turn's when that history had not seen it.
+            # The conversation this turn continues, which is the suspended run's whenever
+            # one is waiting: its verdicts resume it, and a message sent past it (from a
+            # second tab, a reloaded page) closes its calls as never run — continuing from
+            # the history before it dropped the message that raised them. A config save is
+            # this turn's when that history had not seen it.
             started = chat.history
             verdicts: DeferredToolResults | None = None
             if body.approvals:
                 if chat.pending is None:
                     raise ConfigError("no suspended run to resume")
+                # Exactly the calls waiting, checked here: the run would refuse any other set
+                # only after the cards were taken, leaving nothing for them to resume.
+                waiting = [card["id"] for card in chat.pending.cards]
+                if set(body.approvals) != set(waiting):
+                    raise ConfigError(f"the verdicts must answer exactly the calls {waiting}")
                 started = chat.pending.messages
                 verdicts = DeferredToolResults(approvals=dict(body.approvals))
+            elif chat.pending is not None:
+                started = answerable(chat.pending.messages)
             resolved = ProviderConfig.resolve(
                 body.provider or "custom",
                 model=body.model,
@@ -780,12 +790,12 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
                 config_path=body.config_path
                 or (str(config_path) if config_path is not None else None),
             )
+            # Taken, not read, once a run starts: verdicts run the approved calls before the
+            # model is asked anything, and a message has closed the calls it went past —
+            # either way a failure leaves no run for the cards to answer, and answering them
+            # again would run those calls twice.
+            chat.pending = None
             if verdicts is not None:
-                # Taken, not read: the approved calls run before the model is asked anything,
-                # so once the resume starts, a failure — the endpoint dying on the next
-                # request — leaves no run for these cards to answer, and answering them
-                # again would run those calls twice.
-                chat.pending = None
                 result = run_turn(agent, message_history=started, deferred_tool_results=verdicts)
             else:
                 result = run_turn(agent, body.message, message_history=started)

@@ -1499,6 +1499,75 @@ def test_chat_refuses_approvals_with_nothing_pending(
     }
 
 
+def test_verdicts_that_do_not_answer_the_waiting_calls_are_refused_before_the_run(
+    client: Any, chat_env: pytest.MonkeyPatch, tmp_path: Path
+):
+    """A stale page's verdicts are refused, and the run they missed is still there.
+
+    The run itself refuses verdicts for any other set of calls — but only after the cards
+    were taken, so a second tab's stale click lost the suspended run and the message that
+    raised it. Refused before the run, the calls still wait, and the refusal names them.
+    """
+    config = _saved_config(tmp_path)
+    _inject_model(chat_env, _script_model(config))
+    [card] = _post(client, "/api/agent/chat", {"message": "scaffold it"}).get_json()["pending"]
+
+    stale = _post(client, "/api/agent/chat", {"approvals": {"call-from-another-turn": True}})
+    assert stale.status_code == 400
+    assert card["id"] in stale.get_json()["error"]
+    assert stale.get_json()["pending"] == [card]
+    assert not (tmp_path / "templates").exists()
+
+    resumed = _post(client, "/api/agent/chat", {"approvals": {card["id"]: True}})
+    assert resumed.get_json()["reply"] == "finished"
+    assert (tmp_path / "templates" / "step1.inp").is_file()
+
+
+def test_a_message_past_waiting_calls_continues_from_them_as_not_run(
+    client: Any, chat_env: pytest.MonkeyPatch, tmp_path: Path
+):
+    """A message sent while calls wait (another tab) keeps the turn that raised them.
+
+    It ran on the history before that turn, so the message that raised the cards was gone
+    from the conversation, and the cards still answered a run the chat had left behind.
+    The waiting calls are closed as never run, and the suspended run is spent.
+    """
+    from pydantic_ai.messages import (
+        ModelMessage,
+        ModelResponse,
+        TextPart,
+        ToolCallPart,
+        ToolReturnPart,
+        UserPromptPart,
+    )
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    config = _saved_config(tmp_path)
+    seen: list[list[ModelMessage]] = []
+
+    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(list(messages))
+        if len(seen) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart("scaffold_templates", {"config_path": str(config)})]
+            )
+        return ModelResponse(parts=[TextPart("left it")])
+
+    _inject_model(chat_env, FunctionModel(script))
+    [card] = _post(client, "/api/agent/chat", {"message": "scaffold it"}).get_json()["pending"]
+    moved_on = _post(client, "/api/agent/chat", {"message": "never mind"}).get_json()
+    assert (moved_on["reply"], moved_on["pending"]) == ("left it", None)
+    parts = [part for message in seen[-1] for part in message.parts]
+    returns = [(p.tool_name, p.outcome) for p in parts if isinstance(p, ToolReturnPart)]
+    assert returns == [("scaffold_templates", "interrupted")]
+    prompts = [p.content for p in parts if isinstance(p, UserPromptPart)]
+    assert prompts == ["scaffold it", "never mind"]
+
+    late = _post(client, "/api/agent/chat", {"approvals": {card["id"]: True}})
+    assert (late.status_code, late.get_json()["pending"]) == (400, None)
+    assert not (tmp_path / "templates").exists()
+
+
 def test_a_resume_that_reached_the_run_leaves_nothing_to_answer_again(
     client: Any, chat_env: pytest.MonkeyPatch, tmp_path: Path
 ):

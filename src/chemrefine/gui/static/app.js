@@ -1667,10 +1667,16 @@ function builder() {
       // must not swallow the verdicts: without the cards the suspended run has nothing left
       // to answer it. One that did reach it is another matter: the approved calls ran before
       // the model was asked anything, the server says nothing is pending, and the same cards
-      // answered again would run those calls twice. Restore unless a reset intervened.
+      // answered again would run those calls twice. Restore unless a reset intervened — and
+      // restore what the server says is waiting when it says: this page's cards can be stale
+      // (another tab moved the chat on), and cards the server no longer holds would be
+      // refused on every answer. The verdicts kept are the ones for calls still waiting.
       if (!landed && stillPending !== null && this._chatGen === generation + 1) {
-        this.chat.pending = heldPending;
-        this.chat.decisions = approvals;
+        const cards = stillPending ?? heldPending;
+        this.chat.pending = cards;
+        this.chat.decisions = Object.fromEntries(
+          Object.entries(approvals).filter(([id]) => cards.some((card) => card.id === id)),
+        );
       }
     },
     async resetChat() {

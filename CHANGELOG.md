@@ -459,6 +459,13 @@ for the full map.
 
 ### Fixed
 
+- **The builder's chat keeps a paused turn when another tab moves past it.** Verdicts
+  that did not answer exactly the calls waiting — stale cards in a second tab — reached
+  the run, which refused them only after the paused turn had been taken, losing it and
+  the message that raised it; they are now refused first, the calls still wait, and the
+  panel shows the ones actually waiting. A message sent while calls waited continued
+  from the conversation before that turn, dropping it; it now continues from the paused
+  turn, with its calls recorded as never run.
 - **A chat turn that fails keeps what it did.** In `chemrefine agent` and the builder's
   chat panel, a turn that failed part-way — the model endpoint dropping after an allowed
   call ran — was dropped whole: the next turn's model saw neither your message nor the

@@ -944,27 +944,44 @@ def test_a_superseded_check_cannot_rearm_send():
 
 
 _CARD = '{"id": "c1", "tool": "start_run", "args": {}}'
+_OTHER_CARD = '{"id": "c2", "tool": "save_config", "args": {}}'
 
 
 @pytest.mark.parametrize(
-    ("response", "offered_again"),
+    ("response", "cards", "decisions"),
     [
-        ("null", True),
-        ('{"status": 409, "body": {"error": "a chat turn is already running"}}', True),
-        (f'{{"status": 400, "body": {{"error": "not a boolean", "pending": [{_CARD}]}}}}', True),
-        ('{"status": 502, "body": {"error": "model endpoint failed", "pending": null}}', False),
+        ("null", ["c1"], {"c1": True}),
+        (
+            '{"status": 409, "body": {"error": "a chat turn is already running"}}',
+            ["c1"],
+            {"c1": True},
+        ),
+        (
+            f'{{"status": 400, "body": {{"error": "not a boolean", "pending": [{_CARD}]}}}}',
+            ["c1"],
+            {"c1": True},
+        ),
+        (
+            f'{{"status": 400, "body": {{"error": "stale", "pending": [{_OTHER_CARD}]}}}}',
+            ["c2"],
+            {},
+        ),
+        ('{"status": 502, "body": {"error": "model endpoint failed", "pending": null}}', [], {}),
     ],
-    ids=["unreachable", "busy", "refused-before-the-run", "failed-after-the-run"],
+    ids=["unreachable", "busy", "refused-before-the-run", "stale-cards", "failed-after-the-run"],
 )
 def test_a_failed_resume_offers_the_cards_again_only_while_they_can_be_answered(
-    response: str, offered_again: bool
+    response: str, cards: list[str], decisions: dict[str, bool]
 ):
     """The cards come back when the verdicts never reached the run, and only then.
 
     Restored unconditionally, a resume that failed *after* its approved calls ran — the
     endpoint dying on the next request — put the cards back with their verdicts filled in,
     and one click ran the same calls again. The server says what is still pending whenever
-    it answered the resume; when it did not (busy, unreachable), nothing was touched.
+    it answered the resume; when it did not (busy, unreachable), nothing was touched. What
+    it says wins over what the page held: cards another tab has since answered would be
+    refused on every click, so the page shows the calls actually waiting, and keeps only
+    the verdicts that answer them.
     """
     out = _run_component_in_node(
         """
@@ -982,8 +999,7 @@ def test_a_failed_resume_offers_the_cards_again_only_while_they_can_be_answered(
       }));
     """.replace("RESPONSE", response).replace("CARD", _CARD)
     )
-    expected = {"cards": ["c1"], "decisions": {"c1": True}}
-    assert json.loads(out) == (expected if offered_again else {"cards": [], "decisions": {}})
+    assert json.loads(out) == {"cards": cards, "decisions": decisions}
 
 
 @pytest.mark.parametrize("reset_meanwhile", [False, True], ids=["current", "orphaned"])

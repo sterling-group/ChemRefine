@@ -71,7 +71,7 @@ class TurnFailed(Exception):
     without it invites the model to propose it again. A run that failed before it took its
     history in (its model client failing to open, say) recorded nothing, and ``messages``
     is then the history it was given, without the new message. Either way, calls left
-    without an answer are closed as interrupted (:func:`_answerable`). The failure itself is
+    without an answer are closed as interrupted (:func:`answerable`). The failure itself is
     ``__cause__``, and this exception's text is the cause's, so a harness reports the
     failure in the cause's own words.
     """
@@ -265,16 +265,17 @@ async def _entered_run(
                 )
         except Exception as e:
             reached = recorded or list(message_history or ())
-            raise TurnFailed(e, _answerable(reached)) from e
+            raise TurnFailed(e, answerable(reached)) from e
 
 
-def _answerable(messages: list[ModelMessage]) -> list[ModelMessage]:
+def answerable(messages: list[ModelMessage]) -> list[ModelMessage]:
     """``messages``, ending where a new prompt can follow.
 
     A history whose last response holds calls nobody answered refuses a new prompt
-    ("unprocessed tool calls"). The run that failed will never answer them, and
-    PydanticAI's record of that is an empty ``interrupted`` request after the response —
-    the marker the next run reads to close those calls with ``interrupted`` returns. How
+    ("unprocessed tool calls"). When they never will be — the run that made them failed,
+    or the user moved on without a verdict — PydanticAI's record of that is an empty
+    ``interrupted`` request after the response: the marker the next run reads to close
+    those calls with ``interrupted`` returns. How
     often a run writes the marker itself depends on the release (some only once a call
     has returned, later ones on any failure inside tool execution), and none writes it for
     a run that failed before it took its history in or that refused a new prompt after
