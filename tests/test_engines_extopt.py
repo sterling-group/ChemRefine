@@ -1064,6 +1064,30 @@ def test_client_main_writes_engrad(tmp_path: Path, monkeypatch):
     assert "Gradient [Eh/Bohr]" in text
 
 
+def test_client_main_with_no_answer_raises_and_leaves_no_engrad(tmp_path: Path, monkeypatch):
+    """No answer, no ``.engrad`` — the failure is the wrapper's non-zero exit.
+
+    ORCA 6.1.1 deletes the ``.engrad`` around every external call and stops the job when the
+    wrapper leaves none, so a failed call cannot hand it a stale gradient — as long as the
+    bridge writes the file only once the server has answered.
+    """
+    from urllib.error import URLError
+
+    inp = _write_extinp(tmp_path)
+    url_file = tmp_path / "server.url"
+    url_file.write_text("127.0.0.1:1234\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "sys.argv",
+        ["bridge.py", "--backend", "mlip", "--url-file", str(url_file), str(inp)],
+    )
+    with (
+        patch("urllib.request.urlopen", side_effect=URLError("refused")),
+        pytest.raises(JobFailureError, match="unreachable"),
+    ):
+        bridge.main()
+    assert not list(tmp_path.glob("*.engrad"))
+
+
 def test_client_main_tags_calls_with_extinp_jobname(tmp_path: Path, monkeypatch):
     """Without an explicit ``--tag``, ``main`` derives a per-structure tag from the
     ``.extinp.tmp`` jobname so per-call artefacts land in a per-structure file — and the
