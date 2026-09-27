@@ -21,7 +21,7 @@ import replay
 
 from chemrefine import pipeline
 from chemrefine.config import load_config
-from chemrefine.engines import backend_env_python
+from chemrefine.engines import _execution, backend_env_python
 
 pytestmark = pytest.mark.integration
 
@@ -108,8 +108,14 @@ def _skip_unless_available(requirements: set[str]) -> None:
 
 
 @pytest.mark.parametrize("name", sorted(_REQUIRES))
-def test_live_case(name: str, tmp_path: Path, request: pytest.FixtureRequest) -> None:
-    """Run the case for real, assert the workflow invariants, optionally record."""
+def test_live_case(
+    name: str, tmp_path: Path, request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Run the case for real, assert the workflow invariants, optionally record.
+
+    Every case runs under :class:`replay.SubmissionRecorder`, recording or not, so the log a
+    recording needs is made the way every live run makes it.
+    """
     requirements = _REQUIRES[name]
     _skip_unless_available(requirements)
     shutil.copytree(CASES_DIR / name, tmp_path, dirs_exist_ok=True)
@@ -122,7 +128,10 @@ def test_live_case(name: str, tmp_path: Path, request: pytest.FixtureRequest) ->
             update={"executables": {**config.executables, "orca": str(Path(_ORCA).resolve())}}
         )
 
+    recorder = replay.SubmissionRecorder(_execution.run_batch, tmp_path / "outputs")
+    monkeypatch.setattr(_execution, "run_batch", recorder)
     outcomes = pipeline.run(config)
+    recorder.write(tmp_path)
 
     assert outcomes[-1].state.structures, "the live pipeline must end with survivors"
     outputs = tmp_path / "outputs"

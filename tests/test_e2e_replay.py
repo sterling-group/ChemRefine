@@ -10,19 +10,28 @@ fixtures never stales them.
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 from collections import Counter
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
-from replay import ReplayCase, ReplaySubmitter, extract_case, replay_run_batch
+from replay import (
+    SUBMISSIONS,
+    ReplayCase,
+    ReplaySubmitter,
+    SubmissionRecorder,
+    extract_case,
+    pack_case,
+    replay_run_batch,
+)
 
 from chemrefine import ids, pipeline
 from chemrefine.config import Config, load_config
 from chemrefine.engines.orca.output import parse_output
 from chemrefine.io import read_xyz_frames
-from chemrefine.state import StepInputs
+from chemrefine.state import JobBatch, JobTriple, StepContext, StepInputs
 
 RUN_BATCH = "chemrefine.engines._execution.run_batch"
 
@@ -81,6 +90,7 @@ def test_conformers_full_pipeline(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     with (case.output_dir / "steps.csv").open(encoding="utf-8", newline="") as fh:
         rows_per_step = Counter(row["Step"] for row in csv.DictReader(fh))
     assert rows_per_step == {"1": 3, "2": 2, "3": 1}, "every step reports its survivors"
+    submitter.assert_replayed()
 
 
 def test_conformers_survivors_follow_the_steps_ranking_energy(
@@ -150,7 +160,10 @@ def test_conformers_second_run_hits_cache(tmp_path: Path, monkeypatch: pytest.Mo
 
 def test_nms_resolves_saddle_via_round_two(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     case, submitter, config = _replay("nms_minimum", tmp_path, monkeypatch)
-    round_one = parse_output(case.captured / "step1" / "0" / "step1_0.out", "opt_sp")[0]
+    # Round 1 as it was submitted: the canonical `.out` of the recorded tree is the promoted
+    # winner, as a user's tree has it.
+    round_one_out = case.submitted_file("step1/0", 0, "step1_0.out")
+    round_one = parse_output(round_one_out, "opt_sp")[0]
     assert round_one.imaginary_freqs, "the captured seed must be a saddle"
 
     outcomes = pipeline.run(config)
@@ -185,6 +198,7 @@ def test_nms_resolves_saddle_via_round_two(tmp_path: Path, monkeypatch: pytest.M
     assert survivor.converged
     assert survivor.imaginary_freqs == {}, "a verified minimum — a table, with nothing in it"
     assert len(outcomes[1].state.structures) == 1
+    submitter.assert_replayed()
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +221,7 @@ def test_ts_pes_pipeline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     assert len(ts.imaginary_freqs) == 1, "a first-order saddle passes the ts target"
     ts_dir = case.output_dir / "step2" / ts.id
     assert not list(ts_dir.glob("attempt*")), "a clean TS needs no NMS round 2"
+    submitter.assert_replayed()
 
 
 # ---------------------------------------------------------------------------
@@ -231,6 +246,7 @@ def test_host_guest_pipeline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     assert "* xyzfile -1 1 " in step2_inp, "the per-step charge override reaches the input"
     assert len(submitter.calls[1].files) == kept
     assert outcomes[1].state.structures, "solvator output parses into survivors"
+    submitter.assert_replayed()
 
 
 # ---------------------------------------------------------------------------
@@ -258,12 +274,13 @@ def test_mlip_screen_renders_options_and_parses(
     # cumulative weight over two close MACE energies, both survive.
     assert len(outcomes[0].state.structures) == 2, "boltzmann keeps both close conformers"
     assert all(s.energy_hartree is not None for s in outcomes[0].state.structures)
+    submitter.assert_replayed()
 
 
 def test_mlip_extopt_renders_server_block_and_parses(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    case, _submitter, config = _replay("mlip_extopt", tmp_path, monkeypatch)
+    case, submitter, config = _replay("mlip_extopt", tmp_path, monkeypatch)
     config = _with_backend_python(config, 1)
 
     outcomes = pipeline.run(config)
@@ -273,6 +290,7 @@ def test_mlip_extopt_renders_server_block_and_parses(
     (survivor,) = outcomes[0].state.structures
     assert survivor.converged
     assert survivor.energy_hartree is not None
+    submitter.assert_replayed()
 
 
 # ---------------------------------------------------------------------------
@@ -342,6 +360,7 @@ def test_mlip_train_full_pipeline(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert str(run_dir / "train.model") in rendered3, "step 3 loads the model step 2 produced"
     assert len(outcomes[2].state.structures) == 4
     assert all(s.energy_hartree is not None for s in outcomes[2].state.structures)
+    submitter.assert_replayed()
 
 
 def _replay_mlip_train(root: Path, monkeypatch: pytest.MonkeyPatch) -> ReplayCase:
@@ -430,3 +449,117 @@ def test_every_recording_holds_each_file_once() -> None:
         with tar_open(archive) as tar:
             repeated = [name for name, n in Counter(tar.getnames()).items() if n > 1]
         assert not repeated, f"{archive.name} archives {len(repeated)} name(s) more than once"
+
+
+# ---------------------------------------------------------------------------
+# The harness: what a recording says each submission produced
+# ---------------------------------------------------------------------------
+
+
+def _digest(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _logged_case(root: Path, outputs: dict[str, list[str]]) -> ReplayCase:
+    """A hand-made recording: ``{job dir: [what each submission wrote as step1_0.out]}``.
+
+    Laid out as the pipeline leaves a retried structure — each submission but the last
+    sealed into ``attemptK/``, the last at the directory itself.
+    """
+    captured = root / "captured_outputs"
+    log: dict[str, list[list[dict[str, str]]]] = {}
+    for rel, texts in outputs.items():
+        for k, text in enumerate(texts, start=1):
+            home = captured / rel if k == len(texts) else captured / rel / f"attempt{k}"
+            home.mkdir(parents=True, exist_ok=True)
+            (home / "step1_0.out").write_text(text, encoding="utf-8")
+            log.setdefault(rel, []).append([{"name": "step1_0.out", "sha256": _digest(text)}])
+    (root / SUBMISSIONS).write_text(json.dumps(log), encoding="utf-8")
+    return ReplayCase(root=root, captured=captured)
+
+
+def _submit(submitter: ReplaySubmitter, rel: str) -> str:
+    """Submit ``rel``'s job once; return the output the submitter served for it."""
+    out = submitter.case.output_dir / rel / "step1_0.out"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    submitter._satisfy(StepInputs(files=((out.with_suffix(".inp"), out, "0"),)))
+    return out.read_text(encoding="utf-8")
+
+
+def test_a_directory_is_served_its_recorded_submissions_in_order(tmp_path: Path) -> None:
+    """A retried structure's directory is submitted twice, and replays both runs in order.
+
+    The directory alone cannot say that: the run sealed the first submission into
+    ``attempt1/`` and ran the retry where it had been, while an NMS parent that stayed
+    unresolved leaves an ``attempt1/`` holding only its children. The log recorded each
+    submission as it finished, and a replay serves exactly that.
+    """
+    submitter = ReplaySubmitter(_logged_case(tmp_path, {"step1/0": ["first try", "the retry"]}))
+    assert [_submit(submitter, "step1/0") for _ in range(2)] == ["first try", "the retry"]
+    submitter.assert_replayed()
+
+
+def test_a_submission_past_the_recording_is_refused(tmp_path: Path) -> None:
+    """A replay that submits more than the live run did has diverged — it is not served."""
+    submitter = ReplaySubmitter(_logged_case(tmp_path, {"step1/0": ["only try"]}))
+    _submit(submitter, "step1/0")
+    with pytest.raises(AssertionError, match=r"submission 2 of step1/0 .* never recorded"):
+        _submit(submitter, "step1/0")
+
+
+def test_replay_that_skips_a_recorded_submission_is_caught(tmp_path: Path) -> None:
+    """A replay that never makes the retry the live run made is not a replay of that run."""
+    submitter = ReplaySubmitter(_logged_case(tmp_path, {"step1/0": ["first try", "the retry"]}))
+    _submit(submitter, "step1/0")
+    with pytest.raises(AssertionError, match="but the recording holds"):
+        submitter.assert_replayed()
+
+
+def test_the_recorder_logs_each_completion_as_the_job_left_it(tmp_path: Path) -> None:
+    """One entry per completion, holding the kept files present at that moment.
+
+    A file the pipeline writes after a job completes (an NMS ``resolution.json``) is not
+    the job's, and an input is not an output. The follow-up batch re-enters ``run_batch``
+    with the sink it was handed, as the array path does — already recording, so nothing is
+    logged twice.
+    """
+    outputs = tmp_path / "outputs"
+    job = outputs / "step1" / "0"
+    job.mkdir(parents=True)
+    triple: JobTriple = (job / "step1_0.inp", job / "step1_0.out", "0")
+
+    def run_batch(engine: object, inputs: StepInputs, ctx: StepContext, *, sink: Any) -> JobBatch:
+        retry = (job / "step1_0.out").exists()
+        (job / "step1_0.inp").write_text("an input", encoding="utf-8")
+        (job / "step1_0.out").write_text("the retry" if retry else "first try", encoding="utf-8")
+        sink.on_complete(triple)
+        if not retry:
+            recorder(engine, inputs, ctx, sink=sink)
+            (job / "resolution.json").write_text("{}", encoding="utf-8")
+        return JobBatch(jobs={})
+
+    recorder = SubmissionRecorder(run_batch, outputs)
+    recorder(object(), StepInputs(files=(triple,)), cast(StepContext, None))
+    recorder.write(tmp_path)
+
+    logged = json.loads((tmp_path / SUBMISSIONS).read_text(encoding="utf-8"))
+    assert logged == {
+        "step1/0": [
+            [{"name": "step1_0.out", "sha256": _digest("first try")}],
+            [{"name": "step1_0.out", "sha256": _digest("the retry")}],
+        ]
+    }
+
+
+def test_a_log_naming_a_file_the_tree_lost_is_refused_at_pack_time(tmp_path: Path) -> None:
+    """A recorded output rewritten in place would leave its submission nothing to serve."""
+    run_dir = tmp_path / "run"
+    (run_dir / "templates").mkdir(parents=True)
+    (run_dir / "input.yaml").write_text("output_dir: ./outputs\n", encoding="utf-8")
+    job = run_dir / "outputs" / "step1" / "0"
+    job.mkdir(parents=True)
+    (job / "step1_0.out").write_text("rewritten", encoding="utf-8")
+    log = {"step1/0": [[{"name": "step1_0.out", "sha256": _digest("as the job wrote it")}]]}
+    (run_dir / SUBMISSIONS).write_text(json.dumps(log), encoding="utf-8")
+    with pytest.raises(AssertionError, match="logged outputs missing from the packed tree"):
+        pack_case(run_dir, "lost", dest_dir=tmp_path / "recordings")

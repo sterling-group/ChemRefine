@@ -2,20 +2,21 @@
 
 A structure lives at ``stepN/<id>/``, and resolving it may take more than one try. Each try is
 an *attempt*, archived under ``stepN/<id>/attemptK/``. Two callers use this, and they compose
-the same three operations differently:
+the operations differently:
 
 .. code-block:: text
 
-    convergence retry   archive(dir)                            → re-run at canonical
-    NMS resolution      begin(dir) → children run inside → seal → promote the winner
+    convergence retry   archive(dir)                              → re-run at canonical
+    NMS resolution      children run in the next attemptK/ → a winner? seal → promote it
 
-The retry has nothing to run inside the attempt, so it seals immediately and installs a new
-canonical state by re-running. NMS runs its displaced children inside the attempt first, then
-seals round 1 alongside them and installs by promoting the winner. Keeping ``begin`` and
-``seal`` separable is what lets both spell their own order instead of passing a destination
-into a shared one.
+The retry has nothing to run inside the attempt, so it seals immediately (:func:`archive` is
+:func:`begin` then :func:`seal`) and installs a new canonical state by re-running. NMS runs
+its displaced children inside the next attempt directory first, and only when one of them
+wins does it seal round 1 into that attempt beside them and promote the winner; a round that
+resolves nothing seals nothing, so round 1 stays at canonical and the attempt holds only its
+children. Keeping ``seal`` apart from ``begin`` is what lets NMS seal late, or not at all.
 
-The invariant either way: **the attempt holds what was at canonical, and canonical holds one
+The invariant for a sealed attempt: **it holds what was at canonical, and canonical holds one
 calculation.** Only ``attempt*/`` is ever left behind by a seal — folding one attempt into
 another would lose a run's history.
 

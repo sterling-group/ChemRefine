@@ -155,6 +155,8 @@ survivors, a new operation) is not a re-parse, and needs the live tier:
   (`pytest -m integration`, deselected by default) runs the case
   definitions in `tests/data/e2e/cases/` against real ORCA/MLIP
   binaries; add `--record` to re-pack the recordings from a passing run.
+  A recording pairs the tree a run left with `submissions.json`, the log of
+  what each job produced as it finished, and a fresh replay serves that log.
   After a parser-only change, re-pack offline instead — no binaries needed:
   run the drift-detector test
   (`tests/test_e2e_relocate.py::test_rebuilt_records_match_the_archived_ones_field_for_field`)
