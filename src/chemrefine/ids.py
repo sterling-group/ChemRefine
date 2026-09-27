@@ -18,7 +18,8 @@ The functions here own three concerns:
    (:func:`structure_artifact_path`, :func:`input_geometry_path`) — each
    structure gets its own ``step_dir/{ID}/`` directory holding
    ``step{N}_{ID}.{ext}`` (and ``step{N}_{ID}_inp.xyz`` for the input
-   geometry). (IDs travel in the step manifest, never re-parsed out of
+   geometry) — and spell one relative to its step (:func:`step_relative`).
+   (IDs travel in the step manifest, never re-parsed out of
    filenames — note that NMS child IDs like ``0_m5_pos`` contain letters,
    so a filename is not a reliable place to recover an ID from.)
 3. Resolve a step's input *template* path (:func:`step_template_path`,
@@ -99,6 +100,21 @@ def structure_artifact_path(step_dir: Path, step: int, structure_id: str, ext: s
     Keeping the naming convention here means a layout change touches one file.
     """
     return step_dir / structure_id / f"{structure_stem(step, structure_id)}.{ext}"
+
+
+def step_relative(path: Path, step_dir: Path) -> str:
+    """How a step's file is spelled wherever it is named: relative to the step directory.
+
+    Everything about a tree is addressed relatively — ``Config.step_dir`` derives from
+    ``output_dir``, which resolves against the config file's own directory, and no key holds
+    a path — so a tree copied off a cluster or moved to another directory keeps working
+    everywhere. A file spelled absolute names the machine the step ran on: a manifest that did
+    sent ``rebuild-cache`` and a ledgered ``rerun`` on the copy to paths that were not there,
+    and a failure reason that did pointed its reader at them. Every shipped engine writes its
+    jobs under the step directory, so this is the normal spelling (``0/step1_0.out``); a file
+    elsewhere stays absolute.
+    """
+    return str(path.relative_to(step_dir)) if path.is_relative_to(step_dir) else str(path)
 
 
 def step_ensemble_path(step_dir: Path, step: int) -> Path:

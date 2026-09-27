@@ -27,7 +27,7 @@ from chemrefine.engines.api import NmsInputInfo, ParsedResult, RunBlock, registe
 from chemrefine.engines.orca import input as orca_input
 from chemrefine.engines.orca import inspect, output
 from chemrefine.errors import ConfigError
-from chemrefine.ids import require_template
+from chemrefine.ids import require_template, step_relative
 from chemrefine.state import StepContext
 
 logger = logging.getLogger(__name__)
@@ -250,8 +250,13 @@ class OrcaEngine(JobEngine):
         geometries elsewhere (a trajectory) leaves it nothing, and the structure is
         ledgered unparseable — exactly what the ``sp`` these templates used to infer did,
         now under the run kind's own name and with the warning.
+
+        A reason for an output it cannot use names that output relative to the step
+        (:func:`~chemrefine.ids.step_relative`), so it still points at the file once the
+        tree is copied or moved.
         """
         operation = self._resolve_operation(ctx)
+        src = step_relative(output_path, ctx.step_dir)
         inferred = ctx.step_cfg.operation is None
         if inferred and operation not in output.known_operations():
             logger.warning(
@@ -260,14 +265,8 @@ class OrcaEngine(JobEngine):
                 output_path.name,
                 operation,
             )
-            return output.parse_dft(output_path)
-        if operation.lower().replace("+", "_") in output.TEXT_BASED_OPERATIONS:
-            return output.parse_text(
-                output_path.read_text(encoding="utf-8", errors="replace"),
-                operation,
-                src=str(output_path),
-            )
-        return output.parse_output(output_path, operation)
+            return output.parse_dft(output_path, src=src)
+        return output.parse_output(output_path, operation, src=src)
 
     # -- nms hook (the only engine-specific half of chemrefine.nms) --------
 

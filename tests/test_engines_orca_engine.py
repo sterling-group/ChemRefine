@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import synthetic
 from ase import Atoms
 
 from chemrefine import cache, lifecycle, slurm
@@ -18,7 +19,14 @@ from chemrefine.engines.api import NmsCapableEngine, get_engine
 from chemrefine.errors import ConfigError
 from chemrefine.ids import step_template_path
 from chemrefine.slurm import dispatch
-from chemrefine.state import JobBatch, PipelineState, StepContext, StepInputs, Structure
+from chemrefine.state import (
+    FailureKind,
+    JobBatch,
+    PipelineState,
+    StepContext,
+    StepInputs,
+    Structure,
+)
 
 FIXTURE = Path(__file__).parent / "data" / "engines" / "orca" / "dft" / "step1_0.out"
 
@@ -567,6 +575,67 @@ def test_crashed_goat_job_is_ledgered_not_silently_accepted(tmp_path: Path):
     successes, failures = lifecycle.parse_with_failures(get_engine("orca"), inputs, ctx)
     assert successes == []
     assert [(f.sid, f.reason) for f in failures] == [("0", "did not terminate normally")]
+
+
+_DIED = synthetic.ORCA_ERROR_TERMINATION_OUT
+_FINISHED = "                             ****ORCA TERMINATED NORMALLY****\n"
+
+
+@pytest.mark.parametrize(
+    ("operation", "out_text", "sidecar", "kind", "named"),
+    [
+        # A single-structure output that died: named, and its `.err` quoted.
+        ("opt_sp", _DIED, None, FailureKind.NOT_TERMINATED_NORMALLY, "0/step1_0.out"),
+        # A scan that died before a point converged reads the same way as any other run
+        # that died — it is read through the same route as every declared operation.
+        ("pes", _DIED, None, FailureKind.NOT_TERMINATED_NORMALLY, "0/step1_0.out"),
+        # A sidecar is named by its own file, beside the output, under the same step.
+        (
+            "goat",
+            _FINISHED,
+            "step1_0.finalensemble.xyz",
+            FailureKind.UNPARSEABLE,
+            "0/step1_0.finalensemble.xyz",
+        ),
+    ],
+)
+def test_a_failure_reason_names_its_output_relative_to_its_step(
+    tmp_path: Path,
+    operation: str,
+    out_text: str,
+    sidecar: str | None,
+    kind: FailureKind,
+    named: str,
+):
+    """The ledgered reason must still point at the file after the tree is copied or moved.
+
+    Spelled absolute, it named the directory the step ran in — a cluster's scratch, another
+    machine's home — so a tree copied off the cluster reported locations that are not there.
+    The `.err` is still read from where it lies, and quoted.
+    """
+    ctx = _ctx(
+        tmp_path,
+        (_seed_structure("0"),),
+        StepConfig(step=1, engine="orca", operation=operation),
+    )
+    job_dir = ctx.step_dir / "0"
+    job_dir.mkdir(parents=True)
+    out = job_dir / "step1_0.out"
+    out.write_text(out_text, encoding="utf-8")
+    out.with_suffix(".err").write_text(synthetic.ORCA_ERROR_TERMINATION_ERR, encoding="utf-8")
+    if sidecar is not None:
+        (job_dir / sidecar).write_text("no frames here\n", encoding="utf-8")
+
+    _, failures = lifecycle.parse_with_failures(
+        get_engine("orca"), StepInputs(files=((job_dir / "step1_0.inp", out, "0"),)), ctx
+    )
+
+    [failure] = failures
+    assert failure.kind is kind
+    assert f" {named}" in failure.detail
+    assert str(tmp_path) not in failure.detail
+    if kind is FailureKind.NOT_TERMINATED_NORMALLY:
+        assert "step1_0.err ends: sh: 1: /opt/orca/orca_startup: not found" in failure.detail
 
 
 # ---------------------------------------------------------------------------

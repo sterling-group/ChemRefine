@@ -15,10 +15,9 @@ ExtOpt ``.extinp.tmp`` / ``.engrad`` round-trip helpers live in
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, Protocol
 
 import numpy as np
 from numpy.typing import NDArray
@@ -40,14 +39,24 @@ _DFT_OPERATIONS = frozenset({"opt_sp", "dft", "sp", "freq"})
 TEXT_BASED_OPERATIONS = _DFT_OPERATIONS | {"pes"}
 
 
-def parse_dft(path: str | Path) -> list[ParsedResult]:
-    """Parse a single-structure DFT ``.out`` (``opt_sp`` / ``sp`` / ``freq``)."""
+def parse_dft(path: str | Path, *, src: str | None = None) -> list[ParsedResult]:
+    """Parse a single-structure DFT ``.out`` (``opt_sp`` / ``sp`` / ``freq``).
+
+    ``src`` is what error messages call the output — the path itself unless the caller
+    names it otherwise (an engine names it relative to its step). The job's ``.err`` is
+    read from beside ``path`` either way.
+    """
+    path = Path(path)
     return parse_dft_from_text(
-        Path(path).read_text(encoding="utf-8", errors="replace"), src=str(path)
+        path.read_text(encoding="utf-8", errors="replace"),
+        src=src or str(path),
+        stderr=path.with_suffix(".err"),
     )
 
 
-def parse_dft_from_text(text: str, *, src: str = "<text>") -> list[ParsedResult]:
+def parse_dft_from_text(
+    text: str, *, src: str = "<text>", stderr: Path | None = None
+) -> list[ParsedResult]:
     """Assemble one :class:`ParsedResult` from a single read of an ORCA ``.out``.
 
     Runs every section extractor over the shared ``text`` — energy, geometry, forces,
@@ -57,14 +66,15 @@ def parse_dft_from_text(text: str, *, src: str = "<text>") -> list[ParsedResult]
     its geometry, energy, gradient, thermochemistry and frequencies are read from that
     evaluation alone (:func:`_evaluation_of`), its convergence from every verdict printed
     by its end — the optimiser judges a geometry before re-printing it for a final energy —
-    and termination from the whole output. ``src`` only labels error messages. Raises
+    and termination from the whole output. ``src`` only labels error messages, and
+    ``stderr`` is the job's ``.err``, quoted when the run died. Raises
     :class:`OutputParseError` if the energy or coordinates are missing / malformed, or
     :class:`OutputTerminationError` when the reason they are missing is that ORCA died — see
     :func:`_unreadable`.
     """
     found = _last_energy(text)
     if found is None:
-        raise _unreadable("no FINAL SINGLE POINT ENERGY", text, src)
+        raise _unreadable("no FINAL SINGLE POINT ENERGY", text, src, stderr)
     electronic, energy_at = found
     start, end = _evaluation_of(text, energy_at)
     evaluation = text[max(start, 0) : end]
@@ -74,10 +84,10 @@ def parse_dft_from_text(text: str, *, src: str = "<text>") -> list[ParsedResult]
         # Corrupt token (e.g. a ``*****`` overflow) — a per-file parse failure, not a crash.
         raise OutputParseError(f"malformed coordinate row in {src}: {e}") from e
     if coords is None:
-        raise _unreadable("no CARTESIAN COORDINATES block", text, src)
+        raise _unreadable("no CARTESIAN COORDINATES block", text, src, stderr)
     symbols, positions = coords
     if not symbols:
-        raise _unreadable("CARTESIAN COORDINATES block has no atoms", text, src)
+        raise _unreadable("CARTESIAN COORDINATES block has no atoms", text, src, stderr)
     try:
         # The atom count comes from the coordinates block just read, which is what lets the
         # gradient reader tell a skipped summary line from a lost atom row.
@@ -109,10 +119,18 @@ def parse_dft_from_text(text: str, *, src: str = "<text>") -> list[ParsedResult]
     ]
 
 
+class _SidecarReader(Protocol):
+    """An ensemble reader: the sidecar to read, and what its messages call it."""
+
+    def __call__(self, path: str | Path, *, src: str | None = None) -> list[ParsedResult]:
+        """Read every frame of the sidecar at ``path``."""
+        ...
+
+
 class _Ensemble(NamedTuple):
     """How one multi-frame operation finds and reads its sidecar."""
 
-    parse: Callable[[Path], list[ParsedResult]]
+    parse: _SidecarReader
     names: tuple[str, ...]
     """Sidecar suffixes to try in order; a filename changed across ORCA releases has more
     than one, and the first that exists wins."""
@@ -149,7 +167,7 @@ _ERR_TAIL_LINES = 5
 """How much of the job's stderr to quote — enough for the message that caused the abort."""
 
 
-def _unreadable(what: str, text: str, src: str) -> OutputParseError:
+def _unreadable(what: str, text: str, src: str, stderr: Path | None) -> OutputParseError:
     """Return the error for a section that is missing, saying *why* it is missing.
 
     A section can be absent because the parser cannot read it, or because the program
@@ -158,7 +176,8 @@ def _unreadable(what: str, text: str, src: str) -> OutputParseError:
     :func:`chemrefine.lifecycle._parse_job` files it as ``NOT_TERMINATED_NORMALLY``.
 
     ORCA's abort banner names the module it died in but not the cause, which it writes to
-    stderr — so the job's ``.err``, which shares the output's stem, is quoted alongside it.
+    stderr — so the job's ``.err`` (``stderr``, which shares the output's stem) is quoted
+    alongside it.
     Without that the message is "error termination in Startup" and the actual reason (a
     missing basis file, a helper binary that is not on ``PATH``) is in a file nothing points
     at.
@@ -166,7 +185,7 @@ def _unreadable(what: str, text: str, src: str) -> OutputParseError:
     if status.parse_terminated_normally(text):
         return OutputParseError(f"{what} in {src}")
     return OutputTerminationError(
-        f"{_termination_detail(text)} — {what} in {src}{_stderr_tail(src)}"
+        f"{_termination_detail(text)} — {what} in {src}{_stderr_tail(stderr)}"
     )
 
 
@@ -176,9 +195,10 @@ def _termination_detail(text: str) -> str:
     return banner.group(0) if banner else "the run did not terminate normally"
 
 
-def _stderr_tail(src: str) -> str:
+def _stderr_tail(err_path: Path | None) -> str:
     """The last few non-empty lines of the job's ``.err``, or ``""`` if there is none."""
-    err_path = Path(src).with_suffix(".err")
+    if err_path is None:
+        return ""
     try:
         text = err_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -298,27 +318,31 @@ def _stamp_run_status(frames: list[ParsedResult], text: str) -> list[ParsedResul
     return [replace(frame, terminated_normally=normally) for frame in frames]
 
 
-def parse_output(path: str | Path, operation: str) -> list[ParsedResult]:
+def parse_output(path: str | Path, operation: str, *, src: str | None = None) -> list[ParsedResult]:
     """Pick the right parser based on the YAML ``operation`` string.
 
     ``opt_sp`` / ``sp`` / ``freq`` / ``pes`` read the ``.out`` directly; the multi-frame
     ensemble operations read their ``<base>.<suffix>`` sidecar (via :mod:`ensembles`) and
     then take their run status from the ``.out`` beside it (:func:`_stamp_run_status`).
+    ``src`` is what error messages call the output, as for :func:`parse_dft`; a sidecar is
+    called by its own name beside it.
     """
     op = operation.lower().replace("+", "_")
     if op in _DFT_OPERATIONS:
-        return parse_dft(path)
+        return parse_dft(path, src=src)
     if op not in _ENSEMBLE_OPERATIONS and op != "pes":
         # A name no engine offers is a config mistake, not a job that died — it must not
         # be reported as one, so it is raised before the termination check below.
         raise OutputParseError(f"unknown ORCA operation: {operation!r}")
     out_path = Path(path)
+    label = Path(src) if src else out_path
     text = out_path.read_text(encoding="utf-8", errors="replace")
     try:
         if op == "pes":
-            return ensembles.parse_pes_from_text(text, src=str(out_path))
+            return ensembles.parse_pes_from_text(text, src=str(label))
         suffixes = _ENSEMBLE_OPERATIONS[op]
-        frames = suffixes.parse(ensembles.ensemble_sidecar(out_path, *suffixes.names))
+        sidecar = ensembles.ensemble_sidecar(out_path, *suffixes.names)
+        frames = suffixes.parse(sidecar, src=str(label.with_name(sidecar.name)))
     except OutputParseError as e:
         # A sidecar that is absent, empty or frameless usually means the job never wrote
         # one, and the `.out` beside it says whether that is what happened. Reporting the
@@ -326,6 +350,6 @@ def parse_output(path: str | Path, operation: str) -> list[ParsedResult]:
         if status.parse_terminated_normally(text):
             raise
         raise OutputTerminationError(
-            f"{_termination_detail(text)} — {e}{_stderr_tail(str(out_path))}"
+            f"{_termination_detail(text)} — {e}{_stderr_tail(out_path.with_suffix('.err'))}"
         ) from e
     return _stamp_run_status(frames, text)

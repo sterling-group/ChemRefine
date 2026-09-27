@@ -1124,8 +1124,8 @@ def save_manifest(
         "search_key": search_key,
         "files": [
             {
-                "input": _manifest_path_text(inp, step_dir),
-                "output": _manifest_path_text(out, step_dir),
+                "input": ids.step_relative(inp, step_dir),
+                "output": ids.step_relative(out, step_dir),
                 "id": sid,
                 **(
                     {"row_key": provenance[sid][0], "parent_digest": provenance[sid][1]}
@@ -1138,20 +1138,6 @@ def save_manifest(
     }
     write_json(path, data)
     return path
-
-
-def _manifest_path_text(path: Path, step_dir: Path) -> str:
-    """How a manifest spells a file: relative to the step directory when it lives there.
-
-    Everything else about a tree is addressed relatively — ``Config.step_dir`` derives from
-    ``output_dir``, which resolves against the config file's own directory, and no key holds
-    a path — so a tree copied or moved keeps working everywhere. The manifest was the one
-    exception: spelled absolute, it named the machine the step ran on, and ``rebuild-cache``
-    and a ledgered ``rerun`` on the copy read paths that were not there. Every shipped engine
-    writes its jobs under the step directory, so the relative spelling is the normal one;
-    a file elsewhere stays absolute, and :func:`load_manifest` reads both.
-    """
-    return str(path.relative_to(step_dir)) if path.is_relative_to(step_dir) else str(path)
 
 
 @dataclass(frozen=True)

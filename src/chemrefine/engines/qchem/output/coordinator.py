@@ -53,9 +53,15 @@ def _unreadable(what: str, text: str, src: str) -> OutputParseError:
     return OutputParseError(f"{what} in {src}")
 
 
-def parse_qchem(path: str | Path) -> list[ParsedResult]:
-    """Parse one Q-Chem ``.out`` into a single-element ``[ParsedResult]``."""
-    return parse_qchem_text(Path(path).read_text(encoding="utf-8", errors="replace"), src=str(path))
+def parse_qchem(path: str | Path, *, src: str | None = None) -> list[ParsedResult]:
+    """Parse one Q-Chem ``.out`` into a single-element ``[ParsedResult]``.
+
+    ``src`` is what error messages call the output — the path itself unless the caller
+    names it otherwise (an engine names it relative to its step).
+    """
+    return parse_qchem_text(
+        Path(path).read_text(encoding="utf-8", errors="replace"), src=src or str(path)
+    )
 
 
 def parse_qchem_text(text: str, *, src: str = "<text>") -> list[ParsedResult]:
@@ -111,16 +117,17 @@ def parse_qchem_text(text: str, *, src: str = "<text>") -> list[ParsedResult]:
     ]
 
 
-def parse_output(path: str | Path, operation: str) -> list[ParsedResult]:
+def parse_output(path: str | Path, operation: str, *, src: str | None = None) -> list[ParsedResult]:
     """Pick the parser for the YAML ``operation`` string — one table.
 
     Every known operation routes to the single-pass assembler today (see the module
     docstring for why that is uniform rather than lazy). A name outside the vocabulary
     is a config mistake and is raised as such before any file is read — the preflight
     (:meth:`~chemrefine.engines.qchem.engine.QchemEngine.check_step`) refuses it at t=0,
-    and this is the same refusal for a caller that skipped the preflight.
+    and this is the same refusal for a caller that skipped the preflight. ``src`` is what
+    error messages call the output, as for :func:`parse_qchem`.
     """
     op = operation.lower().replace("+", "_")
     if op not in _QCHEM_OPERATIONS:
         raise OutputParseError(f"unknown Q-Chem operation: {operation!r}")
-    return parse_qchem(path)
+    return parse_qchem(path, src=src)

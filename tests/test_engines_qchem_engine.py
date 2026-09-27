@@ -223,6 +223,28 @@ def test_an_inferred_operation_without_a_reader_still_runs_and_reads_the_final_s
     assert "final structure" not in caplog.text
 
 
+def test_a_failure_reason_names_its_output_relative_to_its_step(tmp_path: Path):
+    """The ledgered reason must still point at the output once the tree is moved.
+
+    Spelled absolute, it named the directory the step ran in, so a tree copied off a
+    cluster reported a location that is not there.
+    """
+    from chemrefine import lifecycle
+    from chemrefine.state import FailureKind, StepInputs
+
+    ctx = _ctx(tmp_path)
+    out = ctx.step_dir / "0" / "step1_0.out"
+    out.parent.mkdir(parents=True)
+    out.write_text("Q-Chem wrote nothing it could be read by\n", encoding="utf-8")
+    inputs = StepInputs(files=((out.with_suffix(".in"), out, "0"),))
+
+    _, [failure] = lifecycle.parse_with_failures(get_engine("qchem"), inputs, ctx)
+
+    assert failure.kind is FailureKind.UNPARSEABLE
+    assert failure.detail.endswith(" in 0/step1_0.out")
+    assert str(tmp_path) not in failure.detail
+
+
 @pytest.mark.parametrize("jobtype", ["sp", "force", "opt", "ts", "freq", "nmr"])
 def test_a_single_structure_jobtype_prepares(tmp_path: Path, jobtype: str):
     """Every job type whose output is one structure keeps running as before."""

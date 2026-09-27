@@ -33,17 +33,20 @@ def parse_output(
     label: str,
     fallback: Atoms | None,
     fields: Sequence[OutputField] = SCRIPT_OUTPUT,
+    src: str | None = None,
 ) -> list[ParsedResult]:
     """Read one template output JSON into a single-element ``[ParsedResult]``.
 
     ``label`` (the human backend name) tags error messages; ``fallback`` is the seed geometry,
     which supplies the symbols always and the positions when the script wrote none; ``fields``
-    is the engine's output contract, defaulting to the shared one.
+    is the engine's output contract, defaulting to the shared one; ``src`` is what error
+    messages call the document — the path itself unless the caller names it otherwise (the
+    engine names it relative to its step).
 
     The seed is required outright rather than only when ``positions_angstrom`` is absent: a
     parsed structure needs symbols, and the output document carries none.
     """
-    data = _load_output_json(output_path, label=label, fields=fields)
+    data = _load_output_json(output_path, label=label, fields=fields, src=src)
     if fallback is None:
         raise OutputParseError(
             "no seed atoms are available to parse against — the output document carries no "
@@ -73,7 +76,11 @@ def parse_output(
 
 
 def _load_output_json(
-    out_path: Path, *, label: str, fields: Sequence[OutputField] = SCRIPT_OUTPUT
+    out_path: Path,
+    *,
+    label: str,
+    fields: Sequence[OutputField] = SCRIPT_OUTPUT,
+    src: str | None = None,
 ) -> dict[str, Any]:
     """Read the user's script output JSON; raise :class:`OutputParseError` if malformed.
 
@@ -90,9 +97,12 @@ def _load_output_json(
     list escaped the same way, one line earlier. The generated footer can write none of
     these — the trigger is a template that writes its output document itself, which the
     script engines document as the user's right.
+
+    ``src`` is what the messages call the document — ``out_path`` itself when ``None``.
     """
+    name = src or str(out_path)
     if not out_path.is_file():
-        raise OutputParseError(f"{label} output not found: {out_path}")
+        raise OutputParseError(f"{label} output not found: {name}")
     try:
         data: dict[str, Any] = json.loads(out_path.read_text(encoding="utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as e:
@@ -100,23 +110,21 @@ def _load_output_json(
         # the decode error is a `ValueError` raised before `json.loads` sees a byte, and
         # caught alone the JSON half let it escape to the CLI as a traceback over one
         # structure. `e` names which half — the codec and the byte, or the JSON position.
-        raise OutputParseError(
-            f"{label} output {out_path} is not a UTF-8 JSON document ({e})"
-        ) from e
+        raise OutputParseError(f"{label} output {name} is not a UTF-8 JSON document ({e})") from e
     if not isinstance(data, dict):
         raise OutputParseError(
-            f"{label} output {out_path} is not a JSON mapping "
+            f"{label} output {name} is not a JSON mapping "
             f"(got {type(data).__name__}); the document must be an object of named fields"
         )
     for spec in fields:
         if spec.required and data.get(spec.name) is None:
             raise OutputParseError(
-                f"{label} output {out_path} is missing required {spec.name!r} (absent or null)"
+                f"{label} output {name} is missing required {spec.name!r} (absent or null)"
             )
         if not spec.finite:
             continue
         for component in _components(data.get(spec.name)):
-            _require_finite(component, what=spec.name, label=label, path=out_path)
+            _require_finite(component, what=spec.name, label=label, src=name)
     return data
 
 
@@ -145,7 +153,7 @@ def _components(block: Any) -> Iterator[Any]:
             yield item
 
 
-def _require_finite(value: Any, *, what: str, label: str, path: Path) -> float:
+def _require_finite(value: Any, *, what: str, label: str, src: str) -> float:
     """Return ``value`` as a finite float, or raise :class:`OutputParseError`.
 
     A diverged calculation reports ``nan`` / ``inf`` rather than failing, and nothing
@@ -173,18 +181,18 @@ def _require_finite(value: Any, *, what: str, label: str, path: Path) -> float:
     # here, once, for every numeric field the sweep visits.
     if isinstance(value, bool):
         raise OutputParseError(
-            f"{label} output {path} has a non-numeric {what!r} ({value!r}); a boolean is not "
+            f"{label} output {src} has a non-numeric {what!r} ({value!r}); a boolean is not "
             f"a quantity"
         )
     try:
         number = float(value)
     except (TypeError, ValueError) as e:
         raise OutputParseError(
-            f"{label} output {path} has a non-numeric {what!r} ({value!r})"
+            f"{label} output {src} has a non-numeric {what!r} ({value!r})"
         ) from e
     if not np.isfinite(number):
         raise OutputParseError(
-            f"{label} output {path} reports a non-finite {what!r} ({value!r}); "
+            f"{label} output {src} reports a non-finite {what!r} ({value!r}); "
             f"the calculation diverged"
         )
     return number

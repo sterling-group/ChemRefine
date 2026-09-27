@@ -59,13 +59,14 @@ def ensemble_sidecar(out_path: str | Path, suffix: str, *fallbacks: str) -> Path
 
 
 def _parse_xyz_ensemble(
-    path: str | Path, header_re: re.Pattern[str], *, fmt_name: str
+    path: str | Path, header_re: re.Pattern[str], *, fmt_name: str, src: str | None
 ) -> list[ParsedResult]:
     """Walk a multi-frame XYZ file, extracting one structure per frame.
 
     Each frame is ``<n_atoms>`` / ``<header containing an energy float>`` / ``n_atoms`` rows.
     ``header_re`` must capture the per-frame Hartree energy in group 1; frames whose header
     doesn't match are skipped (some ORCA writers emit a stray blank frame at the end).
+    ``src`` is what the error message calls the file — ``path`` itself when ``None``.
     """
     lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
     structures: list[ParsedResult] = []
@@ -75,7 +76,7 @@ def _parse_xyz_ensemble(
         if structure is not None:
             structures.append(structure)
     if not structures:
-        raise OutputParseError(f"no {fmt_name} frames found in {path}")
+        raise OutputParseError(f"no {fmt_name} frames found in {src or path}")
     return structures
 
 
@@ -122,12 +123,12 @@ def _parse_xyz_frame(
     return structure, i + 2 + n_atoms
 
 
-def parse_goat_ensemble(path: str | Path) -> list[ParsedResult]:
+def parse_goat_ensemble(path: str | Path, *, src: str | None = None) -> list[ParsedResult]:
     """Parse a GOAT ``.finalensemble.xyz`` file (header ``<energy_hartree> converged=<bool>``)."""
-    return _parse_xyz_ensemble(path, _GOAT_HEADER_RE, fmt_name="GOAT")
+    return _parse_xyz_ensemble(path, _GOAT_HEADER_RE, fmt_name="GOAT", src=src)
 
 
-def parse_docker(path: str | Path) -> list[ParsedResult]:
+def parse_docker(path: str | Path, *, src: str | None = None) -> list[ParsedResult]:
     """Parse an ORCA Docker pose ensemble (``allopt`` or 6.1.1's ``all.optimized``).
 
     Header layout: ``<idx> Eopt=<energy_hartree> (Eh) …``. Returns one structure per frame.
@@ -135,24 +136,24 @@ def parse_docker(path: str | Path) -> list[ParsedResult]:
     last structure as non-sensible); 6.1.1's ``all.optimized.xyz`` holds only real poses.
     """
     path = Path(path)
-    structures = _parse_xyz_ensemble(path, _DOCKER_HEADER_RE, fmt_name="Docker")
+    structures = _parse_xyz_ensemble(path, _DOCKER_HEADER_RE, fmt_name="Docker", src=src)
     if not path.name.endswith(DOCKER_SUFFIX):
         return structures
     if len(structures) <= 1:
         raise OutputParseError(
-            f"Docker output {path} has {len(structures)} frame(s); "
+            f"Docker output {src or path} has {len(structures)} frame(s); "
             "expected at least 2 (the last is dropped as non-sensible)"
         )
     return structures[:-1]
 
 
-def parse_solvator(path: str | Path) -> list[ParsedResult]:
+def parse_solvator(path: str | Path, *, src: str | None = None) -> list[ParsedResult]:
     """Parse an ORCA Solvator ensemble (header ``Energy <e_hartree>``).
 
     Same frame layout under both filenames — ``solventbuild.xyz`` (legacy) and
     6.1.1's ``solvator.solventbuild.xyz``.
     """
-    return _parse_xyz_ensemble(path, _SOLVATOR_HEADER_RE, fmt_name="Solvator")
+    return _parse_xyz_ensemble(path, _SOLVATOR_HEADER_RE, fmt_name="Solvator", src=src)
 
 
 # ---------------------------------------------------------------------------
@@ -165,10 +166,13 @@ _PES_COORD_HEADER_RE = re.compile(r"^\s*CARTESIAN COORDINATES\s*\(ANGSTROEM\)\s*
 _PES_DASH_RE = re.compile(r"^\s*-{3,}\s*$")
 
 
-def parse_pes(path: str | Path) -> list[ParsedResult]:
-    """Parse an ORCA PES-scan output (one frame per converged scan point)."""
+def parse_pes(path: str | Path, *, src: str | None = None) -> list[ParsedResult]:
+    """Parse an ORCA PES-scan output (one frame per converged scan point).
+
+    ``src`` is what error messages call the output — the path itself when ``None``.
+    """
     return parse_pes_from_text(
-        Path(path).read_text(encoding="utf-8", errors="replace"), src=str(path)
+        Path(path).read_text(encoding="utf-8", errors="replace"), src=src or str(path)
     )
 
 

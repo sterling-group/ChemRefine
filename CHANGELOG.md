@@ -459,6 +459,14 @@ for the full map.
 
 ### Fixed
 
+- **A failure reason names its output relative to its step.** The reason a step ledgers for
+  an output it could not use (an ORCA or Q-Chem run that did not finish, a script output
+  with a non-finite value) quoted the output's absolute path, so a tree copied off a
+  cluster or moved to another directory reported locations that no longer exist. It now
+  names the output as `<structure>/<file>` under its step directory, the spelling the
+  manifests use. The job's `.err` is still read, and quoted, from where it lies. An ORCA
+  scan that died before any point converged is now ledgered as a run that did not
+  terminate normally, as every other ORCA operation is, rather than as unparseable.
 - **An ORCA structure is read from one evaluation, the last with an energy.** The parser
   took the last of each value in the output, so any output that did not end on a complete
   evaluation paired values from different geometries. A job killed mid-optimisation — a

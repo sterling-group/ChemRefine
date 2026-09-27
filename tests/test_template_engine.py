@@ -850,6 +850,44 @@ def test_an_unconverged_script_is_a_convergence_failure_with_a_geometry_to_retry
     assert best.atoms.get_positions().tolist() == [[0.0, 0.0, 0.1]]
 
 
+def test_a_failure_reason_names_the_document_relative_to_its_step(tmp_path: Path):
+    """The ledgered reason must still point at the document once the tree is moved.
+
+    Spelled absolute, it named the directory the step ran in, so a tree copied off a
+    cluster reported a location that is not there.
+    """
+    from chemrefine import lifecycle
+    from chemrefine.state import FailureKind, StepInputs
+
+    class _Probe(ScriptEngine[EngineOptions]):
+        name = "relative-probe"
+        label = "Probe"
+
+    step_dir = tmp_path / "step1"
+    output = step_dir / "0" / "step1_0.json"
+    output.parent.mkdir(parents=True)
+    output.write_text('{"energy_hartree": NaN}', encoding="utf-8")
+    ctx = StepContext(
+        step_cfg=StepConfig(step=1, engine="pyscf"),
+        step_dir=step_dir,
+        template_dir=tmp_path,
+        template=tmp_path / "step1.py",
+        scratch_dir=None,
+        prev_state=PipelineState(structures=(Structure(id="0", atoms=Atoms("H")),)),
+        charge=0,
+        multiplicity=2,
+        max_cores=1,
+        slurm_template="cpu.slurm.header",
+    )
+    inputs = StepInputs(files=((output.with_suffix(".py"), output, "0"),))
+
+    _, [failure] = lifecycle.parse_with_failures(_Probe(), inputs, ctx)
+
+    assert failure.kind is FailureKind.UNPARSEABLE
+    assert "Probe output 0/step1_0.json reports a non-finite 'energy_hartree'" in failure.detail
+    assert str(tmp_path) not in failure.detail
+
+
 def test_the_scaffold_starter_names_the_engines_own_contract():
     """The starter comment is generated from the engine's fields, not typed per starter."""
     from chemrefine.engines.api import get_engine

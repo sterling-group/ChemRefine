@@ -25,6 +25,7 @@ from chemrefine.engines._script import output as script_output
 from chemrefine.engines._script import render as script_render
 from chemrefine.engines._script.contract import SCRIPT_OUTPUT, OutputField
 from chemrefine.engines.api import ParsedResult, RunBlock
+from chemrefine.ids import step_relative
 from chemrefine.state import StepContext
 
 OptsT = TypeVar("OptsT", bound=EngineOptions)
@@ -172,7 +173,9 @@ class ScriptEngine(JobEngine, Generic[OptsT]):
 
         Read through :attr:`output_fields`, the same contract :meth:`build_input` rendered the
         footer from — so what the script was told it could write and what the driver reads
-        back cannot come apart.
+        back cannot come apart. A reason for a document it cannot use names that document
+        relative to the step (:func:`~chemrefine.ids.step_relative`), so it still points at
+        the file once the tree is copied or moved.
         """
         seed = ctx.prev_state.by_id.get(structure_id)
         return script_output.parse_output(
@@ -180,4 +183,5 @@ class ScriptEngine(JobEngine, Generic[OptsT]):
             label=self.label,
             fallback=seed.atoms if seed is not None else None,
             fields=self.output_fields,
+            src=step_relative(output_path, ctx.step_dir),
         )

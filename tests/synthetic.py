@@ -160,8 +160,8 @@ def synthetic_pes_segment(
 ORCA_ERROR_TERMINATION_STEM = "step2_5-54"
 """Basename the captured abort was written under, kept so the ``.err`` sidecar pairs with it.
 
-:func:`chemrefine.engines.orca.output.coordinator._stderr_tail` finds the stderr by swapping
-the output's suffix, so the two files have to share a stem for the quoted tail to be found."""
+:func:`chemrefine.engines.orca.output.coordinator.parse_dft` finds the stderr by swapping the
+output's suffix, so the two files have to share a stem for the quoted tail to be found."""
 
 ORCA_ERROR_TERMINATION_OUT = """\
  Group   1 Type H   : 3s contracted to 1s pattern {3}

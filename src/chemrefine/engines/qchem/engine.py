@@ -43,7 +43,7 @@ from chemrefine.engines.qchem import input as qchem_input
 from chemrefine.engines.qchem import inspect, output
 from chemrefine.engines.qchem.options import QchemOptions
 from chemrefine.errors import ConfigError
-from chemrefine.ids import require_template
+from chemrefine.ids import require_template, step_relative
 from chemrefine.state import StepContext
 
 logger = logging.getLogger(__name__)
@@ -324,8 +324,13 @@ class QchemEngine(JobEngine):
         day it appears in a template, and fans out into its geometries the day its reader
         joins the dispatch, with no edit here. An explicit ``operation:`` is held to the
         vocabulary by :meth:`check_step`, so only an inferred one takes this path.
+
+        A reason for an output it cannot use names that output relative to the step
+        (:func:`~chemrefine.ids.step_relative`), so it still points at the file once the
+        tree is copied or moved.
         """
         operation = self._resolve_operation(ctx)
+        src = step_relative(output_path, ctx.step_dir)
         inferred = ctx.step_cfg.operation is None
         if inferred and operation.lower().replace("+", "_") not in output.known_operations():
             template = require_template(ctx.template, label=self.label)
@@ -337,8 +342,8 @@ class QchemEngine(JobEngine):
                 jobtypes,
                 operation,
             )
-            return output.parse_qchem(output_path)
-        return output.parse_output(output_path, operation)
+            return output.parse_qchem(output_path, src=src)
+        return output.parse_output(output_path, operation, src=src)
 
     # -- nms hook (the only engine-specific half of chemrefine.nms) --------
 

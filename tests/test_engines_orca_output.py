@@ -8,7 +8,12 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from synthetic import FREQUENCY_BLOCK, THERMOCHEMISTRY_BLOCK, synthetic_dft_output
+from synthetic import (
+    FREQUENCY_BLOCK,
+    ORCA_ERROR_TERMINATION_OUT,
+    THERMOCHEMISTRY_BLOCK,
+    synthetic_dft_output,
+)
 
 from chemrefine.engines.api import ParsedResult
 from chemrefine.engines.orca.output import (
@@ -706,6 +711,19 @@ def test_an_error_terminated_run_quotes_the_stderr_that_says_why(orca_error_term
     """ORCA names the module it died in; the cause is on stderr, in the job's `.err`."""
     with pytest.raises(OutputTerminationError, match=r"orca_startup: not found"):
         parse_dft(orca_error_termination)
+
+
+def test_text_parsed_from_memory_quotes_no_stderr(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Text has no file beside it, so there is no job's `.err` to quote.
+
+    ``src`` only names the text. Read as a path, it found a `.err` named after that label in
+    whatever directory the caller ran from and quoted another job's stderr as this one's.
+    """
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "step1_0.err").write_text("not this job's stderr\n", encoding="utf-8")
+    with pytest.raises(OutputTerminationError) as excinfo:
+        parse_dft_from_text(ORCA_ERROR_TERMINATION_OUT, src="step1_0.out")
+    assert "ends:" not in str(excinfo.value)
 
 
 def test_the_err_tail_is_read_as_utf8_with_replacement(tmp_path: Path):
