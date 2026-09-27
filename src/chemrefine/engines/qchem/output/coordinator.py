@@ -37,6 +37,15 @@ def known_operations() -> frozenset[str]:
     return _QCHEM_OPERATIONS
 
 
+def canonical_operation(operation: str) -> str:
+    """How the dispatch reads an ``operation:`` spelling: in any case, ``+`` for ``_``.
+
+    A :class:`~chemrefine.config.StepConfig` built directly is not normalised on the way
+    in, so every reader of the field in this engine reads it through this rule.
+    """
+    return operation.lower().replace("+", "_")
+
+
 def _unreadable(what: str, text: str, src: str) -> OutputParseError:
     """The error for a section that is missing, saying *why* it is missing.
 
@@ -127,7 +136,7 @@ def parse_output(path: str | Path, operation: str, *, src: str | None = None) ->
     and this is the same refusal for a caller that skipped the preflight. ``src`` is what
     error messages call the output, as for :func:`parse_qchem`.
     """
-    op = operation.lower().replace("+", "_")
+    op = canonical_operation(operation)
     if op not in _QCHEM_OPERATIONS:
         raise OutputParseError(f"unknown Q-Chem operation: {operation!r}")
     return parse_qchem(path, src=src)

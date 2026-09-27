@@ -459,6 +459,19 @@ for the full map.
 
 ### Fixed
 
+- **A step's cache key follows the operation its outputs are read as and the NMS target it
+  resolves to.** A step that left out `operation:` keyed the omission, not the reader its
+  template selects. A change in what the template infers therefore moved no key, and
+  `resume` kept serving results read by the previous reader, while writing out the
+  `operation:` the template already implied re-keyed every row and recomputed the step.
+  Likewise, an NMS step on an `OptTS` template with no `target` keyed the default `minimum`
+  while it resolved `ts`. The key now holds the operation the engine resolves (declared or
+  inferred, in any legal spelling) and the target the step resolves to, so spelling either
+  out is a free edit. Two keys move once. Every ORCA and Q-Chem step that omits
+  `operation:`: a tree cached before recomputes it on `resume`, and `rebuild-cache`
+  refuses it as another configuration's; `rerun N` is the migration. An NMS step on an
+  `OptTS` template with no `target`: `resume` re-runs its resolution once, as after any
+  criterion change, without resubmitting a round-1 job.
 - **A failed ExtOpt gradient call reports its reason, not a traceback.** When the bridge
   ORCA runs for each gradient failed in a way ChemRefine classifies (no reply within
   `gradient_timeout_seconds`, a server that cannot be reached or refuses the request, a

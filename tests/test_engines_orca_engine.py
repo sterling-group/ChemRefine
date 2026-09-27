@@ -475,7 +475,7 @@ def test_parse_without_operation_infers_parser_from_template(tmp_path: Path):
     inputs = engine.prepare(ctx)
     shutil.copy(FIXTURE, inputs.files[0][1])
     # The default template (`! B3LYP def2-SVP`, no Opt) inspects to sp → parse_dft.
-    assert engine._resolve_operation(ctx) == "sp"
+    assert engine.resolve_operation(ctx) == "sp"
     results = engine.parse(inputs, ctx)
     assert results.structures[0].energy_hartree == pytest.approx(-6044.555726221861)
 
@@ -489,7 +489,7 @@ def test_effective_operation_explicit_wins_over_template(tmp_path: Path):
         step_cfg=StepConfig(step=1, engine="orca", operation="opt_sp"),
     )
     (ctx.template_dir / "step1.inp").write_text("! GOAT XTB\n", encoding="utf-8")
-    assert engine._resolve_operation(ctx) == "opt_sp"
+    assert engine.resolve_operation(ctx) == "opt_sp"
 
 
 def test_effective_operation_falls_back_to_inspection(tmp_path: Path):
@@ -501,7 +501,7 @@ def test_effective_operation_falls_back_to_inspection(tmp_path: Path):
         step_cfg=StepConfig(step=1, engine="orca"),  # operation omitted
     )
     (ctx.template_dir / "step1.inp").write_text("! GOAT XTB\n", encoding="utf-8")
-    assert engine._resolve_operation(ctx) == "goat"
+    assert engine.resolve_operation(ctx) == "goat"
 
 
 def test_template_digest_tracks_template_contents(tmp_path: Path):

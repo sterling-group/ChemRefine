@@ -106,7 +106,8 @@ reuses the round-1 outputs on disk and recomputes only what the edit actually ch
 - **Tuning a search parameter** (`displacement_value`, `num_random_displacements`,
   `seed`) re-reads round 1 and re-attempts just the parents that stayed unresolved;
   resolved structures keep their winners.
-- **Changing the criterion** (`target`, `ts_mode_index`) re-runs the *resolution* —
+- **Changing the criterion** (`target` as resolved — an `OptTS` template with no `target`
+  keys `ts` — and `ts_mode_index`) re-runs the *resolution* —
   existing `attemptK/` results are trusted only under the criterion they were written
   for — still without resubmitting a single round-1 job.
 - **Changing the parents or the template** recomputes exactly the affected rows, like

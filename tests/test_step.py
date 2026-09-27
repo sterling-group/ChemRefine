@@ -2244,6 +2244,106 @@ def test_the_orca_engines_template_aux_files_reach_the_step_key(tmp_path: Path):
     assert before.row_keys != after.row_keys
 
 
+def _key_over(
+    root: Path, engine_name: str, template: str | None, **step_fields: object
+) -> cache.StepKey:
+    """The key a one-step config over one H2 seed derives, with ``template`` as its input."""
+    from chemrefine import step
+
+    engine = get_engine(engine_name)
+    template_dir = root / "templates"
+    template_dir.mkdir(parents=True)
+    if template is not None:
+        (template_dir / f"step1.{engine.template_suffix}").write_text(template, encoding="utf-8")
+    cfg = Config(
+        output_dir=root / "outputs",
+        template_dir=template_dir,
+        steps=[StepConfig(step=1, engine=engine_name, **step_fields)],
+    )
+    seed = Structure(id="0", atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]))
+    ctx = build_context(cfg, cfg.steps[0], PipelineState(structures=(seed,)), engine)
+    return step.derive_step_key(ctx, cfg.steps[0], engine)
+
+
+@pytest.mark.parametrize(
+    ("engine_name", "template", "spellings"),
+    [
+        ("orca", "! GOAT XTB\n", (None, "goat", "GOAT")),
+        ("orca", "! Opt XTB2\n", (None, "opt_sp", "OPT+SP")),
+        ("qchem", "$rem\n  jobtype opt\n$end\n", (None, "opt_sp", "OPT+SP")),
+    ],
+)
+def test_a_step_keys_the_operation_its_outputs_are_read_as(
+    tmp_path: Path, engine_name: str, template: str, spellings: tuple[str | None, ...]
+):
+    """Leaving out the operation the template implies, or spelling it any legal way, is free.
+
+    The operation selects the reader, and the reader is what the key has to pin. Keyed as
+    spelled, the omission and the spelled-out operation were two configurations: writing
+    out what the template already implied re-keyed every row and recomputed the step.
+    """
+    keys = [
+        _key_over(tmp_path / str(i), engine_name, template, operation=spelling)
+        for i, spelling in enumerate(spellings)
+    ]
+    assert len({key.row_keys for key in keys}) == 1
+    assert len({key.fingerprint for key in keys}) == 1
+
+
+def test_a_change_in_what_the_template_infers_moves_the_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The same template read as another operation is another result, so another key.
+
+    Keyed as spelled, an omitted operation keyed the omission: an inspector that learned to
+    read the template differently moved no key, and ``resume`` served results read by the
+    previous reader.
+    """
+    import dataclasses
+
+    from chemrefine.engines.orca import inspect
+
+    before = _key_over(tmp_path / "before", "orca", "! Opt XTB2\n")
+    read_as = inspect.inspect_template
+    monkeypatch.setattr(
+        inspect,
+        "inspect_template",
+        lambda path: dataclasses.replace(read_as(path), operation="goat"),
+    )
+    after = _key_over(tmp_path / "after", "orca", "! Opt XTB2\n")
+    assert before.row_keys != after.row_keys
+
+
+def test_an_nms_step_keys_the_target_it_resolves_to(tmp_path: Path):
+    """An ``OptTS`` template with no ``target`` resolves ``ts``, and keys ``ts``.
+
+    It keyed the default ``minimum`` it never used, so spelling out the ``ts`` it did use
+    moved the criterion key, and ``resume`` distrusted every resolution on disk.
+    """
+    template = "! OptTS Freq XTB2\n"
+
+    def criterion(name: str, **options: object) -> str:
+        key = _key_over(tmp_path / name, "orca", template, nms=True, options=options)
+        return key.criterion_key
+
+    inferred = criterion("inferred")
+    assert inferred == criterion("spelled", target="ts")
+    assert inferred != criterion("other", target="minimum")
+
+
+def test_a_step_whose_template_is_missing_still_derives_a_key(tmp_path: Path):
+    """Nothing is inferred from a template that is not there, and nothing is refused either.
+
+    The missing template contributes no digest, so the step misses its cache, and the
+    actionable error arrives when the input is rendered — the key is not where a step
+    that asked for nothing to run learns its template is gone.
+    """
+    missing = _key_over(tmp_path / "missing", "orca", None, nms=True)
+    present = _key_over(tmp_path / "present", "orca", "! Opt Freq XTB2\n", nms=True)
+    assert missing.row_keys != present.row_keys
+    assert missing.fingerprint != present.fingerprint
+
+
 # ---------------------------------------------------------------------------
 # preflight_batches — the scheduler's refusals at t=0
 # ---------------------------------------------------------------------------

@@ -43,6 +43,7 @@ from chemrefine.engines.api import (
     CalculationEngine,
     JobExecutable,
     NmsCapableEngine,
+    OperationInferring,
     OptionsDeclaring,
     TemplateDriven,
     get_engine,
@@ -351,6 +352,15 @@ def derive_step_key(
     :mod:`chemrefine.cache` keeps that module free of engine and NMS knowledge — it
     keys values it does not interpret.
 
+    The operation and the NMS target are keyed **as the step resolves them**, not as the
+    config spells them: the operation the engine reads the outputs as
+    (:class:`~chemrefine.engines.api.OperationInferring`), and the target
+    :func:`chemrefine.nms.resolved_options` resolves by. That is what selects the reader
+    and decides a child resolved, so spelling out what the template implies moves no key,
+    and a change in what it infers does. A template that is not there infers nothing: its
+    digest is ``""`` (:func:`chemrefine.cache.template_digest`), so the step misses its
+    cache anyway, and the actionable error arrives at rendering.
+
     A path-valued option (:data:`chemrefine.config.STEP_OPTION_PATHS`) is keyed by its
     **basename**. The loader resolved it to an absolute path so the job can find the file,
     and the same config over the same model bytes then derived a different row key at
@@ -372,16 +382,26 @@ def derive_step_key(
     aux_files: Mapping[str, Path] = {}
     if isinstance(engine, AuxFileConsuming) and ctx.template is not None:
         aux_files = engine.template_aux_files(ctx.template)
+    readable = ctx.template is None or ctx.template.is_file()
+    operation = step_cfg.operation
+    if readable and isinstance(engine, OperationInferring):
+        operation = engine.resolve_operation(ctx)
     resolution = None
     if step_cfg.nms and isinstance(engine, NmsCapableEngine):
         try:
-            resolution = nms.NmsOptions.from_raw(step_cfg.options).resolution_spec()
+            options = (
+                nms.resolved_options(engine, ctx)
+                if readable
+                else nms.NmsOptions.from_raw(step_cfg.options)
+            )
         except ValidationError as e:
             raise ConfigError(f"step {step_cfg.step}: invalid NMS options:\n{e}") from e
+        resolution = options.resolution_spec()
     return cache.StepKey.of(
         step_cfg,
         ctx.prev_state.structures,
         ctx.template,
+        operation=operation,
         charge=ctx.charge,
         multiplicity=ctx.multiplicity,
         engine_options=engine_options,

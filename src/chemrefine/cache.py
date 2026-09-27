@@ -302,7 +302,8 @@ def row_key(
     """One structure's job identity — everything that determines *this row's* result.
 
     The fields are exactly the config surface that can reach a job plus its geometry:
-    the engine and operation select the code, the template digest is the input text,
+    the engine and the operation its outputs are read as select the code, the template
+    digest is the input text,
     ``charge``/``multiplicity`` are the **effective** (inheritance-resolved) physics
     inputs, ``engine_options`` is the options mapping *as the engine's own declared
     model reads it* (``{}`` for an engine that declares none — an undeclared key can
@@ -911,6 +912,7 @@ class StepKey:
         parents: Sequence[Structure],
         template: Path | None,
         *,
+        operation: str | None = None,
         charge: int = 0,
         multiplicity: int = 1,
         engine_options: Mapping[str, Any] | None = None,
@@ -919,6 +921,9 @@ class StepKey:
     ) -> StepKey:
         """Derive the key for ``step_cfg`` run over ``parents`` with ``template``.
 
+        ``operation`` is the one the engine reads the outputs as
+        (:func:`chemrefine.step.derive_step_key` resolves it), ``step_cfg.operation`` as
+        written when ``None``.
         ``charge``/``multiplicity`` are the **effective** values (the ones jobs render),
         not the per-step overrides — hashing the override let a workflow-level edit
         change every job's physics while every fingerprint stood still. Their defaults
@@ -939,7 +944,7 @@ class StepKey:
         rows = tuple(
             row_key(
                 engine=step_cfg.engine,
-                operation=step_cfg.operation,
+                operation=operation if operation is not None else step_cfg.operation,
                 template_digest=template_dig,
                 charge=charge,
                 multiplicity=multiplicity,

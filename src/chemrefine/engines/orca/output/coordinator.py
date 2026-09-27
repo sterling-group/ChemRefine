@@ -39,6 +39,16 @@ _DFT_OPERATIONS = frozenset({"opt_sp", "dft", "sp", "freq"})
 TEXT_BASED_OPERATIONS = _DFT_OPERATIONS | {"pes"}
 
 
+def canonical_operation(operation: str) -> str:
+    """How the dispatch reads an ``operation:`` spelling: in any case, ``+`` for ``_``.
+
+    ``OPT+SP`` and ``GOAT`` are the v1 spellings and stay legal. The legacy YAML rewriter
+    lowercases on the way in, but a :class:`~chemrefine.config.StepConfig` built directly
+    does not, so every reader of the field in this engine reads it through this rule.
+    """
+    return operation.lower().replace("+", "_")
+
+
 def parse_dft(path: str | Path, *, src: str | None = None) -> list[ParsedResult]:
     """Parse a single-structure DFT ``.out`` (``opt_sp`` / ``sp`` / ``freq``).
 
@@ -291,7 +301,7 @@ def parse_text(text: str, operation: str, *, src: str = "<text>") -> list[Parsed
     Only the :data:`TEXT_BASED_OPERATIONS` are handled here; the sidecar ensemble operations
     use :func:`parse_output`.
     """
-    op = operation.lower().replace("+", "_")
+    op = canonical_operation(operation)
     if op in _DFT_OPERATIONS:
         return parse_dft_from_text(text, src=src)
     if op == "pes":
@@ -327,7 +337,7 @@ def parse_output(path: str | Path, operation: str, *, src: str | None = None) ->
     ``src`` is what error messages call the output, as for :func:`parse_dft`; a sidecar is
     called by its own name beside it.
     """
-    op = operation.lower().replace("+", "_")
+    op = canonical_operation(operation)
     if op in _DFT_OPERATIONS:
         return parse_dft(path, src=src)
     if op not in _ENSEMBLE_OPERATIONS and op != "pes":

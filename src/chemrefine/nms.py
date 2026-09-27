@@ -246,11 +246,14 @@ class NmsResolution:
 # ---------------------------------------------------------------------------
 
 
-def _resolved_options(engine: NmsCapableEngine, ctx: StepContext) -> NmsOptions:
-    """NMS options with ``target`` resolved (F1): explicit wins, else inferred.
+def resolved_options(engine: NmsCapableEngine, ctx: StepContext) -> NmsOptions:
+    """NMS options with ``target`` resolved: explicit wins, else inferred.
 
     When the step doesn't set ``options.target``, derive it from the engine's input —
     a TS search targets a ``ts`` (keep one imaginary mode), anything else a ``minimum``.
+    The one reading of the target: the coordinator resolves by it, and the cache keys it
+    (:func:`chemrefine.step.derive_step_key`), so a step that spells out the target its
+    input implies keys exactly as one that leaves it out.
     """
     raw = ctx.step_cfg.options or {}
     opts = NmsOptions.from_raw(raw)
@@ -702,7 +705,7 @@ def _resolve_all(
     disagreed about who earns an attempt, and failing safe as unresolved rather than reading
     an empty result set as a verdict.
     """
-    opts = _resolved_options(engine, ctx)
+    opts = resolved_options(engine, ctx)
     target = target_imaginary_count(opts)
     survivors: list[Structure] = []
     failures: list[Failure] = list(round1_failures)
@@ -742,11 +745,11 @@ def _resolve_all(
 def child_round(engine: NmsCapableEngine, ctx: StepContext) -> NmsRound:
     """This step's NMS fan-out, for a scheduler to run in its own queue.
 
-    Built before round 1 submits, which is also where :func:`_resolved_options` first reads
+    Built before round 1 submits, which is also where :func:`resolved_options` first reads
     the engine's input — so a step whose ``target`` cannot be resolved says so before it
     spends a batch.
     """
-    return NmsRound(ctx, _resolved_options(engine, ctx))
+    return NmsRound(ctx, resolved_options(engine, ctx))
 
 
 def run_nms(

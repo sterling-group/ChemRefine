@@ -179,9 +179,10 @@ scattered through the parser:
   it a TS search, does it compute frequencies. Nothing else re-derives facts from the
   template.
 - **An explicit `operation:` wins; otherwise the inspection decides** (ORCA:
-  `OrcaEngine._resolve_operation`). If the vocabulary is real, declare `OperationsDeclaring` —
-  `check_step` then refuses an unknown operation at preflight, and the schema document and
-  agent guide serve the vocabulary with no further wiring.
+  `OrcaEngine.resolve_operation`). Declare it as `OperationInferring` and the cache keys the
+  operation the outputs are read as, not its spelling. If the vocabulary is real, declare
+  `OperationsDeclaring` — `check_step` then refuses an unknown operation at preflight, and
+  the schema document and agent guide serve the vocabulary with no further wiring.
 - **A read-once coordinator hands shared text to per-section extractors** (see
   `orca/output/`: coordinator / energy / geometry / frequencies / status) — the file is read
   once, and each section owns its own block grammar.

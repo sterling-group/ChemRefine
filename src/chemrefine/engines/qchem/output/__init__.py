@@ -18,6 +18,7 @@ is this package's instance of the rule.
 """
 
 from chemrefine.engines.qchem.output.coordinator import (
+    canonical_operation,
     known_operations,
     parse_output,
     parse_qchem,
@@ -25,6 +26,7 @@ from chemrefine.engines.qchem.output.coordinator import (
 )
 
 __all__ = [
+    "canonical_operation",
     "known_operations",
     "parse_output",
     "parse_qchem",

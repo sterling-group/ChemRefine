@@ -336,6 +336,24 @@ class OperationsDeclaring(Protocol):
     """The ``operation:`` spellings this engine interprets, canonical only."""
 
 
+@runtime_checkable
+class OperationInferring(Protocol):
+    """An engine that names the operation it reads a step's outputs as, before any job runs.
+
+    The declared ``operation:`` when the step sets one, normalised the way the engine's
+    reader normalises it, else the one the engine's own input infers. This is the value
+    that selects the reader, so it is what the cache keys
+    (:func:`chemrefine.step.derive_step_key`) rather than the field's spelling: writing out
+    the operation the input already implies moves no key, and a change in what the input
+    infers does. An engine that treats ``operation:`` as a label does not implement this,
+    and the field is keyed as written.
+    """
+
+    def resolve_operation(self, ctx: StepContext) -> str:
+        """The operation this engine reads ``ctx``'s step outputs as."""
+        ...
+
+
 @dataclass(frozen=True)
 class NmsInputInfo:
     """What an engine's configured input does, for the generic NMS coordinator.

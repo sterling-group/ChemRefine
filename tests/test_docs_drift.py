@@ -164,7 +164,7 @@ _STATED_RULES: dict[tuple[str, str], str] = {
     ("StepConfig", "slurm_template"): "chemrefine.slurm.dispatch.header_name_for_step",
     ("StepConfig", "charge"): "chemrefine.config.StepConfig.effective_charge",
     ("StepConfig", "multiplicity"): "chemrefine.config.StepConfig.effective_multiplicity",
-    ("NmsOptions", "target"): "chemrefine.nms._resolved_options",
+    ("NmsOptions", "target"): "chemrefine.nms.resolved_options",
     ("options[mlip-train]", "task_name"): f"{_TRAIN}.check_step",
     ("options[mlip-train]", "device"): f"{_TRAIN}.check_step",
     ("options[mlip-train]", "cores"): f"{_TRAIN}.pal",

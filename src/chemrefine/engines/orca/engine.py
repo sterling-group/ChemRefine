@@ -151,7 +151,7 @@ class OrcaEngine(JobEngine):
         """
         if step_cfg.operation is None:
             return
-        normalized = step_cfg.operation.lower().replace("+", "_")
+        normalized = output.canonical_operation(step_cfg.operation)
         if normalized not in output.known_operations() | {"dft"}:
             raise ConfigError(
                 f"step {step_cfg.step}: unknown ORCA operation {step_cfg.operation!r} — "
@@ -221,14 +221,16 @@ class OrcaEngine(JobEngine):
 
     # -- parse -------------------------------------------------------------
 
-    def _resolve_operation(self, ctx: StepContext) -> str:
-        """Operation for parsing: an explicit ``operation`` wins, else inspect the template.
+    def resolve_operation(self, ctx: StepContext) -> str:
+        """The operation the step's outputs are read as: the declared one, else the template's.
 
-        The template's ORCA keywords (:mod:`engines.orca.inspect`) pick the parser when
-        ``operation`` is omitted.
+        An explicit ``operation`` wins, in the dispatch's own spelling
+        (:func:`~chemrefine.engines.orca.output.canonical_operation`); omitted, the
+        template's ORCA keywords (:mod:`engines.orca.inspect`) pick it. The cache keys this
+        value (:class:`~chemrefine.engines.api.OperationInferring`).
         """
         if ctx.step_cfg.operation is not None:
-            return ctx.step_cfg.operation
+            return output.canonical_operation(ctx.step_cfg.operation)
         return inspect.inspect_template(require_template(ctx.template, label=self.label)).operation
 
     def parse_one(
@@ -255,7 +257,7 @@ class OrcaEngine(JobEngine):
         (:func:`~chemrefine.ids.step_relative`), so it still points at the file once the
         tree is copied or moved.
         """
-        operation = self._resolve_operation(ctx)
+        operation = self.resolve_operation(ctx)
         src = step_relative(output_path, ctx.step_dir)
         inferred = ctx.step_cfg.operation is None
         if inferred and operation not in output.known_operations():

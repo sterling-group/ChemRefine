@@ -446,7 +446,7 @@ def test_an_explicit_operation_beats_the_template(tmp_path: Path):
     """``operation:`` wins over inspection — explicit beats inferred, always."""
     engine = get_engine("qchem")
     ctx = _ctx(tmp_path, template="$rem\n  jobtype opt\n$end\n")
-    assert engine._resolve_operation(ctx) == "opt_sp"  # inspected: opt -> opt_sp
+    assert engine.resolve_operation(ctx) == "opt_sp"  # inspected: opt -> opt_sp
     explicit = StepContext(
         step_cfg=StepConfig(step=1, engine="qchem", operation="sp"),
         step_dir=ctx.step_dir,
@@ -459,4 +459,4 @@ def test_an_explicit_operation_beats_the_template(tmp_path: Path):
         max_cores=8,
         slurm_template="cpu.slurm.header",
     )
-    assert engine._resolve_operation(explicit) == "sp"
+    assert engine.resolve_operation(explicit) == "sp"

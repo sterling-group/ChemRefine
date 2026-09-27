@@ -949,7 +949,7 @@ def test_the_round_and_the_loop_agree_about_which_parents_get_an_attempt(tmp_pat
         "displaceable": True,
     }
     # The loop's own two questions, asked independently, must partition the same way.
-    opts = nms._resolved_options(engine, ctx)
+    opts = nms.resolved_options(engine, ctx)
     target = nms.target_imaginary_count(opts)
     for s in round1.structures:
         loop_would_run = not nms._already_at_target(s, target) and bool(nms._children_for(s, opts))
