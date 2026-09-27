@@ -45,6 +45,18 @@ FAMILIES = ("mace_off", "mace_mp", "mace_omol")
 One list, used by both capabilities below, so a family cannot be runnable and not trainable by
 an oversight in one decorator."""
 
+_TRAINER_RELEASES = {
+    "mace_off": {size: f"{size}_off" for size in ("small", "medium", "large")},
+    "mace_omol": {"extra_large": "mace_omol"},
+}
+"""How MACE's ``run_train`` names a released foundation model, where it differs from the name
+the family's loader takes.
+
+``run_train`` reads a bare size as a Materials Project model, so MACE-OFF's are ``small_off``
+and so on, and MACE-OMOL's one release is ``mace_omol``. A Materials Project size, and
+anything else (a checkpoint's path, which ``run_train`` loads as a file), is read the same
+by both."""
+
 LEGACY_MACE_TASK = "custom_mace"
 """A back-compat alias for MACE, kept only so configs written against v1 still resolve.
 
@@ -159,6 +171,15 @@ class MaceTrainer(TrainerBase):
     checkpoints are readable *while it runs* rather than only after it copies back. A template
     that leaves ``work_dir`` at MACE's default writes into the job's scratch instead, and
     these are what stop the model disappearing with it."""
+
+    def foundation_name(self, task_name: str, model_name: str) -> str:
+        """``model_name`` in ``task_name``'s family, as ``run_train`` names it.
+
+        A bare ``small`` is MACE-MP-0 to ``run_train``, so a ``mace_off`` step fine-tuned
+        the Materials Project model while its runlog said it started from ``small``. See
+        :data:`_TRAINER_RELEASES`.
+        """
+        return _TRAINER_RELEASES.get(task_name, {}).get(model_name, model_name)
 
     def write_split(self, plan: TrainingPlan, name: str, structures: tuple[Structure, ...]) -> Path:
         """One split as extxyz with MACE's own ``REF_*`` label keys.

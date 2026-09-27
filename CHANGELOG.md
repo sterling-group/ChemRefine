@@ -459,6 +459,15 @@ for the full map.
 
 ### Fixed
 
+- **A MACE fine-tune starts from the family its step names.** MACE's `run_train` reads a
+  bare size as a Materials Project model, and the step handed it the bare `model_name`, so
+  a `mace_off` step naming `small` fine-tuned MACE-MP-0 small while its runlog said it
+  started from `small`. The trainer now spells the release as `run_train` names it in the
+  step's family (`small_off`, `mace_omol`), and the runlog shows that spelling, the value
+  the template's `$FOUNDATION_MODEL` carries. The `mlip_training` tutorial's step 4
+  (`mace_off`, `medium`) fine-tuned MACE-MP-0 medium, with MACE's Materials Project replay
+  head; it now starts from MACE-OFF medium, which MACE fine-tunes without a replay head
+  unless the template names a pretraining file (`pt_train_file`).
 - **An ORB step builds its calculator.** `task_name: orb` failed before its first
   structure: the builder dropped the atoms adapter the pretrained loader returns, which
   orb-models' calculator requires. The builder now passes it, and loads the model

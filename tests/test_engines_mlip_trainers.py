@@ -157,6 +157,28 @@ def test_the_dataset_uses_maces_own_label_keys(tmp_path: Path):
     assert FORCES_KEY in text
 
 
+@pytest.mark.parametrize(
+    ("task", "model_name", "spelled"),
+    [
+        ("mace_off", "small", "small_off"),
+        ("mace_off", "large", "large_off"),
+        ("mace_omol", "extra_large", "mace_omol"),
+        ("mace_mp", "small", "small"),
+        ("mace_off", "/models/previous.model", "/models/previous.model"),
+    ],
+)
+def test_a_mace_release_reaches_run_train_in_its_own_family(
+    task: str, model_name: str, spelled: str
+):
+    """``run_train`` reads a bare size as Materials Project; each family is spelled its way.
+
+    A ``mace_off`` step naming ``small`` fine-tuned MACE-MP-0 small, while its runlog said
+    it started from ``small``. A Materials Project size, and a checkpoint's path, are read
+    the same by the loader and by ``run_train``.
+    """
+    assert MaceTrainer().foundation_name(task, model_name) == spelled
+
+
 @pytest.mark.integration
 def test_the_label_keys_are_the_ones_mace_declares():
     """Pinned against the library rather than against a literal we chose.

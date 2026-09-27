@@ -272,7 +272,8 @@ def test_prepare_renders_the_template_against_the_dataset_it_wrote(tmp_path: Pat
     assert f"train_file: {run_dir / 'train.xyz'}" in rendered
     assert f"valid_file: {run_dir / 'valid.xyz'}" in rendered
     assert f"work_dir: {run_dir}" in rendered
-    assert "foundation_model: small" in rendered, "model_name is what a fine-tune starts from"
+    # MACE-OFF's `small`, as MACE's run_train names it: a bare `small` is MACE-MP-0 there.
+    assert "foundation_model: small_off" in rendered.splitlines()
     assert (run_dir / "train.xyz").is_file()
 
 
@@ -415,7 +416,7 @@ def test_the_copy_back_directories_come_from_the_selected_trainer(tmp_path: Path
 def test_the_runlog_records_what_the_job_asked_for(tmp_path: Path):
     """`--gres` comes from the user's own header, so the runlog is where the two can be compared."""
     fields = dict(MlipTrainEngine().extra_header_fields(_ctx(tmp_path, device="cuda", gpus=2)))
-    assert fields == {"trainer": "mace_off", "gpus": 2, "started_from": "small"}
+    assert fields == {"trainer": "mace_off", "gpus": 2, "started_from": "small_off"}
 
 
 def test_training_from_scratch_says_so_in_the_runlog(tmp_path: Path):

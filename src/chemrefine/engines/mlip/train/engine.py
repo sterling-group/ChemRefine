@@ -222,6 +222,7 @@ class MlipTrainEngine(MlipBackend):
         # plan's `cores` feeds the thread exports and `$CORES` — a raw pal() here let a
         # `cores:` above the budget thread past what the scheduler grants and charges.
         ntasks, cpus_per_task = self.slurm_layout(ctx)
+        trainer = self._trainer(ctx)
         return TrainingPlan(
             run_dir=self.run_dir(ctx),
             run_name=ids.TRAINING_ID,
@@ -235,7 +236,11 @@ class MlipTrainEngine(MlipBackend):
             # facts, and the API-trainer hooks dispatch on which one was named — the
             # CalculatorSpec shape, on the training side.
             weights=Path(opts.model_path) if opts.model_path else None,
-            foundation=opts.model_name or None,
+            foundation=(
+                trainer.foundation_name(opts.task_name, opts.model_name)
+                if opts.model_name
+                else None
+            ),
             launcher=Path(_provision.launcher_for(self, ctx.step_cfg.options)),
         )
 
@@ -464,10 +469,11 @@ class MlipTrainEngine(MlipBackend):
 
         ``gpus`` is here because chemrefine does not write ``--gres`` — the allocation comes
         from the user's own header — so the runlog is where the two can be compared.
+        ``started_from`` is the plan's own display (:attr:`TrainingPlan.start_from`), the
+        value the template's ``$FOUNDATION_MODEL`` carries, in the library's spelling.
         """
-        opts = self._opts(ctx)
         return (
-            ("trainer", opts.task_name),
+            ("trainer", self._opts(ctx).task_name),
             ("gpus", self.gpus(ctx)),
-            ("started_from", opts.model_path or opts.model_name or "scratch"),
+            ("started_from", self._plan(ctx).start_from or "scratch"),
         )

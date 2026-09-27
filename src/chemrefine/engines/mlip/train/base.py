@@ -355,6 +355,16 @@ class TrainerBase(ABC):
         moments the answer matters most.
         """
 
+    def foundation_name(self, task_name: str, model_name: str) -> str:
+        """The release ``model_name`` names, spelled the way this library's trainer reads it.
+
+        A step names a release as the calculator builder reads it, under ``task_name``'s
+        family. A trainer that spells releases differently translates here, so
+        :attr:`TrainingPlan.foundation` is in the library's own spelling — what its
+        template's ``$FOUNDATION_MODEL`` and its hook receive. Unchanged by default.
+        """
+        return model_name
+
     # -- the machinery: written once, driven by the declarations -----------------------
 
     def write_dataset(self, plan: TrainingPlan, split: DatasetSplit) -> DatasetFiles:
