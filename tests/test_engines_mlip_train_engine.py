@@ -329,8 +329,32 @@ def test_parse_hands_the_ensemble_on_unchanged_and_records_the_model(tmp_path: P
     assert sidecar["backend"] == "mlip-mace"
     assert sidecar["started_from"] == "small"
     assert sidecar["charge"] == -1
-    assert sidecar["model_path"].endswith("train.model")
+    assert sidecar["model_path"] == "train.model"
     assert len(sidecar["model_digest"]) == 16
+    assert sidecar["trained_model_format"] == 2
+
+
+def test_the_record_cites_nothing_a_copied_tree_lacks(tmp_path: Path):
+    """No value in ``trained_model.json`` names the machine the step trained on.
+
+    The model is named relative to the record's own directory, and a starting checkpoint by
+    its file name — the cache key's spelling of a path-valued option — so a tree copied off
+    a cluster still cites its own model rather than a location left behind.
+    """
+    start = tmp_path / "models" / "foundation.model"
+    start.parent.mkdir()
+    start.write_bytes(b"foundation weights")
+    ctx = _ctx(tmp_path, model_path=str(start))
+    engine = MlipTrainEngine()
+    engine.prepare(ctx)
+    engine.artifact(ctx).write_bytes(b"weights")
+
+    engine.parse(StepInputs(files=()), ctx)
+
+    sidecar = json.loads((ctx.step_dir / "train" / SIDECAR_NAME).read_text(encoding="utf-8"))
+    assert sidecar["started_from"] == "foundation.model"
+    assert sidecar["model_path"] == "train.model"
+    assert not [v for v in sidecar.values() if isinstance(v, str) and str(tmp_path) in v]
 
 
 def test_the_artifact_is_answerable_without_an_ensemble(tmp_path: Path):

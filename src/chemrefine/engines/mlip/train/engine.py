@@ -99,7 +99,10 @@ Names the backend, the selection that produced it, the split sizes and the model
 digest. It exists so a later step — or a person, months on — can tell which run a checkpoint
 came from without re-deriving it from the YAML, and so the model can be cited."""
 
-TRAINED_MODEL_FORMAT = 1
+TRAINED_MODEL_FORMAT = 2
+"""The :data:`SIDECAR_NAME` layout. 2 names the model relative to the record's own directory
+and a starting checkpoint by its file name, so the record cites nothing a copied tree lacks;
+1 gave both as absolute paths."""
 
 
 @register("mlip-train")
@@ -336,7 +339,9 @@ class MlipTrainEngine(MlipBackend):
 
         Written with the standard library rather than through :mod:`chemrefine.cache`'s
         ``write_json``: an engine records what it produced, and caching is not its concern —
-        a rule the subsystem is held to by test.
+        a rule the subsystem is held to by test. Every path in it is relative
+        (:data:`TRAINED_MODEL_FORMAT`), so a tree copied off the machine it trained on
+        still cites its own model.
         """
         opts = self._opts(ctx)
         model = self.artifact(ctx)
@@ -344,9 +349,13 @@ class MlipTrainEngine(MlipBackend):
             "trained_model_format": TRAINED_MODEL_FORMAT,
             "task_name": opts.task_name,
             "backend": backend_spec(opts.task_name).extra,
-            "model_path": str(model),
+            "model_path": model.relative_to(self.run_dir(ctx)).as_posix(),
             "model_digest": digest_of(model),
-            "started_from": opts.model_path or opts.model_name or None,
+            # A checkpoint by its file name, the cache key's rule for a path-valued option:
+            # its bytes are what the key pins, and its directory names a machine.
+            "started_from": (
+                Path(opts.model_path).name if opts.model_path else opts.model_name or None
+            ),
             "seed": opts.seed,
             "charge": ctx.charge,
             "multiplicity": ctx.multiplicity,

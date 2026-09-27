@@ -345,6 +345,9 @@ class TrainerBase(ABC):
     def artifact(self, run_dir: Path, run_name: str) -> Path:
         """The trained model — the file whose existence is this step's success test.
 
+        It lies under ``run_dir``, directly or nested: the job copies that directory home,
+        and the step's record cites the model relative to it.
+
         Takes the run's directory and name rather than a whole :class:`TrainingPlan`,
         because it must be answerable *without* one: ``rebuild-cache`` adopts a product
         having submitted nothing, and ``chemrefine.step`` asks after a failure, when

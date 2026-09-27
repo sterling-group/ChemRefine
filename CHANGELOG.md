@@ -459,6 +459,12 @@ for the full map.
 
 ### Fixed
 
+- **`trained_model.json` names its model relative to itself.** The record a training step
+  writes beside its model gave the model's absolute path, and gave a starting checkpoint by
+  the path the loader resolved, so a tree copied elsewhere cited locations on the machine
+  it came from. The model is now named relative to the record's directory, and a starting
+  checkpoint by its file name (the spelling the cache key uses), under
+  `trained_model_format` 2.
 - **A `%docker` or `%solvator` block infers its run kind.** ORCA runs a docking or a
   solvation from the `%docker` / `%solvator` block alone. A step that omitted `operation:`
   inferred only from the `!` keyword line, read such a run as a single point, and kept one
