@@ -893,6 +893,37 @@ def test_chat_confirm_names_the_tool_and_defaults_to_no(monkeypatch: pytest.Monk
     assert default is False  # the safe answer is the default answer
 
 
+def test_an_aborted_allow_prompt_is_a_no_not_a_failed_turn(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """Ctrl-D or Ctrl-C at the allow prompt declines the call, and the turn goes on.
+
+    ``typer.confirm`` raises ``Abort`` for both. Raised through the tool, it failed the whole
+    turn, reported as "model endpoint failed: " with nothing after the colon.
+    """
+    import typer
+
+    from chemrefine.agent import chat
+
+    config = _orca_config(tmp_path)
+
+    def aborted(*args: Any, **kwargs: Any) -> bool:
+        raise typer.Abort
+
+    monkeypatch.setenv("CHEMREFINE_LLM_MODEL", "test-model")
+    monkeypatch.setattr(ProviderConfig, "build_model", lambda self: _scripted_scaffold(config))
+    monkeypatch.setattr(typer, "confirm", aborted)
+    prompts = iter(["scaffold my templates", "exit"])
+    monkeypatch.setattr(typer, "prompt", lambda *a, **k: next(prompts))
+    echoed: list[str] = []
+    monkeypatch.setattr(typer, "echo", lambda m, **k: echoed.append(str(m)))
+
+    chat.main(provider="custom")
+    assert "finished" in echoed  # the model read the denial and answered
+    assert not any("model endpoint failed" in line for line in echoed)
+    assert not (tmp_path / "templates").exists()
+
+
 def test_chat_repl_threads_history_until_exit(monkeypatch: pytest.MonkeyPatch):
     """The second turn carries the first turn's messages — the web twin's assertion.
 

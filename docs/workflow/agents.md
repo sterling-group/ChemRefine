@@ -145,7 +145,8 @@ allow start_run({"config_path": ".../input.yaml", "max_cores": 16})? [y/N]
 
 A declined call is reported to the model as a structured refusal it must respect — nothing
 changes on disk without your yes, which also bounds what any prompt-injected instruction
-could do. In an MCP client the client's own approval dialog plays this role.
+could do. Ctrl-D or Ctrl-C at the prompt answers no as well. In an MCP client the client's
+own approval dialog plays this role.
 
 A tool that refuses on its own account — a config that does not load, an action it does not
 know, a run lock another driver holds — answers the model with the error's class and message

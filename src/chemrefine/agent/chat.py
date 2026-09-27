@@ -15,8 +15,16 @@ from chemrefine.agent.providers import ProviderConfig
 
 
 def _confirm(tool_name: str, rendered_args: str) -> bool:
-    """The human gate: name the mutation, show the arguments, ask."""
-    return typer.confirm(f"allow {tool_name}({rendered_args})?", default=False)
+    """The human gate: name the mutation, show the arguments, ask.
+
+    Ctrl-D or Ctrl-C at the prompt answers no. ``typer.confirm`` raises ``Abort`` for both,
+    and raised through the tool it would fail the whole turn — reported as a dead endpoint,
+    with no reason — for what is the user declining the call.
+    """
+    try:
+        return typer.confirm(f"allow {tool_name}({rendered_args})?", default=False)
+    except typer.Abort:
+        return False
 
 
 def main(

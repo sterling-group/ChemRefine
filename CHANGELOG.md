@@ -459,6 +459,9 @@ for the full map.
 
 ### Fixed
 
+- **Ctrl-D or Ctrl-C at `chemrefine agent`'s allow prompt declines the call.** It failed
+  the whole turn instead, reported as "model endpoint failed: " with no reason, for what
+  was only you answering no; the model now reads it as a declined call and goes on.
 - **The builder's chat keeps a paused turn when another tab moves past it.** Verdicts
   that did not answer exactly the calls waiting — stale cards in a second tab — reached
   the run, which refused them only after the paused turn had been taken, losing it and
