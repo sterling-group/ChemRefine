@@ -25,8 +25,18 @@ from chemrefine.engines.mlip.train.base import (
 )
 from chemrefine.state import Structure
 
-CHGNET = MlipLibrary(extra="mlip-chgnet", package="chgnet", import_name="chgnet")
-"""The one declaration of what provides this library."""
+CHGNET = MlipLibrary(
+    extra="mlip-chgnet",
+    package="chgnet",
+    import_name="chgnet",
+    periodic_only=True,
+    periodic_reason="it builds a pymatgen Structure from every geometry, whose lattice must "
+    "be invertible",
+)
+"""The one declaration of what provides this library.
+
+Periodic-only: a molecule is evaluated and fitted in a vacuum box
+(:meth:`~chemrefine.engines.mlip.registry.MlipLibrary.boxed`)."""
 
 _EPOCH_DIR = "chgnet_epochs"
 """Where the hook points CHGNet's per-epoch ``bestE_…``/``bestF_…`` saves, under the job's
@@ -77,20 +87,17 @@ class ChgnetTrainer(ApiTrainerBase):
     pointer and the docs carry a worked example.
 
     The declarations carry the library facts: a validation set is required because
-    ``Trainer.train(train_loader, val_loader, …)`` has no train-only mode; the model is
-    periodic, so a structure with no cell is refused before anything is written (the
-    hook's ``AseAtomsAdaptor.get_structure`` inverts the lattice, and a zero one is a
-    ``LinAlgError`` naming neither the structure nor the library); and CHGNet has no
-    charge or spin channel, so the base warns on non-neutral data.
+    ``Trainer.train(train_loader, val_loader, …)`` has no train-only mode; and CHGNet has
+    no charge or spin channel, so the base warns on non-neutral data. The model is
+    periodic, which is the library's declaration (:data:`CHGNET`): the step fits every
+    structure with no cell in a vacuum box, since the hook's
+    ``AseAtomsAdaptor.get_structure`` inverts the lattice and a zero one is a
+    ``LinAlgError`` naming neither the structure nor the library.
     """
 
     label = "CHGNet"
     needs_validation = True
     validation_reason = "its Trainer.train takes a validation loader, with no train-only mode"
-    periodic_only = True
-    periodic_reason = (
-        "its dataset is built from pymatgen Structures, whose lattice must be invertible"
-    )
     driver_task = "chgnet"
     required_config_keys = ("train_set", "valid_set", "run_name")
     """The base's keys plus ``valid_set`` — ``Trainer.train`` takes a validation loader

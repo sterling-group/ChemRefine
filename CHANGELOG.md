@@ -648,13 +648,14 @@ for the full map.
   this step's own values. The next step's cache rows for such backfilled parents move
   once on an existing `best` tree (the parent's digest covers its energy), so a `resume`
   recomputes exactly those rows.
-- **A periodic-only library refuses a molecular dataset before anything is written.**
-  `mlip-train` with `task_name: chgnet` over the pipeline's own structures — molecules with
-  no cell, which is every seed read from `.xyz` or built from SMILES — passed every
-  pre-run check, wrote its splits, submitted, and died inside the training job with a
-  singular-matrix error naming neither the structure nor the library, after the labelling
-  steps were paid for. The trainer now declares that its model is periodic and the shared
-  dataset writer refuses, naming the structures and the reason.
+- **A periodic-only MLIP runs a molecule in a vacuum box.** CHGNet builds a pymatgen
+  structure from every geometry it evaluates or fits. A molecule with no cell (every seed
+  read from `.xyz` or built from SMILES) failed as a singular-matrix error naming neither
+  the structure nor the library, in a single point, an optimisation and an ExtOpt server
+  alike, and `mlip-train` died the same way inside the training job, after the labelling
+  steps were paid for. The library now declares that it is periodic-only. A structure with
+  no cell is evaluated and fitted in a cubic box with 10 Å of vacuum on every side, with a
+  warning, and the structure carried forward keeps its own coordinates.
 - **A native output that cannot be read as the molecule it claims is that structure's
   parse failure, never a smaller molecule or a dead run.** A PES scan point whose
   coordinate row overflowed (`*****`) or parsed to `nan` used to ship with one atom fewer

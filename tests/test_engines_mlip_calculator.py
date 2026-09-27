@@ -19,9 +19,15 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 from ase import Atoms
+from ase.calculators.calculator import Calculator, CalculatorSetupError, all_changes
 
 from chemrefine.engines.mlip.calculator import MlipCalculator, build_calculator
-from chemrefine.engines.mlip.registry import backend_spec, registered_backends
+from chemrefine.engines.mlip.registry import (
+    VACUUM_PADDING_ANGSTROM,
+    MlipLibrary,
+    backend_spec,
+    registered_backends,
+)
 from chemrefine.errors import ConfigError
 
 
@@ -245,7 +251,7 @@ def _install_fake_chgnet(monkeypatch) -> tuple[MagicMock, MagicMock]:
     chgnet_cls = MagicMock()
     chgnet_cls.load = MagicMock(side_effect=_load)
     chgnet_cls.from_file = MagicMock(side_effect=_from_file)
-    calc_class = MagicMock(return_value="CHGNET_CALC")
+    calc_class = MagicMock(return_value=MagicMock(implemented_properties=["energy", "forces"]))
     model_mod = _fake_module("chgnet.model", CHGNet=chgnet_cls, CHGNetCalculator=calc_class)
     monkeypatch.setitem(sys.modules, "chgnet", _fake_module("chgnet", model=model_mod))
     monkeypatch.setitem(sys.modules, "chgnet.model", model_mod)
@@ -258,7 +264,7 @@ def test_build_chgnet_uses_the_released_default_when_nothing_is_named(monkeypatc
     chgnet_cls.load.assert_called_once_with()
     chgnet_cls.from_file.assert_not_called()
     calc_class.assert_called_once_with(model="CHGNET_MODEL", use_device="cpu")
-    assert calc.calculator == "CHGNET_CALC"
+    assert calc.calculator.inner is calc_class.return_value  # boxed: CHGNet is periodic-only
 
 
 def test_build_chgnet_passes_a_release_name_through(monkeypatch):
@@ -636,3 +642,143 @@ def test_optimize_keeps_the_optimisers_verdict(monkeypatch, caplog):
     calc.optimize(atoms, fmax=0.05, steps=10)
     assert calc.last_converged is True
     assert atoms.info["converged"] is True
+
+
+# ---------------------------------------------------------------------------
+# A periodic-only library evaluates a molecule in a vacuum box
+# ---------------------------------------------------------------------------
+
+_BOND = 0.74
+
+_BOXING = MlipLibrary(
+    extra="mlip-box",
+    package="box-lib",
+    import_name="box_lib",
+    periodic_only=True,
+    periodic_reason="it reads every geometry through its lattice",
+)
+"""A periodic-only library, for its :meth:`~MlipLibrary.boxed` alone."""
+
+
+class _NeedsALattice(Calculator):
+    """A harmonic H2 bond that, like CHGNet, cannot evaluate a structure with no cell."""
+
+    def __init__(self):
+        Calculator.__init__(self)
+        self.implemented_properties = ["energy", "forces", "stress"]
+
+    def calculate(self, atoms=None, properties=("energy",), system_changes=all_changes):
+        Calculator.calculate(self, atoms, properties, system_changes)
+        if not self.atoms.cell.rank:
+            raise np.linalg.LinAlgError("Singular matrix")
+        bond = self.atoms.positions[1] - self.atoms.positions[0]
+        length = float(np.linalg.norm(bond))
+        pull = 2 * (length - _BOND) * bond / length
+        self.results = {"energy": (length - _BOND) ** 2, "forces": np.array([pull, -pull])}
+
+
+def _periodic_only(task: str = "needs_a_lattice") -> MlipLibrary:
+    """Register a periodic-only library whose builder returns :class:`_NeedsALattice`."""
+    library = MlipLibrary(
+        extra="mlip-lattice",
+        package="lattice-lib",
+        import_name="lattice_lib",
+        periodic_only=True,
+        periodic_reason="it reads every geometry through its lattice",
+    )
+    library.calculator(task)(lambda _spec: _NeedsALattice())
+    return library
+
+
+def _h2(length: float) -> Atoms:
+    return Atoms("H2", positions=[[1.0, 2.0, 3.0], [1.0 + length, 2.0, 3.0]])
+
+
+def test_a_periodic_only_library_evaluates_a_molecule_in_a_vacuum_box(caplog):
+    """The molecule is computed boxed, the caller's atoms stay as they were, and it is said once.
+
+    Unboxed, CHGNet fails on a structure with no cell as a singular-matrix error naming
+    neither the structure nor the library, in a single point, an optimisation and an
+    ExtOpt server alike.
+    """
+    _periodic_only()
+    mlip = MlipCalculator(task_name="needs_a_lattice", device="cpu")
+    atoms = _h2(0.80)
+    before = atoms.positions.copy()
+
+    with caplog.at_level("WARNING", logger="chemrefine.engines.mlip.calculator"):
+        energy, gradient = mlip.single_point(atoms)
+        mlip.single_point(_h2(0.90))
+
+    assert energy == pytest.approx((0.80 - _BOND) ** 2)
+    assert gradient[0][0] == pytest.approx(-2 * (0.80 - _BOND))
+    np.testing.assert_array_equal(atoms.positions, before)
+    assert atoms.cell.rank == 0 and not atoms.pbc.any()
+    assert caplog.text.count("lattice-lib is periodic-only") == 1
+    assert "it reads every geometry through its lattice" in caplog.text
+    assert "stress" not in mlip.calculator.implemented_properties  # the box's, not the molecule's
+
+
+def test_an_optimisation_on_a_periodic_only_library_moves_only_the_callers_atoms():
+    """LBFGS walks the caller's own atoms; each step is evaluated on a boxed copy.
+
+    The path is the one LBFGS takes over a hand-boxed copy, shifted by the centring, so the
+    box changes where the energy is computed and nothing about where the atoms go.
+    """
+    from ase.optimize import LBFGS
+
+    _periodic_only()
+    mlip = MlipCalculator(task_name="needs_a_lattice", device="cpu")
+    atoms = _h2(0.90)
+    relaxed = mlip.optimize(atoms, fmax=1e-4, steps=100)
+
+    by_hand = _BOXING.boxed(_h2(0.90))
+    shift = by_hand.positions[0] - _h2(0.90).positions[0]
+    by_hand.calc = _NeedsALattice()
+    LBFGS(by_hand, logfile=None).run(fmax=1e-4, steps=100)
+
+    assert relaxed is atoms and mlip.last_converged is True
+    assert atoms.cell.rank == 0
+    assert atoms.get_distance(0, 1) == pytest.approx(_BOND, abs=1e-4)
+    np.testing.assert_allclose(atoms.positions, by_hand.positions - shift, atol=1e-9)
+
+
+def test_a_box_leaves_the_padding_on_every_side_and_the_caller_untouched():
+    """A centred cube, the structure's extent plus the padding each side; a copy, not a move."""
+    atoms = _h2(0.74)
+    box = _BOXING.boxed(atoms)
+
+    assert box is not atoms and atoms.cell.rank == 0
+    side = 0.74 + 2 * VACUUM_PADDING_ANGSTROM
+    np.testing.assert_allclose(box.cell.lengths(), [side] * 3)
+    np.testing.assert_allclose(box.positions.mean(axis=0), [side / 2] * 3)
+    assert box.pbc.all()
+    np.testing.assert_allclose(box.get_distance(0, 1), 0.74)
+
+
+def test_a_structure_with_a_cell_or_a_molecular_library_is_not_boxed():
+    """Only a periodic-only library boxes, and only a structure with no cell of its own."""
+    periodic = _h2(0.74)
+    periodic.set_cell([7.0, 7.0, 7.0])
+    assert _BOXING.boxed(periodic) is periodic
+
+    molecular = MlipLibrary(extra="mlip-mol", package="mol", import_name="mol")
+    atoms = _h2(0.74)
+    assert molecular.boxed(atoms) is atoms
+
+
+def test_a_molecular_librarys_calculator_is_returned_as_built():
+    """The wrapper exists for periodic-only libraries; any other calculator is untouched."""
+    built = _NeedsALattice()
+    MlipLibrary(extra="mlip-mol", package="mol", import_name="mol").calculator("molecular")(
+        lambda _spec: built
+    )
+    assert build_calculator(task_name="molecular", device="cpu") is built
+
+
+def test_a_periodic_only_calculator_asked_about_no_atoms_says_so():
+    """With nothing ever attached, there is nothing to box — ASE's own setup error, named."""
+    _periodic_only()
+    calc = build_calculator(task_name="needs_a_lattice", device="cpu")
+    with pytest.raises(CalculatorSetupError, match="no atoms to evaluate"):
+        calc.get_potential_energy()

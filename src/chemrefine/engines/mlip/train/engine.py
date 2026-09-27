@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -39,6 +40,8 @@ from chemrefine.engines.api import BackendRequirement, RunBlock, register
 from chemrefine.engines.mlip.backend import MlipBackend
 from chemrefine.engines.mlip.options import MlipTrainOptions
 from chemrefine.engines.mlip.registry import (
+    VACUUM_PADDING_ANGSTROM,
+    MlipLibrary,
     backend_spec,
     registered_trainers,
     requirement_from_options,
@@ -46,6 +49,7 @@ from chemrefine.engines.mlip.registry import (
     trainer_output_globs,
 )
 from chemrefine.engines.mlip.train.base import (
+    DatasetSplit,
     TrainerBase,
     TrainingPlan,
     digest_of,
@@ -54,9 +58,39 @@ from chemrefine.engines.mlip.train.base import (
     split_structures,
 )
 from chemrefine.errors import ConfigError
-from chemrefine.state import JobBatch, StepContext, StepInputs, StepResults
+from chemrefine.state import JobBatch, StepContext, StepInputs, StepResults, Structure
 
 logger = logging.getLogger(__name__)
+
+
+def _as_fitted_by(library: MlipLibrary, split: DatasetSplit) -> DatasetSplit:
+    """``split`` as ``library`` can fit it: each structure through :meth:`MlipLibrary.boxed`.
+
+    A periodic-only library fits every structure with no cell in a vacuum box, and the step
+    says so once, with the count. Any other library gets every structure back as it was.
+    """
+    fitted: list[tuple[Structure, ...]] = []
+    boxed = 0
+    for _name, structures in split.items():
+        kept: list[Structure] = []
+        for structure in structures:
+            atoms = library.boxed(structure.atoms)
+            if atoms is not structure.atoms:
+                structure = replace(structure, atoms=atoms)
+                boxed += 1
+            kept.append(structure)
+        fitted.append(tuple(kept))
+    if boxed:
+        logger.warning(
+            "%s is periodic-only (%s): %d structure(s) with no cell are fitted in a periodic "
+            "box with %g Å of vacuum on every side",
+            library.package,
+            library.periodic_reason,
+            boxed,
+            VACUUM_PADDING_ANGSTROM,
+        )
+    return DatasetSplit(*fitted)
+
 
 SIDECAR_NAME = "trained_model.json"
 """Record of what a training step produced, written beside the model.
@@ -262,7 +296,9 @@ class MlipTrainEngine(MlipBackend):
             seed=opts.seed,
         )
         plan.run_dir.mkdir(parents=True, exist_ok=True)
-        data = trainer.write_dataset(plan, split)
+        data = trainer.write_dataset(
+            plan, _as_fitted_by(backend_spec(opts.task_name).library, split)
+        )
         config = render_config(
             ctx.template,
             placeholders_for(trainer, plan, data),

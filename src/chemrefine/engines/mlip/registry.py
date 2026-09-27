@@ -83,7 +83,16 @@ from chemrefine.engines.mlip.options import MlipOptions
 from chemrefine.errors import ConfigError
 
 if TYPE_CHECKING:
+    from ase import Atoms
+
     from chemrefine.engines.mlip.train.base import TrainerBase
+
+VACUUM_PADDING_ANGSTROM = 10.0
+"""The vacuum a periodic-only library's box leaves on every side of a structure with no cell.
+
+Above every shipped periodic library's interaction cutoff (CHGNet's graph reaches 6 Å for
+atoms and 3 Å for bonds), so a periodic image never enters a structure's neighbour list and
+the boxed energy is the molecule's own."""
 
 
 @dataclass(frozen=True)
@@ -140,11 +149,45 @@ class MlipLibrary:
     ``import_name`` is the top-level module the provisioner probes with
     :func:`importlib.util.find_spec`. Every MLIP library gets an environment of its own —
     their torch/e3nn trees conflict and cannot share a prefix.
+
+    ``periodic_only`` marks a library whose model reads every geometry through a lattice,
+    and ``periodic_reason`` says why in its own words (no trailing period). The pipeline's
+    structures never carry a cell — a seed read from ``.xyz`` or built from SMILES has
+    none — so such a library evaluates and fits each of them in a vacuum box
+    (:meth:`boxed`), and the structure carried forward keeps its own coordinates.
     """
 
     extra: str
     package: str
     import_name: str
+    periodic_only: bool = False
+    periodic_reason: str = ""
+
+    def __post_init__(self) -> None:
+        """Refuse a periodic-only library that does not say why — the warning quotes it."""
+        if self.periodic_only and not self.periodic_reason:
+            raise TypeError(
+                f"{self.extra}: a periodic_only library must declare its periodic_reason — "
+                f"the warning a boxed structure logs quotes it"
+            )
+
+    def boxed(self, atoms: Atoms) -> Atoms:
+        """``atoms`` as this library can compute it: in a vacuum box when it needs a cell.
+
+        ``atoms`` itself unless the library is :attr:`periodic_only` and the structure has
+        no cell. Otherwise a centred copy in a periodic cube whose side is the structure's
+        largest extent plus :data:`VACUUM_PADDING_ANGSTROM` on each side; ``pbc`` is set
+        because a lattice is what the library computes with. The caller's atoms are never
+        touched.
+        """
+        if not self.periodic_only or atoms.cell.rank:
+            return atoms
+        box: Atoms = atoms.copy()
+        extent = box.positions.max(axis=0) - box.positions.min(axis=0)
+        box.set_cell([float(extent.max()) + 2 * VACUUM_PADDING_ANGSTROM] * 3)
+        box.center()
+        box.pbc = True
+        return box
 
     def calculator(self, *task_names: str) -> Callable[[CalculatorBuilder], CalculatorBuilder]:
         """Register a builder for each of ``task_names``; return it unchanged.
@@ -225,8 +268,6 @@ class MlipLibrary:
             missing = [name for name in required if not hasattr(cls, name)]
             if cls.needs_validation and not cls.validation_reason:
                 missing.append("validation_reason")
-            if cls.periodic_only and not cls.periodic_reason:
-                missing.append("periodic_reason")
             if missing:
                 raise TypeError(
                     f"{self.extra}: trainer {cls.__name__} is missing declaration(s) "

@@ -41,9 +41,16 @@ from pathlib import Path
 from typing import Any
 
 from ase import Atoms
+from ase.calculators.calculator import Calculator, CalculatorSetupError, all_changes
 
 from chemrefine.engines.mlip.options import MlipOptions
-from chemrefine.engines.mlip.registry import CalculatorSpec, backend_spec, calculator_for
+from chemrefine.engines.mlip.registry import (
+    VACUUM_PADDING_ANGSTROM,
+    CalculatorSpec,
+    MlipLibrary,
+    backend_spec,
+    calculator_for,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +99,10 @@ def build_calculator(
     which is the property the spec exists for (a backend-specific knob starts life as a
     declared option instead).
 
+    A periodic-only library's calculator comes back wrapped (:class:`_VacuumBoxed`), so
+    every caller — a single point, an optimisation, the ExtOpt server — evaluates a
+    structure with no cell in a vacuum box rather than failing inside the library.
+
     Raises :class:`~chemrefine.errors.ConfigError` listing known keys if nothing is
     registered; a missing backend *library* surfaces as an ``ImportError`` naming the
     extra to install.
@@ -112,12 +123,64 @@ def build_calculator(
         multiplicity=multiplicity,
     )
     try:
-        return builder(spec)
+        calculator = builder(spec)
     except ImportError as exc:
         raise ImportError(
             f"this MLIP backend needs '{registered.package}' — install it with "
             f"`pip install chemrefine[{registered.extra}]` (in its own environment)."
         ) from exc
+    if registered.library.periodic_only:
+        return _VacuumBoxed(calculator, registered.library)
+    return calculator
+
+
+class _VacuumBoxed(Calculator):
+    """A periodic-only library's calculator, fed each structure the way it can compute it.
+
+    The library reads every geometry through a lattice, and a structure with no cell has a
+    zero one: CHGNet's pymatgen conversion fails on it as a singular matrix naming neither
+    the structure nor the library. Each evaluation hands the inner calculator
+    :meth:`MlipLibrary.boxed` of the atoms — a copy, so the caller's atoms keep their own
+    coordinates, cell and ``pbc`` — and reports its energy and forces. ``stress`` is not
+    offered: it would be the box's, not the molecule's. The first boxed evaluation logs
+    the fact, once per calculator.
+    """
+
+    def __init__(self, inner: Any, library: MlipLibrary) -> None:
+        """Wrap ``inner``, the calculator ``library``'s builder returned."""
+        # The base named, not reached through ``super()``: ase's methods are unannotated,
+        # and mypy's ``untyped_calls_exclude`` does not recognise a ``super()`` call as one.
+        Calculator.__init__(self)
+        self.inner = inner
+        self.library = library
+        self.implemented_properties = [p for p in inner.implemented_properties if p != "stress"]
+        self._warned = False
+
+    def calculate(
+        self,
+        atoms: Atoms | None = None,
+        properties: Any = ("energy",),
+        system_changes: Any = all_changes,
+    ) -> None:
+        """Evaluate the boxed copy of ``atoms`` with the inner calculator."""
+        Calculator.calculate(self, atoms, properties, system_changes)
+        if self.atoms is None:
+            raise CalculatorSetupError(
+                "no atoms to evaluate: pass them, or attach this calculator to them"
+            )
+        box = self.library.boxed(self.atoms)
+        if box is not self.atoms and not self._warned:
+            logger.warning(
+                "%s is periodic-only (%s): a structure with no cell is evaluated in a "
+                "periodic box with %g Å of vacuum on every side",
+                self.library.package,
+                self.library.periodic_reason,
+                VACUUM_PADDING_ANGSTROM,
+            )
+            self._warned = True
+        box.calc = self.inner
+        energy = float(box.get_potential_energy())
+        self.results = {"energy": energy, "free_energy": energy, "forces": box.get_forces()}
 
 
 # ---------------------------------------------------------------------------

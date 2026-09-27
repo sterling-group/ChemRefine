@@ -125,23 +125,6 @@ def _plan(tmp_path: Path, **overrides: object) -> TrainingPlan:
     return TrainingPlan(**base)
 
 
-def _boxed(split: DatasetSplit) -> DatasetSplit:
-    """``split`` with every structure in a 10 Å box — what a periodic-only library needs."""
-    from dataclasses import replace
-
-    def box(struct: Structure) -> Structure:
-        atoms = struct.atoms.copy()
-        atoms.set_cell(10.0 * np.eye(3))
-        atoms.pbc = True
-        return replace(struct, atoms=atoms)
-
-    return DatasetSplit(
-        train=tuple(map(box, split.train)),
-        valid=tuple(map(box, split.valid)),
-        test=tuple(map(box, split.test)),
-    )
-
-
 def _small_split() -> DatasetSplit:
     """Two train / one valid / no test — the shape the per-library writer tests share."""
     return DatasetSplit(
@@ -735,9 +718,10 @@ def _driver_config(tmp_path: Path, **overrides) -> Path:
     """A rendered driver config over a really-written dataset, as YAML on disk."""
     import yaml
 
-    from chemrefine.engines.mlip.backends.chgnet import ChgnetTrainer
+    from chemrefine.engines.mlip.backends.chgnet import CHGNET, ChgnetTrainer
+    from chemrefine.engines.mlip.train.engine import _as_fitted_by
 
-    files = ChgnetTrainer().write_dataset(_plan(tmp_path), _boxed(_small_split()))
+    files = ChgnetTrainer().write_dataset(_plan(tmp_path), _as_fitted_by(CHGNET, _small_split()))
     config = {
         "train_set": str(files.train),
         "valid_set": str(files.valid),
