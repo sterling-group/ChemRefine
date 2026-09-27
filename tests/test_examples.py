@@ -30,6 +30,7 @@ from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.api import ENGINES, OptionsDeclaring, get_engine
 from chemrefine.engines.orca.engine import OrcaEngine
 from chemrefine.engines.orca.inspect import inspect_template
+from chemrefine.engines.orca.output import canonical_operation
 from chemrefine.io import read_xyz_frames
 from chemrefine.nms import NmsOptions
 
@@ -150,13 +151,10 @@ def test_example_operations_match_their_templates(yml: Path) -> None:
     every schema gate passed them: ``opt_sp`` is inside the vocabulary, so only a
     template-vs-operation comparison can see the mismatch.
 
-    The comparison is deliberately one-sided. The inspector reads only the ``!``
-    simple-keyword spelling (its documented scope), so a template driving DOCKER or
-    SOLVATOR through a ``%``-block infers as a plain run — there the explicit
-    ``operation`` is legitimately *correcting* inference's blind spot (host_guest does
-    this on purpose). Only when the ``!`` line itself names an ensemble or scan run is
-    the template unambiguous, and a declared operation that selects a different parser
-    is the defect this gate exists for.
+    Two-sided: the inspector reads a run kind from the ``!`` keywords and from the ``%``
+    blocks ORCA accepts in their place, so a declared operation that selects another
+    parser than the template's run needs is the defect this gate exists for, whichever
+    of the two says so.
     """
     cfg = load_config(yml)
     for step in cfg.steps:
@@ -165,9 +163,7 @@ def test_example_operations_match_their_templates(yml: Path) -> None:
         template = _resolved_template(cfg, step)
         assert template is not None
         inferred = inspect_template(template).operation
-        if inferred in _DFT_TEXT_OPERATIONS:
-            continue  # block-form ensembles infer as plain runs — the explicit value rules
-        declared = step.operation.lower().replace("+", "_")
+        declared = canonical_operation(step.operation)
         assert _parse_route(declared) == _parse_route(inferred), (
             f"step {step.step}: operation {step.operation!r} selects the "
             f"{_parse_route(declared)!r} parser, but template {template.name} runs "

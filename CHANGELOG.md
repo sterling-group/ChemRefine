@@ -459,6 +459,12 @@ for the full map.
 
 ### Fixed
 
+- **A `%docker` or `%solvator` block infers its run kind.** ORCA runs a docking or a
+  solvation from the `%docker` / `%solvator` block alone. A step that omitted `operation:`
+  inferred only from the `!` keyword line, read such a run as a single point, and kept one
+  structure of the ensemble ORCA wrote. The block now infers `docker` / `solvator` exactly
+  as the `! DOCKER` / `! SOLVATOR` keyword does. A keyword still wins over a block, and a
+  `%solvator` block over a `%docker` one, which a solvation reads as its docking settings.
 - **A step's cache key follows the operation its outputs are read as and the NMS target it
   resolves to.** A step that left out `operation:` keyed the omission, not the reader its
   template selects. A change in what the template infers therefore moved no key, and

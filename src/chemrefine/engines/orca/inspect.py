@@ -9,11 +9,12 @@ When a step omits ``operation``, ChemRefine inspects the resolved ORCA template 
 which parser to use and (for NMS) whether the run optimises a TS and whether it computes
 frequencies. An explicit ``operation`` always wins — inspection is the convenience default.
 
-Only the ``!`` simple-input lines are read for keywords, and ORCA ``#`` comments (whole-line
-*and* trailing) are stripped first, so a keyword that only appears in a comment
-(``# add Opt later``) is never mistaken for a real directive. A relaxed surface scan is
-detected from a ``%geom … Scan … end`` block (also comment-stripped). The PAL count is read
-from the ``%pal``/``nprocs``/``PALn`` declaration anywhere in the template.
+A run kind comes from the ``!`` simple-input keywords and from the ``%`` blocks ORCA accepts
+in their place — a relaxed surface scan's ``%geom … Scan … end``, a docking's ``%docker``, a
+solvation's ``%solvator``, a trajectory's ``%md``. ORCA ``#`` comments (whole-line *and*
+trailing) are stripped first, so a keyword or block that only appears in a comment
+(``# add Opt later``) is never mistaken for a real directive. The PAL count is read from the
+``%pal``/``nprocs``/``PALn`` declaration anywhere in the template.
 
 The returned :attr:`OrcaInputInfo.operation` is one of the strings
 :func:`chemrefine.engines.orca.output.parse_output` already understands
@@ -67,6 +68,13 @@ _FREQ_TOKEN_RE = re.compile(r"(?:num|an)?freq", re.IGNORECASE)
 # trajectory is driven from a ``%md … end`` block rather than a keyword.
 _NEB_TOKEN_RE = re.compile(r"(?:fast-|zoom-|loose-|tight-)?neb(?:-ci|-ts|-idpp)?", re.IGNORECASE)
 _MD_BLOCK_RE = re.compile(r"%md\b.*?\bend\b", re.IGNORECASE | re.DOTALL)
+
+# ORCA runs a docking or a solvation from its block alone, exactly as from the ``!`` keyword.
+# A ``%docker`` block is also how a solvation's own docking is tuned: ORCA 6.1.1 runs a
+# solvation for a template carrying both blocks and reads ``%docker`` as its settings. So a
+# ``%solvator`` block outranks a ``%docker`` block, and a run-kind keyword outranks both.
+_DOCKER_BLOCK_RE = re.compile(r"%docker\b", re.IGNORECASE)
+_SOLVATOR_BLOCK_RE = re.compile(r"%solvator\b", re.IGNORECASE)
 
 # Every spelling of an ORCA PAL declaration, as ``(prefix)(count)`` pairs so :func:`_read_pal`
 # reads the count and :func:`chemrefine.engines.orca.input.clamp_pal` rewrites it in place.
@@ -144,8 +152,10 @@ def _has_geom_scan(decommented: str) -> bool:
 def inspect_template(template_path: str | Path) -> OrcaInputInfo:
     """Infer run type + PAL from an ORCA template in a single read.
 
-    Ensemble runs are simple keywords (``! GOAT`` / ``! DOCKER`` / ``! SOLVATOR``); a relaxed
-    scan is a ``%geom … Scan … end`` block; a reaction path (``! IRC``), a band of images
+    Ensemble runs are simple keywords (``! GOAT`` / ``! DOCKER`` / ``! SOLVATOR``) or the
+    ``%docker`` / ``%solvator`` block ORCA accepts in their place (a keyword wins over a block,
+    and ``%solvator`` over ``%docker`` — see :data:`_DOCKER_BLOCK_RE`); a relaxed scan is a
+    ``%geom … Scan … end`` block; a reaction path (``! IRC``), a band of images
     (``! NEB…``) and a trajectory (a ``%md … end`` block) are named for what they are
     (``irc`` / ``neb`` / ``md``); an ``Opt`` (or ``OptTS``) is an optimization (``opt_sp``);
     anything else — including a bare single point or a frequency-only job — parses from the
@@ -171,8 +181,10 @@ def inspect_template(template_path: str | Path) -> OrcaInputInfo:
         operation = "goat"
     elif "docker" in keywords:
         operation = "docker"
-    elif "solvator" in keywords:
+    elif "solvator" in keywords or _SOLVATOR_BLOCK_RE.search(decommented):
         operation = "solvator"
+    elif _DOCKER_BLOCK_RE.search(decommented):
+        operation = "docker"
     elif _has_geom_scan(decommented):
         operation = "pes"
     elif "irc" in keywords:

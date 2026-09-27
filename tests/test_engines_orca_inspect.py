@@ -137,6 +137,36 @@ def test_inspect_ignores_commented_out_scan_block(tmp_path: Path):
 
 
 @pytest.mark.parametrize(
+    ("body", "operation"),
+    [
+        # The block alone runs the ensemble, as the keyword does (ORCA 6.1.1).
+        ('! XTB\n%DOCKER\n  GUEST "cl.xyz"\nEND\n', "docker"),
+        ("! XTB ALPB(WATER)\n%solvator nsolv 2 end\n", "solvator"),
+        # The ensemble is the product, not the optimisation beside it.
+        ('! XTB Opt\n%docker guest "cl.xyz" end\n', "docker"),
+        # A solvation reads a `%docker` block as the settings of its own docking.
+        ("! XTB\n%solvator nsolv 2 end\n%docker docklevel quick end\n", "solvator"),
+        # A run-kind keyword outranks a block.
+        ("! XTB SOLVATOR\n%docker docklevel quick end\n", "solvator"),
+        ('! GOAT XTB\n%docker guest "cl.xyz" end\n', "goat"),
+    ],
+)
+def test_a_docker_or_solvator_block_infers_its_run_kind(tmp_path: Path, body: str, operation: str):
+    """ORCA runs a docking or a solvation from its ``%`` block alone.
+
+    Read from the ``!`` line only, such a run inferred a single point, and the step kept one
+    structure of the ensemble ORCA wrote.
+    """
+    assert inspect_template(_write(tmp_path, body)).operation == operation
+
+
+def test_a_commented_out_docker_block_is_not_a_docking(tmp_path: Path):
+    """A ``%docker`` block hidden behind a comment is not a directive."""
+    body = '! XTB Opt\n# %docker guest "cl.xyz" end\n'
+    assert inspect_template(_write(tmp_path, body)).operation == "opt_sp"
+
+
+@pytest.mark.parametrize(
     "body",
     [
         # The word in a later block's quoted path.
