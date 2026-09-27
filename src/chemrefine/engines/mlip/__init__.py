@@ -8,7 +8,7 @@ old vocabulary — so existing YAML keeps working.
 Engines shipped in this package:
 
 * ``MlipEngine`` (``"mlip"``) — in-process MLIP inference, no ORCA, for fast
-  pre-screening. The model loads once per pipeline run.
+  pre-screening. Each structure is its own job: one process that loads the model.
 * ``MlipExtOptEngine`` (``"mlip-extopt"``) — drives ORCA's external optimizer
   protocol with an MLIP gradient server. The HTTP / backend-server plumbing
   lives in :mod:`chemrefine.engines._backend_server`; only the per-call
