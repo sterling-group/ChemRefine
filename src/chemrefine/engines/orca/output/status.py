@@ -44,10 +44,10 @@ _TERMINATED_RE = re.compile(r"ORCA TERMINATED NORMALLY")
 #: Two deliberate omissions:
 #:
 #: * There is **no** ``THE OPTIMIZATION HAS NOT CONVERGED``. ORCA has no such banner; a
-#:   geometry optimisation that runs out of cycles simply leaves ``The optimization has not
-#:   yet converged`` as its last word, with no success banner after it. That is the
-#:   spelling to match, and matching it is what makes a cycle-exhausted optimisation
-#:   detectable at all.
+#:   geometry optimisation that runs out of cycles leaves ``The optimization has not yet
+#:   converged`` as its last verdict, followed only by a notice that it reached its cycle
+#:   limit and never by a success banner. That is the spelling to match, and matching it
+#:   is what makes a cycle-exhausted optimisation detectable at all.
 #: * No bare ``NOT CONVERGED`` catch-all. Its only real-world matches are
 #:   ``LOCALIZATION HAS NOT CONVERGED`` and ``MAXIMUM NO OF ITERATIONS EXCEEDED -
 #:   LOCALIZATION NOT CONVERGED`` — orbital localisation is post-processing for printing,

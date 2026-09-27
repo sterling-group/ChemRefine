@@ -16,6 +16,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, cast
 
+import numpy as np
 import pytest
 from replay import (
     SUBMISSIONS,
@@ -290,6 +291,35 @@ def test_mlip_extopt_renders_server_block_and_parses(
     (survivor,) = outcomes[0].state.structures
     assert survivor.converged
     assert survivor.energy_hartree is not None
+    submitter.assert_replayed()
+
+
+def test_extopt_cycle_limit_retries_from_where_it_stopped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An ExtOpt run out of cycles is retried from its last cycle; ``best`` keeps the retry's.
+
+    ExtOpt prints ``FINAL SINGLE POINT ENERGY`` for its first cycle only, so a run read at
+    the last of those came back at the geometry it was submitted with: the retry resubmitted
+    the seed, stopped at the same limit on the same path, and ``best`` carried an
+    unoptimised input downstream.
+    """
+    case, submitter, config = _replay("extopt_cycle_limit", tmp_path, monkeypatch)
+    config = _with_backend_python(config, 1)
+
+    outcomes = pipeline.run(config)
+
+    assert submitter.submissions() == ["0", "0"], "one convergence retry"
+    stopped = parse_output(case.submitted_file("step1/0", 0, "step1_0.out"), "opt_sp")[0]
+    retried = parse_output(case.submitted_file("step1/0", 1, "step1_0.out"), "opt_sp")[0]
+    (retry_input,) = read_xyz_frames(case.output_dir / "step1" / "0" / "step1_0_inp.xyz")
+    assert np.allclose(retry_input.positions, stopped.positions), "retried from its last cycle"
+    (seed,) = read_xyz_frames(case.root / "water_distorted.xyz")
+    assert not np.allclose(retry_input.positions, seed.positions, atol=1e-3)
+    (survivor,) = outcomes[0].state.structures
+    assert survivor.converged is False
+    assert survivor.energy_hartree == retried.energy_hartree
+    assert np.allclose(survivor.atoms.positions, retried.positions)
     submitter.assert_replayed()
 
 

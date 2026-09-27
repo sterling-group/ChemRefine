@@ -139,10 +139,10 @@ def test_converged_true_when_an_early_scf_failure_recovers():
 def test_converged_false_when_the_optimisation_runs_out_of_cycles():
     """A geometry optimisation that exhausts MaxIter is a failure.
 
-    ORCA has no "optimisation failed" banner: it prints "has not yet converged" after
-    every non-final cycle and, when the cycles run out, simply stops — so that line is
-    the last word. Unmatched, a cycle-exhausted optimisation reads as converged and its
-    unfinished geometry flows downstream.
+    ORCA has no "optimisation failed" verdict: it prints "has not yet converged" after
+    every non-final cycle and, when the cycles run out, adds only a notice that it hit the
+    limit — so that line is the last verdict. Unmatched, a cycle-exhausted optimisation
+    reads as converged and its unfinished geometry flows downstream.
     """
     assert status.parse_converged("\n".join([_SCF_OK, _GEOM_PENDING])) is False
 

@@ -16,12 +16,15 @@ import os
 import shutil
 from pathlib import Path
 
+import numpy as np
 import pytest
 import replay
 
 from chemrefine import pipeline
 from chemrefine.config import load_config
 from chemrefine.engines import _execution, backend_env_python
+from chemrefine.engines.orca.output import parse_dft
+from chemrefine.io import read_xyz_frames
 
 pytestmark = pytest.mark.integration
 
@@ -72,6 +75,7 @@ _REQUIRES = {
     "mlip_screen": {"mace"},
     "mlip_train": {"mace"},
     "mlip_extopt": {"orca", "mace"},
+    "extopt_cycle_limit": {"orca", "mace"},
     "pyscf_sp": {"pyscf"},
     "pyscf_extopt": {"orca", "pyscf"},
 }
@@ -170,6 +174,21 @@ def test_live_case(
         # gives all-real textbook modes) — the clean-minimum assertion lives on pyscf_extopt.
         (structure,) = outcomes[0].state.structures
         assert structure.imaginary_freqs is not None, "NumFreq must yield parsed frequencies"
+    elif name == "extopt_cycle_limit":
+        # Stopped at its cycle limit, retried once from the last cycle it reached — not the
+        # seed — and, stopped again, carried forward by `best` as the retry's last cycle.
+        structure_dir = outputs / "step1" / "0"
+        assert len(recorder.log["step1/0"]) == 2, "one convergence retry"
+        stopped = parse_dft(structure_dir / "attempt1" / "step1_0.out")[0]
+        (retry_input,) = read_xyz_frames(structure_dir / "step1_0_inp.xyz")
+        assert np.allclose(retry_input.positions, stopped.positions)
+        (seed,) = read_xyz_frames(tmp_path / "water_distorted.xyz")
+        assert not np.allclose(retry_input.positions, seed.positions, atol=1e-3)
+        last = parse_dft(structure_dir / "step1_0.out")[0]
+        (structure,) = outcomes[0].state.structures
+        assert structure.converged is False
+        assert structure.energy_hartree == last.energy_hartree
+        assert np.allclose(structure.atoms.positions, last.positions)
     elif name in ("pyscf_sp", "pyscf_extopt"):
         # Water/HF/STO-3G is ~-74.96 Eh. Asserting the number, not just that something
         # parsed, is the point of running PySCF for real: the contract goldens for both

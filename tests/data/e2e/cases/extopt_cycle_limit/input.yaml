@@ -1,0 +1,29 @@
+# Capture case: an ORCA ExtOpt optimisation that stops at its cycle limit, over a CPU MACE
+# server — twice.
+#
+# The optimisation is cut short on purpose (`%geom MaxIter 3` in the template, a stretched
+# and opened water as the seed), so the job ends NOT_CONVERGED and the pipeline retries it
+# once, from the last geometry it reached; the retry stops at the limit as well, and
+# `on_failure: best` carries its last cycle forward. That is the path an ExtOpt run takes
+# whenever it runs out of cycles, and ExtOpt prints `FINAL SINGLE POINT ENERGY` for its first
+# cycle only — every later cycle's energy is the optimiser's `Current Energy` — so the
+# recording holds both halves: the parser reading each attempt at its last cycle, and the
+# retry starting there rather than from the seed. The distortion leaves the energy still
+# falling ~0.01 Eh per cycle after six, so neither attempt can converge by accident.
+template_dir: ./templates
+output_dir: ./outputs
+executables: { orca: orca }  # the live harness injects the resolved absolute path
+dispatch: auto
+max_cores: 8
+
+input: ./water_distorted.xyz
+charge: 0
+multiplicity: 1
+
+steps:
+  - step: 1
+    engine: mlip-extopt
+    operation: opt_sp
+    on_failure: best
+    options: { task_name: mace_off, model_name: small, device: cpu }
+    sample: { method: min, count: 1 }

@@ -6,10 +6,13 @@ exactly like a passing test. This file asserts the readers against every real OR
 already in the repo, streamed straight out of the ``tests/data/e2e/recordings``
 archives (nothing is extracted to disk).
 
-Every recorded run is a *successful* one — they were captured from passing live runs — so
-the corpus-wide expectation is simple and strong: every output must read as terminated and
-converged, and every frequency job must yield a well-shaped normal-mode tensor. A reader
-that starts finding failures here is wrong about real ORCA, whatever the unit tests say.
+Every recorded run passed its live test, and every one succeeded except those cut short on
+purpose — which ORCA announces in its own words, "did not converge but reached the maximum
+number of optimization cycles", a line no reader here uses. So the corpus-wide expectation
+stays simple, strong and independent of the parser: an output ORCA says ran out of cycles
+reads as unconverged, every other one as terminated and converged, and every frequency job
+yields a well-shaped normal-mode tensor. A reader that disagrees with ORCA here is wrong
+about real ORCA, whatever the unit tests say.
 
 Marked ``slow``, not ``integration``: it reads every ``.out`` out of the compressed archives,
 which is a second or so, but it invokes no ORCA, no SLURM and no external service. That
@@ -72,18 +75,27 @@ def test_the_corpus_is_actually_there():
     assert sum(1 for _ in _recorded_outputs()) >= 17
 
 
-def test_every_recorded_run_reads_as_successful():
-    """No false failures across the corpus.
+_RAN_OUT_OF_CYCLES = "did not converge but reached the maximum number of"
+"""ORCA's own words for an optimisation that hit its cycle limit — read by no reader here."""
+
+
+def test_every_recorded_run_reads_as_orca_itself_reports_it():
+    """No false failures across the corpus, and the one real failure is read as one.
 
     This is the assertion that catches a bare ``NOT CONVERGED`` matching ORCA's
-    ``LOCALIZATION HAS NOT CONVERGED``, or any other over-broad negative.
+    ``LOCALIZATION HAS NOT CONVERGED``, or any other over-broad negative — and, over the
+    optimisation recorded running out of cycles, a negative that stopped matching.
     """
-    bad = [
+    wrong = [
         label
         for label, text in _recorded_outputs()
-        if not (status.parse_terminated_normally(text) and status.parse_converged(text))
+        if status.parse_terminated_normally(text) is not True
+        or status.parse_converged(text) is (_RAN_OUT_OF_CYCLES in text)
     ]
-    assert bad == []
+    assert wrong == []
+    assert any(_RAN_OUT_OF_CYCLES in text for _label, text in _recorded_outputs()), (
+        "no cycle-exhausted optimisation in the corpus — has the recording set changed?"
+    )
 
 
 def test_pending_optimisation_lines_are_never_the_last_verdict_in_a_finished_run():
@@ -101,7 +113,8 @@ def test_pending_optimisation_lines_are_never_the_last_verdict_in_a_finished_run
         if "The optimization has not yet converged" in text
     ]
     assert pending, "no optimisation outputs in the corpus — has the recording set changed?"
-    assert all(status.parse_converged(text) for label, text in _recorded_outputs())
+    finished = [text for _label, text in _recorded_outputs() if _RAN_OUT_OF_CYCLES not in text]
+    assert all(status.parse_converged(text) for text in finished)
 
 
 def test_every_frequency_output_yields_a_well_shaped_normal_mode_tensor():
