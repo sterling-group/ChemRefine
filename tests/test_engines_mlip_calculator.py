@@ -342,15 +342,30 @@ def test_build_sevenn_falls_back_to_the_librarys_own_default(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _install_fake_orb(monkeypatch) -> tuple[MagicMock, MagicMock, object]:
-    """Install a fake ``orb_models`` tree; return ``(loader, calc_class, orbff)``."""
-    orbff = object()
-    loader = MagicMock(return_value=orbff)
+def _install_fake_orb(monkeypatch) -> tuple[MagicMock, MagicMock, tuple[object, object]]:
+    """Install a fake ``orb_models`` tree; return ``(loader, calc_class, (model, adapter))``.
+
+    Shaped as orb-models is from the 0.6 floor on: the loader is registered in
+    ``ORB_PRETRAINED_MODELS`` and returns ``(model, atoms_adapter)``, and the calculator
+    takes the adapter positionally, so a builder that drops it fails here as it does
+    against the real library. The module also holds an architecture builder, which is not
+    a loader.
+    """
+    loaded = (object(), object())
+    loader = MagicMock(return_value=loaded)
+    loader.__name__ = "orb_v3_conservative_inf_omat"
     pretrained = _fake_module(
-        "orb_models.forcefield.pretrained", orb_v3_conservative_inf_omat=loader
+        "orb_models.forcefield.pretrained",
+        orb_v3_conservative_inf_omat=loader,
+        orb_v2_architecture=MagicMock(),
+        ORB_PRETRAINED_MODELS={"orb-v3-conservative-inf-omat": loader},
     )
     forcefield = _fake_module("orb_models.forcefield", pretrained=pretrained)
-    calc_class = MagicMock(return_value="ORB_CALC")
+
+    def _calculator(model, atoms_adapter, *, device=None):
+        return "ORB_CALC"
+
+    calc_class = MagicMock(side_effect=_calculator)
     calc_mod = _fake_module("orb_models.forcefield.inference.calculator", ORBCalculator=calc_class)
     inference = _fake_module("orb_models.forcefield.inference")
     for name, mod in {
@@ -361,14 +376,20 @@ def _install_fake_orb(monkeypatch) -> tuple[MagicMock, MagicMock, object]:
         "orb_models.forcefield.inference.calculator": calc_mod,
     }.items():
         monkeypatch.setitem(sys.modules, name, mod)
-    return loader, calc_class, orbff
+    return loader, calc_class, loaded
 
 
 def test_build_orb_constructs_real_orb_calculator(monkeypatch):
-    loader, calc_class, orbff = _install_fake_orb(monkeypatch)
+    """The calculator gets the model and the atoms adapter the loader returned beside it.
+
+    orb-models' calculator takes the adapter positionally; dropped, ``task_name: orb`` failed
+    before its first structure. The model loads uncompiled: a compile is paid once per
+    process, and a ChemRefine process serves one job.
+    """
+    loader, calc_class, (model, adapter) = _install_fake_orb(monkeypatch)
     calc = MlipCalculator(task_name="orb", model_name="orb_v3_conservative_inf_omat", device="cpu")
-    loader.assert_called_once_with(device="cpu")
-    calc_class.assert_called_once_with(orbff, device="cpu")
+    loader.assert_called_once_with(device="cpu", compile=False)
+    calc_class.assert_called_once_with(model, adapter, device="cpu")
     assert calc.calculator == "ORB_CALC"
 
 
@@ -381,16 +402,16 @@ def test_an_unset_orb_model_name_runs_the_default_loader(monkeypatch, tmp_path: 
     checkpoint from an ``mlip-train`` step is the same case: it carries weights, not an
     architecture, and the run that produced it never had to name one either.
     """
-    loader, calc_class, orbff = _install_fake_orb(monkeypatch)
+    loader, calc_class, (model, adapter) = _install_fake_orb(monkeypatch)
     MlipCalculator(task_name="orb", device="cpu")
-    loader.assert_called_once_with(device="cpu")
-    calc_class.assert_called_once_with(orbff, device="cpu")
+    loader.assert_called_once_with(device="cpu", compile=False)
+    calc_class.assert_called_once_with(model, adapter, device="cpu")
 
     loader.reset_mock()
     model_file = tmp_path / "finetuned.ckpt"
     model_file.touch()
     MlipCalculator(task_name="orb", device="cpu", model_path=str(model_file))
-    loader.assert_called_once_with(weights_path=str(model_file), device="cpu")
+    loader.assert_called_once_with(weights_path=str(model_file), device="cpu", compile=False)
 
 
 _FAKE_LIBRARIES = {
@@ -440,6 +461,17 @@ def test_build_orb_unknown_loader_raises(monkeypatch):
         MlipCalculator(task_name="orb", model_name="orb_not_a_loader", device="cpu")
 
 
+def test_an_orb_module_attribute_that_is_not_a_loader_is_an_unknown_model(monkeypatch):
+    """A name is resolved through orb's registry of loaders, not as any module attribute.
+
+    An architecture builder lives in the same module; called with a loader's arguments it
+    failed as a ``TypeError`` naming neither the step nor the option.
+    """
+    _install_fake_orb(monkeypatch)
+    with pytest.raises(ConfigError, match="unknown ORB model 'orb_v2_architecture'"):
+        MlipCalculator(task_name="orb", model_name="orb_v2_architecture", device="cpu")
+
+
 def test_an_orb_checkpoint_reaches_the_named_loaders_weights_path(monkeypatch, tmp_path: Path):
     """``model_path`` is honoured with ORB's library, like every builder's.
 
@@ -448,7 +480,7 @@ def test_an_orb_checkpoint_reaches_the_named_loaders_weights_path(monkeypatch, t
     an architecture, so the loader that built it is named alongside it — the same doctrine
     as naming the library that trained it.
     """
-    loader, calc_class, orbff = _install_fake_orb(monkeypatch)
+    loader, calc_class, (model, adapter) = _install_fake_orb(monkeypatch)
     model_file = tmp_path / "finetuned.ckpt"
     model_file.touch()
     MlipCalculator(
@@ -457,28 +489,8 @@ def test_an_orb_checkpoint_reaches_the_named_loaders_weights_path(monkeypatch, t
         device="cpu",
         model_path=str(model_file),
     )
-    loader.assert_called_once_with(weights_path=str(model_file), device="cpu")
-    calc_class.assert_called_once_with(orbff, device="cpu")
-
-
-def test_an_orb_loader_without_weights_path_is_a_version_message(monkeypatch, tmp_path: Path):
-    """An older loader signature becomes a ConfigError naming the limitation.
-
-    orb-models grew ``weights_path`` over time; against an older install the keyword raises
-    ``TypeError`` from deep inside the loader, naming neither the step nor the option. The
-    builder turns that into the version limitation it is, with the two ways out.
-    """
-    loader, _calc_class, _orbff = _install_fake_orb(monkeypatch)
-    loader.side_effect = TypeError("unexpected keyword argument 'weights_path'")
-    model_file = tmp_path / "finetuned.ckpt"
-    model_file.touch()
-    with pytest.raises(ConfigError, match="takes no local"):
-        MlipCalculator(
-            task_name="orb",
-            model_name="orb_v3_conservative_inf_omat",
-            device="cpu",
-            model_path=str(model_file),
-        )
+    loader.assert_called_once_with(weights_path=str(model_file), device="cpu", compile=False)
+    calc_class.assert_called_once_with(model, adapter, device="cpu")
 
 
 # ---------------------------------------------------------------------------

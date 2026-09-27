@@ -1095,9 +1095,11 @@ def _install_fake_orb_stack(monkeypatch) -> dict:
     model.heads = {}
     adapter = MagicMock()
     loader_fn = MagicMock(return_value=(model, adapter))
+    loader_fn.__name__ = "orb_v3_conservative_inf_omat"
 
     pretrained = types.ModuleType("orb_models.forcefield.pretrained")
     pretrained.orb_v3_conservative_inf_omat = loader_fn
+    pretrained.ORB_PRETRAINED_MODELS = {"orb-v3-conservative-inf-omat": loader_fn}
     forcefield = types.ModuleType("orb_models.forcefield")
     forcefield.pretrained = pretrained
 
@@ -1221,7 +1223,7 @@ def test_the_orb_hook_rebuilds_the_scripts_loop(monkeypatch, tmp_path: Path):
     # init_device(), whose unconditional cuda-if-available pick would put a CPU-booked
     # step on a GPU the scheduler never charged (init_device returns a distinct
     # sentinel here precisely so the source is provable).
-    recorded["loader_fn"].assert_called_once_with(device="DEV:cpu", train=True)
+    recorded["loader_fn"].assert_called_once_with(device="DEV:cpu", train=True, compile=False)
     recorded["init_device"].assert_not_called()
     recorded["seed"].assert_called_once_with(11)
     recorded["get_optim"].assert_called_once()
@@ -1270,41 +1272,8 @@ def test_the_orb_hook_fine_tunes_from_a_local_checkpoint(monkeypatch, tmp_path: 
     monkeypatch.chdir(tmp_path)
     OrbTrainer().run_training(_orb_config(weights_path="/models/prev.ckpt"))
     recorded["loader_fn"].assert_called_once_with(
-        device="DEV:cpu", train=True, weights_path="/models/prev.ckpt"
+        device="DEV:cpu", train=True, weights_path="/models/prev.ckpt", compile=False
     )
-
-
-def test_the_orb_hook_reports_a_loader_without_the_weights_door(monkeypatch, tmp_path: Path):
-    """An older loader without ``weights_path`` says so — the builder's guard, trainer side.
-
-    Left raw, the TypeError died as an unattributed traceback inside a submitted job;
-    the builder converts the identical fault into a named refusal a screen away.
-    """
-    from chemrefine.engines.mlip.backends.orb import OrbTrainer
-
-    recorded = _install_fake_orb_stack(monkeypatch)
-    recorded["loader_fn"].side_effect = TypeError("unexpected keyword argument 'weights_path'")
-    monkeypatch.chdir(tmp_path)
-    with pytest.raises(SystemExit, match="takes no local weights_path"):
-        OrbTrainer().run_training(_orb_config(weights_path="/models/prev.ckpt"))
-
-
-def test_the_orb_hook_reports_a_loader_without_an_adapter(monkeypatch, tmp_path: Path):
-    """A bare-model return shape refuses by name — never `cannot unpack`.
-
-    The module docstring says both shapes occur across orb-models versions and both are
-    handled; the trainer unpacked unconditionally, so the bare shape crashed fine-tuning
-    with a naked TypeError while the builder normalized it a screen away. One helper now
-    spells the shape for both.
-    """
-    from chemrefine.engines.mlip.backends.orb import OrbTrainer
-
-    recorded = _install_fake_orb_stack(monkeypatch)
-    recorded["loader_fn"].return_value = recorded["model"]  # bare model, no adapter
-    recorded["loader_fn"].side_effect = None
-    monkeypatch.chdir(tmp_path)
-    with pytest.raises(SystemExit, match="no atoms adapter"):
-        OrbTrainer().run_training(_orb_config())
 
 
 def test_the_orb_hook_takes_the_architecture_from_the_foundation_fact(monkeypatch, tmp_path: Path):
@@ -1322,7 +1291,7 @@ def test_the_orb_hook_takes_the_architecture_from_the_foundation_fact(monkeypatc
     config = _orb_config(foundation="orb_v3_conservative_inf_omat")
     del config["base_model"]
     assert OrbTrainer().run_training(config) == 0
-    recorded["loader_fn"].assert_called_once_with(device="DEV:cpu", train=True)
+    recorded["loader_fn"].assert_called_once_with(device="DEV:cpu", train=True, compile=False)
 
     _install_fake_orb_stack(monkeypatch)
     with pytest.raises(SystemExit, match="keep one"):

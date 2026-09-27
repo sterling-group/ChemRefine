@@ -1,9 +1,10 @@
 """ORB (Orbital Materials): the calculator chemrefine runs, and the trainer that fine-tunes it.
 
 ``model_name`` names a loader in :mod:`orb_models.forcefield.pretrained`
-(e.g. ``orb_v3_conservative_inf_omat``, ``orb_v2``). The loader returns either
-a model or a ``(model, atoms_adapter)`` tuple depending on the orb-models
-version; both are handled. Requires ``pip install orb-models``.
+(e.g. ``orb_v3_conservative_inf_omat``, ``orb_v2``) — one of the functions orb-models
+registers in its ``ORB_PRETRAINED_MODELS``. From the 0.6 floor on, every such loader returns
+``(model, atoms_adapter)`` and takes ``weights_path``, ``device`` and ``compile``.
+Requires ``pip install orb-models``.
 
 One module for one library, so the environment is declared once (:data:`ORB`) and both
 capabilities hang off it. Training takes the CHGNet route — orb-models publishes its
@@ -32,6 +33,17 @@ ORB = MlipLibrary(extra="mlip-orb", package="orb-models", import_name="orb_model
 _DEFAULT_MODEL = "orb_v3_conservative_inf_omat"
 
 
+def _loader(pretrained: Any, name: str) -> Any | None:
+    """The pretrained loader ``name`` names, or ``None`` when it names none.
+
+    Resolved through orb-models' own registry (``ORB_PRETRAINED_MODELS``), by function
+    name, rather than as any attribute of the module: an architecture builder or a helper
+    in the same module is not a loader, and called with a loader's arguments it failed as
+    a ``TypeError`` that named neither the step nor the option.
+    """
+    return {fn.__name__: fn for fn in pretrained.ORB_PRETRAINED_MODELS.values()}.get(name)
+
+
 @ORB.calculator("orb")
 def _build_orb(spec: CalculatorSpec) -> Any:
     """ORB potential; ``model_name`` picks a loader from ``orb_models...pretrained``.
@@ -41,19 +53,19 @@ def _build_orb(spec: CalculatorSpec) -> Any:
     pretrained loaders take a ``weights_path`` (defaulting to the release URL, accepting
     a local file). Unset, the loader is :data:`_DEFAULT_MODEL` — with a ``model_path``
     too, so a checkpoint an ``mlip-train`` step produced runs without naming the
-    architecture its own training defaulted to. An older loader without the keyword is
-    reported as the version limitation it is (:class:`~chemrefine.errors.ConfigError`),
-    not left as a ``TypeError`` naming neither the step nor the option.
+    architecture its own training defaulted to.
+
+    The calculator takes the atoms adapter the loader returns beside the model, and the
+    model is loaded uncompiled. orb compiles by default, and a compile is paid once per
+    process, while every calculator ChemRefine builds serves one job in one process — a
+    single point, an optimisation, an ExtOpt server. On CPU the compile was 70 s of an
+    80 s single point of water.
     """
     from orb_models.forcefield import pretrained
-
-    try:  # v3 layout
-        from orb_models.forcefield.inference.calculator import ORBCalculator
-    except ImportError:  # older layout
-        from orb_models.forcefield.calculator import ORBCalculator
+    from orb_models.forcefield.inference.calculator import ORBCalculator
 
     name = spec.model_name or _DEFAULT_MODEL
-    loader = getattr(pretrained, name, None)
+    loader = _loader(pretrained, name)
     if loader is None:
         # A ConfigError, not a ValueError: the name came from the YAML, and every failure
         # a config can cause carries the exit code the CLI maps (the rule the registry
@@ -63,31 +75,9 @@ def _build_orb(spec: CalculatorSpec) -> Any:
             f"unknown ORB model {name!r}; pick a loader from "
             f"orb_models.forcefield.pretrained (e.g. {_DEFAULT_MODEL!r})"
         )
-    if spec.weights is None:
-        loaded = loader(device=spec.device)
-    else:
-        try:
-            loaded = loader(weights_path=str(spec.weights), device=spec.device)
-        except TypeError as e:
-            raise ConfigError(
-                f"this orb-models version's {name!r} loader takes no local "
-                f"weights_path, so model_path cannot be honoured; upgrade orb-models "
-                f"or drop model_path to run the named release"
-            ) from e
-    orbff, _adapter = _model_and_adapter(loaded)
-    return ORBCalculator(orbff, device=spec.device)
-
-
-def _model_and_adapter(loaded: Any) -> tuple[Any, Any | None]:
-    """Both loader return shapes, one spelling: ``(model, atoms_adapter-or-None)``.
-
-    The pretrained loaders return a bare model or a ``(model, atoms_adapter)`` tuple
-    depending on the orb-models version. Normalized here for the builder *and* the
-    trainer, because two spellings of the shape is how the trainer came to unpack
-    unconditionally — a bare-model version crashed fine-tuning with a naked
-    ``TypeError: cannot unpack`` while the builder handled it a screen away.
-    """
-    return loaded if isinstance(loaded, tuple) else (loaded, None)
+    weights = {} if spec.weights is None else {"weights_path": str(spec.weights)}
+    model, adapter = loader(**weights, device=spec.device, compile=False)
+    return ORBCalculator(model, adapter, device=spec.device)
 
 
 # ---------------------------------------------------------------------------
@@ -219,7 +209,7 @@ class OrbTrainer(ApiTrainerBase):
                 "orb training: no architecture named — set base_model in the template "
                 "(a loader from orb_models.forcefield.pretrained) or model_name on the step"
             )
-        loader_fn = getattr(pretrained, base_model, None)
+        loader_fn = _loader(pretrained, base_model)
         if loader_fn is None:
             raise SystemExit(
                 f"orb training: unknown base_model {base_model!r}; pick a loader from "
@@ -229,23 +219,9 @@ class OrbTrainer(ApiTrainerBase):
         loader_kwargs: dict[str, Any] = {"device": device, "train": True}
         if weights:
             loader_kwargs["weights_path"] = weights
-        try:
-            loaded = loader_fn(**loader_kwargs)
-        except TypeError as e:
-            # The builder's guard, on the training side: an older loader without the
-            # keyword must say so, not die as a naked TypeError in a submitted job.
-            raise SystemExit(
-                f"orb training: this orb-models version's {base_model!r} loader takes no "
-                f"local weights_path, so model_path cannot be honoured; upgrade "
-                f"orb-models or drop model_path to fine-tune the named release"
-            ) from e
-        model, atoms_adapter = _model_and_adapter(loaded)
-        if atoms_adapter is None:
-            raise SystemExit(
-                f"orb training: {base_model!r} returned no atoms adapter on this "
-                f"orb-models version, and fine-tuning needs one to batch the dataset — "
-                f"upgrade orb-models"
-            )
+        # Uncompiled for the builder's reason: one fit is one process, and on CPU the
+        # compile made a one-epoch fit take 67 s.
+        model, atoms_adapter = loader_fn(**loader_kwargs, compile=False)
         if getattr(model, "has_stress", False) or "stress" in getattr(model, "heads", {}):
             # orb's loss reads `batch.system_targets["stress"]` unconditionally on a
             # stress-carrying model, and ChemRefine's labels are molecular — energy and

@@ -1120,10 +1120,12 @@ def test_mlip_direct_submit_respects_cores_option(tmp_path: Path):
 
 
 def test_build_orb_success_path(monkeypatch):
-    """The v3 layout, whose loaders return ``(model, atoms_adapter)``: the model is what
-    reaches the calculator, and the step's device reaches both the loader and the
-    calculator — asserted on the calls, not on the mock's own return value."""
-    pretrained = types.SimpleNamespace(orb_v2=MagicMock(return_value=("ORBFF", "ADAPTER")))
+    """The loader's ``(model, atoms_adapter)`` both reach the calculator, and the step's
+    device reaches both the loader and the calculator — asserted on the calls, not on the
+    mock's own return value."""
+    orb_v2 = MagicMock(return_value=("ORBFF", "ADAPTER"))
+    orb_v2.__name__ = "orb_v2"
+    pretrained = types.SimpleNamespace(orb_v2=orb_v2, ORB_PRETRAINED_MODELS={"orb-v2": orb_v2})
     forcefield = types.ModuleType("orb_models.forcefield")
     forcefield.pretrained = pretrained
     calc_mod = types.ModuleType("orb_models.forcefield.inference.calculator")
@@ -1141,11 +1143,8 @@ def test_build_orb_success_path(monkeypatch):
 
     spec = CalculatorSpec(task_name="orb", model_name="orb_v2", device="cuda", weights=None)
     assert _build_orb(spec) == "ORB_CALC"
-    pretrained.orb_v2.assert_called_once_with(device="cuda")
-    calc_mod.ORBCalculator.assert_called_once_with("ORBFF", device="cuda")
-
-
-# --- orb older-layout fallback ----------------------------------------------
+    pretrained.orb_v2.assert_called_once_with(device="cuda", compile=False)
+    calc_mod.ORBCalculator.assert_called_once_with("ORBFF", "ADAPTER", device="cuda")
 
 
 def _runnable_libraries() -> list[ParameterSet]:
@@ -1190,28 +1189,3 @@ def test_backend_missing_dependency_names_the_extra(lib, package, extra, tasks, 
     assert hints, f"no {extra} task reaches its lazy import — the install hint can never fire"
     for hint in hints:
         assert re.search(f"{package}.*{extra}", hint), hint
-
-
-def test_build_orb_older_layout(monkeypatch):
-    """When the v3 ``inference.calculator`` import fails, fall back to the older path."""
-    pretrained = types.SimpleNamespace(orb_v2=MagicMock(return_value="ORBFF"))
-    forcefield = types.ModuleType("orb_models.forcefield")
-    forcefield.pretrained = pretrained
-    older_calc = types.ModuleType("orb_models.forcefield.calculator")
-    older_calc.ORBCalculator = MagicMock(return_value="OLD_CALC")
-    for name, mod in {
-        "orb_models": types.ModuleType("orb_models"),
-        "orb_models.forcefield": forcefield,
-        # v3 layout absent (None ⇒ ImportError) → exercises the older-layout branch
-        "orb_models.forcefield.inference.calculator": None,
-        "orb_models.forcefield.calculator": older_calc,
-    }.items():
-        monkeypatch.setitem(sys.modules, name, mod)
-
-    from chemrefine.engines.mlip.backends.orb import _build_orb
-    from chemrefine.engines.mlip.registry import CalculatorSpec
-
-    spec = CalculatorSpec(task_name="orb", model_name="orb_v2", device="cpu", weights=None)
-    assert _build_orb(spec) == "OLD_CALC"
-    # A bare-model loader, the older layout: the same device discipline holds.
-    older_calc.ORBCalculator.assert_called_once_with("ORBFF", device=spec.device)

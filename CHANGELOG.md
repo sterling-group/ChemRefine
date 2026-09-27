@@ -459,6 +459,14 @@ for the full map.
 
 ### Fixed
 
+- **An ORB step builds its calculator.** `task_name: orb` failed before its first
+  structure: the builder dropped the atoms adapter the pretrained loader returns, which
+  orb-models' calculator requires. The builder now passes it, and loads the model
+  uncompiled, as the trainer does: ORB compiles by default, a compile is paid once per
+  process, and a ChemRefine process serves one job. On CPU the compile cost 70 s of an
+  80 s single point of water, and made a one-epoch fit take 67 s. A `model_name` is now
+  resolved through orb-models' own registry of loaders, so a name that is not a loader is
+  refused as an unknown model rather than failing as a `TypeError`.
 - **`trained_model.json` names its model relative to itself.** The record a training step
   writes beside its model gave the model's absolute path, and gave a starting checkpoint by
   the path the loader resolved, so a tree copied elsewhere cited locations on the machine
