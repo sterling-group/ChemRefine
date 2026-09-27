@@ -14,6 +14,7 @@ from dataclasses import dataclass
 _FINAL_ENERGY_RE = re.compile(
     r"FINAL SINGLE POINT ENERGY(?:\s*\(From external program\))?\s+(-?\d+\.\d+)"
 )
+_RELAXATION_ENERGY_RE = re.compile(r"^Current Energy\s+\.+\s+(-?\d+\.\d+) Eh", re.MULTILINE)
 
 _THERMO_MARKER = "THERMOCHEMISTRY"
 # ORCA prints "<label>   ...   <value> Eh"; tolerate the dotted padding.
@@ -22,14 +23,43 @@ _ENTHALPY_RE = re.compile(r"Total Enthalpy\s*\.*\s*(-?\d+\.\d+)")
 _ZPE_RE = re.compile(r"Zero point energy\s*\.*\s*(-?\d+\.\d+)")
 
 
+def find_final_energy(text: str) -> tuple[float, int] | None:
+    """The **last** ``FINAL SINGLE POINT ENERGY`` (Hartree) and the offset it is printed at.
+
+    The offset is what ties the energy to the rest of its evaluation: ORCA prints each
+    geometry before anything computed at it, so the geometry an energy belongs to is the
+    last one printed ahead of it.
+    """
+    return _last(_FINAL_ENERGY_RE, text)
+
+
+def find_relaxation_energy(text: str) -> tuple[float, int] | None:
+    """The last energy an optimiser's relaxation step reports, and the offset it is at.
+
+    Each geometry optimisation cycle closes with a ``Current Energy .... <E> Eh`` line, the
+    energy of that cycle's geometry at nine decimals. An ExtOpt optimisation prints no
+    ``FINAL SINGLE POINT ENERGY`` after its first cycle — ORCA sends the external
+    program's output to ``.lastext`` — so for those cycles this line is the only energy.
+    """
+    return _last(_RELAXATION_ENERGY_RE, text)
+
+
+def _last(pattern: re.Pattern[str], text: str) -> tuple[float, int] | None:
+    """The last match's energy and the offset it starts at, or ``None`` if nothing matched."""
+    last = None
+    for match in pattern.finditer(text):
+        last = match
+    return None if last is None else (float(last.group(1)), last.start())
+
+
 def parse_final_energy_from_text(text: str) -> float | None:
     """Return the **last** ``FINAL SINGLE POINT ENERGY`` (Hartree), or ``None`` if absent.
 
     The last is taken because a geometry optimisation re-prints it as it iterates (and a
     PES segment ends with the converged point's energy).
     """
-    matches = _FINAL_ENERGY_RE.findall(text)
-    return float(matches[-1]) if matches else None
+    found = find_final_energy(text)
+    return None if found is None else found[0]
 
 
 @dataclass(frozen=True)

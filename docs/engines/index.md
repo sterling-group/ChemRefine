@@ -65,12 +65,20 @@ or gaining a nucleus. A ghost atom (`H:`, a basis-only centre for a counterpoise
 correction) is printed as a plain `H` and cannot be told from one: it would be carried
 into every later step as a real hydrogen. Keep both out of pipeline steps.
 
-Forces are read only from a gradient block printed *after* the last geometry — an
-`EnGrad` single point, a `Freq` — because an `Opt` prints its gradient inside each cycle
-and the converged geometry once more afterwards, so its last gradient describes the
-point before the result. An `Opt` step therefore carries no forces; a step that labels a
-training set computes them with a single point on the optimised geometries, which is
-what the [MLIP training tutorial](../tutorials/mlip_training.md) does.
+A structure is read from one evaluation: the last geometry ORCA printed an energy for —
+its `FINAL SINGLE POINT ENERGY`, or the optimiser's `Current Energy` for an ExtOpt cycle
+after the first, which prints no other — with what was computed there: its gradient, its
+frequencies and thermochemistry. Its convergence is the last verdict the SCF and the
+optimiser each gave by the end of that evaluation. A run killed mid-cycle (a walltime, a
+failed external program) or stopped at its cycle limit is therefore read at the last
+geometry it has an energy for, and a TS search's initial Hessian is never reported as its
+result's. Forces come only from a gradient inside that evaluation — an `EnGrad` single
+point, an ExtOpt evaluation that prints one (the first and the final), the last cycle of a
+native `Opt` that stopped early. A converged native `Opt` re-prints its geometry for a final energy
+with no gradient, so its last gradient belongs to the cycle before and the step carries no
+forces; a step that labels a training set computes them with a single point on the
+optimised geometries, which is what the [MLIP training tutorial](../tutorials/mlip_training.md)
+does.
 
 ## Q-Chem (`qchem`)
 

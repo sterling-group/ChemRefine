@@ -12,11 +12,9 @@ import re
 import numpy as np
 from numpy.typing import NDArray
 
-# Last block, since geometry optimisation re-prints the table as it iterates.
-_COORD_BLOCK_RE = re.compile(
-    r"CARTESIAN COORDINATES\s+\(ANGSTROEM\)\s*\n-+\n((?:.*?\n)+?)-+\n",
-    re.DOTALL,
-)
+# Last block, since geometry optimisation re-prints the table as it iterates. Whole lines,
+# each read one way, as the gradient block is (:mod:`.forces` says why).
+_COORD_BLOCK_RE = re.compile(r"CARTESIAN COORDINATES\s+\(ANGSTROEM\)\s*\n-+\n((?:[^\n]*\n)+?)-+\n")
 
 
 def parse_coordinates_from_text(

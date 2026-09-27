@@ -14,6 +14,12 @@ sends a converged structure back through the retry path. Taking the last verdict
 discipline the energy readers already use: ``parse_final_energy_from_text`` keeps the *last*
 ``FINAL SINGLE POINT ENERGY``.
 
+The last verdict is taken **of each kind**, SCF and optimiser apart, and a run is converged
+unless either is a failure. The two judge different things — one evaluation's SCF, and
+whether the geometry has settled — and each geometry's SCF verdict comes after the
+optimiser's verdict on the one before it. Read as one stream, a run killed after the SCF of a
+geometry the optimiser had not yet judged reads as converged.
+
 "Last verdict wins" is also what makes ``The optimization has not yet converged`` usable as a
 negative: ORCA prints it after every non-final geometry cycle, so most recorded optimisation
 outputs contain it — but in none of them is it the *last* verdict, because the success banner
@@ -26,10 +32,14 @@ import re
 
 _TERMINATED_RE = re.compile(r"ORCA TERMINATED NORMALLY")
 
-#: Every convergence verdict ORCA prints, positive or negative, in one pass so the
-#: **last** one decides. Each alternative is a string ORCA 6.1.1 actually emits — verified
-#: against its binaries and against the recorded outputs — because guessing at the wording
-#: here fails silently in both directions.
+#: The convergence verdicts ORCA prints, positive and negative, one pattern per kind so the
+#: **last** of each decides. Each alternative is a string ORCA 6.1.1 actually emits —
+#: verified against its binaries and against the recorded outputs — because guessing at the
+#: wording here fails silently in both directions. Matched case and all: other text that
+#: says "SCF not converged" reaches an output too — an ExtOpt external program's own log
+#: (PySCF prints ``SCF not converged.``), ORCA's NEB warning about images that are not the
+#: structure read — and none of it is a verdict on this one, which a verdict of its kind
+#: printed later would not always override.
 #:
 #: Two deliberate omissions:
 #:
@@ -43,10 +53,11 @@ _TERMINATED_RE = re.compile(r"ORCA TERMINATED NORMALLY")
 #:   LOCALIZATION NOT CONVERGED`` — orbital localisation is post-processing for printing,
 #:   and it failing says nothing about the energy or the geometry. Catching it would fail
 #:   a perfectly good run.
-_VERDICT_RE = re.compile(
-    r"(?P<neg>SCF NOT CONVERGED|The optimization has not yet converged)"
-    r"|(?P<pos>SCF CONVERGED AFTER|THE OPTIMIZATION HAS CONVERGED)",
-    re.IGNORECASE,
+_VERDICT_RES = (
+    re.compile(r"(?P<neg>SCF NOT CONVERGED)|(?P<pos>SCF CONVERGED AFTER)"),
+    re.compile(
+        r"(?P<neg>The optimization has not yet converged)|(?P<pos>THE OPTIMIZATION HAS CONVERGED)"
+    ),
 )
 
 
@@ -60,16 +71,19 @@ def parse_terminated_normally(text: str) -> bool:
 
 
 def parse_converged(text: str) -> bool:
-    """``True`` unless ORCA's **last** convergence verdict was a failure.
+    """``True`` unless ORCA's **last** SCF or **last** optimiser verdict was a failure.
 
-    An output with no verdict at all (a plain single point, a trimmed fixture) returns
-    ``True`` — "no signal is not a failure signal", matching
-    :func:`chemrefine.lifecycle.succeeded`, which treats only an explicit ``False``
+    A kind with no verdict at all (a plain single point prints no optimiser verdict, a
+    trimmed fixture may print none) counts as passed — "no signal is not a failure signal",
+    matching :func:`chemrefine.lifecycle.succeeded`, which treats only an explicit ``False``
     as a failure.
     """
+    return not any(_last_failed(pattern, text) for pattern in _VERDICT_RES)
+
+
+def _last_failed(pattern: re.Pattern[str], text: str) -> bool:
+    """Whether the last verdict ``pattern`` finds in ``text`` is a failure."""
     last = None
-    for match in _VERDICT_RE.finditer(text):
+    for match in pattern.finditer(text):
         last = match
-    if last is None:
-        return True
-    return last.lastgroup == "pos"
+    return last is not None and last.lastgroup == "neg"

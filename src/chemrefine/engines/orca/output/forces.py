@@ -13,10 +13,10 @@ from numpy.typing import NDArray
 
 from chemrefine.quantities import HARTREE_PER_BOHR_TO_EV_PER_A
 
-_GRAD_BLOCK_RE = re.compile(
-    r"CARTESIAN GRADIENT\s*\n-+\n((?:.*?\n)+?)-+\n",
-    re.DOTALL,
-)
+# Whole lines, each read one way. Lines that ``.*?`` could also split under DOTALL give a
+# block exponentially many readings, and one with no closing rule — an output cut off
+# mid-block by a kill — tries them all: 26 atoms take over a minute.
+_GRAD_BLOCK_RE = re.compile(r"CARTESIAN GRADIENT\s*\n-+\n((?:[^\n]*\n)+?)-+\n")
 _GRAD_LINE_RE = re.compile(
     r"^\s*(\d+)\s+[A-Za-z]{1,3}\s*:\s*"
     r"([+-]?\d*\.?\d+(?:[EeDd][+-]?\d+)?)\s+"
@@ -31,7 +31,8 @@ def parse_forces_from_text(
     """Return the **last** ``CARTESIAN GRADIENT`` block as forces, or ``None``.
 
     ``F = -∂E/∂x``, converted to eV/Å unless ``to_ev_per_A`` is ``False``. ``None`` means
-    the output has no gradient block at all — a plain single point, which is not an error.
+    the output has no complete gradient block — a plain single point, or a block a kill cut
+    off before its closing rule — which is not an error.
 
     Held to the two rules every other reader of numbers in this package already obeys, and
     for the reasons they give. Both raise :class:`ValueError`, which

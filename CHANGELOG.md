@@ -459,6 +459,19 @@ for the full map.
 
 ### Fixed
 
+- **An ORCA structure is read from one evaluation, the last with an energy.** The parser
+  took the last of each value in the output, so any output that did not end on a complete
+  evaluation paired values from different geometries. A job killed mid-optimisation — a
+  walltime, a failed external program — stored one cycle's energy on the next cycle's
+  geometry, which `on_failure: best` carried downstream, and that cycle's SCF verdict
+  marked the unfinished optimisation converged. An ExtOpt optimisation that stopped at its
+  cycle limit, whose later cycles print their energy only as the optimiser's
+  `Current Energy`, carried its first cycle's energy on its last geometry. A TS search's
+  initial Hessian gave the optimised structure its frequencies and thermochemistry. Each
+  value is now read from the last evaluation ORCA printed an energy for, and a run is
+  converged unless the last SCF or the last optimiser verdict failed. Apart from that
+  Hessian, a finished run that converged reads as before. A gradient or coordinate block cut off by a kill is also read
+  in linear time, where a few dozen atoms never finished parsing.
 - **Ctrl-D or Ctrl-C at `chemrefine agent`'s allow prompt declines the call.** It failed
   the whole turn instead, reported as "model endpoint failed: " with no reason, for what
   was only you answering no; the model now reads it as a declined call and goes on.

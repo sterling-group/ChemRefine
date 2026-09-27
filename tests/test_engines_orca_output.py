@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 import re
+import time
 from pathlib import Path
 
 import numpy as np
 import pytest
-from synthetic import THERMOCHEMISTRY_BLOCK, synthetic_dft_output
+from synthetic import FREQUENCY_BLOCK, THERMOCHEMISTRY_BLOCK, synthetic_dft_output
 
 from chemrefine.engines.api import ParsedResult
-from chemrefine.engines.orca.output import parse_dft, parse_dft_from_text, parse_output, status
+from chemrefine.engines.orca.output import (
+    geometry,
+    parse_dft,
+    parse_dft_from_text,
+    parse_output,
+    status,
+)
 from chemrefine.engines.orca.output.ensembles import (
     parse_docker,
     parse_goat_ensemble,
@@ -66,11 +73,11 @@ def test_fixture_present():
 def _minimal_out(*, terminated_normally: bool, not_converged: bool) -> str:
     """Smallest .out parse_dft accepts, with optional status markers."""
     body = (
-        "FINAL SINGLE POINT ENERGY     -1.500000\n\n"
         "CARTESIAN COORDINATES (ANGSTROEM)\n"
         "----------------\n"
         "  H   0.000000   0.000000   0.000000\n"
-        "----------------\n"
+        "----------------\n\n"
+        "FINAL SINGLE POINT ENERGY     -1.500000\n"
     )
     if not_converged:
         # ORCA's real wording for an optimisation that has not finished. The previous
@@ -176,6 +183,27 @@ def test_converged_false_when_the_last_scf_fails():
 def test_converged_true_when_no_verdict_is_printed():
     """No signal is not a failure signal — matches ``lifecycle.succeeded``."""
     assert status.parse_converged("FINAL SINGLE POINT ENERGY  -1.5\n") is True
+
+
+def test_converged_true_when_only_other_text_says_scf_not_converged():
+    """Only ORCA's own verdicts count, matched exactly as it prints them.
+
+    An ExtOpt external program can log into the output — PySCF prints ``SCF not
+    converged.`` — and ORCA's NEB warns about its images in the same words. With the SCF
+    verdicts read apart from the optimiser's, such a line after the last real SCF verdict
+    would stand as that kind's last word and fail a converged run.
+    """
+    other = ["SCF not converged.", "All gradients are converged but SCF not converged for"]
+    assert status.parse_converged("\n".join([_SCF_OK, _GEOM_OK, *other])) is True
+
+
+def test_converged_false_when_the_next_geometrys_scf_follows_an_unfinished_optimisation():
+    """The SCF of a geometry the optimiser has not judged yet says nothing about the run.
+
+    Read as one stream with the optimiser's verdicts, that SCF was the last word, and a run
+    killed after it read as converged. Each kind's last verdict counts on its own.
+    """
+    assert status.parse_converged("\n".join([_GEOM_PENDING, _SCF_OK])) is False
 
 
 def test_parse_dft_recovered_scf_is_a_success(tmp_path: Path):
@@ -303,14 +331,23 @@ def test_parse_dft_reads_no_forces_from_an_opt_whose_last_gradient_predates_its_
     assert text.rfind("CARTESIAN GRADIENT") < text.rfind("CARTESIAN COORDINATES (ANGSTROEM)")
 
 
-_GEOMETRY_THEN_GRADIENT = (
-    "FINAL SINGLE POINT ENERGY     -1.10\n"
-    "---------------------------------\n"
-    "CARTESIAN COORDINATES (ANGSTROEM)\n"
-    "---------------------------------\n"
-    "  H   0.0  0.0  0.0\n"
-    "  H   0.0  0.0  0.74\n"
-    "---------------------------------\n"
+def _geometry(z: float) -> str:
+    """An H2 ``CARTESIAN COORDINATES`` block with the second atom at ``z``."""
+    return (
+        "---------------------------------\n"
+        "CARTESIAN COORDINATES (ANGSTROEM)\n"
+        "---------------------------------\n"
+        "  H   0.0  0.0  0.0\n"
+        f"  H   0.0  0.0  {z}\n"
+        "---------------------------------\n"
+    )
+
+
+def _energy(hartree: float) -> str:
+    return f"FINAL SINGLE POINT ENERGY     {hartree}\n"
+
+
+_GRADIENT = (
     "CARTESIAN GRADIENT\n"
     "------------------\n"
     "   1   H   :   0.000000000    0.000000000    0.010000000\n"
@@ -318,20 +355,10 @@ _GEOMETRY_THEN_GRADIENT = (
     "------------------\n"
 )
 
-
-_GRADIENT_THEN_GEOMETRY = (
-    "FINAL SINGLE POINT ENERGY     -1.10\n"
-    "CARTESIAN GRADIENT\n"
-    "------------------\n"
-    "   1   H   :   0.000000000    0.000000000    0.010000000\n"
-    "   2   H   :   0.000000000    0.000000000   -0.010000000\n"
-    "------------------\n"
-    "---------------------------------\n"
-    "CARTESIAN COORDINATES (ANGSTROEM)\n"
-    "---------------------------------\n"
-    "  H   0.0  0.0  0.0\n"
-    "  H   0.0  0.0  0.74\n"
-    "---------------------------------\n"
+# In the order ORCA prints them: each geometry first, then what was computed there.
+_GEOMETRY_THEN_GRADIENT = _geometry(0.74) + _energy(-1.10) + _GRADIENT  # EnGrad
+_GRADIENT_THEN_GEOMETRY = (  # a converged Opt, its geometry re-printed for the final energy
+    _geometry(0.80) + _energy(-1.09) + _GRADIENT + _geometry(0.74) + _energy(-1.10)
 )
 
 
@@ -345,6 +372,113 @@ def test_parse_dft_pairs_a_gradient_with_the_geometry_it_follows():
     [moved] = parse_dft_from_text(_GRADIENT_THEN_GEOMETRY)
     assert moved.forces_ev_per_a is None
     assert moved.positions[1, 2] == 0.74
+
+
+def test_parse_dft_reads_a_run_killed_mid_cycle_from_one_evaluation():
+    """Geometry, energy, gradient and verdict come from the last geometry with an energy.
+
+    A run killed mid-cycle — a walltime, a crashed external program — has printed its next
+    geometry and that geometry's SCF verdict, but no energy for it. Read as "the last of
+    each", it paired one cycle's energy with the next cycle's coordinates, which
+    ``on_failure: best`` then carried downstream, and the SCF verdict made the unfinished
+    optimisation read as converged.
+    """
+    killed = (
+        f"{_geometry(0.80)}{_SCF_OK}\n{_energy(-1.09)}{_GRADIENT}{_GEOM_PENDING}\n"
+        f"{_geometry(0.74)}{_SCF_OK}\n"
+    )
+    [frame] = parse_dft_from_text(killed)
+    assert (frame.positions[1, 2], frame.energy_hartree) == (0.80, -1.09)
+    assert frame.forces_ev_per_a is not None  # its own evaluation's gradient
+    assert (frame.converged, frame.terminated_normally) == (False, False)
+
+
+def test_parse_dft_reads_a_run_killed_after_its_next_energy_as_unconverged():
+    """Killed between a cycle's energy and the optimiser's verdict on it: that cycle, unjudged.
+
+    The geometry and energy already agree there; the verdict did not — the new cycle's SCF
+    was the last one printed, and the run read as converged. Its gradient was cut off, and a
+    block without its closing rule is no gradient, not the previous cycle's.
+    """
+    killed = (
+        f"{_geometry(0.80)}{_SCF_OK}\n{_energy(-1.09)}{_GRADIENT}{_GEOM_PENDING}\n"
+        f"{_geometry(0.74)}{_SCF_OK}\n{_energy(-1.10)}"
+        "CARTESIAN GRADIENT\n------------------\n   1   H   :   0.0   0.0   0.01\n"
+    )
+    [frame] = parse_dft_from_text(killed)
+    assert (frame.positions[1, 2], frame.energy_hartree) == (0.74, -1.10)
+    assert frame.forces_ev_per_a is None
+    assert frame.converged is False
+
+
+EXTOPT_MAXITER = DATA / "engines" / "orca" / "extopt_maxiter" / "step1_0.out"
+
+
+def test_parse_dft_reads_an_extopt_run_at_its_last_cycle():
+    """An ExtOpt optimisation that ran out of cycles is read at its last one, with its energy.
+
+    ORCA 6.1.1 prints ``FINAL SINGLE POINT ENERGY`` for an ExtOpt run's first and final
+    evaluations only — later cycles send the external program's output to ``.lastext`` —
+    so a run that stops before its final evaluation has that line for cycle 1 alone. Read
+    from it, the run came back at the geometry it was submitted with, and the unconverged
+    retry resubmitted the identical job. The fixture is real ORCA 6.1.1 output (``%geom
+    MaxIter 3``) around a harmonic external potential; each cycle closes with its
+    ``Current Energy``, and no gradient is printed after the first.
+    """
+    [frame] = parse_dft(EXTOPT_MAXITER)
+    assert frame.positions[1, 2] == 1.441247  # cycle 3, not the 1.6 it started from
+    assert frame.energy_hartree == -0.976179429
+    assert frame.forces_ev_per_a is None
+    assert (frame.converged, frame.terminated_normally) == (False, True)
+
+
+def test_parse_dft_keeps_the_full_precision_energy_of_an_evaluation_that_prints_both():
+    """Every optimisation cycle closes with a nine-decimal ``Current Energy``; where the
+    same evaluation printed its ``FINAL SINGLE POINT ENERGY``, that is the one read."""
+    cycle = f"{_geometry(0.74)}{_energy(-1.005106704672)}{_GRADIENT}"
+    relaxed = "Current Energy                          ....    -1.005106705 Eh\n"
+    [frame] = parse_dft_from_text(cycle + relaxed)
+    assert frame.energy_hartree == -1.005106704672
+
+
+def test_parse_dft_does_not_give_the_result_an_earlier_geometrys_hessian():
+    """Frequencies and thermochemistry printed at an earlier geometry are not the result's.
+
+    A TS search that computes its initial Hessian prints that Hessian's modes and
+    thermochemistry at the geometry it starts from. Read as the last of each, they were
+    reported on the optimised structure — modes a normal-mode displacement then followed
+    at a geometry they were never computed at.
+    """
+    text = (
+        f"{_geometry(0.80)}{_energy(-1.09)}{FREQUENCY_BLOCK}{THERMOCHEMISTRY_BLOCK}"
+        f"{_geometry(0.74)}{_energy(-1.10)}"
+    )
+    [frame] = parse_dft_from_text(text)
+    assert (frame.imaginary_freqs, frame.frequencies, frame.normal_modes) == (None, None, None)
+    assert (frame.gibbs_hartree, frame.enthalpy_hartree) == (None, None)
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        "CARTESIAN GRADIENT\n------------------\n\n"
+        + "   1   H   :    0.000000000    0.000000000   -0.168783646\n" * 400,
+        "CARTESIAN COORDINATES (ANGSTROEM)\n-------------\n"
+        + "  H      0.000000    0.000000    1.200000\n" * 400,
+    ],
+    ids=["gradient", "coordinates"],
+)
+def test_a_block_cut_off_before_its_closing_rule_is_read_in_linear_time(block: str):
+    """A kill can land mid-block, and the reader must still answer — in no time at all.
+
+    Lines a pattern can split more than one way give a block with no closing rule
+    exponentially many readings to try: 22 rows took six seconds and 26 over a minute, so a
+    molecule of a few dozen atoms never finished parsing. 400 rows is far past that.
+    """
+    started = time.perf_counter()
+    assert parse_forces(block, n_atoms=400) is None
+    assert geometry.parse_coordinates_from_text(block) is None
+    assert time.perf_counter() - started < 1.0
 
 
 def test_parse_dft_treats_a_frequency_banner_with_no_modes_as_no_data():
@@ -652,11 +786,11 @@ def test_a_malformed_gradient_row_is_a_parse_error_not_a_crash():
     — one step too late, and at the cost of every sibling's results.
     """
     text = (
-        "FINAL SINGLE POINT ENERGY  -1.0\n"
         "CARTESIAN COORDINATES (ANGSTROEM)\n"
         "---------\n"
         "  H  0.0 0.0 0.0\n"
         "---------\n"
+        "FINAL SINGLE POINT ENERGY  -1.0\n"
         "CARTESIAN GRADIENT\n"
         "----\n"
         "   0  H :   1.0e999999   0.000000   0.000000\n"

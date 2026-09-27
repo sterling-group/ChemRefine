@@ -276,6 +276,36 @@ _BUNDLED: tuple[Mutation, ...] = (
         "so only a positions assertion can see it",
     ),
     Mutation(
+        id="energy-pairs-with-its-geometry",
+        path="src/chemrefine/engines/orca/output/coordinator.py",
+        old="coords = geometry.parse_coordinates_from_text(evaluation)",
+        new="coords = geometry.parse_coordinates_from_text(text)",
+        tests="tests/test_engines_orca_output.py",
+        breaks="an optimisation killed mid-cycle stores one cycle's energy on the next "
+        "cycle's geometry, and `on_failure: best` carries that pair downstream — an "
+        "energy for coordinates it was never computed at",
+    ),
+    Mutation(
+        id="extopt-cycle-energy",
+        path="src/chemrefine/engines/orca/output/coordinator.py",
+        old="    if relaxed is None or (\n",
+        new="    if True or (\n",
+        tests="tests/test_engines_orca_output.py",
+        breaks="an ExtOpt optimisation that stops at its cycle limit is read at the geometry "
+        "it was submitted with, so its unconverged retry resubmits the identical job and "
+        "`on_failure: best` carries the unoptimised input downstream",
+    ),
+    Mutation(
+        id="hessian-of-its-own-geometry",
+        path="src/chemrefine/engines/orca/output/coordinator.py",
+        old="_parse_frequency_block(evaluation, n_atoms=len(symbols))",
+        new="_parse_frequency_block(text, n_atoms=len(symbols))",
+        tests="tests/test_engines_orca_output.py",
+        breaks="a TS search's initial Hessian is reported as its optimised structure's, so "
+        "the imaginary modes a `ts` step verifies and displaces along were computed at "
+        "another geometry",
+    ),
+    Mutation(
         id="retry-best-frame",
         path="src/chemrefine/lifecycle.py",
         old="best = min(bad, key=lambda s: (s.energy_hartree is None, s.energy_hartree or 0.0))",

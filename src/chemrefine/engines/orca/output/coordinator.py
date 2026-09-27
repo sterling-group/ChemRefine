@@ -52,16 +52,24 @@ def parse_dft_from_text(text: str, *, src: str = "<text>") -> list[ParsedResult]
 
     Runs every section extractor over the shared ``text`` — energy, geometry, forces,
     thermochemistry, status, and (when a ``VIBRATIONAL FREQUENCIES`` block is present) the
-    imaginary modes + normal-mode tensor — so each value is parsed exactly once. ``src`` only
-    labels error messages. Raises :class:`OutputParseError` if the energy or coordinates are
-    missing / malformed, or :class:`OutputTerminationError` when the reason they are missing
-    is that ORCA died — see :func:`_unreadable`.
+    imaginary modes + normal-mode tensor — so each value is parsed exactly once. The
+    structure is the last evaluation ORCA printed an energy for (:func:`_last_energy`):
+    its geometry, energy, gradient, thermochemistry and frequencies are read from that
+    evaluation alone (:func:`_evaluation_of`), its convergence from every verdict printed
+    by its end — the optimiser judges a geometry before re-printing it for a final energy —
+    and termination from the whole output. ``src`` only labels error messages. Raises
+    :class:`OutputParseError` if the energy or coordinates are missing / malformed, or
+    :class:`OutputTerminationError` when the reason they are missing is that ORCA died — see
+    :func:`_unreadable`.
     """
-    electronic = energy.parse_final_energy_from_text(text)
-    if electronic is None:
+    found = _last_energy(text)
+    if found is None:
         raise _unreadable("no FINAL SINGLE POINT ENERGY", text, src)
+    electronic, energy_at = found
+    start, end = _evaluation_of(text, energy_at)
+    evaluation = text[max(start, 0) : end]
     try:
-        coords = geometry.parse_coordinates_from_text(text)
+        coords = geometry.parse_coordinates_from_text(evaluation)
     except ValueError as e:
         # Corrupt token (e.g. a ``*****`` overflow) — a per-file parse failure, not a crash.
         raise OutputParseError(f"malformed coordinate row in {src}: {e}") from e
@@ -73,11 +81,7 @@ def parse_dft_from_text(text: str, *, src: str = "<text>") -> list[ParsedResult]
     try:
         # The atom count comes from the coordinates block just read, which is what lets the
         # gradient reader tell a skipped summary line from a lost atom row.
-        force_vectors = (
-            forces.parse_forces_from_text(text, n_atoms=len(symbols))
-            if _gradient_belongs_to_last_geometry(text)
-            else None
-        )
+        force_vectors = forces.parse_forces_from_text(evaluation, n_atoms=len(symbols))
     except ValueError as e:
         # Held to the same rule as the coordinates above. A bare ValueError escaping here
         # would pass straight through `lifecycle._parse_job`, which contains only
@@ -85,8 +89,8 @@ def parse_dft_from_text(text: str, *, src: str = "<text>") -> list[ParsedResult]
         # rather than becoming that structure's ledgered failure.
         raise OutputParseError(f"malformed gradient row in {src}: {e}") from e
 
-    thermo = energy.parse_thermochemistry_from_text(text, electronic_hartree=electronic)
-    imaginary, table, modes = _parse_frequency_block(text, n_atoms=len(symbols))
+    thermo = energy.parse_thermochemistry_from_text(evaluation, electronic_hartree=electronic)
+    imaginary, table, modes = _parse_frequency_block(evaluation, n_atoms=len(symbols))
     return [
         ParsedResult(
             symbols=symbols,
@@ -94,7 +98,7 @@ def parse_dft_from_text(text: str, *, src: str = "<text>") -> list[ParsedResult]
             energy_hartree=electronic,
             forces_ev_per_a=force_vectors,
             terminated_normally=status.parse_terminated_normally(text),
-            converged=status.parse_converged(text),
+            converged=status.parse_converged(text[:end]),
             gibbs_hartree=thermo.gibbs_hartree if thermo else None,
             enthalpy_hartree=thermo.enthalpy_hartree if thermo else None,
             energy_zpe_hartree=thermo.energy_zpe_hartree if thermo else None,
@@ -184,22 +188,52 @@ def _stderr_tail(src: str) -> str:
     return f"; {err_path.name} ends: " + " | ".join(tail) if tail else ""
 
 
-_GRADIENT_MARKER = "CARTESIAN GRADIENT"
 _COORDINATES_MARKER = "CARTESIAN COORDINATES (ANGSTROEM)"
 
 
-def _gradient_belongs_to_last_geometry(text: str) -> bool:
-    """Whether the last gradient block was evaluated at the last coordinate block.
+def _last_energy(text: str) -> tuple[float, int] | None:
+    """The energy of the last evaluation ORCA printed one for, and the offset it is at.
 
-    ORCA prints the gradient *inside* each optimisation cycle and re-prints the geometry
-    after convergence, so in an ``Opt`` output the last gradient describes the
-    penultimate geometry: taking "the last of each" stored forces beside coordinates they
-    were not computed at, and a dataset fitted to them learned a force at the wrong
-    point. A gradient that *follows* the last geometry (an ``EnGrad`` single point, a
-    ``Freq`` after an optimisation) is that geometry's own. An ``Opt`` therefore carries no
-    forces — label with a single point, which is what the training tutorial does.
+    An evaluation's energy is its ``FINAL SINGLE POINT ENERGY``, except in an ExtOpt
+    optimisation after its first cycle, which prints its energy only as the optimiser's
+    ``Current Energy`` (:func:`~chemrefine.engines.orca.output.energy.find_relaxation_energy`).
+    Every cycle closes with that line, after the full-precision energy where there is one, so
+    it is taken only when it belongs to a later geometry than the last
+    ``FINAL SINGLE POINT ENERGY``. Read from that line alone, an ExtOpt run that stopped
+    before converging — at its cycle limit, or with its external program failing — would be
+    read at its first cycle, the geometry it was submitted with.
     """
-    return text.rfind(_GRADIENT_MARKER) > text.rfind(_COORDINATES_MARKER)
+    final = energy.find_final_energy(text)
+    relaxed = energy.find_relaxation_energy(text)
+    if relaxed is None or (
+        final is not None and text.find(_COORDINATES_MARKER, final[1], relaxed[1]) < 0
+    ):
+        return final
+    return relaxed
+
+
+def _evaluation_of(text: str, energy_at: int) -> tuple[int, int]:
+    """Where the evaluation of the energy printed at ``energy_at`` starts and ends.
+
+    ORCA prints each geometry it evaluates before anything computed there — the SCF and its
+    verdict, the energy, the gradient, a Hessian's frequencies and thermochemistry — and the
+    optimiser's verdict on it before the next geometry. So an evaluation runs from the last
+    geometry printed before its energy to the next geometry printed after it, or to the end
+    of the output, and a value printed outside it describes another geometry.
+
+    Taking "the last of each" instead pairs values from different evaluations whenever the
+    output does not end on a complete one: a run killed mid-cycle has printed its next
+    geometry but no energy for it, and a TS search's initial Hessian is not its result's. A
+    converged native ``Opt`` re-prints its geometry for a final energy with no gradient, so
+    its last gradient belongs to the cycle before and the result carries no forces — label
+    such a step with a single point, which is what the training tutorial does. A gradient
+    inside the evaluation is its own: an ``EnGrad`` single point, an ExtOpt evaluation that
+    prints one (its first and its final), the last cycle of an ``Opt`` that stopped at its
+    cycle limit or was killed.
+    """
+    start = text.rfind(_COORDINATES_MARKER, 0, energy_at)
+    end = text.find(_COORDINATES_MARKER, energy_at)
+    return start, len(text) if end < 0 else end
 
 
 def _parse_frequency_block(
