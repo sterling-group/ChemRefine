@@ -1064,12 +1064,16 @@ def test_client_main_writes_engrad(tmp_path: Path, monkeypatch):
     assert "Gradient [Eh/Bohr]" in text
 
 
-def test_client_main_with_no_answer_raises_and_leaves_no_engrad(tmp_path: Path, monkeypatch):
-    """No answer, no ``.engrad`` — the failure is the wrapper's non-zero exit.
+def test_client_main_with_no_answer_exits_with_its_reason_and_leaves_no_engrad(
+    tmp_path: Path, monkeypatch, capsys
+):
+    """No answer, no ``.engrad`` — the failure is the wrapper's non-zero exit, and its reason.
 
     ORCA 6.1.1 deletes the ``.engrad`` around every external call and stops the job when the
     wrapper leaves none, so a failed call cannot hand it a stale gradient — as long as the
-    bridge writes the file only once the server has answered.
+    bridge writes the file only once the server has answered. What the wrapper prints goes
+    to the job's ``.err``, whose tail the step's ledgered reason quotes, so it is the one
+    refusal line rather than a traceback.
     """
     from urllib.error import URLError
 
@@ -1080,11 +1084,13 @@ def test_client_main_with_no_answer_raises_and_leaves_no_engrad(tmp_path: Path, 
         "sys.argv",
         ["bridge.py", "--backend", "mlip", "--url-file", str(url_file), str(inp)],
     )
-    with (
-        patch("urllib.request.urlopen", side_effect=URLError("refused")),
-        pytest.raises(JobFailureError, match="unreachable"),
-    ):
-        bridge.main()
+    with patch("urllib.request.urlopen", side_effect=URLError("refused")):
+        rc = bridge.main()
+
+    assert rc == JobFailureError.exit_code != 0
+    assert capsys.readouterr().err == (
+        "JobFailureError: ExtOpt server unreachable at 127.0.0.1:1234: refused\n"
+    )
     assert not list(tmp_path.glob("*.engrad"))
 
 

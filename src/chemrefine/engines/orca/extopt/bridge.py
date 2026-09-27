@@ -32,7 +32,13 @@ from chemrefine.engines._backend_server.base import (
 from chemrefine.engines._backend_server.registry import known_backends, load_calculator
 from chemrefine.engines._options import ExtOptOptions
 from chemrefine.engines.orca.extopt import protocol
-from chemrefine.errors import ENDPOINT_UNREACHABLE, JobFailureError, fetch
+from chemrefine.errors import (
+    ENDPOINT_UNREACHABLE,
+    ChemRefineError,
+    JobFailureError,
+    fetch,
+    refusal_text,
+)
 
 DEFAULT_TIMEOUT: float = float(ExtOptOptions.model_fields["gradient_timeout_seconds"].default)
 """Seconds before a single ``/calculate`` request times out.
@@ -242,22 +248,33 @@ def resolve_server_token(args: argparse.Namespace) -> str | None:
 
 
 def main() -> int:
-    """ORCA-invoked entry point: relay one ``.extinp.tmp`` → ``.engrad`` step."""
+    """ORCA-invoked entry point: relay one ``.extinp.tmp`` → ``.engrad`` step.
+
+    A failure ChemRefine classifies — no reply within the timeout, a server that cannot be
+    reached or refuses the request, a geometry it cannot read — exits with its one-line
+    refusal on stderr and its code, as the CLI does. ORCA stops on the non-zero exit either
+    way, and it passes the wrapper's stderr to the job's ``.err``, which the step's ledgered
+    reason quotes: raised, that quote ended in traceback frames naming install paths rather
+    than the reason. Anything else is a defect and keeps its traceback.
+    """
     import sys
 
     args = parse_args(sys.argv[1:])
-    server_url = resolve_server_url(args)
-    data = protocol.read_extinp(args.inputfile, settings=settings_from_args(args))
-    energy, gradient = submit_calculation(
-        server_url=server_url,
-        data=data,
-        tag=args.tag or _tag_for(args.inputfile),
-        token=resolve_server_token(args),
-        timeout=args.timeout,
-    )
-    engrad_path = _engrad_path_for(args.inputfile)
+    try:
+        server_url = resolve_server_url(args)
+        data = protocol.read_extinp(args.inputfile, settings=settings_from_args(args))
+        energy, gradient = submit_calculation(
+            server_url=server_url,
+            data=data,
+            tag=args.tag or _tag_for(args.inputfile),
+            token=resolve_server_token(args),
+            timeout=args.timeout,
+        )
+    except ChemRefineError as e:
+        print(refusal_text(e), file=sys.stderr)
+        return e.exit_code
     protocol.write_engrad(
-        path=engrad_path,
+        path=_engrad_path_for(args.inputfile),
         n_atoms=len(data.symbols),
         energy_hartree=energy,
         gradients_hartree_per_bohr=gradient if data.dograd else None,

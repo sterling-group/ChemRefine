@@ -459,6 +459,13 @@ for the full map.
 
 ### Fixed
 
+- **A failed ExtOpt gradient call reports its reason, not a traceback.** When the bridge
+  ORCA runs for each gradient failed in a way ChemRefine classifies (no reply within
+  `gradient_timeout_seconds`, a server that cannot be reached or refuses the request, a
+  geometry it cannot read), it raised the error through the interpreter, so the job's
+  stderr, and the step's ledgered reason that quotes it, ended in traceback frames naming
+  install paths. The bridge now prints the one-line refusal and exits with its code, and
+  ORCA stops exactly as before.
 - **A failure reason names its output relative to its step.** The reason a step ledgers for
   an output it could not use (an ORCA or Q-Chem run that did not finish, a script output
   with a non-finite value) quoted the output's absolute path, so a tree copied off a
