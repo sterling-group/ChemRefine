@@ -183,6 +183,30 @@ class _VacuumBoxed(Calculator):
         self.results = {"energy": energy, "free_energy": energy, "forces": box.get_forces()}
 
 
+def stamp_species(atoms: Atoms, *, charge: int | None, multiplicity: int | None) -> None:
+    """Put a species' charge and multiplicity where the charge-aware libraries read them.
+
+    Both shipped charge-aware backends take the values **per geometry**, off
+    ``atoms.info`` — FAIRChem's calculator asks its atoms-to-graph converter for the
+    ``charge`` and ``spin`` keys, and MACE's maps the same two names onto its
+    ``total_charge``/``total_spin`` model inputs, silently assuming a neutral singlet when
+    they are absent. No builder reads the spec fields (construction-time charge is a door
+    for a library that takes one, which none shipped does), so this is the one channel.
+    Its two callers are :class:`MlipCalculator`, with the step-wide values it was built
+    with, and the ExtOpt adapter, with ORCA's per-call values; spelled once here, the two
+    cannot come to write different keys.
+
+    ``setdefault``, not assignment: ``atoms.info`` is per-structure state, so a value the
+    template set on the atoms itself is more specific than the step-wide one and must win.
+    ``None`` stamps nothing. Charge-blind libraries never read the keys, so stamping is
+    inert for them.
+    """
+    if charge is not None:
+        atoms.info.setdefault("charge", charge)
+    if multiplicity is not None:
+        atoms.info.setdefault("spin", multiplicity)
+
+
 # ---------------------------------------------------------------------------
 # Thin wrapper class (shared by the direct engine and the ExtOpt adapter)
 # ---------------------------------------------------------------------------
@@ -212,7 +236,7 @@ class MlipCalculator:
 
         ``charge`` / ``multiplicity`` are optional and additive, and this wrapper is
         where they take effect for the shipped libraries: both charge-aware backends
-        read them per geometry off ``atoms.info`` (see :meth:`_stamp_species`), so the
+        read them per geometry off ``atoms.info`` (see :func:`stamp_species`), so the
         values are kept and stamped at each call rather than only handed to the builder.
         A charge-blind library never reads the keys. Everything else is the shape the
         shipped templates have always called.
@@ -237,34 +261,11 @@ class MlipCalculator:
             multiplicity=multiplicity,
         )
 
-    def _stamp_species(self, atoms: Atoms) -> None:
-        """Put this wrapper's charge and multiplicity where the libraries read them.
-
-        Both shipped charge-aware backends take the values **per geometry**, off
-        ``atoms.info`` — FAIRChem's calculator asks its atoms-to-graph converter for the
-        ``charge`` and ``spin`` keys, and MACE's maps the same two names onto its
-        ``total_charge``/``total_spin`` model inputs, silently assuming a neutral
-        singlet when they are absent. Stamping here is what connects the constructor
-        arguments to that channel; without it they selected nothing (no builder reads
-        the spec fields — construction-time charge is a door for a library that takes
-        one, which none shipped does). The ExtOpt adapter stamps the same keys from
-        ORCA's per-call values; this is the direct path's half of that pattern.
-
-        ``setdefault``, not assignment: ``atoms.info`` is per-structure state, so a
-        value the template set on the atoms itself is more specific than the step-wide
-        one and must win. Charge-blind libraries never read the keys, so stamping is
-        inert for them.
-        """
-        if self.charge is not None:
-            atoms.info.setdefault("charge", self.charge)
-        if self.multiplicity is not None:
-            atoms.info.setdefault("spin", self.multiplicity)
-
     # -- inference ---------------------------------------------------------
 
     def single_point(self, atoms: Atoms) -> tuple[float, list[list[float]]]:
         """Return ``(energy_eV, gradient_eV_per_A)`` for one geometry."""
-        self._stamp_species(atoms)
+        stamp_species(atoms, charge=self.charge, multiplicity=self.multiplicity)
         atoms.calc = self.calculator
         energy = atoms.get_potential_energy()
         forces = atoms.get_forces()
@@ -284,7 +285,7 @@ class MlipCalculator:
         """
         from ase.optimize import LBFGS
 
-        self._stamp_species(atoms)
+        stamp_species(atoms, charge=self.charge, multiplicity=self.multiplicity)
         atoms.calc = self.calculator
         # Named rather than passed as `None`: ase's own `IOContext.openfile` turns `None`
         # into `open(os.devnull)`, so this is the same file by the shorter route — and it

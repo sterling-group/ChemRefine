@@ -794,3 +794,56 @@ def test_a_periodic_only_calculator_asked_about_no_atoms_says_so():
     calc = build_calculator(task_name="needs_a_lattice", device="cpu")
     with pytest.raises(CalculatorSetupError, match="no atoms to evaluate"):
         calc.get_potential_energy()
+
+
+# ---------------------------------------------------------------------------
+# The ExtOpt adapter hands the library the species the direct path does
+# ---------------------------------------------------------------------------
+
+
+class _SeesTheSpecies(Calculator):
+    """Records the ``atoms.info`` each evaluation is handed; a flat, force-free surface."""
+
+    def __init__(self, seen: list[dict]):
+        Calculator.__init__(self)
+        self.implemented_properties = ["energy", "forces"]
+        self.seen = seen
+
+    def calculate(self, atoms=None, properties=("energy",), system_changes=all_changes):
+        Calculator.calculate(self, atoms, properties, system_changes)
+        self.seen.append(dict(self.atoms.info))
+        self.results = {"energy": 0.0, "forces": np.zeros((len(self.atoms), 3))}
+
+
+def test_the_extopt_adapter_stamps_the_species_the_direct_path_does():
+    """Both paths reach a charge-aware library through the same ``atoms.info`` keys.
+
+    The direct engine stamps the step's charge and multiplicity; the ExtOpt adapter stamps
+    ORCA's per-call values. Keys spelled apart could drift, and a library reading the other
+    spelling would fit an ion as a neutral singlet without a word.
+    """
+    from chemrefine.engines._backend_server.base import CalculationData
+    from chemrefine.engines.mlip.extopt_calc import MlipExtOptCalculator
+
+    seen: list[dict] = []
+    MlipLibrary(extra="mlip-species", package="species-lib", import_name="species_lib").calculator(
+        "species"
+    )(lambda _spec: _SeesTheSpecies(seen))
+
+    MlipCalculator(task_name="species", device="cpu", charge=1, multiplicity=2).single_point(
+        _h2(0.74)
+    )
+    MlipExtOptCalculator(model_name=None, task_name="species", device="cpu").calc(
+        CalculationData(
+            symbols=("H", "H"),
+            positions_angstrom=_h2(0.74).positions,
+            charge=1,
+            multiplicity=2,
+            nthreads=1,
+            dograd=True,
+            settings={},
+        )
+    )
+
+    direct, extopt = seen
+    assert direct == extopt == {"charge": 1, "spin": 2}

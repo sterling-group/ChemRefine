@@ -1417,3 +1417,75 @@ def test_the_flag_collision_guard_can_actually_fail():
             bridge.parse_args(["--backend", "mlip", "x.extinp.tmp"])
     finally:
         ENGINES.pop("collide-probe", None)
+
+
+# ---------------------------------------------------------------------------
+# An NMS child runs its own ProgExt wrapper
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("engine_name", "options"),
+    [("pyscf-extopt", {"method": "hf", "basis": "sto-3g"}), ("mlip-extopt", {})],
+)
+def test_an_nms_child_names_the_progext_wrapper_in_its_own_attempt(
+    tmp_path: Path, monkeypatch, engine_name: str, options: dict
+):
+    """Every round-2 child's ``.inp`` names a wrapper that is there, in its attempt directory.
+
+    A child round prepares its jobs with the step's context re-rooted at ``attemptK/``, and
+    the ExtOpt engine writes its wrapper under whatever step directory it is handed and names
+    it absolutely in ``%method ProgExt``. So the children's ORCA finds a wrapper beside them
+    — the one fact of NMS that is ExtOpt's own, checked here rather than by a live run.
+    """
+    from ase import Atoms
+
+    from chemrefine import nms
+    from chemrefine.config import StepConfig
+    from chemrefine.engines import _execution, api
+    from chemrefine.state import JobBatch, PipelineState, StepContext, StepResults, Structure
+
+    template = tmp_path / "templates" / "step1.inp"
+    template.parent.mkdir()
+    template.write_text("! ExtOpt Opt NumFreq\n", encoding="utf-8")
+    modes = np.zeros((2, 3, 6))
+    modes[0, 0, 5], modes[1, 0, 5] = 0.1, -0.1
+    parent = Structure(
+        id="0",
+        atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]),
+        energy_hartree=-1.0,
+        converged=True,
+        terminated_normally=True,
+        imaginary_freqs={5: -42.0},
+        normal_modes=modes,
+    )
+    ctx = StepContext(
+        step_cfg=StepConfig(step=1, engine=engine_name, nms=True, options=options),
+        step_dir=(tmp_path / "outputs" / "step1").resolve(),
+        template_dir=template.parent,
+        template=template,
+        scratch_dir=None,
+        prev_state=PipelineState(structures=(parent,)),
+        charge=0,
+        multiplicity=1,
+        max_cores=2,
+        slurm_template="cpu.slurm.header",
+        executables={},
+    )
+    submitted = []
+
+    def no_jobs(engine, inputs, ctx, *, sink=api.NULL_SINK):
+        submitted.extend(inputs.files)
+        api.sweep(inputs, sink)
+        return JobBatch(jobs={})
+
+    monkeypatch.setattr(_execution, "run_batch", no_jobs)
+
+    nms.run_nms(api.get_engine(engine_name), StepResults(structures=(parent,)), [], ctx)
+
+    attempt = ctx.step_dir / "0" / "attempt1"
+    assert sorted(sid for *_x, sid in submitted) == ["0_m5_neg", "0_m5_pos"]
+    for inp, _out, _sid in submitted:
+        assert inp.parent.parent == attempt
+        wrapper = Path(inp.read_text(encoding="utf-8").split('ProgExt "')[1].split('"')[0])
+        assert wrapper.parent == attempt and wrapper.is_file()

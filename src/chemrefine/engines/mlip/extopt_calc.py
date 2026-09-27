@@ -19,7 +19,7 @@ from chemrefine.engines._backend_server.base import (
     ComputeBackend,
     tokens_from_options,
 )
-from chemrefine.engines.mlip.calculator import MlipCalculator
+from chemrefine.engines.mlip.calculator import MlipCalculator, stamp_species
 from chemrefine.engines.mlip.options import CALCULATOR_KNOBS, MlipOptions
 from chemrefine.quantities import convert
 
@@ -109,13 +109,9 @@ class MlipExtOptCalculator(ComputeBackend):
             symbols=list(data.symbols),
             positions=data.positions_angstrom,
         )
-        # Both charge-aware libraries read charge + spin from these atoms.info keys —
-        # FAIRChem's ``omol`` head via its a2g args, MACE's calculator via its default
-        # info_keys mapping (charge-blind backends ignore them); pass ORCA's values
-        # through so charged / open-shell molecules aren't silently treated as
-        # neutral singlets.
-        atoms.info["charge"] = data.charge
-        atoms.info["spin"] = data.multiplicity
+        # ORCA's values for this call, where the charge-aware libraries read them, so a
+        # charged or open-shell molecule is not silently treated as a neutral singlet.
+        stamp_species(atoms, charge=data.charge, multiplicity=data.multiplicity)
         energy_ev, gradient_ev_per_a = self._calculator.single_point(atoms)
         energy_hartree = convert(energy_ev, "ev", "hartree")
         # convert() is typed to return ArrayLike for array input; asarray is a
