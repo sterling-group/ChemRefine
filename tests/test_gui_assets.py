@@ -986,6 +986,54 @@ def test_a_failed_resume_offers_the_cards_again_only_while_they_can_be_answered(
     assert json.loads(out) == (expected if offered_again else {"cards": [], "decisions": {}})
 
 
+@pytest.mark.parametrize("reset_meanwhile", [False, True], ids=["current", "orphaned"])
+def test_a_failed_turn_that_saved_the_config_reloads_it_and_still_says_it_failed(
+    reset_meanwhile: bool,
+):
+    """A turn can save the config and then fail; the file on disk is the agent's either way.
+
+    The reload hung off the success path only, so the form went on showing the config the
+    agent had replaced — until a save from the form wrote the old one back over it. And the
+    reload's own notice must not replace the failure's: the flash is the only place the
+    page says the turn failed, and "loaded into the builder" alone reads as a success. A
+    reset that orphaned the turn still wins, as it does over a turn that succeeded.
+    """
+    out = _run_component_in_node(
+        """
+      const b = builder();
+      b.chatAvailability = () => {};
+      b.adopt = async () => true;
+      b.recordOnDisk = async () => {};
+      b.forgetPreviousWorkflow = () => {};  // its refreshers are not what is tested
+      const calls = [];
+      global.fetch = async (url) => {
+        calls.push(url.split("?")[0]);
+        if (url.startsWith("/api/load")) {
+          return { ok: true, json: async () => ({ path: "/p/input.yaml", yaml_text: "x\\n" }) };
+        }
+        if (RESET) b._chatGen += 1;
+        const body = {
+          error: "model endpoint failed: reset", pending: null, wrote_config: "/p/input.yaml",
+        };
+        return { ok: false, status: 502, json: async () => body };
+      };
+      const landed = await b._chatTurn({ message: "save it" });
+      console.log(JSON.stringify({ landed, calls, flash: b.flash, savedPath: b.savedPath }));
+    """.replace("RESET", "true" if reset_meanwhile else "false")
+    )
+    result = json.loads(out)
+    assert result["landed"] is False
+    if reset_meanwhile:
+        assert result["calls"] == ["/api/agent/chat"]
+        assert result["flash"] == "model endpoint failed: reset"
+    else:
+        assert result["calls"] == ["/api/agent/chat", "/api/load"]
+        assert result["savedPath"] == "/p/input.yaml"
+        assert result["flash"] == (
+            "model endpoint failed: reset; the agent wrote /p/input.yaml — loaded into the builder"
+        )
+
+
 def test_the_key_is_not_sent_to_a_provider_whose_key_field_is_hidden():
     """The key survives a provider switch; it must not travel with one that hides it.
 

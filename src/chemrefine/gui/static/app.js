@@ -1485,7 +1485,9 @@ function builder() {
     // Refuses to clobber unsaved edits: it offers instead, through pendingReload.
     // Answers whether the path was dealt with: false means it did not load and the caller
     // is still holding the only route back to it (the browser dialog, or the offer banner).
-    async loadConfigFrom(path, { force = false, reason = "agent" } = {}) {
+    // `failure` is a chat turn's failure to report with the load: the turn saved the config
+    // and then failed, and a notice that said only "loaded" would read as a success.
+    async loadConfigFrom(path, { force = false, reason = "agent", failure = "" } = {}) {
       if (this.staticMode) return true; // the playground has no server to read a file from
       if (!force && (this.dirty() || this.rawEdit)) {
         // rawEdit counts as dirty even when the text matches: syncYaml() early-returns
@@ -1506,10 +1508,9 @@ function builder() {
       // finished run, and yanking the pane back to the YAML is precisely the wrong answer
       // when the tab you opened it on was the Structure one.
       if (reason !== "open") this.showTab("right", "yaml");
+      const loaded = `the agent wrote ${data.path} — loaded into the builder`;
       this.flash =
-        reason === "open"
-          ? `loaded ${data.path}`
-          : `the agent wrote ${data.path} — loaded into the builder`;
+        reason === "open" ? `loaded ${data.path}` : failure ? `${failure}; ${loaded}` : loaded;
       return true;
     },
 
@@ -1596,11 +1597,22 @@ function builder() {
     async _chatTurn(extra, { onFailure } = {}) {
       const generation = ++this._chatGen;
       this.chat.busy = true;
+      let failed = {}; // a failed turn's body: the calls it ran before failing may have saved
       try {
         const data = await this.api("POST", "/api/agent/chat", this._chatPayload(extra), {
-          onFailure,
+          onFailure: (body) => {
+            failed = body;
+            if (onFailure) onFailure(body);
+          },
         });
-        if (!data) return false; // server refused; flash explains
+        if (!data) {
+          // The flash explains the failure; a config an approved call saved before it is
+          // on disk all the same, and the form must not go on showing the old one.
+          if (failed.wrote_config && generation === this._chatGen) {
+            await this.loadConfigFrom(failed.wrote_config, { failure: failed.error });
+          }
+          return false;
+        }
         if (generation !== this._chatGen) return true; // a reset won the race: drop it
         if (data.pending) {
           this.chat.pending = data.pending;

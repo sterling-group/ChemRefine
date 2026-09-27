@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import typer
 
-from chemrefine.agent.harness import build_agent, run_turn
+from chemrefine.agent.harness import TurnFailed, build_agent, run_turn
 from chemrefine.agent.providers import ProviderConfig
 
 
@@ -40,11 +40,13 @@ def main(
         # A failed turn must not end the session: the likeliest failure here is the model
         # endpoint dying mid-chat (the very case `--check` preflights), which the web
         # harness answers per turn too (:func:`chemrefine.gui.app.create_app`). A tool's
-        # refusal never lands here — it is the tool's answer to the model.
+        # refusal never lands here — it is the tool's answer to the model. What the turn
+        # did before it failed is the conversation the next one continues.
         try:
             result = run_turn(agent, prompt, message_history=history)
-        except Exception as e:  # the model endpoint is the outside world
+        except TurnFailed as e:
             typer.echo(f"model endpoint failed: {e}", err=True)
+            history = e.messages
             continue
         typer.echo(result.output)
         history = result.all_messages()

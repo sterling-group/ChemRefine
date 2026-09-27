@@ -255,6 +255,47 @@ def refusal_reader() -> Callable[[str, dict[str, Any]], Any]:
     return build
 
 
+@pytest.fixture
+def crashing_tool(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], None]:
+    """Swap one shared tool for a same-named one that crashes — a failure, not a refusal.
+
+    Under its own name the swap keeps the tool's gate: a mutating one is still confirmed in
+    the terminal and still waits for its card in the builder. Both harnesses read
+    :data:`~chemrefine.agent_tools.TOOLS` as they build, so the swap reaches either.
+    """
+    from chemrefine import agent_tools
+
+    def swap(name: str) -> None:
+        def crash(config_path: str) -> dict[str, Any]:
+            raise RuntimeError(f"{name} crashed")
+
+        crash.__name__ = name
+        tools = tuple(crash if tool.__name__ == name else tool for tool in agent_tools.TOOLS)
+        monkeypatch.setattr(agent_tools, "TOOLS", tools)
+
+    return swap
+
+
+@pytest.fixture
+def slow_config_writes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every atomic write takes 0.2 s — long enough to still be running beside a crash.
+
+    What makes "a save and a crashing call in one response" deterministic: run side by
+    side, the crash lands while the save is still writing.
+    """
+    import time
+
+    from chemrefine import io
+
+    write = io.atomic_write
+
+    def slowly(*args: Any, **kwargs: Any) -> None:
+        time.sleep(0.2)
+        write(*args, **kwargs)
+
+    monkeypatch.setattr(io, "atomic_write", slowly)
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
     """Suite-wide flags: golden regeneration and fixture re-recording."""
     parser.addoption(

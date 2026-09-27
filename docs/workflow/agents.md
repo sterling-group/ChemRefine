@@ -166,6 +166,10 @@ free-tier OpenAI-compatible endpoint works via `--base-url`.
   session; it logs to `output_dir/agent_runs/`. Progress is read back with `run_status` —
   pure filesystem reads (`steps.csv`, `failed_jobs.json`, the lock, the log tail),
   identical whether the run is live, finished, or died.
+- **A failed turn is still part of the conversation.** When the model endpoint drops in
+  the middle of a turn, the chat says so and carries on, and the next turn's model sees
+  your message and every change that ran, with what it returned — so a change you allowed
+  is known to have happened, not proposed again.
 - **Results are paginated** so a tool reply cannot flood a model's context window.
 - **Errors are structured.** Tool failures carry ChemRefine's documented
   [exit-code taxonomy](../running/when-a-run-fails.md#exit-codes), and `get_failures`

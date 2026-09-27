@@ -10,11 +10,19 @@ chat has no client in front of it, so the gate lives here. A declined call retur
 not a crash — which also bounds what a prompt-injected instruction can do: nothing
 mutating happens without the human's yes.
 
+Both harnesses register the mutating tools as ``sequential`` — each runs alone, never in
+parallel with the other calls of the same response. PydanticAI runs a response's calls
+side by side and, when one of them crashes, cancels the rest and discards their results;
+a tool running in a worker thread still finishes, so a save beside a crash wrote its file
+and left no record of it. Alone, a mutation that ran is always in the conversation with
+what it returned, and the terminal's confirmation prompts cannot overlap.
+
 Instructions = the packaged agent guide (:func:`chemrefine.agent_tools.guide_text`,
 identical bytes to the MCP resource) plus the session context (which config file, if
 any). The model is a parameter, never constructed here — that is what lets the tests
 run the entire harness against ``TestModel``/``FunctionModel`` offline. Every turn, in
-either harness, runs through :func:`run_turn`, on an event loop the call owns.
+either harness, runs through :func:`run_turn`, on an event loop the call owns, and a turn
+that fails hands back the conversation as far as it got (:class:`TurnFailed`).
 
 PydanticAI is imported at module scope, the way :mod:`chemrefine.mcp_server` imports its
 SDK: :mod:`.chat` imports this module, and the CLI imports :mod:`.chat` inside ``except
@@ -38,8 +46,9 @@ from pydantic_ai import (
     DeferredToolRequests,
     DeferredToolResults,
     ToolFailed,
+    capture_run_messages,
 )
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
 from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings
 
@@ -50,6 +59,26 @@ ConfirmFn = Callable[[str, str], bool]
 """``(tool_name, rendered_args) -> allow?`` — the chat asks the human, tests script it."""
 
 OutputT = TypeVar("OutputT")
+
+
+class TurnFailed(Exception):
+    """A turn that raised, carrying the conversation as far as it got.
+
+    ``messages`` is what the next turn's ``message_history`` must be. A run that took its
+    history in hands back what it recorded: that history, the user's message, and every
+    mutation that executed with what it returned — a change the human allowed is part of
+    the conversation whether or not the model was alive to hear its result, and a history
+    without it invites the model to propose it again. A run that failed before it took its
+    history in (its model client failing to open, say) recorded nothing, and ``messages``
+    is then the history it was given, without the new message. Either way, calls left
+    without an answer are closed as interrupted (:func:`_answerable`). The failure itself is
+    ``__cause__``, and this exception's text is the cause's, so a harness reports the
+    failure in the cause's own words.
+    """
+
+    def __init__(self, cause: Exception, messages: list[ModelMessage]) -> None:
+        super().__init__(str(cause))
+        self.messages = messages
 
 
 def _gated(fn: Callable[..., Any], confirm: ConfirmFn) -> Callable[..., Any]:
@@ -137,10 +166,9 @@ def build_agent(
     )
     for tool in agent_tools.TOOLS:
         answered = agent_tools.answering(tool, ToolFailed)
-        if tool.__name__ in agent_tools.MUTATING_TOOLS:
-            agent.tool_plain(_gated(answered, confirm))
-        else:
-            agent.tool_plain(answered)
+        mutating = tool.__name__ in agent_tools.MUTATING_TOOLS
+        register = agent.tool_plain(sequential=mutating)
+        register(_gated(answered, confirm) if mutating else answered)
     return agent
 
 
@@ -172,7 +200,8 @@ def build_web_agent(
         model_settings=_turn_settings(),
     )
     for tool in agent_tools.TOOLS:
-        register = agent.tool_plain(requires_approval=tool.__name__ in agent_tools.MUTATING_TOOLS)
+        mutating = tool.__name__ in agent_tools.MUTATING_TOOLS
+        register = agent.tool_plain(requires_approval=mutating, sequential=mutating)
         register(agent_tools.answering(tool, ToolFailed))
     return agent
 
@@ -198,6 +227,9 @@ def run_turn(
     The agent is *entered* for the turn (:func:`_entered_run`), which is what PydanticAI
     asks for so the provider's HTTP client opens and closes on the loop that uses it; a
     client left open would otherwise outlive the loop its connections belong to.
+
+    A turn that fails raises :class:`TurnFailed`, never the bare failure: whatever the turn
+    did before it failed is part of the conversation, and the caller needs it to continue.
     """
     return asyncio.run(
         _entered_run(
@@ -216,10 +248,38 @@ async def _entered_run(
     message_history: Sequence[ModelMessage] | None,
     deferred_tool_results: DeferredToolResults | None,
 ) -> AgentRunResult[OutputT]:
-    """:meth:`Agent.run` inside ``async with agent`` — the turn :func:`run_turn` drives."""
-    async with agent:
-        return await agent.run(
-            user_prompt,
-            message_history=message_history,
-            deferred_tool_results=deferred_tool_results,
-        )
+    """:meth:`Agent.run` inside ``async with agent`` — the turn :func:`run_turn` drives.
+
+    ``capture_run_messages`` is PydanticAI's record of a run that raised: the whole
+    conversation the run held, history included, up to the failure. A run that failed
+    before it took the history in recorded nothing, and the history it was given is then
+    the conversation as far as it got.
+    """
+    with capture_run_messages() as recorded:
+        try:
+            async with agent:
+                return await agent.run(
+                    user_prompt,
+                    message_history=message_history,
+                    deferred_tool_results=deferred_tool_results,
+                )
+        except Exception as e:
+            reached = recorded or list(message_history or ())
+            raise TurnFailed(e, _answerable(reached)) from e
+
+
+def _answerable(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """``messages``, ending where a new prompt can follow.
+
+    A history whose last response holds calls nobody answered refuses a new prompt
+    ("unprocessed tool calls"). The run that failed will never answer them, and
+    PydanticAI's record of that is an empty ``interrupted`` request after the response —
+    the marker the next run reads to close those calls with ``interrupted`` returns. How
+    often a run writes the marker itself depends on the release (some only once a call
+    has returned, later ones on any failure inside tool execution), and none writes it for
+    a run that failed before it took its history in or that refused a new prompt after
+    calls already left open. So it is written here whenever the calls are left open.
+    """
+    if messages and isinstance(messages[-1], ModelResponse) and messages[-1].tool_calls:
+        return [*messages, ModelRequest(parts=[], state="interrupted")]
+    return messages

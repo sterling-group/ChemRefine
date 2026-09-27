@@ -799,6 +799,141 @@ def test_a_refused_or_unwritten_save_is_not_a_write(
     assert not config.exists()
 
 
+def test_a_save_is_reported_by_the_turn_that_made_it_and_no_later_one(
+    client: Any, chat_env: pytest.MonkeyPatch, tmp_path: Path
+):
+    """A later turn carries the save in its history; it did not make it.
+
+    The editor reloads on the signal, so one repeated on every later turn would reload the
+    file and pull the right column back to the YAML after each answer — or, over edits of
+    the user's own, offer the agent's old version again every time.
+    """
+    config = tmp_path / "input.yaml"
+    runnable = yaml.safe_dump({"steps": [{"step": 1, "engine": "orca", "operation": "sp"}]})
+    _inject_model(chat_env, _saving_model(config, runnable))
+
+    suspended = _post(client, "/api/agent/chat", {"message": "save it"}).get_json()
+    approvals = {card["id"]: True for card in suspended["pending"]}
+    resumed = _post(client, "/api/agent/chat", {"approvals": approvals}).get_json()
+    assert resumed["wrote_config"] == str(config)
+    later = _post(client, "/api/agent/chat", {"message": "thanks"}).get_json()
+    assert (later["reply"], later["wrote_config"]) == ("saved it", None)
+
+
+def test_a_config_saved_before_a_turn_failed_is_still_reported(
+    client: Any, chat_env: pytest.MonkeyPatch, tmp_path: Path
+):
+    """The approved save ran and the endpoint died after it: the file is on disk regardless.
+
+    Reported only by a turn that succeeded, the save went unannounced, and the editor went
+    on showing the config the agent had just replaced.
+    """
+    from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    config = tmp_path / "input.yaml"
+    runnable = yaml.safe_dump({"steps": [{"step": 1, "engine": "orca", "operation": "sp"}]})
+
+    def dies_after_the_save(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart("save_config", {"path": str(config), "yaml_text": runnable})]
+            )
+        raise RuntimeError("connection reset by the endpoint")
+
+    _inject_model(chat_env, FunctionModel(dies_after_the_save))
+    suspended = _post(client, "/api/agent/chat", {"message": "save it"}).get_json()
+    approvals = {card["id"]: True for card in suspended["pending"]}
+    failed = _post(client, "/api/agent/chat", {"approvals": approvals})
+    assert failed.status_code == 502
+    assert failed.get_json()["wrote_config"] == str(config)
+    assert config.is_file()
+
+
+def test_an_approved_save_beside_a_crashing_call_is_reported_and_remembered(
+    client: Any,
+    chat_env: pytest.MonkeyPatch,
+    tmp_path: Path,
+    crashing_tool: Any,
+    slow_config_writes: None,
+):
+    """Two approved calls, one of which crashes: the save that went through is not lost.
+
+    Run side by side, the crash cancelled the save and discarded its result while its
+    worker thread wrote the file anyway — a 502 with no ``wrote_config`` over a config on
+    disk, and a next turn told the save was interrupted.
+    """
+    from pydantic_ai.messages import (
+        ModelMessage,
+        ModelResponse,
+        TextPart,
+        ToolCallPart,
+        ToolReturnPart,
+    )
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    config = tmp_path / "input.yaml"
+    runnable = yaml.safe_dump({"steps": [{"step": 1, "engine": "orca", "operation": "sp"}]})
+    crashing_tool("scaffold_templates")
+    seen: list[list[ModelMessage]] = []
+
+    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(list(messages))
+        if len(seen) > 1:
+            return ModelResponse(parts=[TextPart("noted")])
+        return ModelResponse(
+            parts=[
+                ToolCallPart("save_config", {"path": str(config), "yaml_text": runnable}),
+                ToolCallPart("scaffold_templates", {"config_path": str(config)}),
+            ]
+        )
+
+    _inject_model(chat_env, FunctionModel(script))
+    suspended = _post(client, "/api/agent/chat", {"message": "save and scaffold"}).get_json()
+    approvals = {card["id"]: True for card in suspended["pending"]}
+    failed = _post(client, "/api/agent/chat", {"approvals": approvals})
+    assert failed.status_code == 502
+    assert failed.get_json()["wrote_config"] == str(config)
+    assert _post(client, "/api/agent/chat", {"message": "what happened?"}).status_code == 200
+    parts = [part for message in seen[-1] for part in message.parts]
+    returns = [(p.tool_name, p.outcome) for p in parts if isinstance(p, ToolReturnPart)]
+    assert returns == [("save_config", "success"), ("scaffold_templates", "interrupted")]
+
+
+def test_a_save_under_a_call_id_an_earlier_turn_used_is_still_reported(
+    client: Any, chat_env: pytest.MonkeyPatch, tmp_path: Path
+):
+    """Call ids are the provider's to choose, and one numbered per response comes back.
+
+    Told apart by id, the second turn's save matched the first turn's return and went
+    unreported, so the editor kept the config the agent had just replaced.
+    """
+    from pydantic_ai.messages import (
+        ModelMessage,
+        ModelResponse,
+        TextPart,
+        ToolCallPart,
+        UserPromptPart,
+    )
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    config = tmp_path / "input.yaml"
+    runnable = yaml.safe_dump({"steps": [{"step": 1, "engine": "orca", "operation": "sp"}]})
+
+    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, UserPromptPart) for part in messages[-1].parts):
+            save = {"path": str(config), "yaml_text": runnable}
+            return ModelResponse(parts=[ToolCallPart("save_config", save, tool_call_id="call_0")])
+        return ModelResponse(parts=[TextPart("saved it")])
+
+    _inject_model(chat_env, FunctionModel(script))
+    for message in ("save it", "save it again"):
+        suspended = _post(client, "/api/agent/chat", {"message": message}).get_json()
+        approvals = {card["id"]: True for card in suspended["pending"]}
+        resumed = _post(client, "/api/agent/chat", {"approvals": approvals}).get_json()
+        assert (resumed["reply"], resumed["wrote_config"]) == ("saved it", str(config))
+
+
 def test_the_agent_is_told_about_the_file_the_builder_has_open(
     client: Any, chat_env: pytest.MonkeyPatch, tmp_path: Path
 ):
@@ -1398,6 +1533,49 @@ def test_a_resume_that_reached_the_run_leaves_nothing_to_answer_again(
     again = _post(client, "/api/agent/chat", {"approvals": {card["id"]: True}})
     assert again.status_code == 400
     assert "no suspended run" in again.get_json()["error"]
+
+
+def test_a_failed_resume_is_remembered_by_the_next_turn(
+    client: Any, chat_env: pytest.MonkeyPatch, tmp_path: Path
+):
+    """The approved calls ran, so the next message's model is told they did.
+
+    A resume that failed kept nothing: the cards were taken, and the history was the one
+    from before the message that raised them — so the next turn's model saw neither that
+    message nor the scaffold that had answered it.
+    """
+    from pydantic_ai.messages import (
+        ModelMessage,
+        ModelResponse,
+        TextPart,
+        ToolCallPart,
+        ToolReturnPart,
+        UserPromptPart,
+    )
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    config = _saved_config(tmp_path)
+    seen: list[list[ModelMessage]] = []
+
+    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(list(messages))
+        if len(seen) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart("scaffold_templates", {"config_path": str(config)})]
+            )
+        if len(seen) == 2:
+            raise RuntimeError("connection reset by the endpoint")
+        return ModelResponse(parts=[TextPart("done")])
+
+    _inject_model(chat_env, FunctionModel(script))
+    [card] = _post(client, "/api/agent/chat", {"message": "scaffold it"}).get_json()["pending"]
+    assert _post(client, "/api/agent/chat", {"approvals": {card["id"]: True}}).status_code == 502
+    assert _post(client, "/api/agent/chat", {"message": "what happened?"}).status_code == 200
+    parts = [part for message in seen[-1] for part in message.parts]
+    returns = [(p.tool_name, p.outcome) for p in parts if isinstance(p, ToolReturnPart)]
+    assert returns == [("scaffold_templates", "success")]
+    prompts = [p.content for p in parts if isinstance(p, UserPromptPart)]
+    assert prompts == ["scaffold it", "what happened?"]
 
 
 def test_a_tool_refusal_reaches_the_model_and_the_turn_answers(

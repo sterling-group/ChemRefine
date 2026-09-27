@@ -459,6 +459,14 @@ for the full map.
 
 ### Fixed
 
+- **A chat turn that fails keeps what it did.** In `chemrefine agent` and the builder's
+  chat panel, a turn that failed part-way — the model endpoint dropping after an allowed
+  call ran — was dropped whole: the next turn's model saw neither your message nor the
+  changes that ran, and could propose the same change again. The conversation now keeps
+  your message and every change the turn made before it failed, with what each returned,
+  and a config saved on such a turn is loaded into the builder as on any other. Allowed
+  changes run one at a time, so a call that crashes beside one can no longer discard the
+  record of a change that went through.
 - **An ExtOpt gradient call cut off by a connection reset fails the job by name.** A reset
   after the server took the request escaped the bridge as a traceback in the runlog, where
   every other server fault is the classified failure ORCA's step records. Every HTTP fetch

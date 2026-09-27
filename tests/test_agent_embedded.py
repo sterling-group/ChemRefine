@@ -19,12 +19,15 @@ from typing import Any, Self
 
 import pytest
 import yaml
+from pydantic_ai import DeferredToolRequests
 from pydantic_ai.messages import (
     ModelMessage,
+    ModelRequest,
     ModelResponse,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -699,6 +702,175 @@ def test_read_only_tools_are_never_gated():
 
 
 # ---------------------------------------------------------------------------
+# A failed turn
+# ---------------------------------------------------------------------------
+
+
+def _returns_and_prompts(
+    messages: list[ModelMessage],
+) -> tuple[list[tuple[str, str]], list[str]]:
+    """What a request carried: each tool result as ``(tool, outcome)``, and each user message."""
+    parts = [part for message in messages for part in message.parts]
+    returns: list[tuple[str, str]] = [
+        (p.tool_name, p.outcome) for p in parts if isinstance(p, ToolReturnPart)
+    ]
+    prompts = [str(p.content) for p in parts if isinstance(p, UserPromptPart)]
+    return returns, prompts
+
+
+def _seen_by_the_next_turn(
+    history: list[ModelMessage],
+) -> tuple[list[tuple[str, str]], list[str]]:
+    """Run one more turn on ``history`` and report what its request carried."""
+    seen: list[list[ModelMessage]] = []
+
+    def spy(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(list(messages))
+        return ModelResponse(parts=[TextPart("ok")])
+
+    agent = harness.build_agent(FunctionModel(spy), confirm=_allow)
+    harness.run_turn(agent, "what happened?", message_history=history)
+    return _returns_and_prompts(seen[0])
+
+
+def test_a_failed_turn_carries_what_ran_into_the_next(tmp_path: Path):
+    """The endpoint died after an allowed call ran; the next turn is told it ran.
+
+    Kept only on success, the history lost the whole turn — the message, and the scaffold
+    that had already written the templates — and the next turn's model, told nothing of
+    either, was free to propose the same change again.
+    """
+    config = _orca_config(tmp_path)
+
+    def dies_after_the_call(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart("scaffold_templates", {"config_path": str(config)})]
+            )
+        raise ConnectionError("the endpoint went away")
+
+    agent = harness.build_agent(FunctionModel(dies_after_the_call), confirm=_allow)
+    with pytest.raises(harness.TurnFailed, match=r"^the endpoint went away$") as failed:
+        harness.run_turn(agent, "scaffold my templates")
+    assert isinstance(failed.value.__cause__, ConnectionError)
+    assert (tmp_path / "templates" / "step1.inp").is_file()
+    assert _seen_by_the_next_turn(failed.value.messages) == (
+        [("scaffold_templates", "success")],
+        ["scaffold my templates", "what happened?"],
+    )
+
+
+def test_a_turn_that_fails_inside_a_call_still_takes_a_new_prompt(
+    tmp_path: Path, crashing_tool: Any
+):
+    """A call the failed run never answered is closed, not left to refuse every later turn.
+
+    PydanticAI refuses a new prompt after a history whose calls have no result ("unprocessed
+    tool calls"), and not every release closes the call a crash left open — so every later
+    turn of the chat failed the same way. The call is recorded as interrupted instead.
+    """
+    crashing_tool("scaffold_templates")
+    agent = harness.build_agent(_scripted_scaffold(_orca_config(tmp_path)), confirm=_allow)
+    with pytest.raises(harness.TurnFailed, match="scaffold_templates crashed") as failed:
+        harness.run_turn(agent, "scaffold my templates")
+    assert _seen_by_the_next_turn(failed.value.messages) == (
+        [("scaffold_templates", "interrupted")],
+        ["scaffold my templates", "what happened?"],
+    )
+
+
+def test_an_allowed_change_that_ran_beside_a_crashing_call_is_kept(
+    tmp_path: Path, crashing_tool: Any, slow_config_writes: None
+):
+    """A change that went through is in the record, whatever the call beside it did.
+
+    PydanticAI runs a response's calls side by side and, when one crashes, cancels the rest
+    and discards their results — but a tool in a worker thread still finishes. The save
+    wrote its file and the record called it interrupted, so the next turn was told a change
+    that happened never had. The write is slowed so that, run beside the crash, it would
+    still be running when the crash landed.
+    """
+    config = tmp_path / "input.yaml"
+    runnable = yaml.safe_dump({"steps": [{"step": 1, "engine": "orca", "operation": "sp"}]})
+    crashing_tool("scaffold_templates")
+
+    def both(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart("save_config", {"path": str(config), "yaml_text": runnable}),
+                ToolCallPart("scaffold_templates", {"config_path": str(config)}),
+            ]
+        )
+
+    agent = harness.build_agent(FunctionModel(both), confirm=_allow)
+    with pytest.raises(harness.TurnFailed, match="scaffold_templates crashed") as failed:
+        harness.run_turn(agent, "save and scaffold")
+    assert config.is_file()
+    returns, _prompts = _seen_by_the_next_turn(failed.value.messages)
+    assert returns == [("save_config", "success"), ("scaffold_templates", "interrupted")]
+
+
+def _asks_to_scaffold(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(
+        parts=[ToolCallPart("scaffold_templates", {"config_path": "/p/input.yaml"})]
+    )
+
+
+def _suspended_on_a_scaffold() -> list[ModelMessage]:
+    """A builder run's history, paused on one call that still waits for its verdict."""
+    agent = harness.build_web_agent(FunctionModel(_asks_to_scaffold))
+    suspended = harness.run_turn(agent, "scaffold it")
+    assert isinstance(suspended.output, DeferredToolRequests)
+    return suspended.all_messages()
+
+
+def _closed(failed: harness.TurnFailed, history: list[ModelMessage]) -> None:
+    """``failed`` handed back ``history`` itself, its open calls closed as interrupted."""
+    *kept, closed = failed.messages
+    assert kept == history
+    assert isinstance(closed, ModelRequest)
+    assert (closed.state, closed.parts) == ("interrupted", [])
+    assert _seen_by_the_next_turn(failed.messages) == (
+        [("scaffold_templates", "interrupted")],
+        ["scaffold it", "what happened?"],
+    )
+
+
+def test_a_turn_that_fails_before_its_run_keeps_the_history_it_was_given():
+    """A run that recorded nothing leaves the conversation as it was, not empty.
+
+    A run that fails before it takes its history in — here the model's client failing to
+    open — records nothing, and storing that would wipe the chat. The history it was given
+    ends in calls still waiting on a verdict (a suspended builder run), and those are
+    closed as well, so the next turn can follow.
+    """
+    history = _suspended_on_a_scaffold()
+
+    class Unopenable(FunctionModel):
+        async def __aenter__(self) -> Self:
+            raise ConnectionError("the client could not open")
+
+    agent = harness.build_agent(Unopenable(_asks_to_scaffold), confirm=_allow)
+    with pytest.raises(harness.TurnFailed, match="could not open") as failed:
+        harness.run_turn(agent, "and now?", message_history=history)
+    _closed(failed.value, history)
+
+
+def test_a_run_refused_for_calls_left_open_hands_them_back_closed():
+    """The run took the history in and refused the prompt; what it recorded is closed.
+
+    A new message after calls nobody answered is refused ("unprocessed tool calls") once
+    the run has recorded the history, and no release marks those calls interrupted for
+    that — so the record, stored as it was, refused every later turn the same way.
+    """
+    history = _suspended_on_a_scaffold()
+    agent = harness.build_agent(FunctionModel(_asks_to_scaffold), confirm=_allow)
+    with pytest.raises(harness.TurnFailed, match="unprocessed tool calls") as failed:
+        harness.run_turn(agent, "and now?", message_history=history)
+    _closed(failed.value, history)
+
+
+# ---------------------------------------------------------------------------
 # REPL + CLI
 # ---------------------------------------------------------------------------
 
@@ -781,8 +953,10 @@ def test_chat_repl_survives_a_dead_endpoint(monkeypatch: pytest.MonkeyPatch):
     from chemrefine.agent import chat
 
     turns = iter([ConnectionError("connection refused"), "recovered"])
+    seen: list[list[ModelMessage]] = []
 
     def flaky(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(list(messages))
         turn = next(turns)
         if isinstance(turn, Exception):
             raise turn
@@ -798,6 +972,46 @@ def test_chat_repl_survives_a_dead_endpoint(monkeypatch: pytest.MonkeyPatch):
     chat.main(provider="custom")
     failed = next(i for i, line in enumerate(echoed) if "model endpoint failed" in line)
     assert any("recovered" in line for line in echoed[failed + 1 :])
+    # The message whose turn failed stays on the screen, and so in the conversation.
+    assert _returns_and_prompts(seen[-1]) == ([], ["hello", "again"])
+
+
+def test_chat_repl_remembers_what_a_failed_turn_did(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """The REPL continues from the failed turn's record, not from the turn before it."""
+    import typer
+
+    from chemrefine.agent import chat
+
+    config = _orca_config(tmp_path)
+    seen: list[list[ModelMessage]] = []
+
+    def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(list(messages))
+        if len(seen) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart("scaffold_templates", {"config_path": str(config)})]
+            )
+        if len(seen) == 2:
+            raise ConnectionError("the endpoint went away")
+        return ModelResponse(parts=[TextPart("the templates are written")])
+
+    monkeypatch.setenv("CHEMREFINE_LLM_MODEL", "test-model")
+    monkeypatch.setattr(ProviderConfig, "build_model", lambda self: FunctionModel(script))
+    monkeypatch.setattr(typer, "confirm", lambda *a, **k: True)
+    prompts = iter(["scaffold my templates", "what happened?", "exit"])
+    monkeypatch.setattr(typer, "prompt", lambda *a, **k: next(prompts))
+    echoed: list[str] = []
+    monkeypatch.setattr(typer, "echo", lambda m, **k: echoed.append(str(m)))
+
+    chat.main(provider="custom")
+    assert "model endpoint failed: the endpoint went away" in echoed
+    assert (tmp_path / "templates" / "step1.inp").is_file()
+    assert _returns_and_prompts(seen[2]) == (
+        [("scaffold_templates", "success")],
+        ["scaffold my templates", "what happened?"],
+    )
 
 
 def test_chat_repl_prints_what_the_model_made_of_a_refusal(

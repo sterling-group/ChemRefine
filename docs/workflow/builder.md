@@ -270,9 +270,12 @@ agent and appear as allow/deny cards naming the exact call and its arguments; no
 touches disk or starts compute until you click *allow*. If the turn fails after your
 verdicts were applied — the model endpoint dropping, say — the cards do not come back:
 the calls you allowed have already run, and nothing is left for them to answer. The
+conversation keeps them, though: your message and the changes that ran, with what they
+returned, are there for the agent's next turn, so it knows what already happened. The
 panel needs the local server, so the online playground shows a note instead.
 
-When the agent saves the config, **the builder loads it** — the form and the YAML pane
+When the agent saves the config, **the builder loads it** — even on a turn that fails
+after the save — the form and the YAML pane
 update, and the right column switches back to `input.yaml` so you see what changed. The
 agent is told about whichever file the builder currently has open, so *"add a freq step
 to that"* means the one on your screen. If you have unsaved edits of your own, nothing is

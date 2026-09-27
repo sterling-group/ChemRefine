@@ -28,6 +28,7 @@ from __future__ import annotations
 import importlib
 import secrets
 import threading
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, TypeVar
@@ -735,7 +736,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         """
         from pydantic_ai import DeferredToolRequests, DeferredToolResults
 
-        from chemrefine.agent.harness import build_web_agent, run_turn
+        from chemrefine.agent.harness import TurnFailed, build_web_agent, run_turn
         from chemrefine.agent.providers import ProviderConfig
 
         try:
@@ -746,11 +747,15 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
                 chat.history = None
                 chat.pending = None
                 return jsonify({"reply": None, "pending": None, "reset": True})
-            resume: tuple[_Suspended, DeferredToolResults] | None = None
+            # The conversation this turn continues: the suspended run's, when verdicts
+            # resume it. A config save is this turn's when that history had not seen it.
+            started = chat.history
+            verdicts: DeferredToolResults | None = None
             if body.approvals:
                 if chat.pending is None:
                     raise ConfigError("no suspended run to resume")
-                resume = (chat.pending, DeferredToolResults(approvals=dict(body.approvals)))
+                started = chat.pending.messages
+                verdicts = DeferredToolResults(approvals=dict(body.approvals))
             resolved = ProviderConfig.resolve(
                 body.provider or "custom",
                 model=body.model,
@@ -775,31 +780,35 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
                 config_path=body.config_path
                 or (str(config_path) if config_path is not None else None),
             )
-            if resume is not None:
-                suspended, verdicts = resume
+            if verdicts is not None:
                 # Taken, not read: the approved calls run before the model is asked anything,
                 # so once the resume starts, a failure — the endpoint dying on the next
                 # request — leaves no run for these cards to answer, and answering them
                 # again would run those calls twice.
                 chat.pending = None
-                result = run_turn(
-                    agent, message_history=suspended.messages, deferred_tool_results=verdicts
-                )
+                result = run_turn(agent, message_history=started, deferred_tool_results=verdicts)
             else:
-                result = run_turn(agent, body.message, message_history=chat.history)
+                result = run_turn(agent, body.message, message_history=started)
         except ChemRefineError as e:
             # The harness refusing its own settings while the agent is built (an unusable
             # CHEMREFINE_LLM_TIMEOUT), in the documented shape — with what is still pending,
             # so the page offers only cards that can be answered. A tool's refusal never
             # lands here: it is the tool's answer to the model.
             return jsonify(chat.refusal(e)), 400
+        except TurnFailed as e:
+            # The run failed part-way, and what it did first is the conversation now: the
+            # message, and every approved call that ran with its result. A config one of
+            # those calls saved is on disk, so the editor is told as on any other turn.
+            chat.history = e.messages
+            failed = {"error": f"model endpoint failed: {e}", "pending": chat.cards}
+            return jsonify({**failed, "wrote_config": _config_written_by(e.messages, started)}), 502
         except Exception as e:  # the model endpoint is the outside world
             return jsonify({"error": f"model endpoint failed: {e}", "pending": chat.cards}), 502
         # Computed once, before the branch, and reported on both: an approved write and a
         # fresh batch of approval cards arrive in the *same* turn, so a signal attached
         # only to the text branch would be silently dropped exactly when the agent is
         # working steadily.
-        wrote_config = _config_written_by(result)
+        wrote_config = _config_written_by(result.all_messages(), started)
         if isinstance(result.output, DeferredToolRequests):
             cards = [
                 {"id": call.tool_call_id, "tool": call.tool_name, "args": call.args}
@@ -844,29 +853,39 @@ def _config_payload(path: Path) -> dict[str, str]:
     return {"path": str(path), "yaml_text": io.read_utf8(path, what="config")}
 
 
-def _config_written_by(result: Any) -> str | None:
+def _config_written_by(messages: Sequence[Any], started: Sequence[Any] | None) -> str | None:
     """The path an agent turn saved a config to, or ``None`` if it saved none.
 
-    Read off the turn's own messages rather than guessed at from the reply text. Four
-    conditions, and each excludes a real case: the part must be a tool *return* (a request
-    is not a write), from ``save_config`` (the other mutating tools touch templates, seeds
-    and runs, never the YAML), with ``outcome`` success (a denied call still leaves a part
-    behind), and carrying ``written: True`` — because ``save_config`` reports
-    ``written: False`` *without raising* when validation refuses the draft, which is the
-    case that would otherwise have the editor adopt a file that was never saved.
+    Read off the turn's own messages rather than guessed at from the reply text:
+    ``messages`` is the conversation the turn ended with — returned, or carried by its
+    failure — and ``started`` the one it continued. Five conditions, and each excludes a
+    real case: the part must be a tool *return* (a request is not a write), one this turn
+    added (an earlier turn's save is not this one's), from ``save_config`` (the other
+    mutating tools touch templates, seeds and runs, never the YAML), with ``outcome``
+    success (a denied call still leaves a part behind), and carrying ``written: True`` —
+    because ``save_config`` reports ``written: False`` *without raising* when validation
+    refuses the draft, which is the case that would otherwise have the editor adopt a file
+    that was never saved.
+
+    The turn's own returns are the ones after as many as ``started`` holds: a run keeps the
+    history it takes in, in order, ahead of what it adds. Counted by return, not located by
+    message or by call — the run merges adjacent messages as it takes a history in, so a
+    message's position moves, and a provider may reuse a call id in a later response, so
+    an id seen before can still be this turn's save.
     """
     from pydantic_ai.messages import ToolReturnPart
 
-    for message in result.new_messages():
-        for part in getattr(message, "parts", []):
-            if (
-                isinstance(part, ToolReturnPart)
-                and part.tool_name == "save_config"
-                and part.outcome == "success"
-                and isinstance(part.content, dict)
-                and part.content.get("written") is True
-            ):
-                return str(part.content.get("path"))
+    def returns(history: Sequence[Any]) -> list[Any]:
+        return [p for message in history for p in message.parts if isinstance(p, ToolReturnPart)]
+
+    for part in returns(messages)[len(returns(started or ())) :]:
+        if (
+            part.tool_name == "save_config"
+            and part.outcome == "success"
+            and isinstance(part.content, dict)
+            and part.content.get("written") is True
+        ):
+            return str(part.content.get("path"))
     return None
 
 
