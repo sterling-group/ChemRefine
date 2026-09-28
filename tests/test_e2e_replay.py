@@ -52,6 +52,7 @@ from chemrefine.engines.api import ArtifactEngine, get_engine
 from chemrefine.engines.orca.output import parse_output
 from chemrefine.errors import ChemRefineError
 from chemrefine.io import read_xyz_frames
+from chemrefine.quantities import HARTREE_TO_KCALMOL
 from chemrefine.recovery import Action
 from chemrefine.state import FailureKind, JobBatch, JobTriple, StepContext, StepInputs
 from chemrefine.step import RunPlan, StepMode, StepOutcome
@@ -416,37 +417,6 @@ def _conformers(run: Replayed) -> None:
     assert lowest.energy_hartree == min(refined.values()), "the lower; which child is a near-tie"
 
 
-def _nms_minimum(run: Replayed) -> None:
-    """A saddle-point seed resolved to a true minimum by NMS round 2, under the parent's id."""
-    case, submitter = run.case, run.submitter
-    # Round 1 as it was submitted: the canonical `.out` of the recorded tree is the promoted
-    # winner, as a user's tree has it.
-    round_one = parse_output(case.submitted_file("step1/0", 0, "step1_0.out"), "opt_sp")[0]
-    assert round_one.imaginary_freqs, "the captured seed must be a saddle"
-
-    structure_dir = case.output_dir / "step1" / "0"
-    attempt = structure_dir / "attempt1"
-    children = sorted(p.name for p in attempt.iterdir() if p.is_dir())
-    assert children and all(name.startswith("0_m") for name in children)
-    assert set(submitter.submissions()) >= set(children)
-    assert list(attempt.glob("*/*.result.json")), "round-2 children leave canonical records"
-    # The attempt holds round 1 (loose files) and its children (subdirectories); the
-    # canonical location holds exactly one calculation — the winner's.
-    assert (attempt / "step1_0.out").is_file(), "round 1 is archived, not overwritten"
-    canonical_out = (structure_dir / "step1_0.out").read_text(encoding="utf-8")
-    child_outs = [p.read_text(encoding="utf-8") for p in sorted(attempt.glob("*/step1_*.out"))]
-    assert canonical_out != (attempt / "step1_0.out").read_text(encoding="utf-8")
-    assert child_outs.count(canonical_out) == 1, "canonical is one specific child's output"
-    caption = (structure_dir / "step1_0.xyz").read_text(encoding="utf-8").splitlines()[1]
-    assert caption == "NMS-resolved 0"
-
-    (survivor,) = run.outcomes[0].state.structures
-    assert survivor.id == "0", "the resolved child is written back under the parent id"
-    assert survivor.converged
-    assert survivor.imaginary_freqs == {}, "a verified minimum — a table, with nothing in it"
-    assert len(run.outcomes[1].state.structures) == 1
-
-
 def _nms_recovery(run: Replayed) -> None:
     """Every way a ``ts`` resolution ends, and recovery re-attempting exactly what is pending.
 
@@ -657,20 +627,126 @@ def _triage(run: Replayed) -> None:
     assert math.isclose(float(row["Energy (Hartree)"]), gibbs[survivor.id], abs_tol=1e-8)
 
 
-def _ts_pes(run: Replayed) -> None:
-    """A scan max-sampled to its highest point, then an OptTS that passes the inferred ts target."""
-    scan_points = parse_output(run.case.captured / "step1" / "0" / "step1_0.out", "pes")
-    assert len(scan_points) >= 3, "the scan must resolve several points"
-    assert len(run.submitter.calls[1].files) == 1, "max count: 1 keeps one TS candidate"
-    (ts_seed,) = run.outcomes[0].state.structures
-    assert ts_seed.energy_hartree == max(
-        p.energy_hartree for p in scan_points if p.energy_hartree is not None
+def _ts_path(run: Replayed) -> None:
+    """HCN to HNC over its barrier: a scan up to it, the saddle, and down both sides.
+
+    No step names its operation or its NMS target; each template implies them. The relaxed
+    scan of the H-C-N angle peaks inside its range, so ``max`` keeps the barrier rather than
+    an end of the scan. ``OptTS`` implies the ``ts`` target, and the saddle it finds, with
+    one imaginary mode, passes through with nothing to displace. ``Opt`` implies
+    ``minimum``: started on that saddle the optimiser stays there, so NMS displaces along
+    the imaginary mode both ways, and the two children fall to the two isomers. ``MaxIter
+    30`` cuts a child short. ORCA says it ran out of cycles, the output reads as terminated
+    but not converged, and the retry from its last geometry converges. Which child that is
+    depends on the limit, so none is named. The lower child, HCN, about 20 kcal/mol under
+    HNC, is promoted under the parent's id. ORCA recognizes it as linear, so five of its
+    modes are translations and rotations, not six, and its table keeps both halves of the
+    degenerate bend.
+    """
+    case, config, served = run.case, run.config, run.submitter.served
+    assert all(s.operation is None and "target" not in s.options for s in config.steps), (
+        "the templates imply every operation and target; a spelled-out one infers nothing"
     )
+    scan, saddle, settle = config.steps
+    s1, s2, s3 = scan.dir_name(), saddle.dir_name(), settle.dir_name()
+    step3_dir = config.step_dir(settle).resolve()
+
+    # Step 1: a relaxed scan whose highest point lies inside it, clear of the others.
+    points = parse_output(case.submitted_file(f"{s1}/0", 0, "step1_0.out"), "pes")
+    energies = [p.energy_hartree for p in points]
+    top = int(np.argmax(energies))
+    assert 0 < top < len(points) - 1, "a scan's end as its maximum makes `max` prove nothing"
+    runner_up = max(e for i, e in enumerate(energies) if i != top)
+    assert (energies[top] - runner_up) * HARTREE_TO_KCALMOL > 1.0, "no near-tie picks the top"
+    scanned = cache.load(config.step_dir(scan).resolve())
+    assert scanned is not None
+    assert [s.id for s in scanned.results.structures] == [f"0-{i}" for i in range(len(points))]
+    (barrier,) = run.outcomes[0].state.structures
+    assert barrier.id == f"0-{top}" and barrier.energy_hartree == energies[top]
+
+    # Step 2: OptTS implies `ts`, and a saddle with one imaginary mode already is one.
     (ts,) = run.outcomes[1].state.structures
+    assert ts.id == barrier.id and ts.resolved_from is None
     assert ts.imaginary_freqs is not None and len(ts.imaginary_freqs) == 1
-    assert not list((run.case.output_dir / "step2" / ts.id).glob("attempt*")), (
-        "a clean TS needs no NMS round 2"
+    assert {rel: n for rel, n in served.items() if rel.startswith(f"{s2}/")} == {
+        f"{s2}/{ts.id}": 1
+    }, "a TS under a ts target is run once, with no child to displace"
+
+    # Step 3: Opt implies `minimum`; round 1 stays on the saddle, so NMS displaces.
+    home = f"{s3}/{ts.id}"
+    prefix = f"{home}/attempt1/"
+    attempt = step3_dir / ts.id / "attempt1"
+    assert served[home] == 1
+    (round_one,) = parse_output(case.submitted_file(home, 0, f"step3_{ts.id}.out"), "opt_sp")
+    assert round_one.imaginary_freqs is not None and len(round_one.imaginary_freqs) == 1
+    (mode,) = round_one.imaginary_freqs
+    children = sorted(rel.removeprefix(prefix) for rel in served if rel.startswith(prefix))
+    assert children == [f"{ts.id}_m{mode}_neg", f"{ts.id}_m{mode}_pos"], (
+        "a minimum target displaces both ways along the one imaginary mode"
     )
+
+    # A child out of cycles, read as not converged, retried from where it stopped.
+    retried = [child for child in children if served[prefix + child] == 2]
+    assert retried, "MaxIter 30 must leave a child short of convergence"
+    for child in retried:
+        stopped_out = case.submitted_file(prefix + child, 0, f"step3_{child}.out")
+        assert CYCLE_LIMIT_RE.search(stopped_out.read_text(encoding="utf-8")), (
+            "ORCA's own notice that it ran out of cycles"
+        )
+        (stopped,) = parse_output(stopped_out, "opt_sp")
+        assert stopped.terminated_normally is True and stopped.converged is False
+        (retry_input,) = read_xyz_frames(attempt / child / f"step3_{child}_inp.xyz")
+        (displaced,) = read_xyz_frames(attempt / child / "attempt1" / f"step3_{child}_inp.xyz")
+        assert np.allclose(retry_input.positions, stopped.positions), "retried from its last cycle"
+        assert not np.allclose(retry_input.positions, displaced.positions, atol=1e-3)
+
+    # Every child, the retried one too, ends at a minimum: one isomer on each side. Its table
+    # leaves out what ORCA counts as translations and rotations, five when ORCA says the
+    # molecule is linear and six when it does not, whatever its geometry.
+    linear = "The molecule is recognized as being linear"
+    settled: dict[str, float] = {}
+    isomers: dict[str, str] = {}
+    for child in children:
+        final_out = attempt / child / f"step3_{child}.out"
+        (final,) = parse_output(final_out, "opt_sp")
+        assert final.converged is True and final.imaginary_freqs == {}, f"{child}: a minimum"
+        trivial = 5 if linear in final_out.read_text(encoding="utf-8") else 6
+        assert final.frequencies is not None
+        assert len(final.frequencies) == 3 * len(final.symbols) - trivial, (
+            f"{child}: the vibrations are the modes ORCA does not call trivial"
+        )
+        settled[child] = final.energy_hartree
+        at = dict(zip(final.symbols, final.positions, strict=True))
+        on_carbon = np.linalg.norm(at["H"] - at["C"]) < np.linalg.norm(at["H"] - at["N"])
+        isomers[child] = "HCN" if on_carbon else "HNC"
+    assert sorted(isomers.values()) == ["HCN", "HNC"], "the saddle's two sides are the isomers"
+
+    # The lower child is promoted under the parent's id, by a margin no near-tie decides.
+    winner = min(settled, key=settled.__getitem__)
+    gap = (max(settled.values()) - settled[winner]) * HARTREE_TO_KCALMOL
+    assert gap > 10.0, "HNC lies about 20 kcal/mol above HCN"
+    assert isomers[winner] == "HCN"
+    (survivor,) = run.outcomes[2].state.structures
+    assert survivor.id == ts.id and survivor.resolved_from == winner
+    assert survivor.energy_hartree == settled[winner]
+    assert survivor.converged and survivor.imaginary_freqs == {}
+    canonical = (step3_dir / ts.id / f"step3_{ts.id}.out").read_text(encoding="utf-8")
+    assert canonical == (attempt / winner / f"step3_{winner}.out").read_text(encoding="utf-8")
+    assert (attempt / f"step3_{ts.id}.out").read_text(encoding="utf-8") != canonical, (
+        "round 1 is sealed into the attempt, not overwritten"
+    )
+    resolution = json.loads((attempt / "resolution.json").read_text(encoding="utf-8"))
+    assert resolution == {"resolved_from": winner}
+    xyz = (step3_dir / ts.id / f"step3_{ts.id}.xyz").read_text(encoding="utf-8")
+    assert xyz.splitlines()[1] == f"NMS-resolved {ts.id}"
+
+    # ORCA says after the table that HCN is linear: indices 0-4 are its translations and
+    # rotations, so index 5 is a vibration, the bend's second half, level with the first.
+    assert linear in canonical
+    frequencies = survivor.frequencies
+    assert frequencies is not None
+    assert len(frequencies) == 3 * len(survivor.atoms) - 5, "HCN keeps its bend"
+    assert abs(frequencies[5] - frequencies[6]) < 1.0, "the two halves of a degenerate bend"
 
 
 def _host_guest(run: Replayed) -> None:
@@ -787,12 +863,11 @@ CHECKS: dict[str, Callable[[Replayed], None]] = {
     "mlip_extopt": _mlip_extopt,
     "mlip_screen": _mlip_screen,
     "mlip_train": _mlip_train,
-    "nms_minimum": _nms_minimum,
     "nms_recovery": _nms_recovery,
     "pyscf_extopt": _pyscf_extopt,
     "pyscf_sp": _pyscf_sp,
     "triage": _triage,
-    "ts_pes": _ts_pes,
+    "ts_path": _ts_path,
 }
 """What each case exists for, beyond what every recording is held to."""
 

@@ -1,0 +1,51 @@
+# HCN -> HNC on ORCA/GFN2-xTB, one frame: a relaxed scan up the isomerisation barrier,
+# the transition state at its top, and down both sides of it to the two isomers. The frame
+# is chemistry; the one setting made for the code rather than the chemistry is step 3's
+# cycle limit, low enough to cut one job short.
+# No step names its operation or its NMS target: each template implies them, and the case
+# exists to show that inference end to end.
+template_dir: ./templates
+output_dir: ./outputs
+executables: { orca: orca }  # the live harness injects the resolved absolute path
+dispatch: auto
+max_cores: 1
+
+input: ./hcn.xyz
+charge: 0
+multiplicity: 1
+
+steps:
+  # `! Opt XTB2` with `%geom Scan A 0 1 2 = 170, 30, 8 end end`: a relaxed scan of the
+  # H-C-N angle in 8 points. The Scan block makes it a `pes` run, and every point fans out
+  # under the seed's lineage. The energy climbs to 70 degrees and falls after it (8 kcal/mol
+  # lower at 50), so the maximum lies inside the scan and `max` keeps the barrier. On a scan
+  # that only climbed, `max` would keep an end point and prove nothing.
+  - step: 1
+    name: scan
+    engine: orca
+    sample: { method: max, count: 1 }
+
+  # `! OptTS Freq XTB2`, from an exact Hessian (`Calc_Hess`): OptTS implies the `ts`
+  # target. The saddle it finds has one imaginary mode, the hydrogen moving between C and
+  # N, so it is already a TS and passes through with no round 2.
+  - step: 2
+    name: ts
+    engine: orca
+    nms: true
+
+  # `! Opt Freq XTB2` with `%geom MaxIter 30 end`: a plain Opt implies `minimum`. Started on
+  # the saddle, the optimiser stays there (one cycle), so NMS displaces along its imaginary
+  # mode both ways, and the two children fall to HCN and HNC. The cycle limit cuts one child
+  # short: ORCA says it reached the maximum number of optimization cycles, the output is
+  # read as not converged, and the retry from its last geometry converges. The lower child,
+  # HCN, about 20 kcal/mol under HNC at GFN2-xTB, is promoted under the parent's id. ORCA
+  # recognizes HCN as linear, so its table keeps both halves of the degenerate bend.
+  # The cycle counts (30, then 6 on the retry, for one child; 26 for the other) were
+  # measured at a 0.5 A displacement; the default, 1.0 A, starts the children elsewhere
+  # and is unmeasured.
+  - step: 3
+    name: settle
+    engine: orca
+    nms: true
+    options: { displacement_value: 0.5 }
+    sample: { method: min, count: 1 }

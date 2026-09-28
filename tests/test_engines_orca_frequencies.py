@@ -18,7 +18,7 @@ from chemrefine.engines.orca.output.frequencies import (
     parse_normal_modes_tensor_from_text,
 )
 
-# A transition state as ORCA 6.1.1 printed one (the HCN/HNC saddle of the ts_pes recording):
+# A transition state as ORCA 6.1.1 printed one (the HCN/HNC saddle, at GFN2-xTB):
 # the translations and rotations first at 0.00, then the vibrations ascending, so the
 # imaginary mode leads them at index 6.
 _TS_BLOCK = """

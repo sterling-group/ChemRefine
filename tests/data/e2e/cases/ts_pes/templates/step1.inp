@@ -1,7 +1,0 @@
-!OPT XTB2
-
-%pal nprocs 4 end
-
-%geom
-   Scan A 0 1 2 = 160, 80, 5 end
-end

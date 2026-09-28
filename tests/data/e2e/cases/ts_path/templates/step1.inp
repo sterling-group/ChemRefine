@@ -1,0 +1,2 @@
+! Opt XTB2
+%geom Scan A 0 1 2 = 170, 30, 8 end end

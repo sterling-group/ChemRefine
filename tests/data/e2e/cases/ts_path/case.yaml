@@ -1,0 +1,5 @@
+# One run (no scenario): six ORCA jobs, one after another on one core. Measured one probe at
+# a time under the probe caps (nice 19, CPUWeight 20), the run itself, which is what the
+# live test times, took 3.3 s; the whole process, with imports and packing, 4.3 s (PL-6).
+# The budget is about twice the 3.3 s, rounded up.
+budget_s: 7

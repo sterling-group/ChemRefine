@@ -1,7 +1,0 @@
-!OptTS Freq XTB2
-
-%pal nprocs 4 end
-
-%geom
-   Calc_Hess true
-end

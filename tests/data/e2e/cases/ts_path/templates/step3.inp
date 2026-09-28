@@ -1,0 +1,2 @@
+! Opt Freq XTB2
+%geom MaxIter 30 end
