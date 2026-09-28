@@ -47,7 +47,7 @@ from replay import (
 from test_engines_orca_corpus import CYCLE_LIMIT_RE
 
 from chemrefine import cache, filtering, ids, pipeline
-from chemrefine.config import Config, StepConfig, load_config
+from chemrefine.config import BoltzmannSample, Config, StepConfig, load_config
 from chemrefine.engines.api import ArtifactEngine, get_engine
 from chemrefine.engines.orca.output import parse_output
 from chemrefine.errors import ChemRefineError
@@ -284,36 +284,136 @@ def test_an_exclusion_nothing_needs_is_stale() -> None:
 
 
 def _conformers(run: Replayed) -> None:
-    """GOAT ensemble → opt+freq ranked by Gibbs → single point: 3 → 2 → 1 survivors.
+    """Formic acid: a lean GOAT, a Boltzmann cut that drops E, a seeded kick, a cation.
 
-    The inputs carry the workflow's charge and the template's cores clamped to the budget.
-    The survivors of step 2 are the lowest by the energy its filter names. These three
-    conformers order identically by electronic and Gibbs energy (the degeneracy the case's
-    input.yaml documents), so the Gibbs-vs-electronic distinction itself is pinned at the
-    unit tier; this holds that the ranking energy reaches the filter end to end.
+    GOAT runs one worker at one temperature for one global iteration and still finds both
+    planar conformers, with E about 7.1 kcal/mol above Z. The 99% cut, recomputed here from
+    the ensemble ORCA wrote, keeps Z alone. The template's ``nprocs 8`` reaches ORCA as
+    ``max_cores``. The kick is ``random`` NMS on a minimum: seed 7 draws one of the nine
+    vibrations the parse names, and the two children start ±0.3 along it from the round-1
+    geometry and relax back to Z. Both are refined as a cation doublet: ORCA echoes UHF,
+    the charge, the multiplicity and one electron fewer, and each energy sits a vertical
+    ionisation above the neutral. The children end 3e-8 Eh apart at xTB and 7e-5 Eh apart
+    at HF, so which one survives is a near-tie. The check never names it, only that it is
+    the lower.
     """
-    case, submitter = run.case, run.submitter
-    ensemble = read_xyz_frames(next(case.captured.glob("step1/*/step1_*.finalensemble.xyz")))
-    assert len(ensemble) >= 3, "the GOAT ensemble must feed the downstream count: 3"
-    fan_out = len(submitter.calls[1].files)
-    assert fan_out == min(3, len(ensemble)), "step 2 runs step 1's three survivors"
-    assert [len(o.state.structures) for o in run.outcomes] == [fan_out, min(2, fan_out), 1]
+    case, config, served = run.case, run.config, run.submitter.served
+    goat, kick, ionise = config.steps
 
-    parsed: dict[str, tuple[float, float]] = {}
-    for out in case.captured.glob("step2/*/step2_*.out"):
-        result = parse_output(out, "opt_sp")[0]
-        assert result.gibbs_hartree is not None and result.energy_hartree is not None
-        parsed[out.parent.name] = (result.gibbs_hartree, result.energy_hartree)
-    survivors = [s.id for s in run.outcomes[1].state.structures]
-    assert survivors == sorted(parsed, key=lambda sid: parsed[sid][0])[: len(survivors)]
-    assert all(s.gibbs_hartree is not None for s in run.outcomes[1].state.structures)
+    # Step 1: the lean settings reached GOAT, and so did the clamped core count.
+    goat_out = case.submitted_file(f"{goat.dir_name()}/0", 0, "step1_0.out")
+    goat_text = goat_out.read_text(encoding="utf-8")
+    # One worker: without NWORKERS and TEMPLIST, ORCA starts four base workers, one per
+    # default temperature, and splits each in two: 8 workers and 40 s.
+    assert re.findall(r"Final number of workers\s+\.{3}\s+(\d+)", goat_text) == ["1"]
+    assert "Reached the maximum number of global iterations (1)!" in goat_text
+    template = (config.template_dir / "step1.inp").read_text(encoding="utf-8")
+    goat_dir = config.step_dir(goat).resolve()
+    rendered = (goat_dir / "0" / "step1_0.inp").read_text(encoding="utf-8")
+    [asked] = re.findall(r"nprocs\s+(\d+)", template)
+    assert int(asked) > config.max_cores, "a template within the budget leaves nothing to clamp"
+    assert re.findall(r"nprocs\s+(\d+)", rendered) == [str(config.max_cores)], "clamped"
+    assert re.findall(r"Number of available CPUs\s+\.{3}\s+(\d+)", goat_text) == [
+        str(config.max_cores)
+    ], "GOAT ran on the clamped count"
+    assert "* xyzfile 0 1 " in rendered, "the workflow itself is the neutral singlet"
 
-    goat_inp = (case.output_dir / "step1" / "0" / "step1_0.inp").read_text(encoding="utf-8")
-    assert f"nprocs {run.config.max_cores}" in goat_inp, "the template's 16 cores are clamped"
-    assert "nprocs 16" not in goat_inp
-    assert "* xyzfile 0 1 " in goat_inp
-    step2_inp = next(case.output_dir.glob("step2/*/step2_*.inp")).read_text(encoding="utf-8")
-    assert "* xyzfile 0 1 " in step2_inp
+    # The cut, recomputed apart from the filter it checks: the constants are written out.
+    ensemble = parse_output(goat_out, "goat")
+    assert len(ensemble) == 2, "formic acid's two planar conformers, Z and E"
+    energies = sorted(frame.energy_hartree for frame in ensemble)
+    above = [(e - energies[0]) * 627.5094740631 for e in energies]
+    assert 6.99 < above[1] < 7.19, "E-formic acid lies 7.09 kcal/mol above Z at GFN2-xTB"
+    sample = goat.sample
+    assert isinstance(sample, BoltzmannSample)
+    weights = [math.exp(-kcal / (1.987204259e-3 * sample.temperature_k)) for kcal in above]
+    kept: list[float] = []
+    cumulative = 0.0
+    for energy, weight in zip(energies, weights, strict=True):
+        kept.append(energy)
+        cumulative += 100 * weight / sum(weights)
+        if cumulative >= sample.percent_cumulative:
+            break
+    assert len(kept) < len(ensemble), "a cut that keeps every conformer proves nothing"
+    survivors = run.outcomes[0].state.structures
+    assert [s.energy_hartree for s in survivors] == kept, "the filter keeps what 99% keeps"
+    cached = cache.load(goat_dir)
+    assert cached is not None
+    assert sorted(s.id for s in cached.results.structures) == [
+        f"0-{i}" for i in range(len(ensemble))
+    ], "one id per GOAT frame, under the seed's"
+    (parent,) = survivors
+    assert parent.id == "0-0", "the draw pinned below is a function of this id"
+    # O=C-O-H over the seed's atom order (C, O, O, H on C, H on O): 0 deg is Z, 180 deg E.
+    (dropped,) = [s for s in cached.results.structures if s.id != parent.id]
+    assert math.cos(math.radians(parent.atoms.get_dihedral(1, 0, 2, 4))) > 0.99, "Z is kept"
+    assert math.cos(math.radians(dropped.atoms.get_dihedral(1, 0, 2, 4))) < -0.99, "E is cut"
+
+    # Step 2: seed 7 draws one of the vibrations the parse names, and the children start there.
+    kick_rel = f"{kick.dir_name()}/{parent.id}"
+    (round_one,) = parse_output(
+        case.submitted_file(kick_rel, 0, f"step2_{parent.id}.out"), "opt_sp"
+    )
+    assert round_one.imaginary_freqs == {}, "Z is a minimum: the kick explores, it repairs nothing"
+    vibrations, modes = round_one.frequencies, round_one.normal_modes
+    assert vibrations is not None and modes is not None
+    assert sorted(vibrations) == list(range(6, 3 * len(parent.atoms))), (
+        "a non-linear molecule's 3N-6 vibrations, past its six translations and rotations"
+    )
+    # rng_for("0-0", 7) over modes 6-14 draws mode 9. The draw is a pure function of the seed
+    # and the id, so a rerun of this config kicks along the same mode.
+    assert kick.options["seed"] == 7, "the draw pinned below is seed 7's"
+    k = 9
+    pair = {f"{parent.id}_m{k}_pos": 1.0, f"{parent.id}_m{k}_neg": -1.0}
+    children = run.outcomes[1].state.structures
+    assert sorted(c.id for c in children) == sorted(pair)
+    assert {rel: n for rel, n in served.items() if rel.startswith(f"{kick.dir_name()}/")} == {
+        kick_rel: 1,
+        **{f"{kick_rel}/attempt1/{cid}": 1 for cid in pair},
+    }, "round 1 once, then the pair once each in attempt1/, nothing retried"
+    amplitude = float(kick.options["displacement_value"])
+    attempt = config.step_dir(kick).resolve() / parent.id / "attempt1"
+    for child in children:
+        (start,) = read_xyz_frames(attempt / child.id / f"step2_{child.id}_inp.xyz")
+        displaced = round_one.positions + pair[child.id] * amplitude * modes[:, :, k]
+        assert np.allclose(start.positions, displaced, atol=1e-5), (
+            f"{child.id} must start {amplitude} along mode {k} from the round-1 geometry"
+        )
+        assert child.parent_id == parent.id
+        assert child.converged and child.imaginary_freqs == {}, "each child relaxes to a minimum"
+        assert child.resolved_from is None, "random fans out: nothing is promoted"
+        assert child.energy_hartree is not None
+        # The kicked starts sit ~0.02 Eh above Z, and E 0.011 Eh: both come back to Z.
+        assert abs(child.energy_hartree - round_one.energy_hartree) < 1e-5, "back in Z's basin"
+
+    # Step 3: the cation doublet reached ORCA, one ionisation above the neutral.
+    charge, multiplicity = 1, 2
+    assert (ionise.charge, ionise.multiplicity) == (charge, multiplicity)
+    electrons = int(parent.atoms.numbers.sum()) - charge
+    neutral = -186.2115  # RHF/STO-3G, the neutral singlet at the pos child's geometry
+    refined: dict[str, float] = {}
+    for cid in pair:
+        rel = f"{ionise.dir_name()}/{cid}"
+        assert served[rel] == 1, "both children are refined"
+        inp = config.step_dir(ionise).resolve() / cid / f"step3_{cid}.inp"
+        assert f"* xyzfile {charge} {multiplicity} " in inp.read_text(encoding="utf-8")
+        out = case.submitted_file(rel, 0, f"step3_{cid}.out")
+        text = out.read_text(encoding="utf-8")
+        echoed = {
+            key: re.findall(rf"\b{key}\s+\.{{4}}\s+(\S+)", text)
+            for key in ("HFTyp", "Charge", "Mult", "NEL")
+        }
+        assert echoed == {
+            "HFTyp": ["UHF"],
+            "Charge": [str(charge)],
+            "Mult": [str(multiplicity)],
+            "NEL": [str(electrons)],
+        }, "an open shell: ORCA picks UHF from the multiplicity the step gave it"
+        (single_point,) = parse_output(out, "sp")
+        assert 0.2 < single_point.energy_hartree - neutral < 0.6, "a charge ORCA never saw gives 0"
+        refined[cid] = single_point.energy_hartree
+    (lowest,) = run.outcomes[2].state.structures
+    assert lowest.energy_hartree == min(refined.values()), "the lower; which child is a near-tie"
 
 
 def _nms_minimum(run: Replayed) -> None:

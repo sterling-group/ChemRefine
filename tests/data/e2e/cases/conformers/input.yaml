@@ -1,47 +1,49 @@
-# Capture case: GOAT ensemble -> DFT opt+freq with Gibbs sorting -> final SP.
+# Conformers on ORCA/xTB at one core: a conformer search, a cut, a kick and an ionisation,
+# on one formic acid molecule throughout. The seed (formic_acid.xyz) is Z-formic acid,
+# O=C-O-H dihedral 0 deg; E (180 deg) lies 7.09 kcal/mol above it at GFN2-xTB. The one
+# frame is real chemistry: nothing here is code-only.
+#   1 goat    GOAT finds both planar conformers on lean settings, and the 99% Boltzmann cut
+#             drops E (weight 6e-6 at 298.15 K): the filter really removes a structure
+#   2 kick    `random` NMS on Z, a minimum: seed 7 draws one vibration, and the pair of
+#             children displaced +/-0.3 along it both relax back to Z
+#   3 ionise  HF/STO-3G single point on both children as the cation doublet (UHF): a
+#             vertical ionisation of 0.268 Eh (7.3 eV) at this level. The children end 7e-5
+#             Eh apart, a near-tie, so `min 1` keeps the lower, whichever it is
+#
+# The GOAT template asks for `nprocs 8`; max_cores clamps what ORCA is given to 1.
 template_dir: ./templates
 output_dir: ./outputs
 executables: { orca: orca }  # the live harness injects the resolved absolute path
 dispatch: auto
-# 4 = the physical cores of the capture machine; OpenMPI refuses ranks beyond
-# physical cores, and the step-1 template's nprocs 16 must clamp to this.
-max_cores: 4
+max_cores: 1
 
-input: ./glycol.xyz
+input: ./formic_acid.xyz
 charge: 0
 multiplicity: 1
 
 steps:
-  # GOAT conformer search (XTB); the template asks for 16 cores to prove the
-  # max_cores clamp.
-  #
-  # `min count 3` is what bounds this case. Step 1's filter is the only thing
-  # deciding how many structures reach the DFT opt+freq below, and it used to be
-  # `boltzmann 99%`, which kept 11 of GOAT's 14 — so the case spent 1212s running
-  # eleven opt+freq jobs to demonstrate that the next filter picks a couple by
-  # Gibbs energy. Three demonstrates that just as well. The Boltzmann filter moved
-  # to the mlip_screen case, where exercising it costs nothing.
+  # `! GOAT XTB` (the template): one worker at one temperature (NWORKERS 1, TEMPLIST) for one
+  # global iteration (MAXGLOBALITER 1), 15 optimisations in 5 to 6 s. Without NWORKERS and
+  # TEMPLIST, ORCA splits the search over 8 workers: 120 optimisations and 40 s.
   - step: 1
+    name: goat
     engine: orca
-    operation: goat
-    sample: { method: min, count: 3 }
+    sample: { method: boltzmann, percent_cumulative: 99 }
 
-  # Opt + freq, then keep the 2 lowest by Gibbs free energy (not electronic) —
-  # `count 2` of 3 rather than 3 of 3, so the Gibbs ranking still selects.
-  #
-  # KNOWN DEGENERACY in the current recording: the three captured conformers order
-  # identically by electronic and by Gibbs energy, so at the replay tier the
-  # Gibbs-vs-electronic distinction is vacuous (the unit tier pins it with adversarial
-  # data — tests/test_filtering.py / test_pipeline.py). A future live re-capture should
-  # pick an ensemble whose two orderings differ, and may then assert exactly that as a
-  # fixture guard.
+  # `! Opt Freq XTB2`: the operation is inferred, the NMS target is `random` on purpose. Z
+  # has no imaginary mode, so there is nothing to repair: seed 7 draws among the nine
+  # vibrations ORCA names (for id 0-0, mode 9 at 1123 cm-1). No sample: both children go on.
   - step: 2
+    name: kick
     engine: orca
-    operation: opt_sp
-    sample: { method: min, count: 2, energy_type: gibbs }
+    nms: true
+    options: { target: random, num_random_displacements: 1, displacement_value: 0.3, seed: 7 }
 
-  # Final single point on the Gibbs-ranked survivors.
+  # `! HF STO-3G`: the step's charge and multiplicity override the workflow's neutral
+  # singlet, and ORCA picks UHF for the doublet.
   - step: 3
+    name: ionise
     engine: orca
-    operation: sp
+    charge: 1
+    multiplicity: 2
     sample: { method: min, count: 1 }

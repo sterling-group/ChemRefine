@@ -1,3 +1,9 @@
-!GOAT XTB
-
-%pal nprocs 4 end
+! GOAT XTB
+%pal nprocs 8 end
+%goat
+  MAXEN 10
+  MINGLOBALITER 1
+  MAXGLOBALITER 1
+  NWORKERS 1
+  TEMPLIST 2903.97
+end

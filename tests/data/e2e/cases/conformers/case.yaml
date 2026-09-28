@@ -1,2 +1,3 @@
-# Wall time a live run of this case may take, measured with headroom.
-budget_s: 160
+# One run (no scenario). It took 8.9 s at one core with nothing else heavy running (6 ORCA
+# jobs, GOAT 5.9 s of them; 9.6 s for the whole process, 259 MB peak): about twice that.
+budget_s: 18
