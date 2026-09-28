@@ -1,0 +1,62 @@
+# The direct MLIP engine (mlip) at its own seam: one library per step, each run by its own
+# script under its backend's interpreter, one core. MACE-OFF relaxes the seed and the other
+# three libraries each take a single point of its result: SevenNet and CHGNet at their
+# defaults, ORB at its molecular loader, which reads the step's charge and multiplicity.
+# What every script engine shares (the output rules, the retry of a run cut short, `skip`)
+# runs here through MACE; MISSING_OUTPUT is the pyscf case's to show.
+template_dir: ./templates
+output_dir: ./outputs
+dispatch: auto
+max_cores: 1
+
+# Frame 0: water with one O-H stretched to 1.30 A, so four LBFGS steps cannot reach fmax.
+# Frame 1 (code-only): water with both hydrogens on one site. MACE's forces there are not
+# finite, the relaxation carries them into the geometry, and the script writes positions
+# the engine cannot read.
+input: ./waters.xyz
+charge: 0
+multiplicity: 1
+
+steps:
+  # opt.py relaxes with `fmax: 0.5` in at most four steps and reports whether it got there
+  # (`last_converged`). Frame 0 stops short, is judged not converged and retried from where it
+  # stopped, and converges in the retry's four steps (0.47 eV/A at the end, against 0.5).
+  # Frame 1's output is unparseable, which `skip` ledgers and never retries. The options use
+  # the `task` and `model` aliases, which the rendered script must spell out.
+  - step: 1
+    name: mace
+    engine: mlip
+    operation: opt_sp
+    template: opt.py
+    on_failure: skip
+    options: { task: mace_off, model: small, device: cpu }
+
+  # SevenNet's default model (7net-0) on the relaxed water. Its energies sit on a PBE
+  # reference, about -0.52 Eh for a water, so the three steps below name their library by
+  # energy as well as by script.
+  - step: 2
+    name: sevenn
+    engine: mlip
+    operation: sp
+    template: sp.py
+    options: { task_name: sevenn, device: cpu }
+
+  # CHGNet's default release. CHGNet is periodic-only, so the molecule is evaluated in a
+  # vacuum box, and the job warns once.
+  - step: 3
+    name: chgnet
+    engine: mlip
+    operation: sp
+    template: sp.py
+    options: { task_name: chgnet, device: cpu }
+
+  # ORB's molecular loader, which requires a charge and a spin on every structure: unstamped,
+  # its adapter raises, so a finite energy proves a stamp arrived, and the rendered script
+  # proves it is the step's (0, 1). The step runs neutral: its cation shift, 0.198 Eh against
+  # water's 0.464 Eh ionisation energy, is no physical charge response to hold a window to.
+  - step: 4
+    name: orb
+    engine: mlip
+    operation: sp
+    template: sp.py
+    options: { task_name: orb, model_name: orb_v3_direct_omol, device: cpu }

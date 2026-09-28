@@ -1,0 +1,5 @@
+# One run (no scenario): six MLIP processes one after the other on one core, each importing
+# its library and building its model, which is nearly all of the time. The four-library run
+# took 46.6 s to 57.9 s under nice 19 (PR-M1), and frame 1 adds a job of about 6 s. About
+# 1.5 times the slower figure with the extra job, rounded up.
+budget_s: 100

@@ -1,0 +1,10 @@
+3
+water, one O-H stretched to 1.30 A
+O 0 0 0
+H 1.30 0 0
+H -0.24 0.927 0
+3
+water, both hydrogens on one site (code-only)
+O 0 0 0
+H 0.957 0 0
+H 0.957 0 0

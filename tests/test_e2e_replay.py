@@ -198,9 +198,6 @@ def test_every_case_has_one_recording_and_one_check() -> None:
 NOT_LIVE: dict[str, str] = {
     "engine fake": "the suite's in-memory engine, not a shipped one",
     "engine qchem": "no Q-Chem binary on the machines that record",
-    "runs mlip-chgnet": "no case runs it directly yet",
-    "runs mlip-orb": "no case runs it directly yet",
-    "runs mlip-sevenn": "no case runs it directly yet",
     "trains mlip-chgnet": "no case fits it yet",
     "trains mlip-fairchem": "a FAIRChem fit needs about 7.3 GB, past what a recording machine has",
     "trains mlip-orb": "no case fits it yet",
@@ -880,14 +877,92 @@ def _host_guest(run: Replayed) -> None:
     assert len(flat.structures) == 1 < len(lowest), "without by_parent, count 1 keeps one"
 
 
-def _mlip_screen(run: Replayed) -> None:
-    """Two seeds through MACE, the knobs rendered, a Boltzmann cut keeping both."""
-    assert len(read_xyz_frames(run.case.root / "glycol2.xyz")) == 2
-    assert len(run.submitter.calls[0].files) == 2
-    rendered = (run.case.output_dir / "step1" / "0" / "step1_0.py").read_text(encoding="utf-8")
-    assert '"small"' in rendered and '"mace_off"' in rendered and '"cpu"' in rendered
-    # At 99% cumulative weight over two close MACE energies, both survive.
-    assert len(run.outcomes[0].state.structures) == 2, "boltzmann keeps both close conformers"
+def _mlip(run: Replayed) -> None:
+    """The direct MLIP engine, one library per step, each at its own seam.
+
+    MACE-OFF relaxes a stretched water in four LBFGS steps, which stop short: the script
+    reports ``converged: false``, and the job is retried from the geometry it stopped at and
+    converges. A water with both hydrogens on one site writes positions the engine cannot
+    read, which ``skip`` ledgers as unparseable, naming the output relative to its step, and
+    never retries. The ``task``/``model`` aliases reach the script spelled out. SevenNet's
+    and CHGNet's defaults and ORB's molecular loader each take a single point of the relaxed
+    water, and each energy sits in a window around its library's own, which another library,
+    another model or a lost geometry cannot reach. ORB's loader needs a charge and a spin, so
+    its script carries the step's.
+    """
+    case, config = run.case, run.config
+    mace, *single_points = config.steps
+    step_dir = {step.step: config.step_dir(step).resolve() for step in config.steps}
+    job = {step.step: f"{step.dir_name()}/0" for step in config.steps}
+    assert dict(run.submitter.served) == {
+        job[1]: 2,
+        f"{mace.dir_name()}/1": 1,
+        **{job[step.step]: 1 for step in single_points},
+    }, "one retry, for the run cut short; the unparseable frame is not retried"
+
+    # Step 1: the aliases spelled out, a relaxation cut short and retried from where it stopped.
+    rendered = (step_dir[1] / "0" / "step1_0.py").read_text(encoding="utf-8")
+    for line in ('model_name="small",', 'task_name="mace_off",', 'device="cpu",'):
+        assert line in rendered, f"the aliases, spelled out: {line!r} is not rendered"
+    stopped, retried = (
+        json.loads(case.submitted_file(job[1], k, "step1_0.json").read_text(encoding="utf-8"))
+        for k in (0, 1)
+    )
+    assert stopped["converged"] is False and retried["converged"] is True
+    (retry_input,) = read_xyz_frames(step_dir[1] / "0" / "step1_0_inp.xyz")
+    assert np.allclose(retry_input.positions, stopped["positions_angstrom"], atol=1e-6), (
+        "retried from the geometry it stopped at"
+    )
+    (seed, _junk) = read_xyz_frames(case.root / "waters.xyz")
+    assert not np.allclose(retry_input.positions, seed.positions, atol=1e-3)
+    (relaxed,) = run.outcomes[0].state.structures
+    assert relaxed.id == "0" and relaxed.converged is True
+    assert relaxed.energy_hartree == retried["energy_hartree"]
+    # MACE-OFF small's water: -76.47928349 Eh relaxed; attempt 1 stopped at -76.47887394.
+    assert relaxed.energy_hartree is not None
+    assert abs(relaxed.energy_hartree - -76.47928349) < 1e-5, relaxed.energy_hartree
+
+    (failure,) = cache.load_failure_records(step_dir[1])
+    assert (failure.structure_id, failure.kind) == ("1", FailureKind.UNPARSEABLE)
+    assert "output 1/step1_1.json reports a non-finite 'positions_angstrom'" in failure.reason, (
+        f"named relative to its step, with what it could not read: {failure.reason}"
+    )
+    assert not ABSOLUTE_PATH_RE.search(failure.reason), f"names the machine: {failure.reason}"
+
+    # Steps 2-4: each library's own energy for the relaxed water, from its own script.
+    (onward,) = read_xyz_frames(ids.step_survivors_path(step_dir[1], mace.step))
+    assert np.allclose(onward.positions, retried["positions_angstrom"], atol=1e-6), (
+        "the retry's geometry goes on"
+    )
+    # Each library's energy for that water, bitwise repeatable, in a window no wrong wiring
+    # measured reaches: SevenNet's nearest is ORB's default (3.6e-5 away), CHGNet's SevenNet
+    # (2.6e-2), and ORB-omol's MACE-OMOL (5.4e-5).
+    expected = {
+        2: ("sevenn", "", -0.51720720, 1e-5),
+        3: ("chgnet", "", -0.54316987, 1e-5),
+        4: ("orb", "orb_v3_direct_omol", -76.43313360, 1e-5),
+    }
+    for step in single_points:
+        n = step.step
+        task, model, energy, window = expected[n]
+        rendered = (step_dir[n] / "0" / f"step{n}_0.py").read_text(encoding="utf-8")
+        for line in (
+            f'model_name="{model}",',
+            f'task_name="{task}",',
+            "charge=0,",
+            "multiplicity=1,",
+        ):
+            assert line in rendered, f"step {n}: {line!r} is not rendered"
+        (single_input,) = read_xyz_frames(step_dir[n] / "0" / f"step{n}_0_inp.xyz")
+        assert np.allclose(single_input.positions, onward.positions, atol=1e-8), (
+            f"step {n} evaluates step 1's relaxed water"
+        )
+        (survivor,) = run.outcomes[n - 1].state.structures
+        assert survivor.id == "0"
+        assert survivor.energy_hartree is not None
+        assert abs(survivor.energy_hartree - energy) < window, (
+            f"step {n}: {survivor.energy_hartree} is not {task}'s water"
+        )
 
 
 def _mlip_extopt(run: Replayed) -> None:
@@ -1157,8 +1232,8 @@ CHECKS: dict[str, Callable[[Replayed], None]] = {
     "conformers": _conformers,
     "fairchem_sp": _fairchem_sp,
     "host_guest": _host_guest,
+    "mlip": _mlip,
     "mlip_extopt": _mlip_extopt,
-    "mlip_screen": _mlip_screen,
     "mlip_train": _mlip_train,
     "nms_recovery": _nms_recovery,
     "pyscf": _pyscf,
