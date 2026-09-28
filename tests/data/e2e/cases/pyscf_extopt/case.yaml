@@ -1,2 +1,5 @@
-# Wall time a live run of this case may take, measured with headroom.
-budget_s: 30
+# One run (no scenario): four ORCA jobs one after the other on one core, each starting a
+# PySCF server of its own. The run took 16.7 s and 17.0 s at a 1-minute load of 1.6 and 2.2,
+# under nice 19 (23.1 s at a load of 3.6), with a 366 MB anonymous-memory peak. The budget is
+# about twice the quieter figure.
+budget_s: 35

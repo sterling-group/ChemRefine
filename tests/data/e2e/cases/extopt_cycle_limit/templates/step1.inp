@@ -1,4 +1,0 @@
-!ExtOpt OPT
-
-%geom MaxIter 3 end
-%pal nprocs 1 end

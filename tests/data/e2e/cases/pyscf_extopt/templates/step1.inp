@@ -1,3 +1,2 @@
-!ExtOpt OPT NumFreq
-
-%pal nprocs 2 end
+! ExtOpt Opt
+%geom MaxIter 2 end

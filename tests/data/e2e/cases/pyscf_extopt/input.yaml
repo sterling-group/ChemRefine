@@ -1,22 +1,66 @@
-# Capture case: ORCA ExtOpt optimisation of water over a PySCF gradient server.
-#
-# The ExtOpt machinery with a second backend: ORCA drives the optimiser and asks
-# a long-running PySCF server for energy+gradient at each step, over the sidecar
-# URL and bearer token. HF/STO-3G on 3 atoms keeps every one of those SCFs at a
-# fraction of a second, so what this measures is the round trip, not the method.
+# ORCA's optimiser over a PySCF gradient server (pyscf-extopt), at this engine's own seam: one
+# LiH, three steps, four ORCA jobs one after the other on one core, each starting a server of
+# its own. What only this engine has runs here once: the server's UKS/`xc` branch, density
+# fitting, and `save_tensors` with `localized` copied home through `output_dirs`. So does the
+# ExtOpt side every ExtOpt engine shares: the charge and multiplicity the `.extinp` carries
+# to the server, the read of an optimisation cut short and its retry, NumFreq over server
+# gradients, and a bridge that gives a gradient up. What ExtOpt shares with native ORCA (NMS
+# rounds, recovery, filters) is proven on ORCA/xTB.
 template_dir: ./templates
 output_dir: ./outputs
+scratch_dir: ./scratch  # explicit, so `tensors/` is copied home from another directory
 executables: { orca: orca }  # the live harness injects the resolved absolute path
 dispatch: auto
-max_cores: 2
+max_cores: 1
 
-input: ./water.xyz
+# Li-H at 1.20 A: the compressed side of both species' minima (UKS-B3LYP/STO-3G LiH+ about
+# 2.01 A, RHF/STO-3G LiH about 1.51 A). Neutral LiH has two occupied orbitals, which the live
+# Fock check needs to tell localised orbitals from canonical ones (H2 has one).
+input: ./lih.xyz
 charge: 0
 multiplicity: 1
 
 steps:
+  # `! ExtOpt Opt` with `%geom MaxIter 2 end`. LiH+, a UKS-B3LYP/STO-3G doublet (one electron
+  # in a non-degenerate orbital): the step's charge and multiplicity reach ORCA's input, and
+  # the `.extinp` ORCA writes for each gradient carries them to the server, whose first
+  # energy is PySCF's own LiH+ doublet at the seed. A half-lost stamp is an electron count
+  # PySCF refuses. The seed sits on the cation's steep wall, 0.8 A short of its minimum, and
+  # ORCA stretches the bond about 0.055 A a cycle, so neither two cycles nor the retry's two
+  # can converge. ExtOpt prints FINAL SINGLE POINT ENERGY for the first cycle only, so each
+  # attempt is read at its last `Current Energy`, the retry starts where the first attempt
+  # stopped, and `best` keeps the retry's last cycle, unconverged. Two cycles are the floor:
+  # at one, the last energy printed would be the first cycle's, and the retry would restart
+  # from the seed.
   - step: 1
+    name: budget
     engine: pyscf-extopt
-    operation: opt_sp
-    options: { method: hf, basis: sto-3g, device: cpu, save_tensors: true }
-    sample: { method: min, count: 1 }
+    charge: 1
+    multiplicity: 2
+    on_failure: best
+    options: { method: dft, xc: b3lyp, basis: sto-3g, device: cpu }
+
+  # `! ExtOpt Opt NumFreq` with `%freq CentralDiff false end`. Neutral LiH at closed-shell HF,
+  # optimised to its minimum; NumFreq takes its Hessian from server gradients. ORCA
+  # recognizes the molecule as linear, so five of its six modes are translations and
+  # rotations and index 5 is its one vibration, which the read keeps. No mode is imaginary,
+  # and NMS, whose target the template implies (a minimum), passes it through with no second
+  # round. `save_tensors` is closed-shell only, which is why it rides on this step: each
+  # gradient call writes the one- and two-electron tensors in Boys-localised orbitals
+  # (`localized`), named for the ORCA job that asked (each NumFreq displacement is a job of
+  # its own), and the engine copies `tensors/` home from the scratch dir. HF, because the
+  # live Fock check assumes HF orbitals.
+  - step: 2
+    name: freq
+    engine: pyscf-extopt
+    nms: true
+    options: { method: hf, basis: sto-3g, device: cpu, save_tensors: true, localized: true }
+
+  # `! ExtOpt Opt`. Code-only: a 1 ms gradient timeout that no gradient meets. The bridge
+  # gives the first call up and exits with its one-line refusal naming the knob, ORCA stops
+  # on the wrapper's failure, and `best` carries step 2's minimum on, with no energy.
+  - step: 3
+    name: no_answer
+    engine: pyscf-extopt
+    on_failure: best
+    options: { method: hf, basis: sto-3g, device: cpu, gradient_timeout_seconds: 0.001 }

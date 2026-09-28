@@ -17,22 +17,26 @@ like any shipped recording; only an archive that passes replaces one, under ``--
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import time
 from collections.abc import Callable
 from pathlib import Path
 
+import numpy as np
 import pytest
 import replay
 from _pytest.mark.structures import ParameterSet
 from test_e2e_replay import check_recording
 
+from chemrefine import ids
 from chemrefine.config import Config, load_config
 from chemrefine.engines import _execution
 from chemrefine.engines._provision import preflight_backends
 from chemrefine.engines.api import get_engine
 from chemrefine.engines.orca.engine import OrcaEngine
 from chemrefine.errors import ConfigError
+from chemrefine.io import read_xyz_frames
 
 pytestmark = pytest.mark.integration
 
@@ -99,9 +103,56 @@ def _skip_unless_runnable(config: Config) -> None:
 
 
 def _pyscf_extopt(config: Config) -> None:
-    """``save_tensors`` delivers through ``output_dirs``, the one copy-back path that moves a
-    whole directory; the tensors are not archived, so only the live run can show them."""
-    assert list(config.output_dir.rglob("tensors/*.npz")), "save_tensors delivered nothing"
+    """What only a live run of ``pyscf_extopt`` shows: its servers, gradients and tensors.
+
+    Every job, the retry too, started a server of its own, which logged beside it (the first
+    attempt's log sealed with it). PySCF printed a gradient header into the job's runlog for
+    each call, density-fitted throughout: unrestricted DFT for step 1's LiH+ doublet,
+    restricted HF for step 2. Step 2's server saved the one- and two-electron tensors of each
+    call under the tag of the ORCA job that asked (the optimiser's, and each NumFreq
+    displacement's own), and ``output_dirs`` copied every file it saved home from the scratch
+    dir. The Fock matrix built from them over the occupied orbitals is not diagonal, since
+    they are Boys-localised rather than canonical, and its occupied-virtual block vanishes,
+    as it does at a converged HF solution in any orbitals that span the occupied space.
+    """
+    budget, freq, _no_answer = config.steps
+    runlogs = sorted(config.output_dir.rglob("*.runlog"))
+    assert runlogs, "no job left a runlog"
+    for runlog in runlogs:
+        servers = list(runlog.parent.glob("server_*.log"))
+        assert len(servers) == 1, f"{runlog.parent}: {len(servers)} server logs, not one"
+
+    header = re.compile(r"^-+ (\w+) gradients -+$", re.MULTILINE)
+    for step, kind in ((budget, "DFUKS"), (freq, "DFRHF")):
+        logs = sorted(config.step_dir(step).rglob("*.runlog"))
+        assert logs, f"step {step.step} left no runlog"
+        for runlog in logs:
+            said = set(header.findall(runlog.read_text(encoding="utf-8", errors="replace")))
+            assert said == {kind}, f"{runlog.name}: gradients {said}, not {kind}"
+
+    step_dir = config.step_dir(freq)
+    tensors = sorted(step_dir.rglob("tensors/*.npz"))
+    assert tensors, "save_tensors delivered nothing"
+    (home,) = {path.parent.parent for path in tensors}
+    (server_log,) = home.glob("server_*.log")
+    log = server_log.read_text(encoding="utf-8", errors="replace")
+    asked = set(re.findall(r"\[req=(\S+)\] calc backend=pyscf", log))
+    saved = {Path(name).name for name in re.findall(r"PySCF tensors saved: (\S+)", log)}
+    assert {path.name for path in tensors} == saved == {f"{tag}.npz" for tag in asked}
+    assert len(asked) > 1, "the optimiser's calls and each displacement's, tagged apart"
+
+    (lih,) = read_xyz_frames(ids.step_survivors_path(step_dir, freq.step))
+    nocc = (int(lih.numbers.sum()) - freq.effective_charge(config.charge)) // 2
+    occ = slice(0, nocc)
+    for path in tensors:
+        with np.load(path, allow_pickle=False) as npz:
+            h1e, h2e = npz["h1e"], npz["h2e"]
+        coulomb = np.einsum("pqii->pq", h2e[:, :, occ, occ])
+        exchange = np.einsum("piiq->pq", h2e[:, occ, occ, :])
+        fock = h1e + 2 * coulomb - exchange
+        f_oo = fock[occ, occ]
+        assert np.abs(f_oo - np.diag(np.diag(f_oo))).max() > 1e-3, f"{path.name}: canonical"
+        assert np.abs(fock[occ, nocc:]).max() < 1e-4, f"{path.name}: not a converged HF density"
 
 
 LIVE_CHECKS: dict[str, Callable[[Config], None]] = {

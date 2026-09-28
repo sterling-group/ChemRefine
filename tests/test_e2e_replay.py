@@ -898,28 +898,6 @@ def _mlip_extopt(run: Replayed) -> None:
     assert survivor.converged and survivor.energy_hartree is not None
 
 
-def _extopt_cycle_limit(run: Replayed) -> None:
-    """An ExtOpt run out of cycles is retried from its last cycle; ``best`` keeps the retry's.
-
-    ExtOpt prints ``FINAL SINGLE POINT ENERGY`` for its first cycle only, so a run read at
-    the last of those came back at the geometry it was submitted with: the retry resubmitted
-    the seed, stopped at the same limit on the same path, and ``best`` carried an
-    unoptimised input downstream.
-    """
-    case = run.case
-    assert run.submitter.submissions() == ["0", "0"], "one convergence retry"
-    stopped = parse_output(case.submitted_file("step1/0", 0, "step1_0.out"), "opt_sp")[0]
-    retried = parse_output(case.submitted_file("step1/0", 1, "step1_0.out"), "opt_sp")[0]
-    (retry_input,) = read_xyz_frames(case.output_dir / "step1" / "0" / "step1_0_inp.xyz")
-    assert np.allclose(retry_input.positions, stopped.positions), "retried from its last cycle"
-    (seed,) = read_xyz_frames(case.root / "water_distorted.xyz")
-    assert not np.allclose(retry_input.positions, seed.positions, atol=1e-3)
-    (survivor,) = run.outcomes[0].state.structures
-    assert survivor.converged is False
-    assert survivor.energy_hartree == retried.energy_hartree
-    assert np.allclose(survivor.atoms.positions, retried.positions)
-
-
 def _mlip_train(run: Replayed) -> None:
     """Label → fine-tune (one job over the ensemble) → run the trained model on every structure.
 
@@ -1000,11 +978,115 @@ def _pyscf(run: Replayed) -> None:
 
 
 def _pyscf_extopt(run: Replayed) -> None:
-    """Water optimised over PySCF HF gradients, then NumFreq: a minimum with all-real modes."""
-    (structure,) = run.outcomes[0].state.structures
-    assert structure.energy_hartree is not None
-    assert -75.5 < structure.energy_hartree < -74.5, structure.energy_hartree
-    assert structure.imaginary_freqs == {}, "HF water minimum has no imaginary modes"
+    """ORCA's optimiser over a PySCF gradient server: cut short, run to a minimum, given up on.
+
+    Step 1 runs LiH+ as a UKS-B3LYP doublet, its charge and multiplicity carried to the
+    server by the ``.extinp`` ORCA writes: the first energy ORCA gets back is PySCF's own
+    LiH+ doublet at the seed. ``MaxIter 2`` stops each attempt far from converged, as ORCA
+    says itself. ExtOpt prints ``FINAL SINGLE POINT ENERGY`` for the first cycle only, so
+    each attempt is read at its last ``Current Energy``; the retry starts from the geometry
+    the first attempt stopped at, its first energy that one again, and ``best`` keeps the
+    retry's last cycle, unconverged, and hands it on to step 2. Step 2 optimises neutral
+    LiH at HF and takes a numerical Hessian over server gradients. ORCA recognizes the
+    molecule as linear, so its one vibration is the last of six modes and survives the
+    read; with no imaginary mode, NMS passes it through without a second round. Step 3
+    gives each gradient 1 ms: ORCA stops on the bridge's failure, and the ledgered reason
+    names the output relative to its step and quotes the bridge's one-line refusal, which
+    names ``gradient_timeout_seconds`` and carries no traceback. ``best`` carries step 2's
+    minimum on, with no energy. The tensors, the density-fitted gradients and the servers'
+    logs are not archived; the live check holds them.
+    """
+    case, served = run.case, run.submitter.served
+    budget, _freq, no_answer = run.reached
+    job = {step.step: f"{step.dir_name()}/0" for step in run.reached}
+    assert dict(served) == {job[1]: 2, job[2]: 1, job[3]: 1}, (
+        "one retry, for the cycle limit; the minimum and the abort run once"
+    )
+
+    # Step 1: both attempts cut short, far from converged, each read at its last cycle.
+    fspe_re = re.compile(r"FINAL SINGLE POINT ENERGY.*?(-?\d+\.\d+)")
+    current_re = re.compile(r"Current Energy\s+\.+\s+(-?\d+\.\d+)")
+    rms_re = re.compile(r"^\s*RMS gradient\s+(\S+)\s+(\S+)\s+(?:YES|NO)\s*$", re.MULTILINE)
+    attempts = []
+    for k, home in enumerate((case.output_dir / job[1] / "attempt1", case.output_dir / job[1])):
+        inp = (home / "step1_0.inp").read_text(encoding="utf-8")
+        assert "* xyzfile 1 2 " in inp, "the step's charge and multiplicity reach ORCA"
+        out = case.submitted_file(job[1], k, "step1_0.out")
+        text = out.read_text(encoding="utf-8")
+        assert CYCLE_LIMIT_RE.search(text), "ORCA's own notice that it ran out of cycles"
+        rms, tolerance = map(float, rms_re.findall(text)[-1])
+        assert rms >= 100 * tolerance, f"RMS gradient {rms / tolerance:.0f}x its tolerance"
+        [first] = [float(e) for e in fspe_re.findall(text)]  # ExtOpt: the first cycle's alone
+        last = float(current_re.findall(text)[-1])
+        parsed = parse_output(out, "opt_sp")[0]
+        assert parsed.terminated_normally and parsed.converged is False
+        assert parsed.energy_hartree == last, "read at its last cycle"
+        assert first - last > 1e-3, "which is not the first cycle's"
+        attempts.append((first, last, parsed))
+    (seed_energy, stopped_at, stopped), (retry_first, _, retried) = attempts
+    # PySCF alone, UKS-B3LYP/STO-3G LiH+ doublet at the seed: -7.61361824 Eh. Neutral LiH at
+    # RHF is 0.22 Eh lower there, and a half-lost stamp is an electron count PySCF refuses.
+    assert abs(seed_energy - -7.61361824) < 0.01, seed_energy
+
+    (seed,) = read_xyz_frames(case.root / "lih.xyz")
+    (retry_input,) = read_xyz_frames(case.output_dir / job[1] / "step1_0_inp.xyz")
+    assert np.allclose(retry_input.positions, stopped.positions), "retried from its last cycle"
+    assert not np.allclose(retry_input.positions, seed.positions, atol=1e-3)
+    assert abs(retry_first - stopped_at) < 1e-6, "its first energy is that one again"
+    assert not np.allclose(retried.positions, retry_input.positions, atol=1e-3), "and moved on"
+    (kept,) = run.outcomes[0].state.structures
+    assert kept.converged is False
+    assert kept.energy_hartree == retried.energy_hartree, "the retry's last cycle"
+    assert np.allclose(kept.atoms.positions, retried.positions)
+    (onward,) = read_xyz_frames(case.output_dir / job[2] / "step2_0_inp.xyz")
+    assert np.allclose(onward.positions, retried.positions), "and step 2 starts from it"
+    (failure,) = cache.load_failure_records(run.config.step_dir(budget).resolve())
+    assert (failure.structure_id, failure.kind) == ("0", FailureKind.NOT_CONVERGED)
+
+    # Step 2: a minimum, read with the one vibration a linear molecule has.
+    inp = (case.output_dir / job[2] / "step2_0.inp").read_text(encoding="utf-8")
+    assert "* xyzfile 0 1 " in inp, "the workflow's neutral singlet, not step 1's stamp"
+    freq_out = case.submitted_file(job[2], 0, "step2_0.out")
+    text = freq_out.read_text(encoding="utf-8")
+    assert "The molecule is recognized as being linear" in text
+    modes = [
+        (int(index), float(cm1))
+        for index, cm1 in re.findall(r"^\s*(\d+):\s+(-?\d+\.\d+) cm\*\*-1", text, re.MULTILINE)
+    ]
+    assert [index for index, _ in modes] == list(range(6)), "ORCA's table: 3N = 6 modes"
+    assert all(cm1 == 0.0 for _, cm1 in modes[:5]) and modes[5][1] > 0, "five trivial, one real"
+    minimum = parse_output(freq_out, "opt_sp")[0]
+    assert minimum.converged and minimum.imaginary_freqs == {}
+    assert minimum.frequencies == dict(modes[5:]), "a linear molecule keeps its one vibration"
+    assert minimum.normal_modes is not None and minimum.normal_modes.shape == (2, 3, 6)
+    # PySCF alone, RHF/STO-3G LiH at its minimum: -7.86346639 Eh.
+    assert abs(minimum.energy_hartree - -7.86346639) < 0.01, minimum.energy_hartree
+    (survivor,) = run.outcomes[1].state.structures
+    assert survivor.energy_hartree == minimum.energy_hartree
+    assert survivor.imaginary_freqs == {} and survivor.frequencies == minimum.frequencies
+    assert survivor.resolved_from is None
+    assert not list((case.output_dir / job[2]).glob("attempt*")), "a minimum: no NMS round 2"
+
+    # Step 3: the bridge gives the first gradient up, and says why in one line.
+    stopped_text = case.submitted_file(job[3], 0, "step3_0.out").read_text(encoding="utf-8")
+    assert "Error (ORCA/EXT): external program failed" in stopped_text, "ORCA stopped on it"
+    err = case.submitted_file(job[3], 0, "step3_0.err").read_text(encoding="utf-8")
+    said = [line.strip() for line in err.splitlines() if line.strip()]
+    assert len(said) == 1, f"the bridge's one-line refusal, alone on stderr: {said}"
+    (refusal,) = said
+    assert refusal.startswith("JobFailureError: "), refusal
+    assert "gave no reply within 0.001s" in refusal, "a timeout, not an unreachable server"
+    (failure,) = cache.load_failure_records(run.config.step_dir(no_answer).resolve())
+    assert (failure.structure_id, failure.kind) == ("0", FailureKind.NOT_TERMINATED_NORMALLY)
+    reason = failure.reason
+    assert " in 0/step3_0.out;" in reason, f"named relative to its step: {reason}"
+    assert not ABSOLUTE_PATH_RE.search(reason), f"names the machine: {reason}"
+    assert reason.endswith(f"step3_0.err ends: {refusal}"), "the bridge's refusal, whole"
+    assert "gradient_timeout_seconds" in reason, "naming the knob to raise"
+    assert "Traceback" not in reason and 'File "' not in reason, f"a traceback: {reason}"
+    (carried,) = run.outcomes[2].state.structures
+    assert carried.energy_hartree is None, "an abort has no energy to carry"
+    assert np.allclose(carried.atoms.positions, survivor.atoms.positions), "step 2's minimum, on"
 
 
 def _fairchem_sp(run: Replayed) -> None:
@@ -1016,7 +1098,6 @@ def _fairchem_sp(run: Replayed) -> None:
 
 CHECKS: dict[str, Callable[[Replayed], None]] = {
     "conformers": _conformers,
-    "extopt_cycle_limit": _extopt_cycle_limit,
     "fairchem_sp": _fairchem_sp,
     "host_guest": _host_guest,
     "mlip_extopt": _mlip_extopt,
