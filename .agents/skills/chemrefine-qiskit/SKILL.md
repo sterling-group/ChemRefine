@@ -61,9 +61,11 @@ Run the calculation only when the user requested execution. The core stack can b
 installed with either `pip install "chemrefine[qiskit]"` or
 `chemrefine backends install qiskit`. Aer estimators use the separate
 `chemrefine[qiskit-aer]` / `chemrefine backends install qiskit-aer` environment. Request
-approval before installing dependencies. Standard Aer is CPU-only; `device: cuda`
-requires a compatible Linux `qiskit-aer-gpu` environment and must never be treated as a
-hardware submission.
+approval before installing dependencies. Standard pip Aer is CPU-only; `device: cuda`
+requires a compatible CUDA-enabled Aer build within the declared version range.
+Follow the tested Conda recipe in `docs/engines/installing.md`; do not layer an
+older GPU wheel over CPU Aer. Verify an actual GPU job and the requested simulation
+method, not just device discovery. GPU simulation is never a hardware submission.
 
 After a run, inspect:
 

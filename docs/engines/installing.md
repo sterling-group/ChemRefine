@@ -221,10 +221,39 @@ backend names accordingly, so a mixed pipeline may provision both `qiskit` and
 `qiskit-runtime`; see [Runtime execution](qiskit-runtime.md) for explicit
 provider selection and credential-free recovery.
 
-Aer GPU wheels are a separate Linux distribution and require a compatible CUDA
-stack. Build a managed or custom backend environment in which
-`qiskit-aer-gpu>=0.17,<0.18` replaces standard `qiskit-aer`; do not install both
-distributions in one environment. A custom environment needs the same pinned
+Aer GPU simulation requires a CUDA-enabled Aer build within the declared
+`>=0.17,<0.18` range. The available PyPI `qiskit-aer-gpu==0.15.1` wheel is outside
+that range and cannot import with Qiskit 2.5. Do not install it over the CPU
+package: the two distributions write the same import directory.
+
+A tested Linux alternative is Conda Forge's CUDA build of Aer 0.17.2:
+
+```bash
+conda create -n chemrefine-cuda -c conda-forge python=3.12 'qiskit-aer=0.17.2=*cuda*' cuda-version=12
+conda activate chemrefine-cuda
+python -m pip install -e '.[qiskit-toolkit]'
+python -m pip check
+python -c 'from qiskit_aer import AerSimulator; print(AerSimulator().available_devices())'
+```
+
+These commands install the current source checkout. The existing Conda Aer
+distribution satisfies the pip requirement; do not force-reinstall Aer from
+PyPI afterward. Keep a Conda explicit environment export as well as `pip freeze`
+because pip does not inventory the CUDA libraries. Verify an actual GPU job,
+not just device discovery, before scheduling production calculations.
+See the [Aer build instructions](https://github.com/Qiskit/qiskit-aer/blob/main/CONTRIBUTING.md)
+for building another compatible CUDA variant.
+
+GPU availability does not certify every Aer method. Local validation of this
+build found intermittent `CUTENSORNET_STATUS_INTERNAL_ERROR` failures in
+`tensor_network` sampling, followed by missing-shot-memory errors. The same
+failure pattern is reported in [Aer issue #2382](https://github.com/Qiskit/qiskit-aer/issues/2382).
+Use `statevector` or, within its memory budget, `density_matrix` for affected
+sampling workloads until the chosen CUDA/Aer build passes a real circuit check.
+Do not silently replace a failed configured method or report it as a successful
+GPU measurement.
+
+A custom environment needs the same pinned
 Qiskit, Nature, Algorithms, PySCF, and ChemRefine source/version as the main
 installation. Point a step at its interpreter only when it cannot be
 provisioned under the normal `qiskit-aer` backend name:

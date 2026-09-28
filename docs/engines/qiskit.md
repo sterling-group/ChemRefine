@@ -250,7 +250,7 @@ values; `ComponentSelection(name="exact", options={})` is equivalent to
 | `optimizer` | `ComponentSelection(name='slsqp', options={})` | Classical optimizer for VQE's parameters. |
 | `initial_point` | `ComponentSelection(name='zeros', options={})` | Fixed-VQE parameter initialization. |
 | `cores` | `1` | Requested per-structure CPU allocation, capped by the run's `max_cores`. Aer uses the granted allocation as its maximum parallel-thread count. |
-| `device` | `cpu` | Shared engine option. Use `cuda` with a consumed GPU-capable Aer estimator or sampler in a Linux environment containing the compatible `qiskit-aer-gpu` package; it also makes ChemRefine request GPU resources. |
+| `device` | `cpu` | Shared engine option. Use `cuda` with a consumed GPU-capable Aer estimator or sampler in a Linux environment containing a compatible CUDA-enabled Aer build; it also makes ChemRefine request GPU resources. See the [verified installation recipe](installing.md#qiskit-nature). |
 | `backend_python` | `None` | Explicit backend interpreter override. Normally let ChemRefine select a declared provider profile containing every dependency consumed by the resolved component graph. |
 
 The Qiskit engine translates the older flat pair `active_electrons` /
@@ -1209,7 +1209,9 @@ estimator.
   [its domain and operator-transformation rules](qiskit-tapering.md).
 - The default estimators run locally. The standard `[qiskit-aer]` extra installs
   Aer's CPU distribution. Aer GPU simulation requires Linux, a compatible CUDA
-  stack, and the separately installed `qiskit-aer-gpu` distribution.
+  stack, and a CUDA-enabled Aer build within the supported version range. Follow
+  the [installation recipe](installing.md#qiskit-nature); do not overlay an older
+  GPU wheel on the CPU package.
 - An Aer noise model is a classical approximation of specified gate/readout
   errors. Explicitly selecting the `ibm_runtime` component enables remote execution,
   provider modes and retrieval; [Runtime options](qiskit-runtime.md) keep remote
@@ -1236,7 +1238,7 @@ estimator.
 | `basic_backend` or `aer_shots` rejects precision `0` | Shot-based `BackendEstimatorV2` requires a positive target precision. Use `statevector` or `aer_statevector` with `default_precision: 0.0` for exact expectations. |
 | `aer_statevector` looks noisy with positive precision | Aer `EstimatorV2` adds Gaussian perturbations at positive precision; it does not switch to finite shots. Use `aer_shots` for shot sampling or set `default_precision: 0.0` for exact saved expectation values. |
 | `aer_shots` rejects `noise_model` | Pass the JSON-compatible mapping returned by the pinned Aer version's `NoiseModel.to_dict(serializable=True)`, not a `NoiseModel` object, string path, or arbitrary dictionary. |
-| `device: cuda` is rejected or Aer reports no GPU device | Select `aer_statevector` or `aer_shots`, run on Linux with a compatible CUDA stack and `qiskit-aer-gpu`, and ensure ChemRefine's local/SLURM GPU allocation is nonzero. The standard `[qiskit-aer]` extra installs CPU Aer. |
+| `device: cuda` is rejected or Aer reports no GPU device | Select a GPU-capable Aer component, use a [compatible CUDA-enabled Aer build](installing.md#qiskit-nature), and ensure ChemRefine's local/SLURM GPU allocation is nonzero. The standard `[qiskit-aer]` extra installs CPU Aer. |
 | VQE and the final energy differ by a constant | Callback `objective_value_hartree` excludes nuclear-repulsion and active-space constants. Compare the final `energy_hartree` or `steps.csv` value. |
 | A larger active-space job exhausts memory | Exact and statevector simulation still scale exponentially in qubit count, including Aer statevector methods on a GPU. Reduce the active space or choose a method whose scaling fits the problem. |
 | Results change between SPSA runs | Set the SPSA `seed`, estimator/simulator seed, and initial-point seed; also pin package versions and all tolerances. |
