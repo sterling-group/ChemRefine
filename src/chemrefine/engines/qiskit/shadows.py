@@ -13,6 +13,7 @@ from math import comb, sqrt
 from typing import Any, Literal, Self, cast
 
 import numpy as np
+from numpy.typing import NDArray
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from chemrefine.engines.qiskit.determinants import (
@@ -290,6 +291,14 @@ def majorana_shadow_snapshot(
 
 
 @dataclass(frozen=True)
+class RDMStandardErrors:
+    """Real standard errors for one component of complex one/two-RDM estimates."""
+
+    one_body: NDArray[np.float64]
+    two_body: NDArray[np.float64] | None = None
+
+
+@dataclass(frozen=True)
 class ShadowResult:
     """Raw settings/outcomes, cluster estimates and aggregate experimental RDMs."""
 
@@ -297,8 +306,8 @@ class ShadowResult:
     counts: tuple[dict[str, int], ...]
     setting_rdms: tuple[ReducedDensityMatrices, ...]
     rdms: ReducedDensityMatrices
-    standard_errors_real: ReducedDensityMatrices | None
-    standard_errors_imag: ReducedDensityMatrices | None
+    standard_errors_real: RDMStandardErrors | None
+    standard_errors_imag: RDMStandardErrors | None
     metadata: dict[str, Any]
 
     def observable(self, operator: FermionicHamiltonian) -> dict[str, float | None]:
@@ -405,20 +414,24 @@ def estimate_fermionic_shadows(
             {"shots": shots, "accepted_shots": accepted, "acceptance_fraction": accepted / shots}
         )
         copied_counts.append(dict(batch))
-    one_values = np.array([rdm.one_body for rdm in clusters])
-    two_values = None if options.max_order == 1 else np.array([rdm.two_body for rdm in clusters])
+    one_values = np.array([rdm.one_body for rdm in clusters], dtype=np.complex128)
+    two_values = (
+        None
+        if options.max_order == 1
+        else np.array([rdm.two_body for rdm in clusters], dtype=np.complex128)
+    )
     mean = ReducedDensityMatrices(
         one_values.mean(axis=0), None if two_values is None else two_values.mean(axis=0)
     )
     real = imag = None
     if len(clusters) > 1:
-        real = ReducedDensityMatrices(
+        real = RDMStandardErrors(
             one_values.real.std(axis=0, ddof=1) / sqrt(len(clusters)),
             None
             if two_values is None
             else two_values.real.std(axis=0, ddof=1) / sqrt(len(clusters)),
         )
-        imag = ReducedDensityMatrices(
+        imag = RDMStandardErrors(
             one_values.imag.std(axis=0, ddof=1) / sqrt(len(clusters)),
             None
             if two_values is None

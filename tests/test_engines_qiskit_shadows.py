@@ -100,6 +100,9 @@ def test_orbital_channel_inversion_matches_exact_complex_qubit_design():
         3
     )
     np.testing.assert_allclose(result.standard_errors_real.one_body, expected)
+    assert result.standard_errors_real.one_body.dtype == np.float64
+    assert result.standard_errors_imag.one_body.dtype == np.float64
+    assert not result.standard_errors_real.one_body.flags.writeable
     assert not result.rdms.one_body.flags.writeable
 
 
