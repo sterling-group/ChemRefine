@@ -1473,3 +1473,18 @@ def test_an_override_is_validated_by_its_fields_own_rule():
         config.with_overrides(max_gpus=-1)
     with pytest.raises(ConfigError, match="'max_nodes' is not a config field"):
         config.with_overrides(max_nodes=2)
+
+
+def test_an_unconstrained_field_is_overridden_with_its_validated_value():
+    """A field that declares no constraint takes an override too, as its field's type.
+
+    The rule is the field itself, so a field with no constraint (``template_dir``) still
+    has one to validate by, and the copy carries the value the rule returns, not the raw
+    one: a path given as text lands as a ``Path``, as it would from YAML.
+    """
+    config = Config.model_validate(_minimal_config())
+    moved = config.with_overrides(template_dir="elsewhere")
+    assert moved.template_dir == Path("elsewhere")
+    assert isinstance(moved.template_dir, Path)
+    with pytest.raises(ConfigError, match="charge 'a': Input should be a valid integer"):
+        config.with_overrides(charge="a")

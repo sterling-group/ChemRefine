@@ -459,6 +459,10 @@ for the full map.
 
 ### Fixed
 
+- **`Config.with_overrides` takes any field.** Overriding a field that declares no
+  constraint, such as `template_dir`, raised a bare `TypeError` instead of copying the
+  value in. Every field is now validated by its own declaration, and the copy carries the
+  validated value, so a path given as text lands as a `Path`, as it does from YAML.
 - **A linear molecule keeps its lowest vibration.** ORCA's frequency reader treated six
   modes as translations and rotations for every molecule, but a linear one has five, which
   ORCA says in its own output ("The molecule is recognized as being linear"). So every

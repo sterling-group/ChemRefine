@@ -816,20 +816,22 @@ class Config(BaseModel):
         validated by exactly the constraint its field declares (``max_cores: ge=1``,
         ``max_gpus: ge=0``), read off the field rather than restated, so there is one
         floor and one wording, and a bad override is the same :class:`ConfigError` a bad
-        YAML value is. A name that is not a field is refused as a programming error, not
+        YAML value is. The copy carries the validated value, so a path given as text lands
+        as a ``Path``. A name that is not a field is refused as a programming error, not
         silently copied in.
         """
+        validated: dict[str, object] = {}
         for name, value in updates.items():
             field = self.__class__.model_fields.get(name)
             if field is None:
                 raise ConfigError(f"{name!r} is not a config field")
-            rule: TypeAdapter[Any] = TypeAdapter(Annotated[field.annotation, *field.metadata])
+            rule: TypeAdapter[Any] = TypeAdapter(Annotated[field.annotation, field])
             try:
-                rule.validate_python(value)
+                validated[name] = rule.validate_python(value)
             except ValidationError as e:
                 detail = "; ".join(err["msg"] for err in e.errors())
                 raise ConfigError(f"{name} {value!r}: {detail}") from e
-        return self.model_copy(update=dict(updates))
+        return self.model_copy(update=validated)
 
     def find_step(self, key: object) -> StepConfig | None:
         """Return the step matching ``key`` (a number or a name), or ``None``.
