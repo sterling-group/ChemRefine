@@ -9,7 +9,6 @@ and the ``on_failure`` policies driven from a genuinely missing output.
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 
 import pytest
@@ -20,23 +19,14 @@ from replay import (
     forget_provenance,
     recording,
     relocate,
-    replay_run_batch,
 )
 
-from chemrefine import cache, pipeline
-from chemrefine.config import Config, MinSample, load_config
+from chemrefine import pipeline
+from chemrefine.config import Config, load_config
 from chemrefine.errors import ChemRefineError
 from chemrefine.step import RunPlan, StepMode
 
 RUN_BATCH = "chemrefine.engines._execution.run_batch"
-
-
-def _with_step_update(config: Config, step_number: int, **updates: object) -> Config:
-    steps = [
-        step.model_copy(update=updates) if step.step == step_number else step
-        for step in config.steps
-    ]
-    return config.model_copy(update={"steps": steps})
 
 
 def _staged(name: str, root: Path) -> tuple[replay.ReplayCase, Config, int | None]:
@@ -181,70 +171,3 @@ def test_rebuilt_records_match_the_archived_ones_field_for_field(
             f"{rel}: the rebuilt fingerprint differs from the archive — the cache-key "
             f"payload changed; note the migration in the changelog and regenerate"
         )
-
-
-# ---------------------------------------------------------------------------
-# on_failure policies, driven by deleting one captured step-2 output
-# ---------------------------------------------------------------------------
-
-
-def _fail_one_step2_structure(tmp_path: Path) -> tuple[object, Config, str]:
-    """Extract conformers, delete one step-2 archived output, return (case, config, sid)."""
-    case = extract_case(recording("conformers"), tmp_path)
-    victim_dir = sorted(case.captured.glob("step2/*"))[0]
-    if victim_dir.name == "_cache":
-        victim_dir = sorted(case.captured.glob("step2/*"))[1]
-    sid = victim_dir.name
-    shutil.rmtree(victim_dir)
-    return case, load_config(case.config_path), sid
-
-
-def test_on_failure_skip_drops_the_failed_structure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    case, config, sid = _fail_one_step2_structure(tmp_path)
-    config = _with_step_update(config, 2, on_failure="skip")
-    # The policy under test lives in step 2; step 3's archive only holds the
-    # original survivors, so the replay stops after step 2.
-    config = config.model_copy(update={"steps": config.steps[:2]})
-    submitter = replay_run_batch(case, allow_missing={sid})
-    monkeypatch.setattr(RUN_BATCH, submitter)
-
-    outcomes = pipeline.run(config)
-
-    assert len(outcomes) == 2, "skip lets the pipeline finish"
-    survivors = {s.id for s in outcomes[1].state.structures}
-    assert sid not in survivors
-    # Step 2 samples `count: 2` (the conformers case) from the two that succeeded: exactly
-    # two survive, and none of them is the dropped one.
-    assert len(survivors) == 2
-
-
-def test_on_failure_best_keeps_the_structure_with_its_best_geometry(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """``best`` keeps the pipeline going; a backfilled input is kept but never ranked.
-
-    The structure whose job left no output is backfilled from its submitted input — the
-    geometry alone, with no energy of this step's — so it lands in the step's cache and
-    ledger, and the ``sample:`` filter, which cannot rank what has no energy, drops it
-    from the survivors rather than placing it by the previous step's number.
-    """
-    case, config, sid = _fail_one_step2_structure(tmp_path)
-    config = _with_step_update(
-        config, 2, on_failure="best", sample=MinSample(method="min", count=3)
-    )
-    config = config.model_copy(update={"steps": config.steps[:2]})
-    submitter = replay_run_batch(case, allow_missing={sid})
-    monkeypatch.setattr(RUN_BATCH, submitter)
-
-    outcomes = pipeline.run(config)
-
-    assert len(outcomes) == 2, "best lets the pipeline finish"
-    ran = len(submitter.calls[1].files)
-    survivors = outcomes[1].state.structures
-    assert len(survivors) == min(3, ran) - 1
-    assert all(s.energy_hartree is not None for s in survivors)
-    cached = cache.load(config.step_dir(config.steps[1]).resolve())
-    assert cached is not None
-    assert [s.id for s in cached.results.structures if s.energy_hartree is None] == [sid]

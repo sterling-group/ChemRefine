@@ -1,0 +1,2 @@
+! Opt XTB2
+%geom MaxIter 2 end

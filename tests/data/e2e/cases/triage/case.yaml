@@ -1,0 +1,4 @@
+# One run (no scenario): nine ORCA jobs, one after another on one core. With nothing else
+# heavy running, the run took 3.5 s, and the whole process 3.9 s with imports; a second run
+# also took 3.9 s (188 and 200 MB peak). The budget is about twice that.
+budget_s: 8

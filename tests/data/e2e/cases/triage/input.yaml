@@ -1,0 +1,51 @@
+# Triage on ORCA/GFN2-xTB: what `best` and `skip` do with real failures, and a ranking by
+# Gibbs energy that is not the electronic one. Four frames of triage.xyz:
+#   0, 1  two gauche ethylene glycol conformers (O-C-C-O -64 and +50 deg), each already a
+#         GFN2-xTB minimum: one optimisation cycle in either step. Conformer 1 lies 0.25
+#         kcal/mol above 0 in electronic energy, and its zero-point energy is 0.25 lower,
+#         so E+ZPE is a tie. It is the softer of the two (lowest modes 100 and 215 cm-1
+#         against 119 and 283): 0.14 kcal/mol more thermal energy, but 0.33 more T*S,
+#         nearly all of it vibrational, so it lies 0.19 kcal/mol below 0 in Gibbs energy.
+#         Every gap is far below xTB's accuracy: the order is a code check, not a
+#         chemical claim.
+#   2     water, stretched and opened: O-H 1.25 and 1.30 A, H-O-H 160 deg (code-only).
+#         ORCA caps every optimisation step at its trust radius (0.3), and each of the
+#         cycles here takes a capped step, so two cycles cannot relax it, and neither can
+#         the retry's two: it ends at O-H 1.06 and 1.08 A and 153 deg, still 7 cycles
+#         from the minimum (0.96 A, 107 deg) that step 2 reaches.
+#   3     FrH: GFN2-xTB is parametrised up to radon (Z=86), so ORCA aborts at its input
+#         check (code-only).
+# Water and FrH ride along only to exercise the policies. Step 2 ranks the water with the
+# glycols only as a code check: its energy is about 10 Eh above theirs.
+template_dir: ./templates
+output_dir: ./outputs
+executables: { orca: orca }  # the live harness injects the resolved absolute path
+dispatch: auto
+max_cores: 1
+
+input: ./triage.xyz
+charge: 0
+multiplicity: 1
+
+steps:
+  # `! Opt XTB2` with `%geom MaxIter 2 end`. The glycols converge. The water hits the cycle
+  # limit, is retried once from the last geometry it reached, and hits it again; `best`
+  # keeps the retry's last cycle, unconverged. FrH aborts and is not retried (it would abort
+  # the same way); `best` carries the input it was submitted with forward, with no energy.
+  # No sample: a filter drops a structure with no energy, so it would drop that backfill
+  # before step 2 could run it.
+  - step: 1
+    name: budget
+    engine: orca
+    on_failure: best
+
+  # `! Opt Freq XTB2`, with no operation and no NMS target given: the template implies an
+  # optimisation, to a minimum. The glycols and the water are minima with no imaginary mode,
+  # so NMS passes them through with no round 2. FrH aborts again, and `skip` drops it. The
+  # filter ranks by Gibbs energy and keeps the lowest.
+  - step: 2
+    name: rank
+    engine: orca
+    nms: true
+    on_failure: skip
+    sample: { method: min, count: 1, energy_type: gibbs }

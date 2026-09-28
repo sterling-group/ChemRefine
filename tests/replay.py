@@ -7,7 +7,7 @@ Tests extract one into a tmp dir and drive the real pipeline against it in
 two modes:
 
 * **fresh replay** — monkeypatch :func:`chemrefine.engines._execution.run_batch`
-  with :func:`replay_run_batch`, so the shipped engines run their real
+  with a :class:`ReplaySubmitter`, so the shipped engines run their real
   ``prepare`` / ``parse`` / NMS / filter / cache code and only the compute
   step is satisfied from the archive;
 * **relocation** — copy ``captured_outputs`` to the config's output dir and
@@ -323,14 +323,11 @@ class ReplaySubmitter:
     the ``.out``, ensemble sidecars, script-engine ``.json``, whatever the capture kept —
     each file found by its digest wherever the run left it. A submission the recording does
     not hold fails loudly, so nondeterminism drift (changed child IDs, renamed dirs, a
-    retry the live run did not make) is diagnosed, not swallowed. An id in
-    ``allow_missing`` whose recorded files a test deleted is served nothing and leaves its
-    submission unspent, to simulate a job that produced no output. An artifact step's
+    retry the live run did not make) is diagnosed, not swallowed. An artifact step's
     product, which no recording holds, is stubbed (:func:`_stub_artifact`).
     """
 
     case: ReplayCase
-    allow_missing: frozenset[str] = frozenset()
     calls: list[StepInputs] = field(default_factory=list)
     served: Counter[str] = field(default_factory=Counter)
 
@@ -374,8 +371,6 @@ class ReplaySubmitter:
             found = {entry["name"]: _locate(self.case.captured, entry) for entry in entries}
             missing = sorted(name for name, path in found.items() if path is None)
             if missing:
-                if sid in self.allow_missing:
-                    continue
                 raise AssertionError(f"{rel} submission {spent + 1}: {missing} not in the archive")
             self.served[rel] += 1
             for name, path in found.items():
@@ -416,11 +411,6 @@ def _stub_artifact(engine: object, ctx: StepContext) -> None:
     if not product.exists():
         product.parent.mkdir(parents=True, exist_ok=True)
         product.write_bytes(ARTIFACT_STUB)
-
-
-def replay_run_batch(case: ReplayCase, allow_missing: set[str] | None = None) -> ReplaySubmitter:
-    """A fresh archive-backed ``run_batch`` stand-in for ``case``."""
-    return ReplaySubmitter(case, allow_missing=frozenset(allow_missing or ()))
 
 
 def forbid_run_batch(engine: object, inputs: StepInputs, ctx: StepContext) -> JobBatch:

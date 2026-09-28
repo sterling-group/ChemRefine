@@ -14,6 +14,7 @@ import csv
 import hashlib
 import json
 import math
+import re
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -43,6 +44,7 @@ from replay import (
     verifiable_prefix,
     with_backend_python,
 )
+from test_engines_orca_corpus import CYCLE_LIMIT_RE
 
 from chemrefine import cache, filtering, ids, pipeline
 from chemrefine.config import Config, StepConfig, load_config
@@ -449,6 +451,112 @@ def _nms_recovery(run: Replayed) -> None:
     assert len(set(places)) == len(places), "each job in a scratch directory of its own"
 
 
+def _triage(run: Replayed) -> None:
+    """What ``best`` and ``skip`` do with real failures, and a ranking by Gibbs energy.
+
+    Step 1 (``best``, ``MaxIter 2``, no sample) meets both kinds of failure. The distorted
+    water runs out of cycles, as ORCA itself says, far from converged. It is retried once
+    from the last geometry it reached and runs out again, still far off, so ``best`` keeps
+    the retry's last cycle, unconverged. FrH makes ORCA abort at its input check, since xTB
+    stops at radon. An abort is not retried: its reason names the output relative to the
+    step and quotes ORCA's stderr, and ``best`` carries the input it was submitted with
+    forward, as a geometry alone. Step 2 (``skip``) runs FrH again and drops the abort. It
+    ranks the three minima by Gibbs energy, and the one it keeps is not the electronically
+    lowest. Which one that is gets recomputed from the archive, never named: the case holds
+    the two orders apart, by margins well clear of a tie.
+    """
+    case, served = run.case, run.submitter.served
+    budget, rank = run.reached
+    step_dirs = [run.config.step_dir(step).resolve() for step in run.reached]
+    seeds = read_xyz_frames(case.root / "triage.xyz")
+
+    # Frame 2: out of cycles twice, and nowhere near converged either time.
+    water = f"{budget.dir_name()}/2"
+    assert served[water] == 2, "a run out of cycles is retried once"
+    outs = [case.submitted_file(water, k, "step1_2.out") for k in (0, 1)]
+    for out in outs:
+        text = out.read_text(encoding="utf-8")
+        assert CYCLE_LIMIT_RE.search(text), "ORCA's own words: out of cycles"
+        rows = re.findall(r"^\s*RMS gradient\s+(\S+)\s+(\S+)\s+(?:YES|NO)\s*$", text, re.M)
+        assert len(rows) == 2, f"{out.name}: MaxIter 2 is two cycles, each judged"
+        rms, tolerance = map(float, rows[-1])
+        assert rms >= 100 * tolerance, f"stopped {rms / tolerance:.0f}x its tolerance: not definite"
+    (stopped,) = parse_output(outs[0], "opt_sp")
+    (retried,) = parse_output(outs[1], "opt_sp")
+    for attempt in (stopped, retried):
+        assert attempt.terminated_normally is True and attempt.converged is False
+    (retry_input,) = read_xyz_frames(case.output_dir / water / "step1_2_inp.xyz")
+    assert np.allclose(retry_input.positions, stopped.positions), "retried from its last cycle"
+    assert not np.allclose(retry_input.positions, seeds[2].positions, atol=1e-3)
+    assert not np.allclose(retried.positions, retry_input.positions, atol=1e-3), "and moved on"
+
+    # Step 1 under `best`: every structure kept, each failure as far as it got.
+    kept = {s.id: s for s in run.outcomes[0].state.structures}
+    assert list(kept) == ["0", "1", "2", "3"], "best keeps every structure"
+    assert kept["2"].converged is False
+    assert kept["2"].energy_hartree == retried.energy_hartree, "the retry's last cycle"
+    assert np.allclose(kept["2"].atoms.positions, retried.positions)
+    assert kept["3"].energy_hartree is None, "an abort has no energy to carry"
+    assert kept["3"].terminated_normally is None, "the input as a geometry, not a parsed run"
+    assert np.allclose(kept["3"].atoms.positions, seeds[3].positions), "its input, carried"
+    for sid, carried in (("2", retried.positions), ("3", seeds[3].positions)):
+        (onward,) = read_xyz_frames(step_dirs[1] / sid / f"step2_{sid}_inp.xyz")
+        assert np.allclose(onward.positions, carried), f"step 2 runs what best kept of {sid}"
+
+    # The abort, in each step: not retried, and its reason portable and ORCA's own.
+    ledgers = [{r.structure_id: r for r in cache.load_failure_records(d)} for d in step_dirs]
+    assert {sid: r.kind for sid, r in ledgers[0].items()} == {
+        "2": FailureKind.NOT_CONVERGED,
+        "3": FailureKind.NOT_TERMINATED_NORMALLY,
+    }
+    assert {sid: r.kind for sid, r in ledgers[1].items()} == {
+        "3": FailureKind.NOT_TERMINATED_NORMALLY
+    }
+    for step, step_dir, ledger in zip(run.reached, step_dirs, ledgers, strict=True):
+        home, stem = f"{step.dir_name()}/3", f"step{step.step}_3"
+        assert served[home] == 1, "an abort would abort again: it is not retried"
+        out_text = case.submitted_file(home, 0, f"{stem}.out").read_text(encoding="utf-8")
+        assert "Z>86" in out_text, "ORCA refused the element: xTB stops at radon"
+        err = step_dir / "3" / f"{stem}.err"
+        assert err.is_file(), "the abort's stderr is recorded, so a replay can quote it"
+        tail = [ln.strip() for ln in err.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        assert tail, "ORCA says on stderr why it aborted"
+        reason = ledger["3"].reason
+        assert f" in 3/{stem}.out" in reason, f"named relative to its step: {reason}"
+        assert f"{err.name} ends: " in reason and reason.endswith(tail[-1]), reason
+        assert not ABSOLUTE_PATH_RE.search(reason), f"names the machine: {reason}"
+
+    # Step 2: skip drops the abort, the rest are minima, and Gibbs picks the survivor.
+    cached = cache.load(step_dirs[1])
+    assert cached is not None
+    minima = cached.results.structures
+    assert [s.id for s in minima] == ["0", "1", "2"], "skip drops the abort; best would keep it"
+    for s in minima:
+        assert s.converged and s.imaginary_freqs == {}, f"{s.id}: a minimum"
+        assert all(_finite(v) for v in (s.gibbs_hartree, s.enthalpy_hartree, s.energy_zpe_hartree))
+    assert not list(step_dirs[1].glob("*/attempt*")), "a minimum under a minimum target: no round 2"
+
+    energy: dict[str, float] = {}
+    gibbs: dict[str, float] = {}
+    for s in minima:
+        out = case.submitted_file(f"{rank.dir_name()}/{s.id}", 0, f"step2_{s.id}.out")
+        (result,) = parse_output(out, "opt_sp")
+        assert result.gibbs_hartree is not None
+        energy[s.id], gibbs[s.id] = result.energy_hartree, result.gibbs_hartree
+    by_energy = sorted(energy, key=energy.__getitem__)
+    by_gibbs = sorted(gibbs, key=gibbs.__getitem__)
+    assert by_gibbs[0] != by_energy[0], "the case exists for a Gibbs order that is not E's"
+    for values, order in ((energy, by_energy), (gibbs, by_gibbs)):
+        gap = values[order[1]] - values[order[0]]
+        assert gap >= 1e-4, f"the lowest two are {gap:.1e} Eh apart: a tie, not an order"
+    (survivor,) = run.outcomes[1].state.structures
+    assert survivor.id == by_gibbs[0], "min by gibbs keeps the lowest free energy"
+    with (case.output_dir / "steps.csv").open(encoding="utf-8", newline="") as fh:
+        (row,) = [r for r in csv.DictReader(fh) if r["Step"] == str(rank.step)]
+    assert row["Energy type"] == "gibbs"
+    assert math.isclose(float(row["Energy (Hartree)"]), gibbs[survivor.id], abs_tol=1e-8)
+
+
 def _ts_pes(run: Replayed) -> None:
     """A scan max-sampled to its highest point, then an OptTS that passes the inferred ts target."""
     scan_points = parse_output(run.case.captured / "step1" / "0" / "step1_0.out", "pes")
@@ -583,6 +691,7 @@ CHECKS: dict[str, Callable[[Replayed], None]] = {
     "nms_recovery": _nms_recovery,
     "pyscf_extopt": _pyscf_extopt,
     "pyscf_sp": _pyscf_sp,
+    "triage": _triage,
     "ts_pes": _ts_pes,
 }
 """What each case exists for, beyond what every recording is held to."""
