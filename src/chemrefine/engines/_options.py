@@ -10,7 +10,7 @@ adds its own fields. It also lets the ExtOpt base type its ``options_cls`` Class
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal, Self
+from typing import Any, ClassVar, Literal, Self
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
 
@@ -35,6 +35,14 @@ class EngineOptions(BaseModel):
     """Base for an engine's validated ``step.options`` model."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+    unkeyed: ClassVar[frozenset[str]] = frozenset({"backend_python"})
+    """Fields that choose where a job runs, not what it computes — left out of the cache key.
+
+    A key that held one would tie a finished tree to the machine it ran on: the same
+    config pointing at its interpreter somewhere else recomputes every step on ``resume``,
+    and ``rebuild-cache`` refuses the tree as another configuration's
+    (:func:`chemrefine.step.derive_step_key`)."""
 
     device: Literal["cuda", "cpu"] = "cpu"
     """Compute device for this engine (``cuda`` ⇒ GPU, ``cpu`` ⇒ CPU).

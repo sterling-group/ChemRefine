@@ -32,7 +32,7 @@ from chemrefine.state import (
     StepResults,
     Structure,
 )
-from chemrefine.step import rebuild_cache_step, run_step
+from chemrefine.step import build_context, derive_step_key, rebuild_cache_step, run_step
 
 ARTIFACT_NAME = "model.pt"
 
@@ -200,14 +200,10 @@ def test_a_missing_product_fails_the_step_and_caches_nothing(tmp_path: Path):
 
 
 def _key_for(config: Config, seeds) -> cache.StepKey:
-    """The key run_step derives for the stub — its declared options included."""
+    """The key run_step derives for the stub, derived the way run_step derives it."""
+    engine = _StubArtifactEngine()
     step_cfg = config.steps[0]
-    return cache.StepKey.of(
-        step_cfg,
-        seeds.structures,
-        None,
-        engine_options=_StubTrainOptions.from_raw_lenient(step_cfg.options).model_dump(mode="json"),
-    )
+    return derive_step_key(build_context(config, step_cfg, seeds, engine), step_cfg, engine)
 
 
 def test_a_rerun_that_produces_nothing_does_not_adopt_the_previous_run(tmp_path: Path):

@@ -459,6 +459,13 @@ for the full map.
 
 ### Fixed
 
+- **The interpreter a step names is not part of its cache key.** `backend_python` rode
+  into every provisioned step's row key, so a tree whose steps named their interpreter
+  recomputed on `resume` wherever that interpreter lived elsewhere, and `rebuild-cache`
+  refused the tree as another configuration's. It chooses where a job runs, not what it
+  computes, and is no longer keyed. The key of every MLIP, PySCF and ExtOpt step moves
+  once: a tree cached before recomputes those steps on `resume`, and `rebuild-cache`
+  refuses it; `rerun N` is the migration.
 - **A MACE fine-tune starts from the family its step names.** MACE's `run_train` reads a
   bare size as a Materials Project model, and the step handed it the bare `model_name`, so
   a `mace_off` step naming `small` fine-tuned MACE-MP-0 small while its runlog said it

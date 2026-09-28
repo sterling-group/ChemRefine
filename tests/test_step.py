@@ -844,6 +844,29 @@ def test_a_model_path_is_keyed_by_basename_so_a_relocated_tree_derives_the_same_
     assert renamed.row_keys != here.row_keys, "two same-byte files stay distinguishable"
 
 
+def test_the_interpreter_a_step_names_is_not_part_of_its_key(tmp_path: Path):
+    """Where a job's backend runs is not what it computes, so it moves no key.
+
+    ``backend_python`` rode into the row key, so a tree whose steps named their
+    interpreter recomputed on ``resume`` wherever the interpreter lived somewhere else,
+    and ``rebuild-cache`` refused it as another configuration's. A knob that changes the
+    computation still moves the key.
+    """
+    from chemrefine.step import derive_step_key
+
+    def key_for(root: Path, **options: object):
+        cfg = _config(root, engine="mlip", options={"task_name": "mace_off", **options})
+        engine = get_engine("mlip")
+        ctx = build_context(cfg, cfg.steps[0], _seed_state(["0"]), engine)
+        return derive_step_key(ctx, cfg.steps[0], engine)
+
+    managed = key_for(tmp_path / "managed")
+    cluster = key_for(tmp_path / "cluster", backend_python="/apps/envs/mace/bin/python")
+    laptop = key_for(tmp_path / "laptop", backend_python="/home/me/envs/mace/bin/python3.12")
+    assert managed.row_keys == cluster.row_keys == laptop.row_keys
+    assert key_for(tmp_path / "gpu", device="cuda").row_keys != managed.row_keys
+
+
 def test_run_step_nms_branch_routes_through_coordinator(tmp_path: Path, monkeypatch):
     """run_step routes an `nms: true` step through the generic coordinator (nms.run_nms),
     then applies the on_failure policy to its survivors/failures."""
