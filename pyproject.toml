@@ -330,6 +330,8 @@ include = [
     "/LICENSE",
     "/CHANGELOG.md",
     "/pyproject.toml",
+    # The shipped benchmark regression tests import their standalone drivers.
+    "/scripts/quantum_*.py",
 ]
 
 # ── the lint gate: `pre-commit run --all-files` (ci.yml, release-check.sh) ──────────────────────

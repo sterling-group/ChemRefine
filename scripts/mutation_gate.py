@@ -543,6 +543,11 @@ _INPUTS = (
     "CITATION.cff",
     "CONTRIBUTING.md",
     "LICENSE",
+    # Benchmark regression tests import these standalone helpers. Keep the gate
+    # itself absent so its anchor tests cannot count as mutation detections.
+    "scripts/quantum_benchmarks.py",
+    "scripts/quantum_workloads.py",
+    "scripts/quantum_validation.py",
 )
 
 
@@ -553,6 +558,7 @@ def _copy_tree(dest: Path) -> None:
         if source.is_dir():
             shutil.copytree(source, dest / name, ignore=shutil.ignore_patterns("__pycache__"))
         else:
+            (dest / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, dest / name)
 
 
