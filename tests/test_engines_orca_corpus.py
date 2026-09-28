@@ -71,11 +71,12 @@ def _recorded_outputs() -> Iterator[tuple[str, str]]:
 def test_the_corpus_is_actually_there():
     """Guards against this file silently passing because it found nothing to check.
 
-    Sized against the *distinct* runs in the archives, not the tar member count. The floor is
-    deliberately below the current corpus: it catches an archive that stops being read, not
-    every change to what is recorded.
+    Sized against the *distinct* runs in the archives, not the tar member count. Each floor
+    here and below sits a few under the current corpus: losing any of the recordings that
+    carry most of it trips the floor, and an output more or less in a re-recorded case does
+    not.
     """
-    assert sum(1 for _ in _recorded_outputs()) >= 17
+    assert sum(1 for _ in _recorded_outputs()) >= 39
 
 
 ORCA_ABORT_RE = re.compile(
@@ -173,7 +174,7 @@ def test_every_frequency_output_yields_a_well_shaped_normal_mode_tensor():
         assert tensor.shape[:2] == (n_atoms, 3), label
         assert tensor.shape[2] >= 1, label
         checked += 1
-    assert checked >= 7, f"only {checked} frequency outputs found — corpus shrank?"
+    assert checked >= 19, f"only {checked} frequency outputs found — corpus shrank?"
 
 
 def test_every_recorded_gradient_reads_one_finite_row_per_atom():
@@ -198,4 +199,4 @@ def test_every_recorded_gradient_reads_one_finite_row_per_atom():
         assert forces.shape == (n_atoms, 3), label
         assert np.isfinite(forces).all(), label
         checked += 1
-    assert checked >= 11, f"only {checked} gradient outputs found — corpus shrank?"
+    assert checked >= 30, f"only {checked} gradient outputs found — corpus shrank?"
