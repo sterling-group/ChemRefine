@@ -32,6 +32,8 @@ from chemrefine.engines.qiskit.components.initial_states_extended import (
     build_determinant,
 )
 from chemrefine.engines.qiskit.context import ElectronicStructureContext
+from chemrefine.engines.qiskit.options import QiskitOptions
+from chemrefine.engines.qiskit.registry import validate_component_graph
 from chemrefine.errors import ConfigError
 
 pytestmark = [
@@ -151,6 +153,27 @@ def test_reference_aware_ucc_can_cross_parallel_compilation_boundary(
         assert Statevector(circuit.assign_parameters(values)).equiv(
             Statevector(original.assign_parameters(values))
         )
+
+
+@pytest.mark.parametrize("mapping", ["parity", "bravyi_kitaev", "z2_tapered"])
+def test_excitation_preserving_mapping_fails_during_schema_preflight(mapping):
+    """GUI/config validation must reject a known bad encoding before spawning a worker."""
+    with pytest.raises(ConfigError, match="unreduced Jordan-Wigner"):
+        validate_component_graph(
+            QiskitOptions(algorithm="vqe", ansatz="excitation_preserving", mapper=mapping)
+        )
+
+
+@pytest.mark.parametrize("algorithm", ["exact", "vqe"])
+def test_excitation_preserving_preflight_checks_only_consumed_ansatz(algorithm):
+    """An unused ansatz must not constrain an exact solver's mapper."""
+    validate_component_graph(
+        QiskitOptions(
+            algorithm=algorithm,
+            ansatz="excitation_preserving",
+            mapper="bravyi_kitaev" if algorithm == "exact" else "jordan_wigner",
+        )
+    )
 
 
 @pytest.mark.parametrize("include_imaginary", [False, True])

@@ -210,6 +210,12 @@ def validate_component_graph(
     selections = options.component_selections()
     consumed = consumed_component_categories(options)
     if (
+        "ansatz" in consumed
+        and options.ansatz.name == "excitation_preserving"
+        and options.mapper.name != "jordan_wigner"
+    ):
+        raise ConfigError("qiskit excitation_preserving requires unreduced Jordan-Wigner mapping")
+    if (
         "optimizer" in consumed
         and "circuit" in OPTIMIZERS.spec(options.optimizer.name).requires
         and "circuit" not in algorithm.requires

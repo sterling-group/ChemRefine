@@ -200,6 +200,23 @@ def test_validate_returns_the_structured_report(client: Any, tmp_path: Path):
     assert report["issues"][0]["kind"] == "engine"
 
 
+@pytest.mark.parametrize("mapper", ["parity", "bravyi_kitaev", "z2_tapered"])
+def test_quantum_gui_preflights_excitation_preserving_encoding(client: Any, mapper: str):
+    """A known incompatible component pairing is visible in the editor's validation report."""
+    path = Path(__file__).resolve().parents[1] / "examples/tutorials/qiskit_sp/input.yaml"
+    config = yaml.safe_load(path.read_text())
+    config["steps"][0]["options"].update(
+        algorithm="vqe", ansatz="excitation_preserving", mapper=mapper
+    )
+    report = _post(
+        client,
+        "/api/validate",
+        {"yaml_text": yaml.safe_dump(config), "base_dir": str(path.parent)},
+    ).get_json()
+    assert report["ok"] is False
+    assert any("unreduced Jordan-Wigner" in issue["message"] for issue in report["issues"])
+
+
 # ---------------------------------------------------------------------------
 # Filesystem: browse + save
 # ---------------------------------------------------------------------------
