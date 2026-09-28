@@ -220,7 +220,11 @@ def test_worker_process_group_cleans_up_descendants(benchmark, tmp_path, finish)
     pid = int(pid_file.read_text())
     state = Path(f"/proc/{pid}/stat")
     for _ in range(100):
-        if not state.exists() or state.read_text().split()[2] == "Z":
+        try:
+            status = state.read_text().split()[2]
+        except (FileNotFoundError, ProcessLookupError):
+            break
+        if status == "Z":
             break
         time.sleep(0.01)
     else:
