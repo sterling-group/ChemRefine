@@ -548,6 +548,7 @@ _INPUTS = (
     "scripts/quantum_benchmarks.py",
     "scripts/quantum_workloads.py",
     "scripts/quantum_validation.py",
+    "scripts/quantum_audit.py",
 )
 
 
