@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+from functools import partial
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 
-from chemrefine.engines.qiskit.components.ansatze import UCCSDOptions
-from chemrefine.engines.qiskit.components.initial_states import reference_occupations
+from chemrefine.engines.qiskit.components.ansatze import (
+    UCCSDOptions,
+    reference_excitation_permutation,
+    reference_excitations,
+)
 from chemrefine.engines.qiskit.context import AnsatzArtifacts, ElectronicStructureContext
-from chemrefine.engines.qiskit.operators import Excitation, ucc_pool_metadata
+from chemrefine.engines.qiskit.operators import ucc_pool_metadata
 from chemrefine.engines.qiskit.registry import ANSATZE
 from chemrefine.errors import ConfigError
 
@@ -68,45 +72,17 @@ def build_ucc_ranks(
     if any(rank > context.num_spatial_orbitals for rank in options.ranks):
         raise ConfigError("qiskit excitation rank cannot exceed the spatial-orbital count")
     from qiskit_nature.second_q.circuit.library import UCC
-    from qiskit_nature.second_q.circuit.library.ansatzes.utils import (
-        generate_fermionic_excitations,
-    )
-
-    permutation: list[int] = []
-    for spin, occupations in enumerate(reference_occupations(context, initial_state)):
-        offset = spin * context.num_spatial_orbitals
-        permutation.extend(offset + index for index, occupied in enumerate(occupations) if occupied)
-        permutation.extend(
-            offset + index for index, occupied in enumerate(occupations) if not occupied
-        )
-
-    def generate(num_spatial_orbitals: int, num_particles: tuple[int, int]) -> list[Excitation]:
-        """Generate each rank once, preserving caller rank order and reference occupations."""
-        excitations = [
-            excitation
-            for rank in options.ranks
-            for excitation in generate_fermionic_excitations(
-                rank,
-                num_spatial_orbitals,
-                num_particles,
-                generalized=options.generalized,
-                preserve_spin=options.preserve_spin,
-            )
-        ]
-        if options.generalized:
-            return excitations
-        return [
-            (
-                tuple(permutation[index] for index in occupied),
-                tuple(permutation[index] for index in unoccupied),
-            )
-            for occupied, unoccupied in excitations
-        ]
 
     circuit = UCC(
         num_spatial_orbitals=context.num_spatial_orbitals,
         num_particles=context.num_particles,
-        excitations=generate,
+        excitations=partial(
+            reference_excitations,
+            ranks=options.ranks,
+            permutation=reference_excitation_permutation(context, initial_state),
+            generalized=options.generalized,
+            preserve_spin=options.preserve_spin,
+        ),
         qubit_mapper=context.mapper,
         reps=options.reps,
         initial_state=initial_state,

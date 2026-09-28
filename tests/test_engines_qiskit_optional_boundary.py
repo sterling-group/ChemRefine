@@ -104,7 +104,9 @@ def test_reordered_uccsd_maps_generated_excitations_to_actual_reference(
     expected = [((1,), (0,)), ((3,), (2,)), ((1, 3), (0, 2))]
     expected = [excitation for excitation in expected for _ in range(2 if include_imaginary else 1)]
     assert circuits[-1].excitation_list == expected
-    assert all(call[3] == {"preserve_spin": preserve_spin} for call in generated)
+    assert all(
+        call[3] == {"preserve_spin": preserve_spin, "generalized": False} for call in generated
+    )
     assert {call[0] for call in generated} == {1, 2}
     assert len(artifacts.operator_pool) == len(artifacts.pool_metadata) == len(expected)
     for index, metadata in enumerate(artifacts.pool_metadata):

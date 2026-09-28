@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import pickle
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,8 +13,10 @@ from pydantic import ValidationError
 
 from chemrefine.engines.qiskit.components.ansatze import (
     EfficientSU2Options,
+    UCCOptions,
     UCCSDOptions,
     build_efficient_su2,
+    build_ucc,
     build_uccsd,
 )
 from chemrefine.engines.qiskit.components.ansatze_extended import (
@@ -112,6 +115,42 @@ def test_generalized_rank_pool_is_independent_of_determinant():
     first = build_ucc_ranks(options=options, context=context, initial_state=initial)
     second = build_ucc_ranks(options=options, context=context, initial_state=alternate)
     assert first.circuit.excitation_list == second.circuit.excitation_list
+
+
+@pytest.mark.parametrize(
+    ("builder", "options"),
+    [
+        (build_ucc_ranks, UCCRanksOptions()),
+        (build_uccsd, UCCSDOptions()),
+        (build_ucc, UCCOptions(excitations=[((1,), (0,))])),
+    ],
+)
+def test_reference_aware_ucc_can_cross_parallel_compilation_boundary(
+    builder, options, qiskit_spawn_pool
+):
+    """QNSPSA's batched fidelity transpilation serializes circuits to worker processes."""
+    context, initial = _context()
+    original = builder(options=options, context=context, initial_state=initial).circuit
+    restored = pickle.loads(pickle.dumps(original))
+    assert restored.excitation_list == original.excitation_list
+    assert tuple(restored.parameters) == tuple(original.parameters)
+    from qiskit.quantum_info import Statevector
+
+    values = np.random.default_rng(31).uniform(-0.2, 0.2, original.num_parameters)
+    assert Statevector(restored.assign_parameters(values)).equiv(
+        Statevector(original.assign_parameters(values))
+    )
+    from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
+
+    manager = generate_preset_pass_manager(
+        optimization_level=1, basis_gates=["rz", "sx", "x", "cx"], seed_transpiler=31
+    )
+    compiled = manager.run([original, restored], num_processes=2)
+    assert len(compiled) == 2
+    for circuit in compiled:
+        assert Statevector(circuit.assign_parameters(values)).equiv(
+            Statevector(original.assign_parameters(values))
+        )
 
 
 @pytest.mark.parametrize("include_imaginary", [False, True])

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from functools import partial
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from chemrefine.engines.qiskit.components.initial_states import reference_occupations
@@ -72,6 +74,53 @@ def reference_excitation_permutation(
     return tuple(permutation)
 
 
+def reference_excitations(
+    num_spatial_orbitals: int,
+    num_particles: tuple[int, int],
+    *,
+    ranks: tuple[int, ...],
+    permutation: tuple[int, ...],
+    generalized: bool,
+    preserve_spin: bool,
+) -> list[Excitation]:
+    """Generate reference-aware ranks with a picklable parallel-compilation callable."""
+    from qiskit_nature.second_q.circuit.library.ansatzes.utils import (
+        generate_fermionic_excitations,
+    )
+
+    excitations = [
+        excitation
+        for rank in ranks
+        for excitation in generate_fermionic_excitations(
+            rank,
+            num_spatial_orbitals,
+            num_particles,
+            generalized=generalized,
+            preserve_spin=preserve_spin,
+        )
+    ]
+    if generalized:
+        return excitations
+    return [
+        (
+            tuple(permutation[index] for index in occupied),
+            tuple(permutation[index] for index in unoccupied),
+        )
+        for occupied, unoccupied in excitations
+    ]
+
+
+def supplied_excitations(
+    num_spatial_orbitals: int,
+    num_particles: tuple[int, int],
+    *,
+    excitations: tuple[Excitation, ...],
+) -> list[Excitation]:
+    """Adapt explicit excitations without retaining an unpicklable local closure."""
+    del num_spatial_orbitals, num_particles
+    return list(excitations)
+
+
 @ANSATZE.register(
     "uccsd",
     UCCSDOptions,
@@ -98,35 +147,15 @@ def build_uccsd(
     )
     permutation = reference_excitation_permutation(context, initial_state)
     if not options.generalized and permutation != tuple(range(2 * context.num_spatial_orbitals)):
-        from qiskit_nature.second_q.circuit.library.ansatzes.utils import (
-            generate_fermionic_excitations,
-        )
-
-        def reference_excitations(
-            num_spatial_orbitals: int, num_particles: tuple[int, int]
-        ) -> list[Excitation]:
-            """Preserve the full singles/doubles pool around the actual occupied orbitals."""
-            excitations = [
-                excitation
-                for rank in (1, 2)
-                for excitation in generate_fermionic_excitations(
-                    rank,
-                    num_spatial_orbitals,
-                    num_particles,
-                    preserve_spin=options.preserve_spin,
-                )
-            ]
-            return [
-                (
-                    tuple(permutation[index] for index in occupied),
-                    tuple(permutation[index] for index in unoccupied),
-                )
-                for occupied, unoccupied in excitations
-            ]
-
         # Nature normally assumes prefix occupations. Its public setter clears
         # cached operators before rebuilding against this explicit determinant.
-        circuit.excitations = reference_excitations
+        circuit.excitations = partial(
+            reference_excitations,
+            ranks=(1, 2),
+            permutation=permutation,
+            generalized=False,
+            preserve_spin=options.preserve_spin,
+        )
     # UCCSD already maps and stores its excitation generators. Re-generating the
     # fermionic excitations here mutates Nature 0.8's internal excitation list when
     # ``include_imaginary`` is enabled, leaving its list and parameter counts unequal.
@@ -163,17 +192,10 @@ def build_ucc(
                 "qiskit UCC excitations must preserve spin when preserve_spin is true"
             )
 
-    def supplied_excitations(
-        num_spatial_orbitals: int, num_particles: tuple[int, int]
-    ) -> list[Excitation]:
-        """Adapt explicit excitations to Nature's generator callable contract."""
-        del num_spatial_orbitals, num_particles
-        return list(options.excitations)
-
     circuit = UCC(
         num_spatial_orbitals=orbitals,
         num_particles=context.num_particles,
-        excitations=supplied_excitations,
+        excitations=partial(supplied_excitations, excitations=options.excitations),
         qubit_mapper=context.mapper,
         reps=options.reps,
         initial_state=initial_state,

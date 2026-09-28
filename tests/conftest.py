@@ -16,6 +16,21 @@ import synthetic
 importlib.import_module("fake_engine")
 
 
+@pytest.fixture
+def qiskit_spawn_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise serialization without forking a parent already running JAX threads."""
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
+    from functools import partial
+
+    parallel = pytest.importorskip("qiskit.utils.parallel")
+    monkeypatch.setattr(
+        parallel,
+        "ProcessPoolExecutor",
+        partial(ProcessPoolExecutor, mp_context=multiprocessing.get_context("spawn")),
+    )
+
+
 @pytest.fixture(scope="session")
 def _scratch_chemrefine_home(tmp_path_factory: pytest.TempPathFactory) -> str:
     """One empty managed-backend root for the whole run, applied per test below."""
