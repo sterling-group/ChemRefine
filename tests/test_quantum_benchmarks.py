@@ -275,3 +275,65 @@ def test_analysis_distinguishes_cpu_wheel_from_cuda_build(benchmark):
     }
     assert provider_versions(cpu) != provider_versions(gpu)
     assert provider_versions(cpu)["qiskit"] == "2.5.2"
+
+
+def test_analysis_comparison_requires_matched_science_and_resources(benchmark):
+    import copy
+
+    from quantum_analysis import validate_comparison
+
+    cpu = {
+        "device": "cpu",
+        "source_sha256": {"workflow.py": "abc"},
+        "python": "3.12.14",
+        "platform": "linux",
+        "gpu": "GPU UUID, driver, build",
+        "timing": "completed operation",
+        "packages": {
+            "qiskit": "2.5.2",
+            "qiskit-aer": "0.17.2",
+            "numpy": "2.4.6",
+            "scipy": "1.18.1",
+            "qiskit-algorithms": "0.4.0",
+        },
+        "cpu": json.dumps(
+            {
+                "lscpu": [
+                    {"field": key, "data": value}
+                    for key, value in (
+                        ("Architecture:", "x86_64"),
+                        ("CPU(s):", "32"),
+                        ("Model name:", "7950X"),
+                        ("Socket(s):", "1"),
+                        ("Core(s) per socket:", "16"),
+                    )
+                ]
+            }
+        ),
+        "environment": {"QISKIT_NUM_PROCS": "1", "CUDA_VISIBLE_DEVICES": "0"},
+        "warmups": 1,
+        "repeats": 3,
+    }
+    gpu = {**cpu, "device": "cuda"}
+    validate_comparison(cpu, gpu)
+    for field, value in (
+        ("device", "cpu"),
+        ("source_sha256", {}),
+        ("source_sha256", {"workflow.py": "def"}),
+        ("python", "3.13"),
+        ("gpu", "another GPU"),
+        ("platform", "other"),
+        ("timing", "kernel"),
+        ("packages", {**cpu["packages"], "qiskit-algorithms": "0.4.99"}),
+        ("packages", {}),
+        ("cpu", '{"lscpu": []}'),
+        ("environment", {"QISKIT_NUM_PROCS": "8", "CUDA_VISIBLE_DEVICES": "0"}),
+        ("environment", {}),
+        ("repeats", 4),
+        ("warmups", 2),
+        ("conda_packages", [{"name": "libcutensor", "version": "changed", "build": "cuda"}]),
+    ):
+        changed = copy.deepcopy(gpu)
+        changed[field] = value
+        with pytest.raises(ValueError, match="comparison"):
+            validate_comparison(cpu, changed)

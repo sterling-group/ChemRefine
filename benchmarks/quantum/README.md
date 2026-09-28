@@ -110,8 +110,14 @@ JSONL is the raw evidence. CSVs are rectangular with nested structures serialize
 as JSON cells and missing values left empty. Times are seconds, energies Hartree,
 memory KiB or bytes as named. Logs preserve tracebacks and provider warnings.
 `analysis/diagnostics.csv` retains unsupported and failed cells; do not replace
-their missing durations with zero. The analysis tool rejects incomplete campaigns
-and refuses speed comparisons between different Aer builds or numerical versions.
+their missing durations with zero. The analysis tool rejects duplicate/out-of-order
+iterations, missing warmups/repeats, invalid timings and inconsistent device records.
+Speed comparisons require matching source fingerprints, numerical providers (including
+solver/addon versions and Conda builds), Python, hardware and resource allocation.
+Older or intentionally unmatched campaigns can still be exported with `--tables-only`;
+that mode does not generate speedups or plots. Existing artifacts are not removed or
+rewritten on validation failure, so use a separate copy of historical campaigns when
+regenerating an analysis.
 It does not prove equal background load; read each run report's contention caveat.
 
 ## Reproduction

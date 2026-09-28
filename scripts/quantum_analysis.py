@@ -43,7 +43,12 @@ def validate_samples(manifest: dict, rows: list[dict]) -> None:
             if iteration >= warmups + repeats or row["phase"] != phase:
                 raise ValueError(f"{key}: invalid iteration phase or repetition count")
             seconds = row.get("seconds")
-            if type(seconds) not in {int, float} or not math.isfinite(seconds) or seconds <= 0:
+            if (
+                not isinstance(seconds, (int, float))
+                or isinstance(seconds, bool)
+                or not math.isfinite(seconds)
+                or seconds <= 0
+            ):
                 raise ValueError(f"{key}: successful timing must be finite and positive")
             positions[key] += 1
         elif row["status"] in {"error", "unsupported", "timeout"}:
@@ -102,13 +107,62 @@ def provider_versions(manifest: dict) -> dict:
     versions = {
         key.lower(): value
         for key, value in manifest["packages"].items()
-        if key.lower() in {"qiskit", "qiskit-aer", "qiskit-nature", "numpy", "scipy"}
+        if key.lower().startswith("qiskit")
+        or key.lower()
+        in {
+            "numpy",
+            "scipy",
+            "pyscf",
+            "ffsim",
+            "samplomatic",
+            "cvxpy",
+            "scs",
+            "openfermion",
+            "qualtran",
+            "sympy",
+            "numba",
+            "h5py",
+        }
     }
     versions["aer_build"] = next(
         (p["build"] for p in manifest.get("conda_packages", []) if p["name"] == "qiskit-aer"),
         "pip",
     )
+    versions["conda_builds"] = {
+        p["name"]: {key: p.get(key) for key in ("version", "build", "channel", "sha256")}
+        for p in manifest.get("conda_packages", [])
+    }
     return versions
+
+
+def validate_comparison(cpu: dict, gpu: dict) -> None:
+    """Refuse speed ratios when scientific code, providers or allocations differ."""
+    if cpu.get("device") != "cpu" or gpu.get("device") != "cuda":
+        raise ValueError("comparison requires CPU and CUDA campaigns respectively")
+    for field in ("source_sha256", "python", "platform", "gpu", "timing"):
+        if not cpu.get(field) or not gpu.get(field) or cpu[field] != gpu[field]:
+            raise ValueError(f"comparison {field} is missing or differs; use matched campaigns")
+    required = {"qiskit", "qiskit-aer", "numpy", "scipy"}
+    versions = [provider_versions(record) for record in (cpu, gpu)]
+    if any(not required <= set(record) for record in versions) or versions[0] != versions[1]:
+        raise ValueError("comparison provider versions/builds differ or are missing")
+    cpu_fields = {"Architecture:", "CPU(s):", "Model name:", "Socket(s):", "Core(s) per socket:"}
+    hardware = [
+        {r["field"]: r["data"] for r in json.loads(m["cpu"])["lscpu"] if r["field"] in cpu_fields}
+        for m in (cpu, gpu)
+    ]
+    if not cpu_fields <= set(hardware[0]) or hardware[0] != hardware[1]:
+        raise ValueError("comparison CPU hardware differs or is incomplete")
+    for field in ("QISKIT_NUM_PROCS", "CUDA_VISIBLE_DEVICES"):
+        if (
+            field not in cpu["environment"]
+            or field not in gpu["environment"]
+            or (cpu["environment"][field] != gpu["environment"][field])
+        ):
+            raise ValueError(f"comparison resource allocation differs or is missing: {field}")
+    for field in ("warmups", "repeats"):
+        if cpu[field] != gpu[field]:
+            raise ValueError(f"comparison {field} differs")
 
 
 def comparisons(cpu: list[dict], gpu: list[dict]) -> list[dict]:
@@ -183,7 +237,12 @@ def main() -> None:
     parser.add_argument("--cpu", default="cpu-matched")
     parser.add_argument("--gpu", default="gpu0")
     parser.add_argument("--plots", action="store_true")
+    parser.add_argument(
+        "--tables-only", action="store_true", help="Export evidence without speed comparisons"
+    )
     args = parser.parse_args()
+    if args.tables_only and args.plots:
+        parser.error("--plots requires a validated CPU/GPU comparison")
     output = args.root / "analysis"
     output.mkdir(exist_ok=True)
     manifests, aggregates = {}, {}
@@ -209,6 +268,10 @@ def main() -> None:
                 "cuda_visible_devices": manifest["environment"]["CUDA_VISIBLE_DEVICES"],
             }
         )
+    if not args.tables_only:
+        if args.cpu not in manifests or args.gpu not in manifests:
+            raise ValueError("comparison campaigns are missing; provide --cpu and --gpu")
+        validate_comparison(manifests[args.cpu], manifests[args.gpu])
     for name, records in (
         ("measurements", all_rows),
         ("case_summary", all_summaries),
@@ -255,12 +318,8 @@ def main() -> None:
             for package, version in sorted(record["packages"].items())
         ],
     )
-    if args.cpu not in manifests or args.gpu not in manifests:
-        raise ValueError("comparison campaigns are missing; provide --cpu and --gpu")
-    if provider_versions(manifests[args.cpu]) != provider_versions(manifests[args.gpu]):
-        raise ValueError("comparison provider versions/builds differ; use a matched CPU campaign")
-    if manifests[args.cpu]["device"] != "cpu" or manifests[args.gpu]["device"] != "cuda":
-        raise ValueError("comparison requires CPU and CUDA campaigns respectively")
+    if args.tables_only:
+        return
     write_csv(output / "speedups.csv", comparisons(aggregates[args.cpu], aggregates[args.gpu]))
     if args.plots:
         plot_scaling(output, aggregates[args.cpu] + aggregates[args.gpu])
