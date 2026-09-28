@@ -37,12 +37,14 @@ jobs:
       OPENBLAS_NUM_THREADS: "1"
       MKL_NUM_THREADS: "1"
       QISKIT_NUM_PROCS: "2"
-      CHEMREFINE_HOME: ${{ runner.temp }}/chemrefine-cuda-home
-      EVIDENCE: ${{ runner.temp }}/quantum-cuda-evidence
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Initialize runner paths
+        run: |
+          printf 'CHEMREFINE_HOME=%s/chemrefine-cuda-home\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'EVIDENCE=%s/quantum-cuda-evidence\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Bind the pre-provisioned isolated CUDA environment to this checkout
         run: |
           test -x "$GPU_PYTHON"

@@ -90,10 +90,17 @@ would run every gate green while checking the frontend not at all. Setting
 **Biome is the frontend's ruff.** `pre-commit` runs `biome check --write` over
 `src/chemrefine/gui/static/`: it formats the JavaScript and CSS and lints all
 three languages, with the settings and their reasons in `biome.jsonc`. It is
-the one hook that is not `language: python`, so on a machine with no Node the
+configured with `language: node`, so on a machine with no Node the
 first `pre-commit` run downloads one into `~/.cache/pre-commit`. The vendored
 bundles under `static/vendor/` are excluded — they must stay byte-identical to
 what upstream published.
+
+**Actionlint checks GitHub's workflow syntax and expression contexts.** The
+SHA-pinned pre-commit hook runs locally and through the existing CI lint job;
+pre-commit manages its Go environment. The custom CUDA runner label is declared
+in `.github/actionlint.yaml`. Optional ShellCheck/Pyflakes integrations are
+disabled so workflow validation does not depend on which snippet linters happen
+to be installed. Linting does not dispatch workflows or request a GPU runner.
 
 ### The gates above do not cover the `integration` tier
 

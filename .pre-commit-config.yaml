@@ -17,6 +17,13 @@ ci:
   autofix_prs: false
 
 repos:
+  - repo: https://github.com/rhysd/actionlint
+    rev: 914e7df21a07ef503a81201c76d2b11c789d3fca  # frozen: v1.7.12
+    hooks:
+      - id: actionlint
+        # Keep workflow validation independent of optional local snippet linters.
+        args: [-shellcheck=, -pyflakes=]
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: 7c55798a78262d14b2074abf623d8a992ebb70d4  # frozen: v0.16.2
     hooks:
@@ -33,7 +40,7 @@ repos:
 
   # Biome is ruff's opposite number for the GUI: it formats the JavaScript and CSS and
   # lints all three languages, for a layer that had a syntax check and nothing else.
-  # `language: node` — the only non-Python hook here — so pre-commit uses the system Node
+  # `language: node` — so pre-commit uses the system Node
   # where there is one (CI runners) and downloads one with nodeenv where there is not.
   # No setup-node step in ci.yml, and nothing for a contributor to install.
   #
