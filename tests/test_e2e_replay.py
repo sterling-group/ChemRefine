@@ -422,9 +422,13 @@ def _nms_recovery(run: Replayed) -> None:
     assert " in 3/step1_3.out" in reason, f"named relative to its step: {reason}"
     assert f"{err.name} ends: " in reason and reason.endswith(tail[-1]), reason
     assert not ABSOLUTE_PATH_RE.search(reason), f"names the machine: {reason}"
-    assert sorted(p.name for p in (step_dir / "3").glob("attempt*")) == [
-        f"attempt{k}" for k in range(1, actions)
-    ], "each re-run seals the abort before it rather than overwriting it"
+    sealed = sorted(p.name for p in (step_dir / "3").glob("attempt*"))
+    assert sealed == [f"attempt{k}" for k in range(1, actions)], sealed
+    held = [step_dir / "3" / name / "step1_3.out" for name in sealed]
+    held.append(step_dir / "3" / "step1_3.out")
+    assert [p.read_bytes() if p.is_file() else None for p in held] == [
+        case.submitted_file("step1/3", k, "step1_3.out").read_bytes() for k in range(actions)
+    ], "each re-run seals the abort before it, in order, rather than overwriting it"
 
     (survivor,) = run.outcomes[0].state.structures
     assert survivor.id == "0" and survivor.resolved_from is None, "the TS passes through"
@@ -438,7 +442,10 @@ def _nms_recovery(run: Replayed) -> None:
         assert len(said) == 1, f"{out.name}: ORCA names the directory it ran in, once"
         places.append(Path(said[0].partition("Working dir.:")[2].strip()))
     assert len(places) == sum(served.values()), "every submission's output, the aborts too"
-    assert all(p.parent.name == scratch.name and p.name.startswith("ChemRefine_") for p in places)
+    strays = [
+        p for p in places if p.parent.name != scratch.name or not p.name.startswith("ChemRefine_")
+    ]
+    assert not strays, f"ran outside scratch_dir: {strays}"
     assert len(set(places)) == len(places), "each job in a scratch directory of its own"
 
 
