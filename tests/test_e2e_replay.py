@@ -738,6 +738,18 @@ def test_a_jobs_stderr_is_kept_only_where_it_says_why_orca_died(
     assert _kept(tmp_path / "step1_0.err", rel, None) is kept
 
 
+def test_what_the_pipeline_derives_after_a_job_is_not_archived(tmp_path: Path) -> None:
+    """A replay re-creates what the pipeline writes once a job is done; archived, it would
+    only go stale — a trained model's record did, still citing an absolute path."""
+    from replay import _kept
+
+    for name in ("step1_0.result.json", "step1_0.property.json", "trained_model.json"):
+        (tmp_path / name).write_text("{}", encoding="utf-8")
+        assert not _kept(tmp_path / name, Path("step2/train") / name, None), name
+    (tmp_path / "step1_0.json").write_text("{}", encoding="utf-8")
+    assert _kept(tmp_path / "step1_0.json", Path("step1/0/step1_0.json"), None)
+
+
 def test_a_live_run_is_held_to_its_declared_budget() -> None:
     within = CaseSpec(budget_s=10.0)
     within.assert_within_budget(9.9)

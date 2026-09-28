@@ -55,6 +55,7 @@ from chemrefine import cache, recovery
 from chemrefine.config import Config, load_config
 from chemrefine.engines import api
 from chemrefine.engines.api import ArtifactEngine, CompletionSink, JobExecutable, get_engine
+from chemrefine.engines.mlip.train.engine import SIDECAR_NAME
 from chemrefine.engines.orca.output import status as orca_status
 from chemrefine.errors import ChemRefineError
 from chemrefine.state import JobBatch, JobTriple, PipelineState, StepContext, StepInputs
@@ -502,8 +503,9 @@ KEEP_PATTERNS = (
 )
 
 # Derived / native-convenience artifacts a fresh replay must re-create itself —
-# the generic *.json keep-pattern must not swallow them into the archive.
-DROP_SUFFIXES = (".result.json", ".property.json")
+# the generic *.json keep-pattern must not swallow them into the archive. A trained model's
+# record is written by the pipeline once the job is done, and nothing reads it back.
+DROP_SUFFIXES = (".result.json", ".property.json", SIDECAR_NAME)
 
 ABSOLUTE_PATH_RE = re.compile(r"(?<![\w.:/])/[\w.@+-]+/")
 """A ``/`` that opens a token and is followed by a segment and another ``/``: an absolute path.
