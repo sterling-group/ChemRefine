@@ -235,6 +235,8 @@ qiskit-core = [
     "qiskit>=1.4,<2.6",
     "qiskit-nature>=0.8,<0.9",
     "qiskit-algorithms>=0.4,<0.5",
+    # Direct dense/sparse linear algebra and optimization imports, tested in core CI.
+    "scipy>=1.13.0",
 ]
 # The existing geometry/pipeline backend also supplies the optional PySCF adapter.
 qiskit = ["chemrefine[qiskit-core,pyscf]"]

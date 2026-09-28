@@ -295,11 +295,16 @@ def test_adapt_observer_delegates_gradients_and_records_only_retained_sequence(
 def test_dependency_extras_keep_integral_solver_independent_of_geometry_driver():
     project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
     extras = project["project"]["optional-dependencies"]
-    assert len(extras["qiskit-core"]) == 3
+    assert len(extras["qiskit-core"]) == 4
     assert all("pyscf" not in dependency.lower() for dependency in extras["qiskit-core"])
     assert {dependency.split(">=")[0] for dependency in extras["qiskit-core"]} == {
         "qiskit",
         "qiskit-nature",
         "qiskit-algorithms",
+        "scipy",
     }
+    assert "scipy>=1.13.0" in extras["qiskit-core"]
+    assert all(
+        "scipy" not in dependency.lower() for dependency in project["project"]["dependencies"]
+    )
     assert extras["qiskit"] == ["chemrefine[qiskit-core,pyscf]"]

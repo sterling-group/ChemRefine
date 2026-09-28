@@ -5,16 +5,17 @@
 The audit compares `pyproject.toml` at `df3d37a^` (the parent of the original
 Qiskit estimator-provider introduction) with this checkout. "New" means absent
 from every dependency group at that baseline, not necessarily added by the most
-recent commit. `runs/2026-09-28/audit/dependencies.csv` includes every group,
-version constraint, previous constraint and change classification. This work
-adds no third-party runtime dependency.
+recent commit. `runs/2026-09-28/audit/dependencies.csv` preserves the original
+22-distribution audit, including every group, version constraint, previous
+constraint and change classification. The follow-up adds a direct SciPy declaration
+for a library already supplied transitively; it adds no new provider SDK.
 
 ## Newly declared distributions
 
 | Ownership / extra | New distributions |
 | --- | --- |
 | Core | `packaging` |
-| `qiskit-core` | `qiskit`, `qiskit-nature`, `qiskit-algorithms` |
+| `qiskit-core` | `qiskit`, `qiskit-nature`, `qiskit-algorithms`, `scipy` |
 | `qiskit-aer` | `qiskit-aer` |
 | `qiskit-fermionic` | `ffsim`, `qiskit-fermions`, `qiskit-addon-sqd` |
 | `qiskit-runtime` | `qiskit-ibm-runtime`, `qiskit-mitigation`, `samplomatic` |
@@ -26,7 +27,8 @@ adds no third-party runtime dependency.
 | Test tooling | `coverage`, `nodejs-wheel-binaries` |
 | Development tooling | `build`, `pip-audit` |
 
-There are **22 unique new distributions**. Qiskit appears in two extras but is
+There are now **23 unique new direct distributions** relative to the baseline,
+including the follow-up SciPy declaration. Qiskit appears in two extras but is
 counted once. `qiskit-fermionic` raises its required Qiskit floor to 2.5, while
 `qiskit-core` permits 1.4. New self-references such as `chemrefine[qiskit-aer]`
 compose extras; they are not new packages. Existing requirements also changed:
@@ -98,9 +100,11 @@ browser acceptance test or proof that unavailable external engines work.
    Benchmark execution uses the standard library plus installed engine providers;
    optional chart generation uses Matplotlib already available in this validation
    environment. Data analysis is not a core runtime dependency.
-8. Review direct SciPy imports when changing numerical profiles. SciPy is currently
-   supplied transitively by existing numerical dependencies; declaring it directly
-   in a future numerical-provider cleanup would make that contract clearer.
+8. Maintain SciPy in `qiskit-core`, where dense/sparse linear algebra and
+   optimization import it directly. The core provider-floor job pins SciPy 1.13.0;
+   current-version jobs exercise newer compatible releases. Other quantum profiles
+   inherit this requirement and can resolve higher floors imposed by their SDKs.
+   Keep SciPy out of base/GUI direct requirements and preserve lazy imports.
 9. Review dependency updates and vulnerability reports regularly. Retain resolver
    reports and deployment locks with release artifacts; do not automatically relax
    caps to resolve one optional provider's conflict.

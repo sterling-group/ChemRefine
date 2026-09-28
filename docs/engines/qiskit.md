@@ -49,8 +49,8 @@ chemrefine backends install qiskit-fermionic
 chemrefine backends list
 ```
 
-The `[qiskit-core]` extra installs compatible Qiskit, Qiskit Nature, and Qiskit
-Algorithms versions for integral-input calculations. `[qiskit]` adds PySCF for
+The `[qiskit-core]` extra installs compatible Qiskit, Qiskit Nature, Qiskit
+Algorithms and SciPy versions for integral-input calculations. `[qiskit]` adds PySCF for
 the XYZ adapter and shipped CLI examples. `[qiskit-aer]` adds the compatible CPU Aer
 distribution. See [Installation](installing.md#qiskit-nature) for the exact
 supported ranges, source-install commands, and separate Linux GPU-package

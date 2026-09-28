@@ -181,7 +181,8 @@ chemrefine backends list
 ```
 
 The `[qiskit-core]` extra supplies Qiskit `>=1.4,<2.6`, Qiskit Nature
-`>=0.8,<0.9`, and Qiskit Algorithms `>=0.4,<0.5`. It supports upstream integral
+`>=0.8,<0.9`, Qiskit Algorithms `>=0.4,<0.5`, and SciPy `>=1.13.0` for direct
+numerical operations. The core provider CI job tests this SciPy floor. It supports upstream integral
 inputs without requiring PySCF. The existing `[qiskit]` extra adds PySCF for
 XYZ-driven calculations and the CLI examples; `[qiskit-aer]` additionally
 supplies CPU Aer `>=0.17,<0.18`. The managed backend names remain `qiskit` and
