@@ -1,6 +1,6 @@
 ! XTB
-
 %DOCKER
-	GUEST "../templates/cl.xyz"
-	GuestCharge -1
+  GUEST "cl.xyz"
+  GuestCharge -1
+  DOCKLEVEL QUICK
 END

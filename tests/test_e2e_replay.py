@@ -750,19 +750,133 @@ def _ts_path(run: Replayed) -> None:
 
 
 def _host_guest(run: Replayed) -> None:
-    """Docker fan-out with the seed's lineage, a per-step charge, and a solvator parse."""
-    case = run.case
-    poses = parse_output(case.captured / "step1" / "0" / "step1_0.out", "docker")
-    assert len(poses) >= 2, "docking must produce poses to filter"
-    kept = len(run.outcomes[0].state.structures)
-    assert kept == min(3, len(poses))
-    assert {s.id for s in run.outcomes[0].state.structures} <= {
-        f"0-{i}" for i in range(len(poses))
-    }, "docker children carry the seed's lineage"
-    step2_inp = next(case.output_dir.glob("step2/*/step2_*.inp")).read_text(encoding="utf-8")
-    assert "* xyzfile -1 1 " in step2_inp, "the per-step charge override reaches the input"
-    assert len(run.submitter.calls[1].files) == kept
-    assert run.outcomes[1].state.structures, "solvator output parses into survivors"
+    """Chloride docked onto water, then each pose microsolvated: an ensemble inside an ensemble.
+
+    Neither step names its operation, and no ``!`` keyword names the run kind: the
+    ``%DOCKER`` and ``%solvator`` blocks alone make ORCA dock and solvate, and each step
+    infers its reader from its block. The docking template names its guest relative to
+    itself; the job is handed the file's absolute path, and ORCA reads it there.
+    ``DOCKLEVEL QUICK`` keeps exactly two poses, 0.0025 kcal/mol apart, so neither is named.
+    The complex carries the guest's charge, and step 2 runs each pose at it, -1, as ORCA
+    itself reports. SOLVATOR adds one water at a time around its pose, held fixed, and
+    writes a frame per water with the energy ORCA tabulates for it. Those frames fan out
+    under the pose that made them, so the ids nest, and ``by_parent`` keeps the lowest
+    frame of each pose: two, where the same filter over the whole step keeps one.
+    """
+    case, config = run.case, run.config
+    dock, solvate = config.steps
+    step1_dir, step2_dir = (config.step_dir(step).resolve() for step in config.steps)
+
+    # The blocks alone imply both run kinds.
+    templates = {
+        step.step: (config.template_dir / ids.default_template_name(step.step, "inp")).read_text(
+            encoding="utf-8"
+        )
+        for step in config.steps
+    }
+    for step, block in ((dock, "%docker"), (solvate, "%solvator")):
+        text = templates[step.step]
+        keywords = {
+            word.lower()
+            for line in text.splitlines()
+            if line.startswith("!")
+            for word in line[1:].split()
+        }
+        assert step.operation is None, f"step {step.step}: a spelled-out operation infers nothing"
+        assert block in text.lower(), f"step {step.step}: no {block} block"
+        assert not keywords & {"docker", "solvator"}, (
+            f"step {step.step}: the {block} block alone must imply the run kind"
+        )
+
+    # Step 1: the guest, named beside the template, is handed to ORCA where it is.
+    assert 'GUEST "cl.xyz"' in templates[dock.step], "named relative to its template"
+    guest = (config.template_dir / "cl.xyz").resolve()
+    rendered = (step1_dir / "0" / "step1_0.inp").read_text(encoding="utf-8")
+    assert f'GUEST "{guest}"' in rendered, "pinned to the file, since ORCA runs elsewhere"
+    assert "* xyzfile 0 1 " in rendered, "the host alone is the workflow's neutral singlet"
+    dock_out = case.submitted_file(f"{dock.dir_name()}/0", 0, "step1_0.out")
+    dock_text = dock_out.read_text(encoding="utf-8")
+    read_from = re.search(r"^Reading guests from file\s+(\S.*?)\s*$", dock_text, re.MULTILINE)
+    assert read_from is not None, "ORCA read no guest file"
+    read_path = Path(read_from[1])
+    assert read_path.is_absolute(), f"ORCA was handed a relative guest: {read_path}"
+    assert read_path.name == guest.name
+    assert re.search(r"^Docking level\s+quick\s*$", dock_text, re.MULTILINE)
+    final = re.search(
+        r"^Final charge and multiplicity\s+\.+\s+\((-?\d+)\s*,\s*(\d+)\)", dock_text, re.MULTILINE
+    )
+    assert final is not None, "DOCKER reports the complex's charge"
+    charge, multiplicity = int(final[1]), int(final[2])
+    assert (charge, multiplicity) == (-1, 1), "a neutral water and a chloride"
+    assert solvate.charge == charge, "step 2 runs the complex at the charge DOCKER gives it"
+
+    # Two poses, both kept, each a child of the seed.
+    poses = parse_output(dock_out, "docker")
+    assert len(poses) == 2, "DOCKLEVEL QUICK optimises exactly two poses"
+    pose_ids = [f"0-{i}" for i in range(len(poses))]
+    docked = cache.load(step1_dir)
+    assert docked is not None
+    assert [(s.id, s.parent_id, s.energy_hartree) for s in docked.results.structures] == [
+        (sid, "0", pose.energy_hartree) for sid, pose in zip(pose_ids, poses, strict=True)
+    ], "a fan-out: one child per pose, in the order ORCA wrote them"
+    assert sorted(s.id for s in run.outcomes[0].state.structures) == pose_ids
+    assert sorted(run.submitter.submissions()) == ["0", *pose_ids], "one solvation per pose"
+
+    # Step 2: each pose solvated at the complex's charge, a frame per water, ids nested.
+    pose_by_id = {s.id: s for s in docked.results.structures}
+    solvated = cache.load(step2_dir)
+    assert solvated is not None
+    children: dict[str, dict[str, float]] = {}
+    for pose_id in pose_ids:
+        stem = f"step2_{pose_id}"
+        rendered = (step2_dir / pose_id / f"{stem}.inp").read_text(encoding="utf-8")
+        assert f"* xyzfile {charge} {multiplicity} " in rendered, "the step's own charge"
+        out = case.submitted_file(f"{solvate.dir_name()}/{pose_id}", 0, f"{stem}.out")
+        text = out.read_text(encoding="utf-8")
+        ran_at = set(re.findall(r"^\s*:\s*net charge\s+(-?\d+)\s*:", text, re.MULTILINE))
+        assert ran_at == {str(charge)}, "ORCA ran the complex at that charge"
+        asked = re.search(
+            r"^Number of solvent molecules to be added:\s+\.+\s+(\d+) molecules", text, re.MULTILINE
+        )
+        assert asked is not None
+        frames = parse_output(out, "solvator")
+        assert len(frames) == int(asked[1]) >= 2, "a frame per water; one frame is no fan-out"
+        solvator = text[text.index("* ORCA Solvator *") : text.index("ORCA-SOLVATOR TERMINATED")]
+        tabulated = [
+            float(energy)
+            for energy in re.findall(
+                r"^\s+\d+\s+(-?\d+\.\d+)\s+-?\d+\.\d+\s+-?\d+\.\d+\s+\d+\.\d+\s*$",
+                solvator,
+                re.MULTILINE,
+            )
+        ]
+        assert len(tabulated) == len(frames), "SOLVATOR tabulates an energy per water it adds"
+        assert np.allclose([f.energy_hartree for f in frames], tabulated, rtol=0, atol=1e-6), (
+            "each frame carries the energy ORCA reports for it, not a placement score"
+        )
+        pose = pose_by_id[pose_id]
+        for k, frame in enumerate(frames):
+            waters = ("O", "H", "H") * (k + 1)
+            assert list(frame.symbols) == [*pose.atoms.get_chemical_symbols(), *waters]
+            assert np.allclose(
+                frame.positions[: len(pose.atoms)], pose.atoms.positions, atol=1e-5
+            ), f"{pose_id} frame {k}: solvated around its own pose"
+        children[pose_id] = {
+            f"{pose_id}-{k}": frame.energy_hartree for k, frame in enumerate(frames)
+        }
+    # By id: the poses reach step 2 in energy order, and that order is a near-tie.
+    assert {s.id: (s.parent_id, s.energy_hartree) for s in solvated.results.structures} == {
+        sid: (pose_id, energy)
+        for pose_id, frames_of in children.items()
+        for sid, energy in frames_of.items()
+    }, "each job's frames fan out under the pose it solvated"
+
+    # by_parent: the lowest frame of each pose, where the flat filter keeps one in all.
+    lowest = sorted(min(frames_of, key=frames_of.__getitem__) for frames_of in children.values())
+    assert sorted(s.id for s in run.outcomes[1].state.structures) == lowest, "one per pose"
+    assert solvate.sample is not None and solvate.sample.by_parent
+    flat = filtering.apply(solvated.results, solvate.sample.model_copy(update={"by_parent": False}))
+    assert len(flat.structures) == 1 < len(lowest), "without by_parent, count 1 keeps one"
 
 
 def _mlip_screen(run: Replayed) -> None:

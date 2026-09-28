@@ -1,24 +1,56 @@
-# Capture case: dock Cl- onto methanol, then microsolvate the complex.
+# Host-guest on ORCA/xTB at one core: a chloride is docked onto water, and each pose is
+# then microsolvated. Docking is chemistry. Step 2's ranking is code-only: see its comment.
+#
+# Neither step sets `operation:`. ORCA runs a docking or a solvation from its %DOCKER or
+# %solvator block alone, with no run-kind keyword on the `!` line, and each step infers its
+# reader from that block. Read as single points, neither output parses: the docking writes
+# no FINAL SINGLE POINT ENERGY, and the solvation writes no coordinate block.
 template_dir: ./templates
 output_dir: ./outputs
 executables: { orca: orca }  # the live harness injects the resolved absolute path
 dispatch: auto
-max_cores: 8
+max_cores: 1
 
-input: ./methanol.xyz
+input: ./water.xyz
 charge: 0
 multiplicity: 1
 
 steps:
-  # DOCKER poses of the chloride guest around the neutral host.
+  # DOCKER at GFN2-xTB with DOCKLEVEL QUICK, the chloride as guest (GuestCharge -1). The
+  # template names the guest beside itself ("cl.xyz"). ORCA runs in a work directory of
+  # its own, where that name does not resolve, so the job is handed the file's absolute
+  # path. The host is rendered as the workflow's neutral singlet, and ORCA gives the
+  # complex the guest's charge, -1.
+  #
+  # QUICK pre-optimises its swarm on GFN-FF and takes at most two structures into the final
+  # optimisation, so there are exactly two poses, 0-0 and 0-1. They are one complex: the
+  # chloride takes a hydrogen bond from either of water's two equivalent hydrogens (H...Cl
+  # 2.07 A, O-H...Cl 163-164 deg, an interaction energy of -12.32 kcal/mol). The two poses
+  # are 0.0025 kcal/mol apart, so which one is lower is noise, and nothing names it.
+  # `count: 2` keeps both.
   - step: 1
+    name: dock
     engine: orca
-    operation: docker
-    sample: { method: min, count: 3 }
-
-  # Explicit microsolvation of the anionic complex (per-step charge override).
-  - step: 2
-    engine: orca
-    operation: solvator
-    charge: -1
     sample: { method: min, count: 2 }
+
+  # SOLVATOR, nsolv 2 in ALPB water: one job per pose, at the complex's charge (-1). The
+  # workflow's neutral singlet describes the host alone. SOLVATOR holds the pose fixed and
+  # adds the waters one at a time. Each water gives a hydrogen bond to the host water's
+  # oxygen, and each gets a frame: 0-i-0 holds one water, 0-i-1 holds two. That is a
+  # fan-out nested under step 1's. `by_parent` keeps the lowest frame of each pose, so two
+  # survive; `count: 1` alone would keep one in all.
+  #
+  # The ranking is code-only. A pose's two frames differ by a whole water, so the larger
+  # cluster is always lower, and the choice makes no chemical claim.
+  #
+  # nsolv 2 is the floor. A job that writes one frame keeps its pose's id and parent, so
+  # both poses would fall in one group, and by_parent would have a single group to choose
+  # from.
+  #
+  # The template keeps SOLVATOR's default placement. CLUSTERMODE STOCHASTIC is faster, but
+  # its frames carry a placement score where the energy goes, and this step ranks by it.
+  - step: 2
+    name: solvate
+    engine: orca
+    charge: -1
+    sample: { method: min, count: 1, by_parent: true }

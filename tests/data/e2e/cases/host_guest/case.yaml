@@ -1,2 +1,6 @@
-# Wall time a live run of this case may take, measured with headroom.
-budget_s: 110
+# One run (no scenario). At max_cores 1 the run itself took 14.3 s: 3 ORCA jobs, which
+# ORCA timed at 1.6 s for DOCKER and 6.5 s and 5.0 s for the two SOLVATOR jobs (their
+# default placement is the cost). The whole process, with its imports and packing, which
+# the budget does not time, took 14.9 s and peaked at 195 MB. It was measured one probe at
+# a time. The budget is about twice the 14.3 s, rounded up.
+budget_s: 30
