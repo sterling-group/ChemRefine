@@ -350,16 +350,26 @@ def _install_fake_orb(monkeypatch) -> tuple[MagicMock, MagicMock, tuple[object, 
     ``ORB_PRETRAINED_MODELS`` and returns ``(model, atoms_adapter)``, and the calculator
     takes the adapter positionally, so a builder that drops it fails here as it does
     against the real library. The module also holds an architecture builder, which is not
-    a loader.
+    a loader; the registry holds an alias under a name of its own, as orb's
+    ``orbmol-v1-direct`` loads ``orb_v3_direct_omol``, and a deprecated v1 stub, which
+    takes no ``compile`` and only raises.
     """
     loaded = (object(), object())
     loader = MagicMock(return_value=loaded)
     loader.__name__ = "orb_v3_conservative_inf_omat"
+
+    def orb_v1(weights_path: str | None = None, device: str = "cpu") -> None:
+        raise ValueError("orb_v1 is deprecated, use orb_v2")
+
     pretrained = _fake_module(
         "orb_models.forcefield.pretrained",
         orb_v3_conservative_inf_omat=loader,
         orb_v2_architecture=MagicMock(),
-        ORB_PRETRAINED_MODELS={"orb-v3-conservative-inf-omat": loader},
+        ORB_PRETRAINED_MODELS={
+            "orb-v3-conservative-inf-omat": loader,
+            "orbmol-v1-omat": loader,
+            "orb-v1": orb_v1,
+        },
     )
     forcefield = _fake_module("orb_models.forcefield", pretrained=pretrained)
 
@@ -471,6 +481,27 @@ def test_an_orb_module_attribute_that_is_not_a_loader_is_an_unknown_model(monkey
     _install_fake_orb(monkeypatch)
     with pytest.raises(ConfigError, match="unknown ORB model 'orb_v2_architecture'"):
         MlipCalculator(task_name="orb", model_name="orb_v2_architecture", device="cpu")
+
+
+@pytest.mark.parametrize(
+    "name", ["orbmol-v1-omat", "orbmol_v1_omat", "orb-v3-conservative-inf-omat"]
+)
+def test_an_orb_model_is_named_by_its_registry_key_too(monkeypatch, name: str):
+    """orb's own name for a loader resolves, in its spelling or with underscores.
+
+    An alias orb registers under a name of its own loads a function named otherwise, so a
+    lookup by function name alone called the documented name unknown.
+    """
+    loader, _calc_class, _loaded = _install_fake_orb(monkeypatch)
+    MlipCalculator(task_name="orb", model_name=name, device="cpu")
+    loader.assert_called_once_with(device="cpu", compile=False)
+
+
+def test_a_deprecated_orb_model_is_refused_by_name(monkeypatch):
+    """A v1 stub takes no ``compile``: named as deprecated, not a ``TypeError`` from the call."""
+    _install_fake_orb(monkeypatch)
+    with pytest.raises(ConfigError, match="ORB model 'orb_v1' is one orb-models has deprecated"):
+        MlipCalculator(task_name="orb", model_name="orb_v1", device="cpu")
 
 
 def test_an_orb_checkpoint_reaches_the_named_loaders_weights_path(monkeypatch, tmp_path: Path):

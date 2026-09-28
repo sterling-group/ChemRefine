@@ -2,9 +2,9 @@
 
 ``model_name`` names a loader in :mod:`orb_models.forcefield.pretrained`
 (e.g. ``orb_v3_conservative_inf_omat``, ``orb_v2``) — one of the functions orb-models
-registers in its ``ORB_PRETRAINED_MODELS``. From the 0.6.2 floor on, every such loader but
-the deprecated v1 stubs (which only raise) returns ``(model, atoms_adapter)`` and takes
-``weights_path``, ``device`` and ``compile``.
+registers in its ``ORB_PRETRAINED_MODELS``, by its key there or its function name. From
+the 0.6.2 floor on, every such loader but the deprecated v1 stubs (which only raise)
+returns ``(model, atoms_adapter)`` and takes ``weights_path``, ``device`` and ``compile``.
 Requires ``pip install orb-models``.
 
 One module for one library, so the environment is declared once (:data:`ORB`) and both
@@ -16,6 +16,7 @@ utilities, driven by the shared :mod:`chemrefine.engines.mlip.train.driver`.
 
 from __future__ import annotations
 
+import inspect
 import logging
 from pathlib import Path
 from typing import Any, ClassVar
@@ -38,15 +39,41 @@ ORB = MlipLibrary(extra="mlip-orb", package="orb-models", import_name="orb_model
 _DEFAULT_MODEL = "orb_v3_conservative_inf_omat"
 
 
-def _loader(pretrained: Any, name: str) -> Any | None:
-    """The pretrained loader ``name`` names, or ``None`` when it names none.
+def _loader(pretrained: Any, name: str) -> Any:
+    """The pretrained loader ``name`` names; a :class:`ConfigError` if none can run.
 
-    Resolved through orb-models' own registry (``ORB_PRETRAINED_MODELS``), by function
-    name, rather than as any attribute of the module: an architecture builder or a helper
-    in the same module is not a loader, and called with a loader's arguments it failed as
-    a ``TypeError`` that named neither the step nor the option.
+    Resolved through orb-models' own registry (``ORB_PRETRAINED_MODELS``) rather than as any
+    attribute of the module: an architecture builder or a helper in the same module is not
+    a loader, and called with a loader's arguments it fails as a ``TypeError`` that names
+    neither the step nor the option. A name is a registry key, in orb's spelling
+    (``orbmol-v1-direct``) or with underscores, or a loader's function name, which the two
+    differ from where orb registers an alias (``orbmol-v1-direct`` loads
+    ``orb_v3_direct_omol``) or names a function otherwise (``separate_d3_direct_3layer``).
+
+    A ``ConfigError``, since the name came from the YAML and every failure a config can
+    cause carries the exit code the CLI maps. A loader that cannot take ``compile`` is one
+    of orb-models' deprecated v1 stubs, which only raise: refused by name, not left to the
+    ``TypeError`` the call would raise.
     """
-    return {fn.__name__: fn for fn in pretrained.ORB_PRETRAINED_MODELS.values()}.get(name)
+    loaders: dict[str, Any] = {}
+    for key, fn in pretrained.ORB_PRETRAINED_MODELS.items():
+        for spelling in (key, key.replace("-", "_"), fn.__name__):
+            loaders.setdefault(spelling, fn)
+    loader = loaders.get(name)
+    if loader is None:
+        raise ConfigError(
+            f"unknown ORB model {name!r}; pick a loader from "
+            f"orb_models.forcefield.pretrained (e.g. {_DEFAULT_MODEL!r})"
+        )
+    try:
+        inspect.signature(loader).bind_partial(compile=False)
+    except TypeError:
+        raise ConfigError(
+            f"ORB model {name!r} is one orb-models has deprecated: its loader only raises; "
+            f"pick a current loader from orb_models.forcefield.pretrained "
+            f"(e.g. {_DEFAULT_MODEL!r})"
+        ) from None
+    return loader
 
 
 @ORB.calculator("orb")
@@ -69,17 +96,7 @@ def _build_orb(spec: CalculatorSpec) -> Any:
     from orb_models.forcefield import pretrained
     from orb_models.forcefield.inference.calculator import ORBCalculator
 
-    name = spec.model_name or _DEFAULT_MODEL
-    loader = _loader(pretrained, name)
-    if loader is None:
-        # A ConfigError, not a ValueError: the name came from the YAML, and every failure
-        # a config can cause carries the exit code the CLI maps (the rule the registry
-        # states for an unknown task_name). Bare, it reached the ExtOpt server as a crash
-        # during startup and the CLI as a traceback.
-        raise ConfigError(
-            f"unknown ORB model {name!r}; pick a loader from "
-            f"orb_models.forcefield.pretrained (e.g. {_DEFAULT_MODEL!r})"
-        )
+    loader = _loader(pretrained, spec.model_name or _DEFAULT_MODEL)
     weights = {} if spec.weights is None else {"weights_path": str(spec.weights)}
     model, adapter = loader(**weights, device=spec.device, compile=False)
     return ORBCalculator(model, adapter, device=spec.device)
@@ -214,12 +231,10 @@ class OrbTrainer(ApiTrainerBase):
                 f"— name the loader once, as the step's model_name, and drop base_model "
                 f"from the template"
             )
-        loader_fn = _loader(pretrained, foundation)
-        if loader_fn is None:
-            raise SystemExit(
-                f"orb training: unknown ORB model {foundation!r}; pick a loader from "
-                f"orb_models.forcefield.pretrained"
-            )
+        try:
+            loader_fn = _loader(pretrained, foundation)
+        except ConfigError as e:
+            raise SystemExit(f"orb training: {e}") from e
         weights = str(config.get("weights_path") or "")
         loader_kwargs: dict[str, Any] = {"device": device, "train": True}
         if weights:

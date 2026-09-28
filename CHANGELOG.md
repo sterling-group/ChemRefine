@@ -466,6 +466,12 @@ for the full map.
 
 ### Fixed
 
+- **An ORB model is found by the name orb-models registers it under.** A step named its
+  loader by function name only, so the names orb-models documents for its aliases
+  (`orbmol_v1_direct`, `orbmol_v1_conservative`) were unknown models. A `model_name` now
+  resolves by orb's registry key too, with hyphens or underscores. One of orb-models'
+  deprecated v1 models (`orb_v1`, `orb_d3_v1`, …) is refused by name as deprecated, where
+  it failed inside the job with a `TypeError` about `compile`.
 - **A training step records the release an unset `model_name` starts from.** CHGNet's
   trainer fine-tuned its default release, `0.3.0`, while the runlog said
   `started_from: scratch` and `trained_model.json` said nothing. FAIRChem's fine-tuning
