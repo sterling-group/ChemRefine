@@ -1,2 +1,5 @@
-# Wall time a live run of this case may take, measured with headroom.
-budget_s: 60
+# One run (no scenario): two ORCA jobs, four one-epoch fits and four single points, one
+# after the other on one core, each MLIP process importing its library and building its
+# model, which is nearly all of the time. The run took 58.7 s and 60.2 s under nice 19
+# (PR-T1), at about 1.05 GB of anonymous memory. About 1.5 times the slower run.
+budget_s: 90

@@ -155,7 +155,41 @@ def _pyscf_extopt(config: Config) -> None:
         assert np.abs(fock[occ, nocc:]).max() < 1e-4, f"{path.name}: not a converged HF density"
 
 
+def _mlip_train(config: Config) -> None:
+    """What only a live fit shows: each job's own record of its start, and the libraries' words.
+
+    Each runlog names what its fit started from, in the library's spelling, the default
+    included; MACE's own log says it loaded MACE-OFF, not the Materials Project model a
+    bare ``small`` would be; and ORB's default loader trained with its stress output off,
+    as the job said.
+    """
+    fits = {
+        step.options["task_name"]: config.step_dir(step) / ids.TRAINING_ID
+        for step in config.steps
+        if step.engine == "mlip-train"
+    }
+    starts = {}
+    for task, run_dir in fits.items():
+        (runlog,) = run_dir.glob("*.runlog")
+        text = runlog.read_text(encoding="utf-8")
+        (starts[task],) = re.findall(r"^\s*started_from=(\S+)\s*$", text, re.MULTILINE)
+    assert starts == {
+        "mace_off": "small_off",
+        "sevenn": "7net-0",
+        "chgnet": "0.3.0",
+        "orb": "orb_v3_conservative_inf_omat",
+    }, starts
+    mace_log = "\n".join(
+        path.read_text(encoding="utf-8") for path in (fits["mace_off"] / "logs").glob("*.log")
+    )
+    loaded = re.search(r"Using foundation model (.+?) as initial checkpoint", mace_log)
+    assert loaded is not None and "mace-off" in loaded[1], "MACE fine-tuned MACE-OFF"
+    (orb_err,) = fits["orb"].glob("*.err")
+    assert "carries a stress output" in orb_err.read_text(encoding="utf-8"), "ORB warned"
+
+
 LIVE_CHECKS: dict[str, Callable[[Config], None]] = {
+    "mlip_train": _mlip_train,
     "pyscf_extopt": _pyscf_extopt,
 }
 """Facts a live run shows that its recording cannot carry, by case."""

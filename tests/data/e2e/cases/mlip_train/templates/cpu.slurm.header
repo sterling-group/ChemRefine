@@ -1,2 +1,2 @@
-#SBATCH --partition=normal
-#SBATCH --time=01:00:00
+#!/bin/bash
+# Minimal header for local capture runs (no SLURM directives needed).

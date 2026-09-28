@@ -23,6 +23,8 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
+from ase.db import connect
+from ase.io import iread
 from replay import (
     ABSOLUTE_PATH_RE,
     ARTIFACT_STUB,
@@ -49,10 +51,12 @@ from test_engines_orca_corpus import CYCLE_LIMIT_RE
 from chemrefine import cache, filtering, ids, pipeline
 from chemrefine.config import BoltzmannSample, Config, StepConfig, load_config
 from chemrefine.engines.api import ArtifactEngine, get_engine
+from chemrefine.engines.mlip.registry import VACUUM_PADDING_ANGSTROM
+from chemrefine.engines.mlip.train.engine import SIDECAR_NAME
 from chemrefine.engines.orca.output import parse_output
 from chemrefine.errors import ChemRefineError
 from chemrefine.io import read_xyz_frames
-from chemrefine.quantities import HARTREE_TO_KCALMOL
+from chemrefine.quantities import HARTREE_PER_BOHR_TO_EV_PER_A, HARTREE_TO_EV, HARTREE_TO_KCALMOL
 from chemrefine.recovery import Action
 from chemrefine.scaffold import scaffold_templates
 from chemrefine.state import FailureKind, JobBatch, JobTriple, StepContext, StepInputs
@@ -198,10 +202,7 @@ def test_every_case_has_one_recording_and_one_check() -> None:
 NOT_LIVE: dict[str, str] = {
     "engine fake": "the suite's in-memory engine, not a shipped one",
     "engine qchem": "no Q-Chem binary on the machines that record",
-    "trains mlip-chgnet": "no case fits it yet",
     "trains mlip-fairchem": "a FAIRChem fit needs about 7.3 GB, past what a recording machine has",
-    "trains mlip-orb": "no case fits it yet",
-    "trains mlip-sevenn": "no case fits it yet",
 }
 """What no live case covers, each with the reason — an engine, a library run directly, a
 library fitted. Everything else registered must be covered, and an entry here that a case
@@ -1031,32 +1032,127 @@ def _mlip_extopt(run: Replayed) -> None:
 
 
 def _mlip_train(run: Replayed) -> None:
-    """Label → fine-tune (one job over the ensemble) → run the trained model on every structure.
+    """ORCA's labels fitted by each training library, and each fitted model run back.
 
-    The dataset is written from the labelled ensemble, the real MACE template renders
-    against it, the one job flows through the scheduler under the training id, the
-    artifact decides success, the sidecar cites the model, and the next step consumes it.
+    Each dataset holds ORCA's own final energy and the negative of its Cartesian gradient,
+    in eV and eV/Å, one water to train on and one held out, and CHGNet's in a cubic
+    vacuum box, since it is periodic-only. Each template renders against the dataset the
+    step wrote, each library trains in one job, and the sidecar cites the model and what it
+    started from: the release the step names, as the step names it, or, unset, the
+    trainer's declared default. The lower-energy water is then run through each fitted
+    model, by the library that fitted it, and each energy sits in a window around that
+    model's own, which the pretrained model a dropped ``model_path`` would load cannot reach.
     """
-    case = run.case
-    train_calls = [
-        call
-        for call in run.submitter.calls
-        if any(sid == ids.TRAINING_ID for *_x, sid in call.files)
-    ]
-    assert len(train_calls) == 1 and len(train_calls[0].files) == 1
-    run_dir = case.output_dir / "step2" / "train"
-    rendered = (run_dir / "step2_train.yaml").read_text(encoding="utf-8")
-    assert str(run_dir / "train.xyz") in rendered and (run_dir / "train.xyz").is_file()
-    assert str(run_dir / "valid.xyz") in rendered and (run_dir / "valid.xyz").is_file()
-    sidecar = json.loads((run_dir / "trained_model.json").read_text(encoding="utf-8"))
-    assert (sidecar["task_name"], sidecar["backend"]) == ("mace_off", "mlip-mace")
-    assert sidecar["n_structures"] == 4
+    case, config = run.case, run.config
+    served = dict(run.submitter.served)
+    labels_step = config.steps[0]
+    fits = [step for step in config.steps if step.engine == "mlip-train"]
+    round_trips = [step for step in config.steps if step.engine == "mlip"]
 
-    labelled = [s.id for s in run.outcomes[0].state.structures]
-    assert [s.id for s in run.outcomes[1].state.structures] == labelled
-    rendered3 = (case.output_dir / "step3" / "0" / "step3_0.py").read_text(encoding="utf-8")
-    assert str(run_dir / "train.model") in rendered3, "step 3 loads the model step 2 produced"
-    assert len(run.outcomes[2].state.structures) == 4
+    # ORCA's own words for each label: its final energy and its Cartesian gradient.
+    labels: dict[str, tuple[float, np.ndarray, np.ndarray]] = {}
+    for sid in ("0", "1"):
+        job = f"{labels_step.dir_name()}/{sid}"
+        assert served[job] == 1
+        text = case.submitted_file(job, 0, f"step1_{sid}.out").read_text(encoding="utf-8")
+        energy = float(re.findall(r"FINAL SINGLE POINT ENERGY\s+(-?\d+\.\d+)", text)[-1])
+        rows = text[text.rindex("CARTESIAN GRADIENT") :].splitlines()[3:6]
+        gradient = np.array([[float(x) for x in row.split()[3:6]] for row in rows])
+        (structure,) = [s for s in run.outcomes[0].state.structures if s.id == sid]
+        shape = structure.atoms.positions - structure.atoms.positions[0]
+        labels[sid] = (energy * HARTREE_TO_EV, -gradient * HARTREE_PER_BOHR_TO_EV_PER_A, shape)
+
+    def labelled_as(frame: Any) -> str:
+        """The step-1 id a dataset frame is, by its shape (a boxed frame is shifted)."""
+        shape = frame.positions - frame.positions[0]
+        (sid,) = [
+            sid for sid, (*_, known) in labels.items() if np.allclose(shape, known, atol=1e-6)
+        ]
+        return sid
+
+    # What each fit starts from, as its sidecar cites it, and the file it writes.
+    expected = {
+        "mace_off": ("mlip-mace", "small", "train.model", "xyz"),
+        "sevenn": ("mlip-sevenn", "7net-0", "checkpoint_best.pth", "xyz"),
+        "chgnet": ("mlip-chgnet", "0.3.0", "train.pth.tar", "xyz"),
+        "orb": ("mlip-orb", "orb_v3_conservative_inf_omat", "train.ckpt", "db"),
+    }
+    artifacts: dict[str, Path] = {}
+    for fit in fits:
+        task = fit.options["task_name"]
+        backend, started_from, artifact, suffix = expected[task]
+        run_dir = config.step_dir(fit).resolve() / ids.TRAINING_ID
+        assert served[f"{fit.dir_name()}/{ids.TRAINING_ID}"] == 1, f"{task}: one job, once"
+        rendered = (run_dir / f"step{fit.step}_train.yaml").read_text(encoding="utf-8")
+        assert str(run_dir / f"train.{suffix}") in rendered, f"{task}: renders its dataset"
+        if task == "mace_off":
+            assert "foundation_model: small_off" in rendered, "MACE-OFF's small, as MACE names it"
+        seen = []
+        for split in ("train", "valid"):
+            path = run_dir / f"{split}.{suffix}"
+            if suffix == "db":
+                with connect(str(path)) as db:
+                    frames = [row.toatoms() for row in db.select()]
+            else:
+                frames = list(iread(str(path)))
+            assert len(frames) == 1, f"{task}: one water to {split} on"
+            for frame in frames:
+                sid = labelled_as(frame)
+                seen.append(sid)
+                energy_ev, forces, _shape = labels[sid]
+                if task == "mace_off":
+                    got_e, got_f = frame.info["REF_energy"], frame.arrays["REF_forces"]
+                else:
+                    got_e, got_f = frame.get_potential_energy(), frame.get_forces()
+                assert abs(got_e - energy_ev) < 1e-6, f"{task}/{sid}: ORCA's energy, in eV"
+                assert np.allclose(got_f, forces, rtol=0, atol=1e-6), (
+                    f"{task}/{sid}: minus ORCA's gradient, in eV/Å"
+                )
+                if task == "chgnet":
+                    side = (
+                        float(np.ptp(frame.positions, axis=0).max()) + 2 * VACUUM_PADDING_ANGSTROM
+                    )
+                    assert frame.pbc.all() and np.allclose(frame.cell.array, np.eye(3) * side), (
+                        f"{sid}: fitted in a cubic vacuum box"
+                    )
+                else:
+                    assert not frame.pbc.any(), f"{task}/{sid}: a molecule, fitted as one"
+        assert sorted(seen) == ["0", "1"], f"{task}: both labels, one per split"
+        sidecar = json.loads((run_dir / SIDECAR_NAME).read_text(encoding="utf-8"))
+        assert sidecar["task_name"] == task and sidecar["backend"] == backend
+        assert sidecar["model_path"] == artifact and sidecar["n_structures"] == 2
+        assert sidecar["started_from"] == started_from, f"{task}: {sidecar['started_from']}"
+        artifacts[task] = run_dir / artifact
+        if fit.sample is None:
+            kept = [s.id for s in run.outcomes[fit.step - 1].state.structures]
+            assert kept == ["0", "1"], f"{task}: the ensemble passes through"
+
+    # Each fitted model, run by its library on the lower-energy water. Each window is the
+    # trained model's own energy; the pretrained model's is 1e-3 Eh or more away.
+    trained = {
+        "mace_off": -75.33151031,  # pretrained MACE-OFF small: -76.47933836
+        "sevenn": -0.52229955,  # pretrained 7net-0: -0.51791364
+        "chgnet": -0.54846524,  # pretrained 0.3.0: -0.54424447
+        "orb": -0.52095277,  # pretrained default loader: -0.51794676
+    }
+    (onward,) = run.outcomes[fits[-1].step - 1].state.structures
+    assert onward.id == "1", "the lower-energy water"
+    for step in round_trips:
+        task = step.options["task_name"]
+        step_dir = config.step_dir(step).resolve()
+        assert served[f"{step.dir_name()}/1"] == 1
+        script = (step_dir / "1" / f"step{step.step}_1.py").read_text(encoding="utf-8")
+        assert Path(step.options["model_path"]) == artifacts[task], f"{task}: its own fit"
+        assert f'model_path="{artifacts[task]}",' in script, f"{task}: loads the fitted model"
+        assert f'task_name="{task}",' in script, f"{task}: run by the library that fitted it"
+        assert 'model_name="",' in script and "charge=0," in script and "multiplicity=1," in script
+        (single_input,) = read_xyz_frames(step_dir / "1" / f"step{step.step}_1_inp.xyz")
+        assert np.allclose(single_input.positions, onward.atoms.positions, atol=1e-6)
+        (survivor,) = run.outcomes[step.step - 1].state.structures
+        assert survivor.energy_hartree is not None
+        assert abs(survivor.energy_hartree - trained[task]) < 1e-5, (
+            f"{task}: {survivor.energy_hartree} is not its fitted model's energy"
+        )
 
 
 def _pyscf(run: Replayed) -> None:

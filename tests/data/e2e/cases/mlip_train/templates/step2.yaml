@@ -1,5 +1,5 @@
-# MACE training config for the live-tier plumbing case — see input.yaml for why this is a
-# naive fine-tune rather than the multihead replay the tutorial ships.
+# MACE fine-tune for the live tier: one epoch, and no multihead replay (the tutorial ships
+# that), so the fit takes seconds and proves the plumbing, not a model.
 name: $RUN_NAME
 work_dir: $RUN_DIR
 train_file: $TRAIN_SET
@@ -12,5 +12,5 @@ multiheads_finetuning: False
 E0s: average
 
 max_num_epochs: 1
-batch_size: 2
+batch_size: 1  # one training frame, and MACE drops a last partial batch
 default_dtype: float64

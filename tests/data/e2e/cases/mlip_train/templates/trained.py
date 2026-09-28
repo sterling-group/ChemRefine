@@ -1,4 +1,4 @@
-# Run the model step 2 just trained.
+# Run the model a training step produced: task_name names the library, model_path its weights.
 import numpy as np
 from ase.io import read
 
@@ -6,7 +6,12 @@ from chemrefine.engines.mlip.calculator import MlipCalculator
 from chemrefine.quantities import HARTREE_PER_BOHR_TO_EV_PER_A, HARTREE_TO_EV
 
 mlip = MlipCalculator(
-    task_name="$TASK_NAME", model_name="", model_path="$MODEL_PATH", device="$DEVICE"
+    model_name="$MODEL_NAME",
+    task_name="$TASK_NAME",
+    model_path="$MODEL_PATH",
+    device="$DEVICE",
+    charge=$CHARGE,
+    multiplicity=$MULTIPLICITY,
 )
 atoms = read("$XYZ_PATH")
 energy_ev, gradient_ev_per_a = mlip.single_point(atoms)

@@ -1,46 +1,88 @@
-# Capture case: label with MACE-OFF, fine-tune on those labels, run the trained model.
-#
-# The point is the *plumbing* of a training step, not the science: that the ensemble reaches
-# the step after training, that a model appears where the next step was told to look, and
-# that the next step can load it.
-#
-# `multiheads_finetuning: False` is what makes it a release-gate case rather than an
-# overnight one. MACE's replay head defaults to `num_samples_pt: 10000`, so the recommended
-# recipe trains on 10,000 pretraining structures beside these six — measured at 2h21m. The
-# flag skips `prepare_pt_head` entirely, and (being the same guard) also legalises
-# `E0s: average`. The shipped tutorial keeps the replay; this does not.
+# Each training library but FAIRChem's fitted once, one core: ORCA labels two waters, each
+# library fits one epoch on them, and each fitted model is run on one of them. What each fit
+# proves is the plumbing, not a model: the labels reach its dataset in its units and sign, its
+# template renders against that dataset, its one job trains under the step's plan, and the
+# model it writes is the one its round trip loads. The fits share nothing chemically: HF
+# labels on a PBE-referenced SevenNet, CHGNet or ORB model are off by the reference energy.
+# FAIRChem's trainer is left out: a fit needs about 7.3 GB.
 template_dir: ./templates
 output_dir: ./outputs
+executables: { orca: orca }  # the live harness injects the resolved absolute path
 dispatch: auto
-max_cores: 4
+max_cores: 1
 
 input: ./waters.xyz
 charge: 0
 multiplicity: 1
 
 steps:
-  # Label the seeds with energies AND forces — training needs both, seeds have neither.
+  # `! HF STO-3G EnGrad`: an energy and a Cartesian gradient per water, the two halves of a
+  # label. Every fit below reads them, in eV and eV/A, with the forces the gradient's negative.
   - step: 1
-    engine: mlip
-    operation: sp
-    options: { task_name: mace_off, model_name: small, device: cpu, cores: 1 }
-    sample: { method: min, count: 0 }
+    name: labels
+    engine: orca
 
-  # Fine-tune on those labels.
+  # Each fit holds one water out (`valid_fraction: 0.5`), since SevenNet and CHGNet refuse to
+  # train without a validation set, and trains one epoch on the other.
+  #
+  # MACE fine-tunes MACE-OFF small, which its trainer spells `small_off`. MACE drops a last
+  # partial batch, so with one training water the batch is one.
   - step: 2
+    name: mace
     engine: mlip-train
-    options: { task_name: mace_off, model_name: small, device: cpu, valid_fraction: 0.25 }
-    sample: { method: min, count: 0 }
+    options: { task_name: mace_off, model_name: small, device: cpu, valid_fraction: 0.5 }
 
-  # Run what step 2 produced. The path is predictable before the training has run, which is
-  # the whole reason `artifact()` targets MACE's seed-free `model_dir` name. `task_name` is
-  # step 2's word again — it names the library; `model_path` says where its weights are.
+  # SevenNet fine-tunes 7net-0, the checkpoint the template continues from.
   - step: 3
+    name: sevenn
+    engine: mlip-train
+    options: { task_name: sevenn, model_name: 7net-0, device: cpu, valid_fraction: 0.5 }
+
+  # CHGNet names no model, so it fine-tunes the release its trainer declares for an unset
+  # `model_name`, and says which. CHGNet is periodic-only: each water is fitted in a
+  # vacuum box.
+  - step: 4
+    name: chgnet
+    engine: mlip-train
+    options: { task_name: chgnet, device: cpu, valid_fraction: 0.5 }
+
+  # ORB names no model either: its default loader, which carries a stress output, trains
+  # with stress off, and the job warns. The lower-energy water goes on to the round trips.
+  - step: 5
+    name: orb
+    engine: mlip-train
+    options: { task_name: orb, device: cpu, valid_fraction: 0.5 }
+    sample: { method: min, count: 1 }
+
+  # Each fitted model, run by the library that fitted it, on that water. ORB's names no
+  # loader, and runs the default its fit started from.
+  - step: 6
+    name: mace_model
     engine: mlip
     operation: sp
+    template: trained.py
+    options: { task_name: mace_off, model_path: ./outputs/step2_mace/train/train.model, device: cpu }
+
+  - step: 7
+    name: sevenn_model
+    engine: mlip
+    operation: sp
+    template: trained.py
     options:
-      task_name: mace_off
-      model_path: ./outputs/step2/train/train.model
+      task_name: sevenn
+      model_path: ./outputs/step3_sevenn/train/checkpoint_best.pth
       device: cpu
-      cores: 1
-    sample: { method: min, count: 0 }
+
+  - step: 8
+    name: chgnet_model
+    engine: mlip
+    operation: sp
+    template: trained.py
+    options: { task_name: chgnet, model_path: ./outputs/step4_chgnet/train/train.pth.tar, device: cpu }
+
+  - step: 9
+    name: orb_model
+    engine: mlip
+    operation: sp
+    template: trained.py
+    options: { task_name: orb, model_path: ./outputs/step5_orb/train/train.ckpt, device: cpu }

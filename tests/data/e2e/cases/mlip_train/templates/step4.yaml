@@ -1,0 +1,5 @@
+train_set: $TRAIN_SET
+valid_set: $VALID_SET
+run_name: $RUN_NAME
+epochs: 1
+batch_size: 2
