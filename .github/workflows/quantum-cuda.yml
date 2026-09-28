@@ -1,0 +1,68 @@
+name: Quantum CUDA contracts
+
+# Never execute unreviewed PR code on a machine with a GPU runner.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quantum-cuda
+  cancel-in-progress: false
+
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require explicit runner setup and the protected main branch
+        env:
+          ENABLED: ${{ vars.CHEMREFINE_CUDA_CI_ENABLED }}
+          CUDA_PYTHON: ${{ vars.CHEMREFINE_CUDA_PYTHON }}
+          SELECTED_REF: ${{ github.ref }}
+        run: |
+          test "$SELECTED_REF" = refs/heads/main || { echo 'CUDA CI accepts reviewed main only'; exit 1; }
+          test "$ENABLED" = true || { echo 'Configure the dedicated CUDA runner before enabling this workflow'; exit 1; }
+          test -n "$CUDA_PYTHON" || { echo 'Set CHEMREFINE_CUDA_PYTHON to the provisioned interpreter'; exit 1; }
+
+  cuda:
+    needs: readiness
+    runs-on: [self-hosted, linux, x64, chemrefine-cuda]
+    environment: quantum-cuda
+    timeout-minutes: 20
+    env:
+      GPU_PYTHON: ${{ vars.CHEMREFINE_CUDA_PYTHON }}
+      CUDA_VISIBLE_DEVICES: "0"
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      QISKIT_NUM_PROCS: "2"
+      CHEMREFINE_HOME: ${{ runner.temp }}/chemrefine-cuda-home
+      EVIDENCE: ${{ runner.temp }}/quantum-cuda-evidence
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Bind the pre-provisioned isolated CUDA environment to this checkout
+        run: |
+          test -x "$GPU_PYTHON"
+          "$GPU_PYTHON" -m pip install --no-deps -e .
+          "$GPU_PYTHON" -m pip check
+      - name: Execute required GPU numerical and pipeline contracts
+        run: |
+          "$GPU_PYTHON" scripts/quantum_validation.py --output "$EVIDENCE" --label cuda-tests -- \
+            "$GPU_PYTHON" -m pytest -o addopts='' -m gpu -q \
+            tests/test_engines_qiskit_aer_live.py \
+            tests/test_engines_qiskit_pipeline_live.py tests/test_quantum_benchmarks.py \
+            --junitxml="$EVIDENCE/cuda-tests.xml"
+      - name: Reject missing, skipped or failed GPU tests
+        run: |
+          "$GPU_PYTHON" tests/provider_reports.py "$EVIDENCE/cuda-tests.xml" \
+            tests/test_engines_qiskit_aer_live.py \
+            tests/test_engines_qiskit_pipeline_live.py tests/test_quantum_benchmarks.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: quantum-cuda-validation
+          path: ${{ runner.temp }}/quantum-cuda-evidence
+          if-no-files-found: warn

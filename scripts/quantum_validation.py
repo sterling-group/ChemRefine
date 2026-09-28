@@ -47,6 +47,10 @@ def snapshot() -> dict:
                 "CHEMREFINE_REQUIRE_NODE",
                 "PYTHONPATH",
                 "QISKIT_NUM_PROCS",
+                "CHEMREFINE_ENVIRONMENT_ID",
+                "CONTAINER_IMAGE",
+                "CONTAINER_DIGEST",
+                "APPTAINER_CONTAINER",
             )
         },
     }

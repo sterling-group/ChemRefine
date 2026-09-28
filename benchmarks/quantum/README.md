@@ -170,3 +170,30 @@ artifacts; add a new run directory for reruns. Keep scripts, methodology and com
 summaries in source control, and move large historical raw campaigns to artifact
 storage with checksums and a retention policy. Do not add runtime performance
 thresholds until stable repeated measurements establish a baseline on fixed hardware.
+
+## Dedicated CUDA CI
+
+`.github/workflows/quantum-cuda.yml` is a manual, main-only workflow, separate from
+ordinary pull-request CI. It requires a repository administrator to configure:
+
+1. A dedicated ephemeral Linux x64 GPU runner labelled `chemrefine-cuda`, isolated
+   from personal workstations, credentials, production networks and other runners.
+2. A `quantum-cuda` GitHub environment with required reviewers and a main-only
+   deployment-branch policy. Protect workflow changes through normal PR review.
+3. A disposable, pre-provisioned CUDA-enabled Aer environment with
+   `chemrefine[qiskit-toolkit]`, pytest and pytest-cov. Set the repository variable
+   `CHEMREFINE_CUDA_PYTHON` to its absolute interpreter path; do not overlay a CPU
+   Aer wheel. Record the runner image identifier in `CHEMREFINE_ENVIRONMENT_ID`
+   or `CONTAINER_IMAGE`/`CONTAINER_DIGEST` in the runner environment.
+4. Set repository variable `CHEMREFINE_CUDA_CI_ENABLED=true` only after the above
+   protections exist. Dispatch the workflow from `main` after it is merged.
+
+Without setup, the hosted readiness job fails before requesting the GPU runner.
+The workflow runs actual statevector/density-matrix jobs in both precisions,
+checks the reported physical device, and runs the GPU estimator and pipeline/cache
+tests. Missing SDKs, absent GPUs, empty selection and skipped tests fail the gate.
+JUnit results, command logs and environment/build/source metadata are uploaded even
+after test failures. This does not certify tensor-network simulation or multi-GPU
+scaling, and does not replace the CPU provider compatibility jobs.
+See [GitHub's security guidance](https://docs.github.com/en/actions/reference/security/secure-use)
+before connecting a self-hosted runner to a public repository.

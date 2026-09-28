@@ -550,6 +550,7 @@ _INPUTS = (
     "scripts/quantum_validation.py",
     "scripts/quantum_audit.py",
     "scripts/quantum_analysis.py",
+    ".github/workflows/quantum-cuda.yml",
 )
 
 
