@@ -171,6 +171,7 @@ def test_require_backend_does_not_advise_an_install_that_would_do_nothing(
     built on a Python the backend supports.
     """
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    monkeypatch.setattr(provision, "this_python", lambda: "3.14")
     monkeypatch.setattr(provision.importlib.util, "find_spec", lambda _n: None)
     monkeypatch.setattr(provision, "_supported_pythons", lambda _e: ("3.12",))
     with pytest.raises(ConfigError) as excinfo:
@@ -649,12 +650,14 @@ def test_an_extra_that_claims_nothing_still_builds_here(monkeypatch):
 def test_conda_and_uv_are_asked_for_a_version_they_can_produce(monkeypatch, tool):
     """Neither needs an interpreter on the machine: conda resolves one, uv downloads one."""
     _supports(monkeypatch, ("3.12", "3.11"))
+    monkeypatch.setattr(provision, "this_python", lambda: "3.14")
     monkeypatch.setattr(provision.shutil, "which", lambda _n: None)  # nothing on PATH at all
     assert provision.resolve_base_python("mlip-orb", tool) == provision.BasePython("3.12", tool)
 
 
 def test_a_venv_is_created_by_the_canonical_interpreter_for_that_version(monkeypatch):
     _supports(monkeypatch, ("3.12",))
+    monkeypatch.setattr(provision, "this_python", lambda: "3.14")
     monkeypatch.setattr(
         provision.shutil, "which", lambda n: "/usr/bin/python3.12" if n == "python3.12" else None
     )
@@ -669,12 +672,14 @@ def test_uv_supplies_the_python_a_venv_machine_lacks(monkeypatch):
     it makes is installed into by uv — which is why the tool travels with the version.
     """
     _supports(monkeypatch, ("3.12",))
+    monkeypatch.setattr(provision, "this_python", lambda: "3.14")
     monkeypatch.setattr(provision.shutil, "which", lambda n: "/usr/bin/uv" if n == "uv" else None)
     assert provision.resolve_base_python("mlip-orb", "venv") == provision.BasePython("3.12", "uv")
 
 
 def test_no_interpreter_and_no_uv_is_refused_with_the_ways_out(monkeypatch):
     _supports(monkeypatch, ("3.12",))
+    monkeypatch.setattr(provision, "this_python", lambda: "3.14")
     monkeypatch.setattr(provision.shutil, "which", lambda _n: None)
     with pytest.raises(BackendProvisionError) as excinfo:
         provision.resolve_base_python("mlip-orb", "venv")
@@ -834,6 +839,7 @@ def test_a_fresh_env_is_created_on_the_python_the_extra_supports(monkeypatch, tm
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
     monkeypatch.setattr(provision, "_direct_url", lambda: None)
     _supports(monkeypatch, ("3.12",))
+    monkeypatch.setattr(provision, "this_python", lambda: "3.14")
     monkeypatch.setattr(
         provision.shutil, "which", lambda n: "/usr/bin/python3.12" if n == "python3.12" else None
     )
