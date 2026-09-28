@@ -162,13 +162,80 @@ def test_command_timeout_retains_failed_case(benchmark, monkeypatch, tmp_path):
 
     monkeypatch.setattr(benchmark, "snapshot", lambda: {})
     monkeypatch.setattr(benchmark, "cases", lambda _: [{"family": "sampler"}])
-    monkeypatch.setattr(benchmark.subprocess, "run", timeout)
+    monkeypatch.setattr(benchmark, "run_isolated_worker", timeout)
     output = tmp_path / "results"
     monkeypatch.setattr(sys, "argv", ["benchmark", "--output", str(output)])
     assert benchmark.main() == 1
     row = json.loads((output / "samples.jsonl").read_text())
     assert row["status"] == "timeout" and row["seconds"] is None
     assert (output / "summary.csv").is_file()
+
+
+def test_worker_resource_limits_are_explicit_and_recorded(benchmark, monkeypatch, tmp_path):
+    def execute(command, *, env, **kwargs):
+        assert {env[k] for k in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS")} == {
+            "8"
+        }
+        assert env["QISKIT_NUM_PROCS"] == "2"
+        return 7
+
+    monkeypatch.setattr(benchmark, "snapshot", lambda: {"environment": {"QISKIT_NUM_PROCS": "99"}})
+    monkeypatch.setattr(benchmark, "cases", lambda _: [{"family": "sampler", "cores": 8}])
+    monkeypatch.setattr(benchmark, "run_isolated_worker", execute)
+    output = tmp_path / "limits"
+    monkeypatch.setattr(
+        sys, "argv", ["benchmark", "--output", str(output), "--qiskit-processes", "2"]
+    )
+    assert benchmark.main() == 1
+    manifest = json.loads((output / "manifest.json").read_text())
+    assert manifest["environment"]["QISKIT_NUM_PROCS"] == "2"
+    assert manifest["qiskit_processes"] == 2
+    assert "worker exited 7" in json.loads((output / "samples.jsonl").read_text())["reason"]
+
+
+@pytest.mark.parametrize("finish", [False, True])
+def test_worker_process_group_cleans_up_descendants(benchmark, tmp_path, finish):
+    import os
+    import subprocess
+    import time
+
+    if sys.platform != "linux":
+        pytest.skip("requires Linux process-state inspection")
+    child = "import time; time.sleep(60)"
+    code = (
+        "import subprocess,sys,time; from pathlib import Path; "
+        f"p=subprocess.Popen([sys.executable,'-c',{child!r}]); "
+        "Path(sys.argv[1]).write_text(str(p.pid)); "
+        + ("sys.exit(0)" if finish else "time.sleep(60)")
+    )
+    pid_file = tmp_path / "child.pid"
+    with (tmp_path / "worker.log").open("w") as log:
+        kwargs = {"cwd": tmp_path, "env": dict(os.environ), "log": log, "timeout": 2}
+        command = [sys.executable, "-c", code, str(pid_file)]
+        if finish:
+            assert benchmark.run_isolated_worker(command, **kwargs) == 0
+        else:
+            with pytest.raises(subprocess.TimeoutExpired):
+                benchmark.run_isolated_worker(command, **kwargs)
+    pid = int(pid_file.read_text())
+    state = Path(f"/proc/{pid}/stat")
+    for _ in range(100):
+        if not state.exists() or state.read_text().split()[2] == "Z":
+            break
+        time.sleep(0.01)
+    else:
+        pytest.fail("timed-out worker left a running descendant")
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "invalid"])
+def test_worker_rejects_invalid_transpiler_process_budget(benchmark, monkeypatch, tmp_path, value):
+    monkeypatch.setattr(
+        sys, "argv", ["benchmark", "--output", str(tmp_path / "new"), "--qiskit-processes", value]
+    )
+    with pytest.raises(SystemExit) as exc:
+        benchmark.main()
+    assert exc.value.code == 2
+    assert not (tmp_path / "new").exists()
 
 
 def test_analysis_rejects_partial_campaign_and_incomplete_repeats(benchmark, tmp_path):
@@ -226,7 +293,7 @@ def test_analysis_rejects_invalid_successful_timings(benchmark, seconds):
 def test_analysis_validates_warmups_failure_order_and_manifest(benchmark):
     from quantum_analysis import validate_samples
 
-    manifest = {"cases": [{"case_id": "x"}], "device": "cpu", "repeats": 2, "warmups": 1}
+    manifest: dict = {"cases": [{"case_id": "x"}], "device": "cpu", "repeats": 2, "warmups": 1}
     warmup = {
         "case_id": "x",
         "device": "cpu",
@@ -282,7 +349,7 @@ def test_analysis_comparison_requires_matched_science_and_resources(benchmark):
 
     from quantum_analysis import validate_comparison
 
-    cpu = {
+    cpu: dict = {
         "device": "cpu",
         "source_sha256": {"workflow.py": "abc"},
         "python": "3.12.14",

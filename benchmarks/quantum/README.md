@@ -152,7 +152,11 @@ CUDA_VISIBLE_DEVICES=0 QISKIT_NUM_PROCS=1 "$CUDA" scripts/quantum_benchmarks.py 
 Run campaigns serially on an otherwise idle host for publication-quality timing.
 Pin driver/runtime/builds and numerical thread settings. The driver sets OMP,
 OpenBLAS and MKL thread counts per case; Aer cores do not necessarily bound
-Qiskit's separate transpiler process pool. GPU ordinal selection is explicit via
+Qiskit's separate transpiler process pool. `--qiskit-processes` bounds that pool,
+defaulting to `QISKIT_NUM_PROCS` when supplied or otherwise one process. The resolved
+value is recorded in the manifest. Workers run in isolated POSIX process groups;
+completion, timeout and interruption kill remaining descendants of that worker.
+GPU ordinal selection is explicit via
 `CUDA_VISIBLE_DEVICES`; manifests retain physical GPU UUIDs. No multi-GPU speedup
 claim follows from testing two GPUs separately.
 

@@ -12,12 +12,14 @@ import hashlib
 import itertools
 import json
 import os
+import signal
 import statistics
 import subprocess
 import sys
 import tempfile
 import time
 import traceback
+from contextlib import suppress
 from pathlib import Path
 from typing import cast
 
@@ -279,6 +281,25 @@ def worker(payload: dict) -> dict:
     return cast("dict", jsonable({"rows": rows}))
 
 
+def run_isolated_worker(command: list[str], *, cwd: Path, env: dict, log, timeout: float) -> int:
+    """Reap the worker and kill its owned process group on completion or interruption."""
+    with subprocess.Popen(  # noqa: S603 - fixed worker argv, no shell
+        command,
+        cwd=cwd,
+        env=env,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    ) as process:
+        try:
+            return process.wait(timeout=timeout)
+        finally:
+            # Compilation pools can outlive their parent; never kill unrelated host jobs.
+            with suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+
+
 def main() -> int:
     """Run one isolated worker at a time and retain partial evidence after failures."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -293,6 +314,12 @@ def main() -> int:
     parser.add_argument("--warmups", type=int, default=1)
     parser.add_argument("--timeout", type=float, default=180)
     parser.add_argument("--limit", type=int)
+    parser.add_argument(
+        "--qiskit-processes",
+        type=int,
+        default=os.environ.get("QISKIT_NUM_PROCS", "1"),
+        help="Bound transpiler workers independently of Aer threads (default: env or 1)",
+    )
     parser.add_argument("--match", help="Only configurations containing this text in their JSON")
     parser.add_argument("--worker", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -301,8 +328,16 @@ def main() -> int:
         outcome = worker(payload)
         Path(payload["result"]).write_text(json.dumps(outcome, allow_nan=False) + "\n")
         return 0
-    if args.output is None or args.repeats < 1 or args.warmups < 0 or args.timeout <= 0:
-        parser.error("require --output, repeats >= 1, warmups >= 0 and timeout > 0")
+    if (
+        args.output is None
+        or args.repeats < 1
+        or args.warmups < 0
+        or args.timeout <= 0
+        or args.qiskit_processes < 1
+    ):
+        parser.error("require --output, repeats/processes >= 1, warmups >= 0 and timeout > 0")
+    if os.name != "posix":
+        parser.error("benchmark workers require POSIX process-group isolation")
     args.output.mkdir(parents=True, exist_ok=False)
     logs = args.output / "logs"
     logs.mkdir()
@@ -322,10 +357,12 @@ def main() -> int:
         "repeats": args.repeats,
         "warmups": args.warmups,
         "timeout_seconds": args.timeout,
+        "qiskit_processes": args.qiskit_processes,
         "cases": [{"case_id": case_id(c), **c} for c in selected],
         "scope": "Finite declared matrix; not exhaustive over arbitrary options.",
         "timing": "operation wall clock including compilation; setup excluded; synchronous jobs",
     }
+    manifest.setdefault("environment", {})["QISKIT_NUM_PROCS"] = str(args.qiskit_processes)
     (args.output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     rows = []
     with (args.output / "samples.jsonl").open("w") as raw:
@@ -351,11 +388,12 @@ def main() -> int:
                 )
                 for variable in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
                     env[variable] = str(case.get("cores", 1))
+                env["QISKIT_NUM_PROCS"] = str(args.qiskit_processes)
                 start = time.perf_counter()
                 failure = None
                 with (logs / f"{key}.txt").open("w") as log:
                     try:
-                        process = subprocess.run(  # noqa: S603 - fixed worker and JSON argument
+                        returncode = run_isolated_worker(
                             [
                                 sys.executable,
                                 str(Path(__file__).resolve()),
@@ -364,13 +402,11 @@ def main() -> int:
                             ],
                             cwd=ROOT,
                             env=env,
-                            stdout=log,
-                            stderr=subprocess.STDOUT,
+                            log=log,
                             timeout=args.timeout,
-                            check=False,
                         )
-                        if process.returncode or not response.exists():
-                            failure = f"worker exited {process.returncode}; see logs/{key}.txt"
+                        if returncode or not response.exists():
+                            failure = f"worker exited {returncode}; see logs/{key}.txt"
                     except subprocess.TimeoutExpired:
                         failure = f"timeout after {args.timeout} seconds"
                 if failure:
