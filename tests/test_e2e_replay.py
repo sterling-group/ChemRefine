@@ -190,6 +190,91 @@ def test_every_case_has_one_recording_and_one_check() -> None:
     assert set(LIVE_CHECKS) <= set(cases), "a live check for a case that does not exist"
 
 
+NOT_LIVE: dict[str, str] = {
+    "engine fake": "the suite's in-memory engine, not a shipped one",
+    "engine qchem": "no Q-Chem binary on the machines that record",
+    "runs mlip-chgnet": "no case runs it directly yet",
+    "runs mlip-orb": "no case runs it directly yet",
+    "runs mlip-sevenn": "no case runs it directly yet",
+    "trains mlip-chgnet": "no case fits it yet",
+    "trains mlip-fairchem": "a FAIRChem fit needs about 7.3 GB, past what a recording machine has",
+    "trains mlip-orb": "no case fits it yet",
+    "trains mlip-sevenn": "no case fits it yet",
+}
+"""What no live case covers, each with the reason — an engine, a library run directly, a
+library fitted. Everything else registered must be covered, and an entry here that a case
+now covers, or that names nothing registered, is stale."""
+
+
+def _required() -> set[str]:
+    """Every engine, every MLIP library run directly, and every trainer registered."""
+    from chemrefine.engines.api import ENGINES
+    from chemrefine.engines.mlip.registry import (
+        backend_spec,
+        registered_backends,
+        registered_trainers,
+    )
+
+    return (
+        {f"engine {name}" for name in ENGINES}
+        | {f"runs {backend_spec(task).extra}" for task in registered_backends()}
+        | {f"trains {backend_spec(task).extra}" for task in registered_trainers()}
+    )
+
+
+def _covered() -> set[str]:
+    """What the case directories run: each step's engine, and the library it runs or fits."""
+    from chemrefine.engines.mlip.engine import MlipEngine
+    from chemrefine.engines.mlip.train.engine import MlipTrainEngine
+
+    covered = set()
+    for case in sorted(CASES_DIR.iterdir()):
+        if not (case / "input.yaml").is_file():
+            continue
+        for step in load_config(case / "input.yaml").steps:
+            engine = get_engine(step.engine)
+            covered.add(f"engine {step.engine}")
+            if isinstance(engine, MlipEngine | MlipTrainEngine):
+                verb = "trains" if isinstance(engine, MlipTrainEngine) else "runs"
+                covered.add(f"{verb} {engine.backend_requirement(step.options or {}).extra}")
+    return covered
+
+
+def gaps(
+    required: set[str], covered: set[str], exclusions: dict[str, str]
+) -> tuple[list[str], list[str]]:
+    """``(uncovered, stale)``: what nothing covers or excuses, and excuses nothing needs."""
+    uncovered = sorted(required - covered - set(exclusions))
+    stale = sorted((set(exclusions) & covered) | (set(exclusions) - required))
+    return uncovered, stale
+
+
+def test_every_engine_library_and_trainer_runs_live_in_some_case() -> None:
+    """A plugin joins the live tier with a case of its own, or with a reason it cannot.
+
+    The tier is lean by covering shared behaviour once, on the cheapest engine, and each
+    engine, MLIP library and trainer only at its own seam. That only holds while every one
+    of them has that case: a new engine or library with none would ship untried against its
+    real program.
+    """
+    uncovered, stale = gaps(_required(), _covered(), NOT_LIVE)
+    assert not uncovered, f"no live case covers {uncovered}: add one, or excuse it in NOT_LIVE"
+    assert not stale, f"NOT_LIVE excuses {stale}, which a case covers or nothing registers"
+
+
+def test_an_exclusion_nothing_needs_is_stale() -> None:
+    required = {"engine a", "engine b", "runs x"}
+    assert gaps(required, {"engine a"}, {"runs x": "why"}) == (["engine b"], [])
+    assert gaps(required, {"engine a", "engine b", "runs x"}, {"runs x": "why"}) == (
+        [],
+        ["runs x"],
+    )
+    assert gaps(required, {"engine a", "engine b", "runs x"}, {"runs y": "why"}) == (
+        [],
+        ["runs y"],
+    )
+
+
 # ---------------------------------------------------------------------------
 # What each case exists for
 # ---------------------------------------------------------------------------

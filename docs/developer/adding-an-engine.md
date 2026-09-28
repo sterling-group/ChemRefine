@@ -212,6 +212,16 @@ The suite is tiered: unit tests (hermetic), **recorded** end-to-end tests that r
 outputs without any binary installed, and **live** integration tests (`pytest -m integration`,
 deselected by default) that run the real binaries and re-record the fixtures with `--record`.
 
+A new engine also brings **one small live case** under `tests/data/e2e/cases/<name>/` — the
+smallest system and the fewest jobs that exercise its own seam, since behaviour every engine
+shares (NMS, `on_failure`, retries, recovery) is already proven once on ORCA with xTB. The
+case is its `input.yaml`, templates and seed, plus a `case.yaml` declaring its `budget_s`
+(and `heavy: true` if its load cannot be made small), and a `CHECKS` entry in
+`tests/test_e2e_replay.py` stating what it proves. Record it with `pytest -m integration
+--record`; the live run is replayed from its own pack before it may replace a recording. Until
+the case exists, `test_every_engine_library_and_trainer_runs_live_in_some_case` fails — or
+excuse the engine in `NOT_LIVE` with the reason it cannot run on the recording machine.
+
 ### The parsed-result contract
 
 Every engine's parse lands in one canonical, engine-independent record —

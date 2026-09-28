@@ -157,6 +157,15 @@ survivors, a new operation) is not a re-parse, and needs the live tier:
   binaries; add `--record` to re-pack the recordings from a passing run.
   A recording pairs the tree a run left with `submissions.json`, the log of
   what each job produced as it finished, and a fresh replay serves that log.
+  The cases stay lean by rule: behaviour every engine shares is proven once, on
+  ORCA with xTB, and each engine, MLIP library and trainer proves only its own
+  seam in one small case (`test_every_engine_library_and_trainer_runs_live_in_some_case`
+  holds this, with `NOT_LIVE` naming what cannot run and why). Each case's
+  `case.yaml` declares its scenario (a halted run, then `resume`, …), the
+  `budget_s` its live run must fit, and `heavy` when its load cannot be made
+  small — `-m "integration and not heavy"` leaves those out. What a case exists
+  for is its `CHECKS` entry in `tests/test_e2e_replay.py`, run on every replay;
+  facts only a live run can show go in `LIVE_CHECKS` in `tests/test_e2e_live.py`.
   After a parser-only change, re-pack offline instead — no binaries needed:
   run the drift-detector test
   (`tests/test_e2e_relocate.py::test_rebuilt_records_match_the_archived_ones_field_for_field`)
