@@ -40,11 +40,12 @@ from replay import (
     recorded_cases,
     recording,
     verifiable_prefix,
+    with_backend_python,
 )
 
 from chemrefine import cache, filtering, ids, pipeline
 from chemrefine.config import Config, StepConfig, load_config
-from chemrefine.engines.api import ArtifactEngine, ProvisionableEngine, get_engine
+from chemrefine.engines.api import ArtifactEngine, get_engine
 from chemrefine.engines.orca.output import parse_output
 from chemrefine.errors import ChemRefineError
 from chemrefine.io import read_xyz_frames
@@ -70,21 +71,10 @@ class Replayed:
     a user reading the finished tree gets."""
 
 
-def _with_backend_python(config: Config) -> Config:
-    """Point every provisioned step at a dummy interpreter, so preflight passes without it."""
-    steps = [
-        step.model_copy(update={"options": {**(step.options or {}), "backend_python": "python"}})
-        if isinstance(get_engine(step.engine), ProvisionableEngine)
-        else step
-        for step in config.steps
-    ]
-    return config.model_copy(update={"steps": steps})
-
-
 def replay(archive: Path, root: Path, monkeypatch: pytest.MonkeyPatch) -> Replayed:
     """Extract ``archive`` under ``root``, drive its scenario, and read back what it reached."""
     case = extract_case(archive, root)
-    config = _with_backend_python(load_config(case.config_path))
+    config = with_backend_python(load_config(case.config_path))
     spec = CaseSpec.read(case.root)
     submitter = ReplaySubmitter(case)
     monkeypatch.setattr(RUN_BATCH, submitter)

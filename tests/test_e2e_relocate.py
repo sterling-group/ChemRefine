@@ -30,13 +30,6 @@ from chemrefine.step import RunPlan, StepMode
 
 RUN_BATCH = "chemrefine.engines._execution.run_batch"
 
-ORCA_CASES = ["conformers", "nms_minimum", "ts_pes", "host_guest"]
-"""The replays that submit through a stubbed `run_batch`.
-
-A parse-only rebuild needs no backend at all, so the drift detector — the one thing
-standing between a recording and becoming a fossil — covers every recording on disk
-instead, each as far as `replay.verifiable_prefix` says it can be re-derived."""
-
 
 def _with_step_update(config: Config, step_number: int, **updates: object) -> Config:
     steps = [
@@ -46,41 +39,59 @@ def _with_step_update(config: Config, step_number: int, **updates: object) -> Co
     return config.model_copy(update={"steps": steps})
 
 
-@pytest.mark.parametrize("name", ORCA_CASES)
+def _staged(name: str, root: Path) -> tuple[replay.ReplayCase, Config, int | None]:
+    """Recording ``name`` staged as a live tree under ``root``, cut to what it reached."""
+    case = extract_case(recording(name), root)
+    relocate(case)
+    config, halt = replay.reached(
+        case.root, replay.with_backend_python(load_config(case.config_path))
+    )
+    return case, config, halt
+
+
+@pytest.mark.parametrize("name", replay.recorded_cases())
 def test_relocated_tree_is_a_full_cache_hit(
     name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A captured tree moved to a new path must revalidate without submissions."""
-    case = extract_case(recording(name), tmp_path)
-    relocate(case)
+    """A captured tree moved to a new path must revalidate without submissions.
+
+    A finished tree is resumed, as a user resumes a tree copied off a cluster; a halted one
+    is served cache-only, since resuming it re-attempts its pending failures by design.
+    """
+    _case, config, halt = _staged(name, tmp_path)
     monkeypatch.setattr(RUN_BATCH, forbid_run_batch)
 
-    outcomes = pipeline.run(load_config(case.config_path))
+    plan = RunPlan() if halt is None else RunPlan(default=StepMode.CACHE_ONLY)
+    outcomes = pipeline.run(config, plan)
 
+    assert len(outcomes) == len(config.steps)
     assert all(outcome.cache_hit for outcome in outcomes)
-    assert outcomes[-1].state.structures, "the cached survivors come back"
 
 
-@pytest.mark.parametrize("name", ORCA_CASES)
+@pytest.mark.parametrize("name", replay.recorded_cases())
 def test_rebuild_cache_reparses_outputs_without_submitting(
     name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`rebuild-cache N` re-parses each step from disk and lands on the same survivors."""
-    baseline_case = extract_case(recording(name), tmp_path / "baseline")
-    relocate(baseline_case)
-    monkeypatch.setattr(RUN_BATCH, forbid_run_batch)
-    baseline = pipeline.run(load_config(baseline_case.config_path))
+    """`rebuild-cache N` re-parses each step from disk and lands on the same survivors.
 
-    for step_number in range(1, len(baseline) + 1):
-        case = extract_case(recording(name), tmp_path / f"rebuild{step_number}")
-        relocate(case)
-        outcomes = pipeline.run(
-            load_config(case.config_path),
-            RunPlan(default=StepMode.CACHE_ONLY, overrides={step_number: StepMode.REBUILD}),
-        )
+    Rebuilding the step a recording is halted at re-parses its failures too, and halts
+    again: re-reading an output cannot make a failed structure succeed.
+    """
+    _case, config, _halt = _staged(name, tmp_path / "baseline")
+    monkeypatch.setattr(RUN_BATCH, forbid_run_batch)
+    baseline = pipeline.run(config, RunPlan(default=StepMode.CACHE_ONLY))
+
+    for step in config.steps:
+        _case, config, halt = _staged(name, tmp_path / f"rebuild{step.step}")
+        plan = RunPlan(default=StepMode.CACHE_ONLY, overrides={step.step: StepMode.REBUILD})
+        if step.step == halt:
+            with pytest.raises(ChemRefineError, match=f"step {halt} halted"):
+                pipeline.run(config, plan)
+            plan = RunPlan(default=StepMode.CACHE_ONLY)
+        outcomes = pipeline.run(config, plan)
         assert [s.id for s in outcomes[-1].state.structures] == [
             s.id for s in baseline[-1].state.structures
-        ], f"rebuilding step {step_number} changed the survivors"
+        ], f"rebuilding step {step.step} changed the survivors"
 
 
 @pytest.mark.parametrize("name", replay.recorded_cases())
@@ -98,19 +109,16 @@ def test_rebuilt_records_match_the_archived_ones_field_for_field(
     Every recording on disk is checked, as far as it can be: one that is verifiable only
     up to a step (`replay.verifiable_prefix`) is rebuilt over that prefix and must carry no
     cache document past it — nothing could check one, so it would be a fossil from the
-    day it was packed.
+    day it was packed. One whose scenario ends halted is rebuilt to the halt, and halts.
 
     A failure here means the parse changed on purpose and the recordings need
     regenerating (a parse-only rebuild from these same archived outputs — no ORCA and
     no MLIP stack required), not that the assertion is too strict.
     """
-    case = extract_case(recording(name), tmp_path)
-    relocate(case)
+    case, config, halt = _staged(name, tmp_path)
     monkeypatch.setattr(RUN_BATCH, forbid_run_batch)
-    config = load_config(case.config_path)
-    prefix = replay.verifiable_prefix(config)
-    verifiable, beyond = config.steps[:prefix], config.steps[prefix:]
-    config = config.model_copy(update={"steps": verifiable})
+    verifiable = config.steps
+    beyond = load_config(case.config_path).steps[replay.verifiable_prefix(config) :]
 
     archived = {
         doc.relative_to(case.output_dir): json.loads(doc.read_text(encoding="utf-8"))
@@ -135,7 +143,11 @@ def test_rebuilt_records_match_the_archived_ones_field_for_field(
             f"{fossils} sit past what a parse-only rebuild can verify — fossils by "
             f"construction; `pack_case` no longer archives them, so regenerate the recording"
         )
-    pipeline.run(config, RunPlan(default=StepMode.REBUILD))
+    if halt is None:
+        pipeline.run(config, RunPlan(default=StepMode.REBUILD))
+    else:
+        with pytest.raises(ChemRefineError, match=f"step {halt} halted"):
+            pipeline.run(config, RunPlan(default=StepMode.REBUILD))
 
     if update:
         # The rebuild above rewrote every cache in `case.output_dir` from the archived native

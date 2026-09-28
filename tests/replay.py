@@ -54,7 +54,13 @@ import yaml
 from chemrefine import cache, recovery
 from chemrefine.config import Config, load_config
 from chemrefine.engines import api
-from chemrefine.engines.api import ArtifactEngine, CompletionSink, JobExecutable, get_engine
+from chemrefine.engines.api import (
+    ArtifactEngine,
+    CompletionSink,
+    JobExecutable,
+    ProvisionableEngine,
+    get_engine,
+)
 from chemrefine.engines.mlip.train.engine import SIDECAR_NAME
 from chemrefine.engines.orca.output import status as orca_status
 from chemrefine.errors import ChemRefineError
@@ -202,6 +208,38 @@ def assert_halted(config: Config, step_number: int) -> None:
         if s.step > step_number and cache.load(config.step_dir(s).resolve()) is not None
     ]
     assert not later, f"steps {later} were cached after the halt at step {step_number}"
+
+
+def with_backend_python(config: Config) -> Config:
+    """Point every provisioned step at a dummy interpreter, so preflight passes without it.
+
+    A replay submits nothing to a backend, and a machine replaying a recording (CI) has
+    none of the stacks installed; the pipeline's own backend preflight would refuse it.
+    """
+    steps = [
+        step.model_copy(update={"options": {**(step.options or {}), "backend_python": "python"}})
+        if isinstance(get_engine(step.engine), ProvisionableEngine)
+        else step
+        for step in config.steps
+    ]
+    return config.model_copy(update={"steps": steps})
+
+
+def reached(root: Path, config: Config) -> tuple[Config, int | None]:
+    """``config`` cut to the steps a recording at ``root`` reached and a rebuild can verify.
+
+    Those before an artifact step (:func:`verifiable_prefix`), and none past the step the
+    scenario leaves halted (:attr:`CaseSpec.halts_at`), which is returned with it when the
+    cut keeps it.
+    """
+    halt = CaseSpec.read(root).halts_at
+    steps = [
+        step
+        for step in config.steps[: verifiable_prefix(config)]
+        if halt is None or step.step <= halt
+    ]
+    kept = halt if halt is not None and any(step.step == halt for step in steps) else None
+    return config.model_copy(update={"steps": steps}), kept
 
 
 def verifiable_prefix(config: Config) -> int:
