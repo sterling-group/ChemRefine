@@ -200,6 +200,29 @@ def test_validate_returns_the_structured_report(client: Any, tmp_path: Path):
     assert report["issues"][0]["kind"] == "engine"
 
 
+@pytest.mark.parametrize("example", ["qiskit_sp/input.yaml", "qiskit_experiment/measurement.yaml"])
+def test_quantum_examples_round_trip_and_validate_through_gui(client: Any, example: str):
+    """The GUI accepts the same real molecular and artifact configs as the CLI."""
+    path = Path(__file__).resolve().parents[1] / "examples/tutorials" / example
+    config = yaml.safe_load(path.read_text())
+    emitted = _post(client, "/api/yaml", {"config": config}).get_json()["yaml_text"]
+    assert _post(client, "/api/parse", {"yaml_text": emitted}).get_json()["config"] == config
+    report = _post(
+        client,
+        "/api/validate",
+        {
+            "yaml_text": emitted,
+            "base_dir": str(path.parent),
+        },
+    ).get_json()
+    assert report["ok"], report
+    engine = config["steps"][0]["engine"]
+    catalog = _get(client, "/api/bootstrap").get_json()["schema"]["engines"][engine][
+        "component_catalog"
+    ]
+    assert catalog
+
+
 @pytest.mark.parametrize("mapper", ["parity", "bravyi_kitaev", "z2_tapered"])
 def test_quantum_gui_preflights_excitation_preserving_encoding(client: Any, mapper: str):
     """A known incompatible component pairing is visible in the editor's validation report."""

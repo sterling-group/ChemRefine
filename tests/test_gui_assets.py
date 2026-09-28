@@ -3167,6 +3167,57 @@ def _component_editor_preamble() -> str:
     )
 
 
+def test_real_quantum_catalogs_work_in_the_javascript_editor(tmp_path):
+    """Every real quantum component is visible and nested scientific options survive edits."""
+    from chemrefine.introspect import schema_document
+
+    schema = schema_document()
+    path = tmp_path / "schema.json"
+    path.write_text(json.dumps(schema))
+    out = _run_component_in_node(
+        f"global.jsyaml = require({json.dumps(str(STATIC / 'vendor/js-yaml.min.js'))});\n"
+        f"const c = builder(); c.schema = require({json.dumps(str(path))});\n"
+        + """
+        c.syncYaml = () => {};
+        const found = {};
+        for (const engine of ['qiskit', 'qiskit-experiment']) {
+          c.cfg = {steps: [{step: 1, engine, options: {}}]};
+          const step = c.cfg.steps[0];
+          found[engine] = {};
+          for (const category of c.componentCategories(engine)) {
+            const names = c.componentChoices(step, category);
+            found[engine][category] = names;
+            for (const name of names) {
+              c.setComponentName(0, category, name);
+              c.componentFields(step, category);
+            }
+          }
+        }
+        c.cfg = {steps: [{step: 1, engine: 'qiskit', options: {
+          optimizer: {name: 'slsqp', options: {maxiter: 20}},
+          ansatz: {name: 'ucc', options: {excitations: [[[0], [1]]]}},
+          active_space: {electrons: [1, 1], orbitals: 2},
+          circuit_export: {max_bytes: 1048576}
+        }}]};
+        const step = c.cfg.steps[0];
+        const field = c.componentFields(step, 'optimizer').find(x => x.key === 'maxiter');
+        c.setComponentOption(0, 'optimizer', field, '40');
+        console.log(JSON.stringify({found, config: jsyaml.load(jsyaml.dump(c.cfg))}));
+        """
+    )
+    result = json.loads(out)
+    for engine, categories in result["found"].items():
+        for category, names in categories.items():
+            assert set(names) == set(
+                schema["engines"][engine]["component_catalog"][category]["components"]
+            )
+    options = result["config"]["steps"][0]["options"]
+    assert options["optimizer"]["options"]["maxiter"] == 40
+    assert options["ansatz"]["options"]["excitations"] == [[[0], [1]]]
+    assert options["active_space"] == {"electrons": [1, 1], "orbitals": 2}
+    assert options["circuit_export"]["max_bytes"] == 1048576
+
+
 def test_component_catalog_controls_preserve_nested_options_and_unknown_names():
     """A scalar edit or component change cannot erase settings the form cannot render."""
     out = _run_component_in_node(
