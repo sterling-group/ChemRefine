@@ -182,6 +182,7 @@ def test_vqd_multi_root_exports_track_physical_sorting_and_persisted_roots(tmp_p
                     "betas": [3],
                     "initial_points": [[0.2, 0.1], [0.9, 0.2]],
                     "target_root": 1,
+                    "fidelity_shots": 65536,
                 },
             },
             "ansatz": {"name": "uccsd", "options": {"include_imaginary": True}},

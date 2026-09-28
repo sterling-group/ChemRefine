@@ -122,7 +122,8 @@ def test_complex_qeom_retains_imaginary_response_matrix_and_uses_both_observable
     assert result.metadata["solver"]["root_sectors"][1]["AngularMomentum"] == pytest.approx(0.75)
 
 
-def test_vqd_complex_spectrum_uses_selected_sampler_and_physical_energies(complex_problem):
+@pytest.mark.parametrize("seed", [3, 17])
+def test_vqd_complex_spectrum_uses_selected_sampler_and_physical_energies(complex_problem, seed):
     """Finite-shot deflation reaches both analytic roots with derivative-free search."""
     prepared, h = complex_problem
     options = _options(
@@ -133,10 +134,12 @@ def test_vqd_complex_spectrum_uses_selected_sampler_and_physical_energies(comple
                 "betas": [3],
                 "initial_points": [[0.2, 0.1], [0.9, 0.2]],
                 "target_root": 1,
+                # Resolve the excited root to 2 mEh despite sampled deflation noise.
+                "fidelity_shots": 65536,
             },
         },
         ansatz={"name": "uccsd", "options": {"include_imaginary": True}},
-        sampler={"name": "statevector", "options": {"seed": 3}},
+        sampler={"name": "statevector", "options": {"seed": seed}},
         optimizer={"name": "cobyla", "options": {"maxiter": 500}},
     )
     result = run_problem(prepared, options=options)
