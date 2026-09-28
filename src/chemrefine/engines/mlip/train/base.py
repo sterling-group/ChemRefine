@@ -302,6 +302,14 @@ class TrainerBase(ABC):
     charge_spin_aware: ClassVar[bool] = False
     """True when the dataset carries charge and spin; False warns on non-neutral data."""
 
+    default_foundation: ClassVar[str] = ""
+    """The release an unset ``model_name`` starts from, as a step would name it.
+
+    Empty means from scratch: what a library's own training entry does when it is told
+    nothing. A library whose training always starts from a released model (its fine-tune
+    API loads one) declares that release here, so the plan names it, and the argv, the
+    runlog's ``started_from`` and the sidecar record what the run started from."""
+
     required_placeholders: ClassVar[frozenset[str]] = frozenset({"TRAIN_SET"})
     """Placeholders this backend's template must reference, or the step is misconfigured.
 

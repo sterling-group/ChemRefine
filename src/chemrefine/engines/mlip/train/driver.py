@@ -90,20 +90,21 @@ def _overlay_plan_facts(config: dict[str, Any], args: argparse.Namespace) -> dic
             continue
         said = repr(facts[fact.key]) if fact.key in facts else "nothing"
         raise SystemExit(
-            f"train_driver: the template renders {fact.key}: {rendered!r} but the step's "
-            f"`{fact.option}` says {said} — the options are authoritative for a plan fact. "
-            f"Remove `{fact.key}:` from the template; the driver hands the trainer the "
-            f"step's value itself."
+            f"train_driver: the template renders {fact.key}: {rendered!r} but the step says "
+            f"{said} (its `{fact.option}`, or the default when that is unset) — the options "
+            f"are authoritative for a plan fact. Set the value you mean as the step's "
+            f"`{fact.option}` and remove `{fact.key}:` from the template; the driver hands "
+            f"the trainer the step's value itself."
         )
     shown = starting_point(facts) or ""
     legacy = config.get("start_from")
     if legacy is not None and str(legacy) not in ("", shown):
         options = " or ".join(f"`{fact.option}`" for fact in PLAN_FACTS if fact.start)
         raise SystemExit(
-            f"train_driver: the template renders start_from: {legacy!r} but the step's "
-            f"options name {shown or 'nothing'} — the options are authoritative. Set "
-            f"{options} on the step (or reference $FOUNDATION_MODEL, which renders the "
-            f"same value)."
+            f"train_driver: the template renders start_from: {legacy!r} but the step starts "
+            f"from {shown or 'nothing'} (its {options}, or the default when both are unset) "
+            f"— the options are authoritative. Set {options} on the step (or reference "
+            f"$FOUNDATION_MODEL, which renders the same value)."
         )
     return {**config, **facts}
 

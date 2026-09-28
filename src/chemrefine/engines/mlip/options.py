@@ -46,8 +46,11 @@ class MlipOptions(EngineOptions):
     ``uma-s-1p2``, MACE's and SevenNet's loaders theirs — because a default spelled
     *here* would have to be right for every library at once, and the old ``uma-s-1p2``
     was not: it reached every non-FAIRChem step's template too, surviving only because a
-    buggy builder happened to drop it. For a training step, unset means training from
-    scratch (``started_from: scratch`` in the runlog).
+    buggy builder happened to drop it. For a training step, unset means where the
+    library's own training starts when told nothing: the trainer's declared release
+    (:attr:`~chemrefine.engines.mlip.train.base.TrainerBase.default_foundation`), named
+    as ``started_from`` in the runlog and in the sidecar, or from scratch (``scratch`` in
+    the runlog, ``null`` in the sidecar).
     """
 
     task_name: str = Field(
@@ -82,10 +85,11 @@ class MlipOptions(EngineOptions):
     def _shell_safe(cls, v: str | None) -> str | None:
         """Hold both selection strings to the shell rule the other bash-bound values obey.
 
-        ``mlip-train`` records ``model_path or model_name`` as the runlog's
-        ``started_from`` row, which lands in the unquoted header heredoc — the same
-        channel ``operation`` and ``executables`` are refused metacharacters for, and
-        the one through which ``model_name: 'x$(…)'`` executed on the compute node.
+        ``mlip-train`` records ``model_path`` or ``model_name`` (unset, its trainer's
+        declared default) as the runlog's ``started_from`` row, which lands in the
+        unquoted header heredoc — the same channel ``operation`` and ``executables``
+        are refused metacharacters for, and the one through which
+        ``model_name: 'x$(…)'`` executed on the compute node.
         :func:`chemrefine.job_log.bash_header` refuses the value again at emission;
         this is the boundary half of the same rule, so the mistake is named at config
         load with the knob that carries it. Real model names and checkpoint paths never

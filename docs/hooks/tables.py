@@ -89,6 +89,7 @@ def _backends_table() -> str:
         backend_spec,
         registered_backends,
         registered_trainers,
+        trainer_for,
     )
     from chemrefine.introspect import describe_engines
 
@@ -112,15 +113,20 @@ def _backends_table() -> str:
             if extra in d.backend_extras
             and ("artifact" not in d.capabilities or any(t in trainable for t in tasks))
         ]
+        # What an `mlip-train` step with no `model_name` starts from: the trainer's declared
+        # release, or from scratch when it declares none.
+        starts = sorted({trainer_for(t).default_foundation for t in tasks if t in trainable})
         rows.append(
             (
                 f"`{extra}`",
                 _code_list(users, "—"),
                 _code_list(tasks, "—"),
+                ", ".join(f"`{_cell(s)}`" if s else "scratch" for s in starts) or "—",
                 _code_list(_third_party(extra), "—"),
             )
         )
-    return _table(("Backend", "Engines", "`task_name`(s)", "Installs"), rows)
+    header = ("Backend", "Engines", "`task_name`(s)", "Trains from, unset", "Installs")
+    return _table(header, rows)
 
 
 def _extras_table() -> str:

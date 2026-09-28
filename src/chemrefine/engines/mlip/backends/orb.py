@@ -2,8 +2,9 @@
 
 ``model_name`` names a loader in :mod:`orb_models.forcefield.pretrained`
 (e.g. ``orb_v3_conservative_inf_omat``, ``orb_v2``) — one of the functions orb-models
-registers in its ``ORB_PRETRAINED_MODELS``. From the 0.6 floor on, every such loader returns
-``(model, atoms_adapter)`` and takes ``weights_path``, ``device`` and ``compile``.
+registers in its ``ORB_PRETRAINED_MODELS``. From the 0.6.2 floor on, every such loader but
+the deprecated v1 stubs (which only raise) returns ``(model, atoms_adapter)`` and takes
+``weights_path``, ``device`` and ``compile``.
 Requires ``pip install orb-models``.
 
 One module for one library, so the environment is declared once (:data:`ORB`) and both
@@ -15,6 +16,7 @@ utilities, driven by the shared :mod:`chemrefine.engines.mlip.train.driver`.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -23,13 +25,16 @@ from chemrefine.engines.mlip.train.base import ApiTrainerBase, TrainingPlan
 from chemrefine.errors import ConfigError
 from chemrefine.state import Structure
 
+logger = logging.getLogger(__name__)
+
 ORB = MlipLibrary(extra="mlip-orb", package="orb-models", import_name="orb_models")
 """The one declaration of what provides this library."""
 
-#: The loader an unset ``model_name`` runs — the conservative v3 model trained on OMat24,
-#: the release ORB's own README leads with. ORB has no notion of a default loader (every
-#: pretrained function is named), so the builder supplies one: the ``model_name`` contract
-#: is that unset means the library's own default, and it must hold for every library.
+#: The loader an unset ``model_name`` runs and trains from — the conservative v3 model
+#: trained on OMat24, the release ORB's own README leads with. ORB has no notion of a
+#: default loader (every pretrained function is named), so the builder and the trainer
+#: supply this one: the ``model_name`` contract is that unset means the library's own
+#: default, and it must hold for every library.
 _DEFAULT_MODEL = "orb_v3_conservative_inf_omat"
 
 
@@ -96,7 +101,7 @@ class OrbTrainer(ApiTrainerBase):
     :mod:`~chemrefine.engines.mlip.train.driver` in the backend env — re-implementing the
     script's slim loop from the utilities that *are* packaged
     (``orb_models.common.dataset`` / ``common.training`` / ``forcefield.pretrained``,
-    the same import layout from the 0.6 floor through main). The schema — backend knobs
+    the same import layout from the 0.6.2 floor through main). The schema — backend knobs
     only; device, seed and the foundation weights are plan facts and arrive on the
     driver's own command line, never through the template:
 
@@ -104,20 +109,24 @@ class OrbTrainer(ApiTrainerBase):
 
         train_set: $TRAIN_SET          # required — ASE sqlite db written by the trainer
         run_name:  $RUN_NAME           # required — names the fixed final checkpoint
-        base_model: orb_v3_conservative_inf_omat   # the pretrained loader = architecture
         epochs: 50
         learning_rate: 3e-4            # the script's own defaults
         batch_size: 100
         gradient_clip: 0.5
 
-    ``base_model`` is not a required key: the architecture may arrive as the template's
-    ``base_model`` *or* as the step's ``model_name`` (the driver's ``foundation`` fact), and
-    only the hook can weigh the pair — a flat presence check would refuse a step that named
-    the loader the second way.
+    The architecture is a pretrained loader, and the step names it: its ``model_name``, or
+    :data:`_DEFAULT_MODEL` unset, arriving as the driver's ``foundation`` fact. A template
+    ``base_model:`` (the reference script's name for it) may repeat that loader, and one
+    that names another is refused.
+
+    A model that carries a stress output trains with it switched off, and the job warns:
+    ChemRefine's labels are molecular (energy and forces, no cell), and orb's loss reads a
+    stress target from every batch while the output is on.
     """
 
     label = "ORB"
     driver_task = "orb"
+    default_foundation = _DEFAULT_MODEL
     missing_config_hint = (
         "the template must reference $TRAIN_SET and $RUN_NAME (device and seed arrive on "
         "the driver's own command line)"
@@ -191,28 +200,24 @@ class OrbTrainer(ApiTrainerBase):
         # choice to fall back on.
         device = torch.device(str(config["device"]))
         seed_everything(int(config["seed"]))
-        # The architecture: the template's `base_model`, or the step's own `model_name`
-        # (the driver's `foundation` fact) — for orb the two words name the same thing, a
-        # pretrained loader. Silently preferring either is how a declared model_name went
-        # ignored while the sidecar recorded it, so a disagreement refuses by name.
+        # The architecture: the step's `model_name`, which the plan hands over as the
+        # `foundation` fact, the default loader when the step names none. A template
+        # `base_model` is the reference script's word for the same loader. Silently
+        # preferring either is how a declared model_name went ignored while the sidecar
+        # recorded it, so a template that names another loader is refused by name.
+        foundation = str(config.get("foundation") or "") or _DEFAULT_MODEL
         base_model = str(config.get("base_model") or "")
-        foundation = str(config.get("foundation") or "")
-        if base_model and foundation and base_model != foundation:
+        if base_model and base_model != foundation:
             raise SystemExit(
-                f"orb training: the template names base_model {base_model!r} but the "
-                f"step's model_name says {foundation!r} — keep one (the template row, or "
-                f"the option)"
+                f"orb training: the template names base_model {base_model!r} but the step "
+                f"starts from {foundation!r} (its model_name, or ORB's default when unset) "
+                f"— name the loader once, as the step's model_name, and drop base_model "
+                f"from the template"
             )
-        base_model = base_model or foundation
-        if not base_model:
-            raise SystemExit(
-                "orb training: no architecture named — set base_model in the template "
-                "(a loader from orb_models.forcefield.pretrained) or model_name on the step"
-            )
-        loader_fn = _loader(pretrained, base_model)
+        loader_fn = _loader(pretrained, foundation)
         if loader_fn is None:
             raise SystemExit(
-                f"orb training: unknown base_model {base_model!r}; pick a loader from "
+                f"orb training: unknown ORB model {foundation!r}; pick a loader from "
                 f"orb_models.forcefield.pretrained"
             )
         weights = str(config.get("weights_path") or "")
@@ -222,16 +227,16 @@ class OrbTrainer(ApiTrainerBase):
         # Uncompiled for the builder's reason: one fit is one process, and on CPU the
         # compile made a one-epoch fit take 67 s.
         model, atoms_adapter = loader_fn(**loader_kwargs, compile=False)
-        if getattr(model, "has_stress", False) or "stress" in getattr(model, "heads", {}):
-            # orb's loss reads `batch.system_targets["stress"]` unconditionally on a
-            # stress-carrying model, and ChemRefine's labels are molecular — energy and
-            # forces off a DFT single point, no cell, no stress. Refused by name here
-            # rather than left to the KeyError inside the first loss call.
-            raise SystemExit(
-                f"orb training: {base_model!r} carries a stress head, and ChemRefine's "
-                f"training labels have no stress (molecular energy + forces) — pick a "
-                f"stress-free loader (orb's omol family) or fine-tune with orb's own "
-                f"tooling on data that carries stress"
+        if model.has_stress:
+            # orb's loss reads `batch.system_targets["stress"]` from every batch while a
+            # model's stress output is on, and ChemRefine's labels are molecular — energy
+            # and forces off a DFT single point, no cell, no stress. Switched off, the
+            # model fits the targets it was given, as orb-models itself provides for.
+            model.disable_stress()
+            logger.warning(
+                "orb training: %r carries a stress output; ChemRefine's labels are "
+                "molecular (energy and forces), so it trains with stress off",
+                foundation,
             )
 
         # The targets the reference script trains on, by their orb spellings: energy is

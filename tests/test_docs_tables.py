@@ -146,6 +146,23 @@ def test_the_training_engine_is_advertised_exactly_where_a_trainer_exists():
     assert checked == len(mlip_extras), "some registered backend never appeared in the table"
 
 
+def test_the_backend_table_says_what_an_unset_model_name_trains_from():
+    """Each training backend's row names its trainer's declared start, or says scratch."""
+    from chemrefine.engines.mlip.registry import backend_spec, registered_trainers, trainer_for
+
+    header, _separator, *rows = [
+        [cell.strip() for cell in re.split(r"(?<!\\)\|", line)[1:-1]]
+        for line in _render("backends").splitlines()
+        if line.startswith("|")
+    ]
+    column = header.index("Trains from, unset")
+    cells = {row[0]: row[column] for row in rows}
+    for task in registered_trainers():
+        start = trainer_for(task).default_foundation
+        cell = cells[f"`{backend_spec(task).extra}`"]
+        assert (f"`{start}`" if start else "scratch") in cell, f"{task}: {cell}"
+
+
 def test_an_unknown_directive_is_a_build_failure_not_a_silent_comment():
     """A typo must not render as an HTML comment nobody sees."""
     with pytest.raises(ValueError, match="unknown directive"):

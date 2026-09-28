@@ -139,9 +139,11 @@ mlip-sevenn = ["sevenn>=0.11.1", "chemrefine[server]"]
 # snapshot no GCC >= 13 compiles. Lift the ceiling when orb loosens that pin. The floor is
 # load-bearing too: unpinned, orb-models resolves on any Python by backtracking to a 2024
 # release, which is both the silent downgrade this refuses and what stopped CI telling a
-# cap that still binds from one that has expired. 0.6 is the first line requiring 3.12.
+# cap that still binds from one that has expired. 0.6 is the first line requiring 3.12, and
+# 0.6.2 the first whose models have `disable_stress()`, which fine-tuning a stress-carrying
+# model on molecular labels needs.
 mlip-orb = [
-    "orb-models>=0.6; python_version >= '3.12' and python_version < '3.13'",
+    "orb-models>=0.6.2; python_version >= '3.12' and python_version < '3.13'",
     "chemrefine[server]",
 ]
 # chgnet 0.4.2 — the newest release — ships cp310-cp312 wheels only; on 3.13+ pip falls back

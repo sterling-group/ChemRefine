@@ -170,7 +170,7 @@ validated model as `$OPTIONS_JSON`, for `options = json.loads("$OPTIONS_JSON")`.
 | Key | Default | Description |
 |-----|---------|-------------|
 | `task_name` (alias `task`) | — (**required**) | Which library trains — the same word that selects a backend for inference. No default: the inference default names a foundation model to *run*, which is a different choice. Which libraries can train is the `Engines` column of the [backend table](installing.md#available-backends) — a backend without a trainer is refused by name. See also the FAIRChem note below. |
-| `model_name` (aliases `model`, `size`) | `""` (train from scratch) | The foundation model a run **starts from** — MACE's `foundation_model`, named as the step's family names it (a `mace_off` step's `small` reaches MACE as `small_off`). Unset trains from scratch (`started_from: scratch` in the runlog), which on a few-dozen-structure dataset is rarely what you want — name the foundation model to fine-tune. |
+| `model_name` (aliases `model`, `size`) | the library's own start | The foundation model a run **starts from** — MACE's `foundation_model`, named as the step's family names it (a `mace_off` step's `small` reaches MACE as `small_off`). Unset, a run starts where its library's training starts when told nothing, which the *Trains from, unset* column of the [backend table](installing.md#available-backends) names: a released model, recorded as `started_from` in the runlog and in `trained_model.json`, or from scratch (`started_from=scratch` in the runlog, `null` in `trained_model.json`), which on a few-dozen-structure dataset is rarely what you want — name the foundation model to fine-tune. |
 | `model_path` | `None` | A local checkpoint to continue from, loaded by the library `task_name` names. Relative paths resolve against the config file's directory. |
 | `device` | — (**required**) | `cuda` or `cpu`. No default either way: `cpu` would silently hand you a job that grinds for days, `cuda` would silently charge the GPU budget and swap the SLURM header for a step that never asked. |
 | `gpus` | `1` | Data-parallel width (MACE's `--nproc_per_node`). ChemRefine never writes `--gres` — this is what it charges to the GPU budget and passes to the trainer; the *allocation* is the `--gres` line in your own `cuda.slurm.header`, so raise both together. |
@@ -236,8 +236,9 @@ submits:
   MACE's own `REF_*` label keys, so no `energy_key`/`forces_key` line is needed. The
   [MLIP training tutorial](../tutorials/mlip_training.md) walks a complete one.
 - **FAIRChem** — fairchem's hydra config per the note above; requires `$TRAIN_SET`,
-  `$VAL_SET`, `$RUN_DIR`, `$RUN_NAME`, `device_type: $DEVICE` and the `seed: $SEED`
-  keys the shipped example threads through `job` and the dataset stanzas.
+  `$VAL_SET`, `$RUN_DIR`, `$RUN_NAME`, `device_type: $DEVICE`, the `seed: $SEED` keys the
+  shipped example threads through `job` and the dataset stanzas, and `$FOUNDATION_MODEL`
+  as `starting_checkpoint`'s `model_name`.
 - **SevenNet** — SevenNet's own `input.yaml` (start from `sevenn preset fine_tune >
   step{N}.yaml`), with `$TRAIN_SET` in `data.load_trainset_path` and `device: $DEVICE`
   (absent, SevenNet takes cuda whenever torch sees one — the step's own device must win);
@@ -252,11 +253,12 @@ submits:
   — never through the template. CHGNet is a periodic model: a molecule it is fitted to or
   evaluated on (every seed read from `.xyz` or built from SMILES) is placed in a periodic
   cubic box with 10 Å of vacuum on every side, and the job warns.
-- **ORB** — the same driver route: `train_set: $TRAIN_SET`, `run_name: $RUN_NAME`, and a
-  `base_model:` naming the pretrained loader (the architecture — the step's `model_name`
-  serves when the template names none); a local checkpoint arrives as the step's
-  `model_path`, on the driver's command line. No validation file — orb's fine-tune loop
-  is train-only.
+- **ORB** — the same driver route: `train_set: $TRAIN_SET` and `run_name: $RUN_NAME`. The
+  architecture is the pretrained loader the step's `model_name` names, ORB's default loader
+  when unset, and a local checkpoint arrives as the step's `model_path`, both on the
+  driver's command line; a template `base_model:` must name that same loader. A model with a
+  stress output trains with it switched off, and the job warns: the labels are molecular.
+  No validation file — orb's fine-tune loop is train-only.
 
 Whatever trained, running the result is the same one line: `model_path:` pointing at the
 artifact, with the same `task_name`.

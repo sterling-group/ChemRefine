@@ -167,6 +167,7 @@ _STATED_RULES: dict[tuple[str, str], str] = {
     ("NmsOptions", "target"): "chemrefine.nms.resolved_options",
     ("options[mlip-train]", "task_name"): f"{_TRAIN}.check_step",
     ("options[mlip-train]", "device"): f"{_TRAIN}.check_step",
+    ("options[mlip-train]", "model_name"): f"{_TRAIN}._foundation",
     ("options[mlip-train]", "cores"): f"{_TRAIN}.pal",
     ("options[mlip-train]", "extra"): (
         "chemrefine.engines.mlip.options.MlipTrainOptions._no_template_knobs"

@@ -47,6 +47,7 @@ job:
   seed: $SEED
 train_file: $TRAIN_SET
 valid_file: $VAL_SET
+starting_checkpoint: {model_name: $FOUNDATION_MODEL}
 """
 """FAIRChem's own placeholder names, which are not MACE's.
 
@@ -419,9 +420,77 @@ def test_the_runlog_records_what_the_job_asked_for(tmp_path: Path):
     assert fields == {"trainer": "mace_off", "gpus": 2, "started_from": "small_off"}
 
 
-def test_training_from_scratch_says_so_in_the_runlog(tmp_path: Path):
-    fields = dict(MlipTrainEngine().extra_header_fields(_ctx(tmp_path, model_name="")))
-    assert fields["started_from"] == "scratch"
+def test_training_from_scratch_says_so_in_both_records(tmp_path: Path):
+    """The runlog says ``scratch``; ``trained_model.json`` says ``null``, JSON's own none."""
+    ctx = _ctx(tmp_path, model_name="")
+    engine = MlipTrainEngine()
+    assert dict(engine.extra_header_fields(ctx))["started_from"] == "scratch"
+    engine.prepare(ctx)
+    engine.artifact(ctx).write_bytes(b"weights")
+    engine.parse(StepInputs(files=()), ctx)
+    sidecar = json.loads((ctx.step_dir / "train" / SIDECAR_NAME).read_text(encoding="utf-8"))
+    assert sidecar["started_from"] is None
+
+
+@pytest.mark.parametrize(
+    ("task", "start"),
+    [("orb", "orb_v3_conservative_inf_omat"), ("chgnet", "0.3.0"), ("omol", "uma-s-1p2")],
+)
+def test_an_unset_model_name_names_the_release_the_trainer_starts_from(
+    tmp_path: Path, task: str, start: str
+):
+    """A trainer whose library always starts from a released model says which one.
+
+    The plan carries the trainer's declared default, so the runlog names that release,
+    where a fine-tune from it used to be recorded as "scratch".
+    """
+    ctx = _ctx(tmp_path, task_name=task, model_name="")
+    assert dict(MlipTrainEngine().extra_header_fields(ctx))["started_from"] == start
+
+
+@pytest.mark.parametrize(
+    ("task", "start"), [("orb", "orb_v3_conservative_inf_omat"), ("chgnet", "0.3.0")]
+)
+def test_a_driver_run_trainer_is_handed_the_default_release(tmp_path: Path, task: str, start: str):
+    """The driver's ``--foundation`` carries the default, so the hook loads what was recorded."""
+    ctx = _ctx(tmp_path, task_name=task, model_name="")
+    engine = MlipTrainEngine()
+    block = engine.run_block(ctx, Path("step1_train.yaml"), engine.artifact(ctx))
+    assert f"--foundation {start}" in block.body
+
+
+def test_a_fairchem_template_must_start_from_the_steps_checkpoint(tmp_path: Path):
+    """A checkpoint named literally would fine-tune one model while the records named another."""
+    template = _FAIRCHEM_TEMPLATE.replace("$FOUNDATION_MODEL", "uma-s-1p1")
+    ctx = _ctx(tmp_path, template=template, task_name="omol", model_name="")
+    with pytest.raises(ConfigError, match=r"\$FOUNDATION_MODEL"):
+        MlipTrainEngine().prepare(ctx)
+
+
+def test_a_config_trained_trainer_renders_the_default_release(tmp_path: Path):
+    """``$FOUNDATION_MODEL`` renders the default a fine-tune needs, not an empty name.
+
+    FAIRChem's fine-tuning entry point initialises from a released checkpoint, which its
+    template resolves by name: rendered empty, the lookup failed inside the job.
+    """
+    ctx = _ctx(tmp_path, template=_FAIRCHEM_TEMPLATE, task_name="omol", model_name="")
+
+    rendered = MlipTrainEngine().prepare(ctx).files[0][0].read_text(encoding="utf-8")
+
+    assert "starting_checkpoint: {model_name: uma-s-1p2}" in rendered
+
+
+def test_the_record_names_the_default_start_the_plan_ran(tmp_path: Path):
+    """``trained_model.json`` cites the release an unset ``model_name`` trained from."""
+    ctx = _ctx(tmp_path, task_name="orb", model_name="")
+    engine = MlipTrainEngine()
+    engine.prepare(ctx)
+    engine.artifact(ctx).write_bytes(b"weights")
+
+    engine.parse(StepInputs(files=()), ctx)
+
+    sidecar = json.loads((ctx.step_dir / "train" / SIDECAR_NAME).read_text(encoding="utf-8"))
+    assert sidecar["started_from"] == "orb_v3_conservative_inf_omat"
 
 
 def test_the_training_job_is_one_task_of_many_cpus_and_declares_no_memory(tmp_path: Path):

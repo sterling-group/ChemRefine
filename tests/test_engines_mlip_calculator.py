@@ -259,9 +259,10 @@ def _install_fake_chgnet(monkeypatch) -> tuple[MagicMock, MagicMock]:
 
 
 def test_build_chgnet_uses_the_released_default_when_nothing_is_named(monkeypatch):
+    """Unset, the release the trainer also starts from — named, so a record can say it."""
     chgnet_cls, calc_class = _install_fake_chgnet(monkeypatch)
     calc = MlipCalculator(task_name="chgnet", device="cpu")
-    chgnet_cls.load.assert_called_once_with()
+    chgnet_cls.load.assert_called_once_with(model_name="0.3.0")
     chgnet_cls.from_file.assert_not_called()
     calc_class.assert_called_once_with(model="CHGNET_MODEL", use_device="cpu")
     assert calc.calculator.inner is calc_class.return_value  # boxed: CHGNet is periodic-only
@@ -271,8 +272,8 @@ def test_build_chgnet_passes_a_release_name_through(monkeypatch):
     """`model_name` is a CHGNet release for keyword-only `load` — the knob the old
     kwargs builder silently dropped into its catch-all, which the spec makes impossible."""
     chgnet_cls, _calc_class = _install_fake_chgnet(monkeypatch)
-    MlipCalculator(task_name="chgnet", model_name="0.3.0", device="cpu")
-    chgnet_cls.load.assert_called_once_with(model_name="0.3.0")
+    MlipCalculator(task_name="chgnet", model_name="0.2.0", device="cpu")
+    chgnet_cls.load.assert_called_once_with(model_name="0.2.0")
     chgnet_cls.from_file.assert_not_called()
 
 
@@ -345,7 +346,7 @@ def test_build_sevenn_falls_back_to_the_librarys_own_default(monkeypatch):
 def _install_fake_orb(monkeypatch) -> tuple[MagicMock, MagicMock, tuple[object, object]]:
     """Install a fake ``orb_models`` tree; return ``(loader, calc_class, (model, adapter))``.
 
-    Shaped as orb-models is from the 0.6 floor on: the loader is registered in
+    Shaped as orb-models is from the 0.6.2 floor on: the loader is registered in
     ``ORB_PRETRAINED_MODELS`` and returns ``(model, atoms_adapter)``, and the calculator
     takes the adapter positionally, so a builder that drops it fails here as it does
     against the real library. The module also holds an architecture builder, which is not

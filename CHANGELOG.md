@@ -300,6 +300,12 @@ for the full map.
 
 ### Changed
 
+- **An ORB model with a stress output fine-tunes with stress off.** It was refused, which
+  left out the default loader and most of ORB's releases. ChemRefine's labels are molecular,
+  so the trainer switches the model's stress output off and the job warns. `mlip-orb` now
+  requires orb-models 0.6.2, the first release with `disable_stress()`. The architecture
+  is the step's `model_name`, ORB's default loader when unset, and a template `base_model:`
+  that names another loader is refused by name.
 - **The ExtOpt wrapper starts in less than half the time.** ORCA spawns it once per
   optimizer step, and its import chain reached `ase.io` twice — through the XYZ helpers
   and through the MACE backend — for half a second it never used. Both import it on the
@@ -369,9 +375,10 @@ for the full map.
 
   The step's YAML changes: `task_name` and `device` are required (neither has a
   default worth guessing); `model_name` is optional — the foundation model a
-  fine-tune starts from, and unset means training from scratch (`started_from:
-  scratch` in the runlog) rather than silently inheriting a FAIRChem checkpoint
-  name as everyone's foundation; `job_name` is gone (the job is named like every
+  fine-tune starts from, and unset means the trainer's own declared start (the
+  docs' backend table lists it: a released model, or scratch), recorded as
+  `started_from`, rather than silently inheriting a FAIRChem checkpoint name as
+  everyone's foundation; `job_name` is gone (the job is named like every
   other); `valid_fraction` now means what it says, and `test_fraction` is the
   separate held-out set it used to be confused with. The template is the
   trainer's own config `stepN.yaml`, **rendered** through `$PLACEHOLDERS` rather
@@ -459,6 +466,16 @@ for the full map.
 
 ### Fixed
 
+- **A training step records the release an unset `model_name` starts from.** CHGNet's
+  trainer fine-tuned its default release, `0.3.0`, while the runlog said
+  `started_from: scratch` and `trained_model.json` said nothing. FAIRChem's fine-tuning
+  template resolves its starting checkpoint by name, and it rendered empty, so the job
+  failed. ORB's trainer refused the step. Each trainer now declares where an unset
+  `model_name` starts, the release its builder runs unset or from scratch, and the plan
+  names it, so the argv, the runlog and `trained_model.json` agree. The backend table in
+  the docs lists each library's start. A FAIRChem template must reference
+  `$FOUNDATION_MODEL`: one naming its checkpoint literally fine-tuned that checkpoint
+  while both records named the step's.
 - **`Config.with_overrides` takes any field.** Overriding a field that declares no
   constraint, such as `template_dir`, raised a bare `TypeError` instead of copying the
   value in. Every field is now validated by its own declaration, and the copy carries the
@@ -905,8 +922,8 @@ for the full map.
   and local checkpoints now load through `CHGNet.from_file`, whose `{"model":
   as_dict()}` shape is exactly what the new trainer saves.
 - **`model_name` reaches CHGNet.** In v1 the CHGNet branch never consumed it —
-  `CHGNet.load()` ran bare, so a pinned `model_name: "0.3.0"` silently served the
-  latest release instead. A release name now routes through
+  `CHGNet.load()` ran bare, so a pinned `model_name: "0.2.0"` silently served the
+  default release instead. A release name now routes through
   `CHGNet.load(model_name=...)`.
 - **An ORCA step under a path containing whitespace fails with its reason, not ORCA's.**
   ORCA reads each geometry through `* xyzfile <path>`, which is whitespace-delimited and not

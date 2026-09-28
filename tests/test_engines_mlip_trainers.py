@@ -19,6 +19,7 @@ process is also what production does, and it keeps a backend's own import-time w
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 from pathlib import Path
 from typing import ClassVar
@@ -832,7 +833,7 @@ def test_the_hook_saves_the_best_checkpoint_under_the_promised_name(tmp_path: Pa
     payload, path = recorded["saved"]
     assert path == "train.pth.tar"
     assert payload == {"model": {"state_dict": "BEST"}}
-    recorded["chgnet_cls"].load.assert_called_once_with()
+    recorded["chgnet_cls"].load.assert_called_once_with(model_name="0.3.0")
     trainer_kwargs = recorded["trainer_cls"].call_args.kwargs
     assert trainer_kwargs["use_device"] == "cpu"
     assert trainer_kwargs["epochs"] == 3
@@ -879,9 +880,9 @@ def test_the_hook_fine_tunes_from_a_release_name_through_loads_own_door(
 
     recorded = _install_fake_chgnet_stack(monkeypatch)
     monkeypatch.chdir(tmp_path)
-    facts = ["--device", "cpu", "--seed", "7", "--foundation", "0.3.0"]
+    facts = ["--device", "cpu", "--seed", "7", "--foundation", "0.2.0"]
     train_driver.main(["chgnet", str(_driver_config(tmp_path)), *facts])
-    recorded["chgnet_cls"].load.assert_called_once_with(model_name="0.3.0")
+    recorded["chgnet_cls"].load.assert_called_once_with(model_name="0.2.0")
     recorded["chgnet_cls"].from_file.assert_not_called()
 
 
@@ -908,11 +909,16 @@ def test_the_driver_refuses_a_template_that_contradicts_the_step(tmp_path: Path,
 @pytest.mark.parametrize(
     ("rendered", "argv", "names"),
     [
-        ({"weights_path": "/tpl/w.pth"}, [], r"`model_path` says nothing"),
-        ({"foundation": "0.2.0"}, ["--foundation", "0.3.0"], r"`model_name` says '0\.3\.0'"),
-        ({"foundation": "0.2.0"}, [], r"`model_name` says nothing"),
-        ({"seed": 0}, [], r"`seed` says 7"),
-        ({"device": ""}, [], r"`device` says 'cpu'"),
+        ({"weights_path": "/tpl/w.pth"}, [], r"step says nothing \(its `model_path`"),
+        (
+            {"foundation": "0.2.0"},
+            ["--foundation", "0.3.0"],
+            r"step says '0\.3\.0' \(its `model_name`, or the default when that is unset\)"
+            r".*Set the value you mean as the step's `model_name`",
+        ),
+        ({"foundation": "0.2.0"}, [], r"step says nothing \(its `model_name`"),
+        ({"seed": 0}, [], r"step says 7 \(its `seed`"),
+        ({"device": ""}, [], r"step says 'cpu' \(its `device`"),
     ],
     ids=[
         "checkpoint-the-step-never-named",
@@ -1111,10 +1117,9 @@ def _install_fake_orb_stack(monkeypatch) -> dict:
     loss_out = types.SimpleNamespace(loss=MagicMock())
     model.loss.return_value = loss_out
     model.state_dict.return_value = {"w": 1}
-    # A stress-free molecular model — the shape the hook accepts. On a bare MagicMock
-    # both probes come back truthy and the stress refusal fires on every test.
+    # A stress-free molecular model, which the hook trains as it is. On a bare MagicMock
+    # `has_stress` comes back truthy, and every test would switch stress off.
     model.has_stress = False
-    model.heads = {}
     adapter = MagicMock()
     loader_fn = MagicMock(return_value=(model, adapter))
     loader_fn.__name__ = "orb_v3_conservative_inf_omat"
@@ -1240,6 +1245,7 @@ def test_the_orb_hook_rebuilds_the_scripts_loop(monkeypatch, tmp_path: Path):
     recorded = _install_fake_orb_stack(monkeypatch)
     monkeypatch.chdir(tmp_path)
     assert OrbTrainer().run_training(_orb_config()) == 0
+    recorded["model"].disable_stress.assert_not_called()
 
     # DEV:cpu = the config's own device through torch.device — never orb's
     # init_device(), whose unconditional cuda-if-available pick would put a CPU-booked
@@ -1269,21 +1275,28 @@ def test_the_orb_hook_rebuilds_the_scripts_loop(monkeypatch, tmp_path: Path):
     assert recorded["dataset_cls"].call_args.kwargs["target_config"] == "TARGETS"
 
 
-def test_the_orb_hook_refuses_a_stress_carrying_model(monkeypatch, tmp_path: Path):
-    """A model with a stress head is refused by name, not left to a KeyError.
+def test_the_orb_hook_trains_a_stress_carrying_model_with_stress_off(
+    monkeypatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    """A model with a stress output fits molecular labels with that output switched off.
 
-    orb's conservative loss reads ``batch.system_targets["stress"]`` whenever the model
-    carries the head, and ChemRefine's labels are molecular — energy and forces, no
-    cell. The refusal lands at load time with the fix in it (pick a stress-free
-    loader), instead of a KeyError from inside the first loss call of a submitted job.
+    orb's loss reads ``batch.system_targets["stress"]`` from every batch while the output
+    is on, and ChemRefine's labels are molecular — energy and forces, no cell. So the hook
+    switches it off through orb-models' own ``disable_stress()``, before the first loss
+    call, and the job says so once.
     """
     from chemrefine.engines.mlip.backends.orb import OrbTrainer
 
     recorded = _install_fake_orb_stack(monkeypatch)
     recorded["model"].has_stress = True
     monkeypatch.chdir(tmp_path)
-    with pytest.raises(SystemExit, match="stress head"):
-        OrbTrainer().run_training(_orb_config())
+    with caplog.at_level(logging.WARNING, logger="chemrefine.engines.mlip.backends.orb"):
+        assert OrbTrainer().run_training(_orb_config()) == 0
+    recorded["model"].disable_stress.assert_called_once_with()
+    assert recorded["loss"].backward.call_count == 4, "and it trains"
+    (warning,) = caplog.records
+    assert "'orb_v3_conservative_inf_omat' carries a stress output" in warning.getMessage()
+    assert "trains with stress off" in warning.getMessage()
 
 
 def test_the_orb_hook_fine_tunes_from_a_local_checkpoint(monkeypatch, tmp_path: Path):
@@ -1316,8 +1329,23 @@ def test_the_orb_hook_takes_the_architecture_from_the_foundation_fact(monkeypatc
     recorded["loader_fn"].assert_called_once_with(device="DEV:cpu", train=True, compile=False)
 
     _install_fake_orb_stack(monkeypatch)
-    with pytest.raises(SystemExit, match="keep one"):
+    with pytest.raises(SystemExit, match="name the loader once, as the step's model_name"):
         OrbTrainer().run_training(_orb_config(foundation="orb_v2"))
+
+
+def test_a_template_architecture_must_be_the_one_the_step_starts_from(monkeypatch, tmp_path: Path):
+    """An unset ``model_name`` starts from ORB's default loader, and a template must agree.
+
+    The plan hands the hook that default as the ``foundation`` fact, so the runlog and the
+    sidecar name the loader that trained. A template ``base_model`` naming another would
+    train one model while both recorded the other, so it is refused by name.
+    """
+    from chemrefine.engines.mlip.backends.orb import OrbTrainer
+
+    _install_fake_orb_stack(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit, match="starts from 'orb_v3_conservative_inf_omat'"):
+        OrbTrainer().run_training(_orb_config(base_model="orb_v2"))
 
 
 def test_a_config_without_a_device_is_refused_not_guessed(monkeypatch, tmp_path: Path):
@@ -1339,16 +1367,21 @@ def test_a_config_without_a_device_is_refused_not_guessed(monkeypatch, tmp_path:
     recorded["init_device"].assert_not_called()
 
 
-def test_the_orb_hook_refuses_what_it_cannot_invent(monkeypatch, tmp_path: Path):
+def test_the_orb_hook_starts_from_the_default_loader_or_a_named_one(monkeypatch, tmp_path: Path):
+    """Named nowhere, the architecture is the builder's default; a name must be a loader."""
     from chemrefine.engines.mlip.backends.orb import OrbTrainer
 
-    _install_fake_orb_stack(monkeypatch)
+    recorded = _install_fake_orb_stack(monkeypatch)
+    monkeypatch.chdir(tmp_path)
     no_architecture = _orb_config()
     del no_architecture["base_model"]
-    with pytest.raises(SystemExit, match="no architecture named"):
-        OrbTrainer().run_training(no_architecture)
-    with pytest.raises(SystemExit, match="unknown base_model"):
-        OrbTrainer().run_training(_orb_config(base_model="orb_not_a_loader"))
+    assert OrbTrainer().run_training(no_architecture) == 0
+    recorded["loader_fn"].assert_called_once_with(device="DEV:cpu", train=True, compile=False)
+
+    unknown = _orb_config(foundation="orb_not_a_loader")
+    del unknown["base_model"]
+    with pytest.raises(SystemExit, match="unknown ORB model 'orb_not_a_loader'"):
+        OrbTrainer().run_training(unknown)
 
 
 def test_the_orb_hook_tolerates_an_optimizer_without_a_scheduler(monkeypatch, tmp_path: Path):

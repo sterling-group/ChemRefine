@@ -173,6 +173,16 @@ class MlipTrainEngine(MlipBackend):
         """
         return trainer_for(self._opts(ctx).task_name)()
 
+    def _foundation(self, ctx: StepContext) -> str:
+        """The release this step starts from, as the step names it; empty for from scratch.
+
+        The step's ``model_name``, or, unset, its trainer's
+        :attr:`~chemrefine.engines.mlip.train.base.TrainerBase.default_foundation`. Resolved
+        here once, so the plan the job runs and the sidecar the model is cited by cannot
+        name two different starts.
+        """
+        return self._opts(ctx).model_name or self._trainer(ctx).default_foundation
+
     def run_dir(self, ctx: StepContext) -> Path:
         """Where the run's files live: the training job's own directory under the step.
 
@@ -237,8 +247,8 @@ class MlipTrainEngine(MlipBackend):
             # CalculatorSpec shape, on the training side.
             weights=Path(opts.model_path) if opts.model_path else None,
             foundation=(
-                trainer.foundation_name(opts.task_name, opts.model_name)
-                if opts.model_name
+                trainer.foundation_name(opts.task_name, foundation)
+                if (foundation := self._foundation(ctx))
                 else None
             ),
             launcher=Path(_provision.launcher_for(self, ctx.step_cfg.options)),
@@ -359,7 +369,7 @@ class MlipTrainEngine(MlipBackend):
             # A checkpoint by its file name, the cache key's rule for a path-valued option:
             # its bytes are what the key pins, and its directory names a machine.
             "started_from": (
-                Path(opts.model_path).name if opts.model_path else opts.model_name or None
+                Path(opts.model_path).name if opts.model_path else self._foundation(ctx) or None
             ),
             "seed": opts.seed,
             "charge": ctx.charge,

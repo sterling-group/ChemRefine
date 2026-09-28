@@ -53,6 +53,8 @@ them by accident — a trainer added later reuses exactly these keys rather than
 
 #: Default checkpoint when ``model_name`` is unset — UMA-1.2, the latest small UMA
 #: model (fastest while still SOTA on most benchmarks); ships with ``fairchem-core>=2.18``.
+#: The one a run loads and a fine-tune starts from: FAIRChem's fine-tuning entry point
+#: always initialises from a released checkpoint.
 _DEFAULT_MODEL = "uma-s-1p2"
 
 
@@ -166,6 +168,7 @@ class FairchemTrainer(TrainerBase):
     """
 
     label = "FAIRChem"
+    default_foundation = _DEFAULT_MODEL
     needs_validation = True
     validation_reason = "its runner takes a train *and* an eval dataloader, with no train-only mode"
     charge_spin_aware = True
@@ -173,7 +176,7 @@ class FairchemTrainer(TrainerBase):
     ion is fitted as itself — no warning to raise."""
 
     required_placeholders: ClassVar[frozenset[str]] = frozenset(
-        {"TRAIN_SET", "VAL_SET", "RUN_DIR", "RUN_NAME", "DEVICE", "SEED"}
+        {"TRAIN_SET", "VAL_SET", "RUN_DIR", "RUN_NAME", "DEVICE", "SEED", "FOUNDATION_MODEL"}
     )
     """``RUN_DIR`` and ``RUN_NAME`` join the datasets because :meth:`artifact` is derived from
     them: FAIRChem writes under ``run_dir/<timestamp_id>/checkpoints``, and the template is
@@ -186,7 +189,12 @@ class FairchemTrainer(TrainerBase):
     trainer the template is the only channel the library reads, so requiring the
     placeholders is the closure the driver-run trainers get from their argv: unset, the
     device falls to FAIRChem's own default and torch seeds diverge from the ``seed`` the
-    step's cache fingerprint records."""
+    step's cache fingerprint records.
+
+    ``FOUNDATION_MODEL`` is the start, a plan fact every FAIRChem step has (the step's
+    ``model_name``, or :data:`_DEFAULT_MODEL`), which FAIRChem reads from the config's
+    ``starting_checkpoint``. A template naming its checkpoint literally would fine-tune that
+    one while the runlog and the sidecar named the step's."""
 
     output_globs: ClassVar[tuple[str, ...]] = ("*.pt", "*.yaml", "*.log")
     output_dirs: ClassVar[tuple[str, ...]] = ()

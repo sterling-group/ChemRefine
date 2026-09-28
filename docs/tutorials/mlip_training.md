@@ -22,7 +22,8 @@ ChemRefine automates this multi-step process:
 4. **MLIP Training (`mlip-train`)**  
    Fine-tunes a potential on the generated DFT dataset. `task_name` picks which library
    trains — the same word that picks the one that runs — and `model_name` is the foundation
-   model it starts from (unset means training from scratch); `task_name` and `device` are
+   model it starts from (unset means where the library's own training starts, from scratch
+   for MACE); `task_name` and `device` are
    required. Which backends train is the
    [backends table](../engines/installing.md#available-backends)'s business — it is
    generated from the registry, so it cannot go stale the way a list here would. This

@@ -38,6 +38,12 @@ CHGNET = MlipLibrary(
 Periodic-only: a molecule is evaluated and fitted in a vacuum box
 (:meth:`~chemrefine.engines.mlip.registry.MlipLibrary.boxed`)."""
 
+_DEFAULT_RELEASE = "0.3.0"
+"""The release an unset ``model_name`` runs and trains from: ``CHGNet.load``'s own default.
+
+Named rather than left to ``load()``, so the builder, the trainer and a training step's
+record say which release ran, and the three cannot drift apart if chgnet's default moves."""
+
 _EPOCH_DIR = "chgnet_epochs"
 """Where the hook points CHGNet's per-epoch ``bestE_…``/``bestF_…`` saves, under the job's
 working directory.
@@ -57,18 +63,15 @@ def _build_chgnet(spec: CalculatorSpec) -> Any:
     A local checkpoint loads through ``CHGNet.from_file`` — ``CHGNet.load`` is
     keyword-only and accepts *release names* (``"0.3.0"``…), never a path; ``from_file``
     reads the ``{"model": as_dict()}`` shape the trainer saves, which is what makes
-    train-then-run one round trip. A ``model_name`` is a release name for ``load`` —
-    the old keyword builder silently dropped it into its catch-all, which is the bug
-    class the spec exists to end. Neither given, the released default loads.
+    train-then-run one round trip. A ``model_name`` is a release name for ``load``.
+    Neither given, :data:`_DEFAULT_RELEASE` loads.
     """
     from chgnet.model import CHGNet, CHGNetCalculator
 
     if spec.weights is not None:
         model = CHGNet.from_file(str(spec.weights))
-    elif spec.model_name:
-        model = CHGNet.load(model_name=spec.model_name)
     else:
-        model = CHGNet.load()
+        model = CHGNet.load(model_name=spec.model_name or _DEFAULT_RELEASE)
     return CHGNetCalculator(model=model, use_device=spec.device)
 
 
@@ -96,6 +99,7 @@ class ChgnetTrainer(ApiTrainerBase):
     """
 
     label = "CHGNet"
+    default_foundation = _DEFAULT_RELEASE
     needs_validation = True
     validation_reason = "its Trainer.train takes a validation loader, with no train-only mode"
     driver_task = "chgnet"
@@ -157,10 +161,10 @@ class ChgnetTrainer(ApiTrainerBase):
         standing in when no epoch ever improved the metric.
 
         ``device`` and ``seed`` are read with no fallback: the driver overlaid the step's
-        own values, and a fallback here is how a ``device: cuda`` step trained on CPU for
-        days with the GPU booked. The weights dispatch mirrors the builder's three doors
-        — ``from_file`` is path-only, ``load(model_name=…)`` takes release names — where
-        the folded ``start_from`` string sent a release name through the path door.
+        own values, and a fallback here would let a ``device: cuda`` step train on CPU
+        for days with the GPU booked. The weights dispatch is the builder's:
+        ``from_file`` for a path, ``load(model_name=…)`` for a release, and
+        :data:`_DEFAULT_RELEASE` when neither is named.
         """
         import torch
         from chgnet.model import CHGNet
@@ -170,10 +174,8 @@ class ChgnetTrainer(ApiTrainerBase):
         foundation = str(config.get("foundation") or "")
         if weights:
             model = CHGNet.from_file(weights)
-        elif foundation:
-            model = CHGNet.load(model_name=foundation)
         else:
-            model = CHGNet.load()
+            model = CHGNet.load(model_name=foundation or _DEFAULT_RELEASE)
 
         batch_size = int(config.get("batch_size", 8))
         seed = int(config["seed"])
