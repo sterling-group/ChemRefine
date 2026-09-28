@@ -1,0 +1,2 @@
+#!/bin/bash
+# Minimal header for local capture runs (no SLURM directives needed).

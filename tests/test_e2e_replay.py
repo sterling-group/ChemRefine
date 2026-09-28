@@ -23,6 +23,7 @@ from typing import Any, cast
 import numpy as np
 import pytest
 from replay import (
+    ABSOLUTE_PATH_RE,
     ARTIFACT_STUB,
     CASE_SPEC,
     CASES_DIR,
@@ -50,7 +51,7 @@ from chemrefine.engines.orca.output import parse_output
 from chemrefine.errors import ChemRefineError
 from chemrefine.io import read_xyz_frames
 from chemrefine.recovery import Action
-from chemrefine.state import JobBatch, JobTriple, StepContext, StepInputs
+from chemrefine.state import FailureKind, JobBatch, JobTriple, StepContext, StepInputs
 from chemrefine.step import RunPlan, StepMode, StepOutcome
 
 RUN_BATCH = "chemrefine.engines._execution.run_batch"
@@ -344,6 +345,103 @@ def _nms_minimum(run: Replayed) -> None:
     assert len(run.outcomes[1].state.structures) == 1
 
 
+def _nms_recovery(run: Replayed) -> None:
+    """Every way a ``ts`` resolution ends, and recovery re-attempting exactly what is pending.
+
+    Planar NH3 is already a TS and passes through. Pyramidal NH3 has no imaginary mode to
+    keep and is unresolved without a round 2. Linear H2O keeps one of its two bends and is
+    displaced along the other; its children relax to bent water, never a TS, so it is
+    unresolved after one. Which bend is displaced is decided by a tie, so it is read from
+    the tree, never named. FrH makes ORCA abort: ledgered as a run that did not terminate
+    normally, its reason naming the output relative to the step and quoting ORCA's stderr.
+    The step halts on the three, and ``resume`` and ``rerun-errors`` each re-run the
+    displaced pair, in an attempt of its own, and the abort, sealing the one before —
+    nothing else — and halt again. Every job ran in a scratch directory of its own under
+    ``scratch_dir``, as ORCA itself reports.
+    """
+    case, served = run.case, run.submitter.served
+    assert [(act.action, act.target, act.halts_at) for act in run.spec.scenario] == [
+        (Action.RUN, None, 1),
+        (Action.RESUME, None, 1),
+        (Action.RERUN_ERRORS, 1, 1),
+    ], "a halted run, then both recovery actions over it, each declared to halt again"
+    actions = len(run.spec.scenario)
+    step_dir = run.config.step_dir(run.config.steps[0]).resolve()
+
+    imaginary: dict[str, dict[int, float]] = {}
+    for sid in ("0", "1", "2"):
+        out = case.submitted_file(f"step1/{sid}", 0, f"step1_{sid}.out")
+        freqs = parse_output(out, "opt_sp")[0].imaginary_freqs
+        assert freqs is not None, f"frame {sid}: round 1 has no frequency table"
+        imaginary[sid] = freqs
+    assert [len(imaginary[sid]) for sid in ("0", "1", "2")] == [1, 0, 2], (
+        "the seeds must be a TS, a minimum and a second-order saddle"
+    )
+    runs = [served[f"step1/{sid}"] for sid in ("0", "1", "2", "3")]
+    assert runs == [1, 1, 1, actions], "round 1 is reused; the abort re-runs every time"
+    for sid in ("0", "1"):
+        assert not list((step_dir / sid).glob("attempt*")), f"frame {sid} has no round 2"
+
+    rounds: dict[str, set[str]] = {}
+    for rel, count in served.items():
+        if rel.startswith("step1/2/attempt"):
+            attempt, child = rel.removeprefix("step1/2/").split("/")
+            assert count == 1, f"{rel} ran {count} times"
+            rounds.setdefault(attempt, set()).add(child)
+    assert sorted(rounds) == [f"attempt{k}" for k in range(1, actions + 1)], (
+        "each action runs frame 2's round 2 in an attempt of its own"
+    )
+    pairs = {frozenset(children) for children in rounds.values()}
+    assert len(pairs) == 1, f"every action displaces the same mode: {rounds}"
+    (pair,) = pairs
+    stems = {child.rpartition("_")[0] for child in pair}
+    assert len(stems) == 1, pair
+    (stem,) = stems
+    assert pair == {f"{stem}_pos", f"{stem}_neg"}, pair
+    mode = stem.removeprefix("2_m")
+    assert mode.isdigit() and int(mode) in imaginary["2"], "one bend displaced, the other kept"
+    for attempt, children in rounds.items():
+        for child in children:
+            out = case.submitted_file(f"step1/2/{attempt}/{child}", 0, f"step1_{child}.out")
+            parsed = parse_output(out, "opt_sp")[0]
+            assert parsed.terminated_normally and parsed.imaginary_freqs == {}, (
+                f"{attempt}/{child} relaxes to bent water, a minimum"
+            )
+
+    ledger = {r.structure_id: r for r in cache.load_failure_records(step_dir)}
+    assert {sid: r.kind for sid, r in ledger.items()} == {
+        "1": FailureKind.UNRESOLVED_NMS,
+        "2": FailureKind.UNRESOLVED_NMS,
+        "3": FailureKind.NOT_TERMINATED_NORMALLY,
+    }
+    reason = ledger["3"].reason
+    err = step_dir / "3" / "step1_3.err"
+    assert err.is_file(), "the abort's stderr is recorded, so a replay can quote it"
+    tail = [line.strip() for line in err.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert tail, "ORCA says on stderr why it aborted"
+    assert " in 3/step1_3.out" in reason, f"named relative to its step: {reason}"
+    assert f"{err.name} ends: " in reason and reason.endswith(tail[-1]), reason
+    assert not ABSOLUTE_PATH_RE.search(reason), f"names the machine: {reason}"
+    assert sorted(p.name for p in (step_dir / "3").glob("attempt*")) == [
+        f"attempt{k}" for k in range(1, actions)
+    ], "each re-run seals the abort before it rather than overwriting it"
+
+    (survivor,) = run.outcomes[0].state.structures
+    assert survivor.id == "0" and survivor.resolved_from is None, "the TS passes through"
+    assert survivor.imaginary_freqs == imaginary["0"]
+
+    scratch = run.config.scratch_dir
+    assert scratch is not None
+    places: list[Path] = []
+    for out in sorted(case.captured.rglob("*.out")):
+        said = [ln for ln in out.read_text(encoding="utf-8").splitlines() if "Working dir.:" in ln]
+        assert len(said) == 1, f"{out.name}: ORCA names the directory it ran in, once"
+        places.append(Path(said[0].partition("Working dir.:")[2].strip()))
+    assert len(places) == sum(served.values()), "every submission's output, the aborts too"
+    assert all(p.parent.name == scratch.name and p.name.startswith("ChemRefine_") for p in places)
+    assert len(set(places)) == len(places), "each job in a scratch directory of its own"
+
+
 def _ts_pes(run: Replayed) -> None:
     """A scan max-sampled to its highest point, then an OptTS that passes the inferred ts target."""
     scan_points = parse_output(run.case.captured / "step1" / "0" / "step1_0.out", "pes")
@@ -475,6 +573,7 @@ CHECKS: dict[str, Callable[[Replayed], None]] = {
     "mlip_screen": _mlip_screen,
     "mlip_train": _mlip_train,
     "nms_minimum": _nms_minimum,
+    "nms_recovery": _nms_recovery,
     "pyscf_extopt": _pyscf_extopt,
     "pyscf_sp": _pyscf_sp,
     "ts_pes": _ts_pes,

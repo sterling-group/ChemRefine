@@ -1,0 +1,21 @@
+4
+planar ammonia (D3h saddle)
+N        0.000000    0.000000    0.000000
+H        1.000000    0.000000    0.000000
+H       -0.500000    0.866025    0.000000
+H       -0.500000   -0.866025    0.000000
+4
+pyramidal ammonia (minimum)
+N 0 0 0
+H 0.9373 0 -0.3815
+H -0.4687 0.8118 -0.3815
+H -0.4687 -0.8118 -0.3815
+3
+linear water (second-order saddle)
+O 0 0 0
+H 0.96 0 0
+H -0.96 0 0
+2
+francium hydride (beyond GFN2)
+Fr 0 0 0
+H 2.3 0 0

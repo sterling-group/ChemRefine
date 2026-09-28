@@ -199,20 +199,6 @@ def _fail_one_step2_structure(tmp_path: Path) -> tuple[object, Config, str]:
     return case, load_config(case.config_path), sid
 
 
-def test_on_failure_stop_halts_and_records_the_ledger(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    case, config, sid = _fail_one_step2_structure(tmp_path)
-    monkeypatch.setattr(RUN_BATCH, replay_run_batch(case, allow_missing={sid}))
-
-    with pytest.raises(ChemRefineError, match="halted"):
-        pipeline.run(config)
-
-    ledger = case.output_dir / "step2" / "_cache" / "failed_jobs.json"
-    assert ledger.is_file()
-    assert sid in ledger.read_text(encoding="utf-8")
-
-
 def test_on_failure_skip_drops_the_failed_structure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -262,27 +248,3 @@ def test_on_failure_best_keeps_the_structure_with_its_best_geometry(
     cached = cache.load(config.step_dir(config.steps[1]).resolve())
     assert cached is not None
     assert [s.id for s in cached.results.structures if s.energy_hartree is None] == [sid]
-
-
-def test_resume_after_stop_resubmits_only_the_failed_structure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    case, config, sid = _fail_one_step2_structure(tmp_path)
-    submitter = replay_run_batch(case, allow_missing={sid})
-    monkeypatch.setattr(RUN_BATCH, submitter)
-    with pytest.raises(ChemRefineError, match="halted"):
-        pipeline.run(config)
-
-    # Restore the deleted output from a pristine extraction, then resume.
-    pristine = extract_case(recording("conformers"), tmp_path / "pristine")
-    shutil.copytree(pristine.captured / "step2" / sid, case.captured / "step2" / sid)
-    resumed = replay_run_batch(case)
-    monkeypatch.setattr(RUN_BATCH, resumed)
-
-    outcomes = pipeline.run(config)
-
-    assert len(outcomes) == 3
-    step2_resubmissions = [
-        sid_ for call in resumed.calls for _i, out, sid_ in call.files if "step2" in str(out)
-    ]
-    assert step2_resubmissions == [sid], "resume re-attempts only the failed job"

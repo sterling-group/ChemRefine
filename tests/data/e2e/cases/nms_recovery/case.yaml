@@ -1,0 +1,10 @@
+# A halted run, then the two recovery actions over it; each re-attempts the pending
+# structures and halts again, because they fail the same way every time.
+scenario:
+  - {action: run, halts_at: 1}
+  - {action: resume, halts_at: 1}
+  - {action: rerun-errors, target: 1, halts_at: 1}
+# The three actions took 4.1 s together at one core with nothing else heavy running (run
+# 2.3 s, resume 0.9 s, rerun-errors 0.9 s; 12 ORCA jobs; 4.5 s for the whole process, 217 MB
+# peak): about twice that.
+budget_s: 9

@@ -1,0 +1,42 @@
+# NMS recovery on ORCA/xTB: every way a `ts`-target normal-mode resolution can end, one
+# structure each, and the recovery actions over the step they halt. Four frames of
+# saddles.xyz, one step:
+#   0  planar NH3, the saddle of ammonia's inversion (~6 kcal/mol above the pyramid at
+#      GFN2-xTB): one imaginary umbrella mode, already a TS -> passes through, no round 2
+#   1  pyramidal NH3, the minimum: no imaginary mode to keep, nothing to displace
+#      -> unresolved without a round 2
+#   2  linear H2O, a second-order saddle (the degenerate bend, two imaginary modes): the
+#      target keeps one bend and displaces along the other, and both children relax to bent
+#      water, ~31 kcal/mol lower, never a TS -> unresolved after its round 2
+#   3  FrH: francium (Z=87) is past GFN2-xTB's parametrisation, which ends at radon, so ORCA
+#      aborts at its input check -> a run that did not terminate normally, its reason
+#      quoting what ORCA wrote on stderr (code-only)
+# Frames 1 and 2 ask for a TS where there is none to find, on purpose: that is what
+# unresolved means.
+#
+# `on_failure: stop` halts the step on the three failures, with frame 0 cached. case.yaml
+# then resumes and re-runs the errors; each re-attempts only what is pending (frame 2's
+# round 2 and frame 3) and halts again, since they fail the same way every time. Round 1
+# of frames 0-2 is never re-run.
+#
+# `scratch_dir` puts every job's working directory outside the tree, the aborts included.
+template_dir: ./templates
+output_dir: ./outputs
+scratch_dir: ./scratch
+executables: { orca: orca }  # the live harness injects the resolved absolute path
+dispatch: auto
+max_cores: 1
+
+input: ./saddles.xyz
+charge: 0
+multiplicity: 1
+
+steps:
+  # `! Opt Freq XTB2` (the template): the operation is inferred. The NMS target is not:
+  # a plain Opt infers `minimum`, and this step asks for `ts` on purpose.
+  - step: 1
+    engine: orca
+    nms: true
+    on_failure: stop
+    options: { target: ts, displacement_value: 0.5 }
+    sample: { method: min, count: 1 }

@@ -109,6 +109,9 @@ def test_every_recorded_run_terminated_exactly_when_orca_printed_no_abort():
         if status.parse_terminated_normally(text) is bool(ORCA_ABORT_RE.search(text))
     ]
     assert wrong == []
+    assert any(ORCA_ABORT_RE.search(text) for _label, text in _recorded_outputs()), (
+        "no aborted run in the corpus — has the recording set changed?"
+    )
 
 
 def test_every_terminated_run_converged_exactly_when_orca_did_not_run_out_of_cycles():
