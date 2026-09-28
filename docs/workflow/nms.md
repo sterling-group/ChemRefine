@@ -20,11 +20,12 @@ The two-round algorithm lives in `chemrefine.nms` and is **engine-independent** 
 drives any NMS-capable engine through one input hook and imports no engine package:
 
 - `nms_input_info(ctx)` — does the input target a TS, and does it compute frequencies?
-- the frequency *values* (`imaginary_freqs` mode→cm⁻¹ + the `normal_modes` tensor) ride on
-  each parsed `Structure`, filled in the same single pass as geometry/energy — so NMS reads
-  them off the structures it already holds, never re-parsing an output.
+- the frequency *values* (the `frequencies` table of vibrational modes, its `imaginary_freqs`
+  subset, and the `normal_modes` tensor) ride on each parsed `Structure`, filled in the same
+  single pass as geometry/energy — so NMS reads them off the structures it already holds,
+  never re-parsing an output.
 
-A new engine becomes NMS-capable by implementing `nms_input_info` and populating those two
+A new engine becomes NMS-capable by implementing `nms_input_info` and populating those three
 structure fields — capability is detected via `isinstance(engine, NmsCapableEngine)`, with
 no flag to keep in sync; everything else is shared. That same `isinstance` is what fills
 the engine table's `NMS` column, so the documentation cannot fall behind the registry.

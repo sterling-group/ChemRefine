@@ -222,8 +222,9 @@ _BUNDLED: tuple[Mutation, ...] = (
     Mutation(
         id="random-skips-trivial-modes",
         path="src/chemrefine/nms.py",
-        old="        candidates = list(range(_TRIVIAL_MODES, n_modes))",
-        new="        candidates = list(range(n_modes))",
+        old="    for idx in _selected_modes(imag_freqs, struct.frequencies or {}, opts, rng):",
+        new="    for idx in _selected_modes(imag_freqs, dict.fromkeys(range(n_modes), 0.0), "
+        "opts, rng):",
         tests="tests/test_nms.py",
         breaks="`random` sampling spends jobs displacing along translations and rotations — "
         "the same molecule moved, re-computed, and reported as an exploration",

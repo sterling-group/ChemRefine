@@ -136,8 +136,8 @@ for the full map.
   geometries; a job type the inspector does not list runs as `sp`. NMS-capable:
   `jobtype ts` targets the sampling and a frequency job — `jobtype freq` in an `@@@`
   chain, or `final_vibrational_analysis true` in the optimisation's own `$geom_opt`
-  block — gates it; the frequency parse maps Q-Chem's 3N−6 vibrational modes onto the
-  trivial-modes-first tensor the coordinator expects. Geometry is exchanged in Ångström only — a template setting
+  block — gates it; the frequency parse numbers Q-Chem's vibrational modes behind six zero
+  columns, so the tensor and the frequency table share one index. Geometry is exchanged in Ångström only — a template setting
   `$rem input_bohr` is refused by name, since the writer emits Å and the reader
   assumes it. The output reader is deliberately minimal (final energy + last
   geometry) pending the full parser set.
@@ -202,10 +202,10 @@ for the full map.
   however long the step takes.
 - Two-round normal-mode sampling (`nms: true`) with target-aware displacement
   (`minimum` / `ts` / `random`); tuning the search parameters re-attempts only
-  the unresolved parents. `random` draws displacement modes only from a
-  molecule's vibrational modes — translations and rotations are never
-  candidates, and a structure with none to draw from (a diatomic) simply
-  yields no displacements. A `ts_mode_index` that names no imaginary mode of
+  the unresolved parents. `random` draws displacement modes from the
+  frequency table the engine's parse names — the vibrations and any imaginary
+  modes; translations and rotations are never candidates, and a structure
+  with no table yields no displacements, with a warning. A `ts_mode_index` that names no imaginary mode of
   the structure is rejected up front, so the mode the setting exists to
   preserve — the reaction coordinate — is never displaced. After sampling,
   `stepN/<id>/` describes a single calculation: the round-1 frequency job is
@@ -459,6 +459,16 @@ for the full map.
 
 ### Fixed
 
+- **A linear molecule keeps its lowest vibration.** ORCA's frequency reader treated six
+  modes as translations and rotations for every molecule, but a linear one has five, which
+  ORCA says in its own output ("The molecule is recognized as being linear"). So every
+  linear molecule lost its lowest real mode, and a diatomic lost its only one: its
+  frequency job read as "no frequency data", and NMS ledgered a converged minimum as
+  unresolved. The reader now takes the count from ORCA's statement, and `random` sampling
+  draws from the frequency table the parse names instead of skipping six modes by index.
+  A tree whose `random` NMS step ran on a linear molecule before draws that molecule's
+  children differently: `resume` computes the new ones, and `rebuild-cache` ledgers the
+  parent unresolved until the step is re-run.
 - **The interpreter a step names is not part of its cache key.** `backend_python` rode
   into every provisioned step's row key, so a tree whose steps named their interpreter
   recomputed on `resume` wherever that interpreter lived elsewhere, and `rebuild-cache`

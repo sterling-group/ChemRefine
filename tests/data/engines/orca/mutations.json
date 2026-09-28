@@ -1,0 +1,18 @@
+[
+  {
+    "id": "orca-linear-molecule-keeps-its-vibration",
+    "path": "src/chemrefine/engines/orca/output/frequencies.py",
+    "old": "    return _Table(rows, 4 if _LINEAR_STATEMENT in text else 5)",
+    "new": "    return _Table(rows, 5)",
+    "tests": "tests/test_engines_orca_frequencies.py",
+    "breaks": "a linear molecule loses its lowest vibration: a diatomic's frequency job reads as no frequency data, and NMS ledgers its converged minimum unresolved"
+  },
+  {
+    "id": "orca-mode-table-leaves-trivial-modes-out",
+    "path": "src/chemrefine/engines/orca/output/frequencies.py",
+    "old": "        if is_imaginary or index > table.last_trivial",
+    "new": "        if is_imaginary or index >= 0",
+    "tests": "tests/test_engines_orca_frequencies.py",
+    "breaks": "the vibration table names translations and rotations, so random sampling spends jobs displacing along them"
+  }
+]

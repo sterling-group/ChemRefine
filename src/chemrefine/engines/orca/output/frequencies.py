@@ -23,6 +23,7 @@ needs (imaginary modes for NMS, all modes for a spectrum, …).
 from __future__ import annotations
 
 import re
+from typing import NamedTuple
 
 import numpy as np
 from numpy.typing import NDArray
@@ -30,11 +31,20 @@ from numpy.typing import NDArray
 _FREQ_BLOCK_MARKER = "VIBRATIONAL FREQUENCIES"
 """Banner each Hessian's frequency table opens with; a TS search prints one per recompute."""
 
-LAST_TRIVIAL_MODE = 5
-"""Highest mode index ORCA gives to a translation or rotation, for a non-linear molecule.
+_LINEAR_STATEMENT = "The molecule is recognized as being linear"
+"""ORCA's own word, in the thermochemistry after a frequency table, that the molecule is linear.
 
-Six of them, indices 0-5, printed at ~0 cm⁻¹ before the real vibrations. A linear molecule
-has five, and its sixth mode is discarded with them."""
+A linear molecule has five translations and rotations (indices 0-4) where any other has six
+(0-5); ORCA prints them at 0.00 cm⁻¹ before the real vibrations. Read from ORCA rather than
+decided from the geometry, which would need a collinearity tolerance of its own."""
+
+
+class _Table(NamedTuple):
+    """The last frequency block: every row, and the highest index that is not a vibration."""
+
+    rows: list[tuple[int, float, bool]]
+    last_trivial: int
+
 
 _NORMAL_MODES_MARKER = "NORMAL MODES"
 """Banner the displacement-tensor scan anchors on (see
@@ -46,7 +56,7 @@ _MODE_COL_HEADER_RE = re.compile(r"^\s*(\d+\s+)+\d+\s*$")
 _MODE_ROW_RE = re.compile(r"^\s*\d+\s+[-\d.Ee\s]+$")
 
 
-def _frequency_rows(text: str) -> list[tuple[int, float, bool]]:
+def _frequency_rows(text: str) -> _Table:
     """``(mode_index, cm⁻¹, is_imaginary)`` for every row of the last frequency block.
 
     The single scan the three public selectors share, so "which block, where does it
@@ -62,6 +72,9 @@ def _frequency_rows(text: str) -> list[tuple[int, float, bool]]:
     geometry describe the final structure while the frequencies describe an earlier one, and
     NMS re-optimises along modes that no longer exist. Same discipline as
     :func:`~chemrefine.engines.orca.output.status.parse_converged`: last verdict wins.
+
+    Returned with the highest trivial index for that block, from ORCA's own statement that
+    the molecule is linear (:data:`_LINEAR_STATEMENT`), which follows the table.
     """
     # `sep` empty means the banner is absent — leave `text` alone so a frequency-less
     # output still yields `[]` rather than being scanned from the top.
@@ -100,29 +113,23 @@ def _frequency_rows(text: str) -> list[tuple[int, float, bool]]:
                 bool(_IMAG_TAG_RE.search(m.group("rest"))),
             )
         )
-    return rows
+    return _Table(rows, 4 if _LINEAR_STATEMENT in text else 5)
 
 
-def parse_frequencies_from_text(
-    text: str,
-    *,
-    only_imaginary: bool = False,
-    skip_first_real: int = LAST_TRIVIAL_MODE,
-) -> dict[int, float]:
+def parse_frequencies_from_text(text: str, *, only_imaginary: bool = False) -> dict[int, float]:
     """Return ``{mode_index: frequency_cm_inverse}`` from already-read ORCA output text.
 
     ``only_imaginary`` keeps only the modes ORCA flagged ``***imaginary mode***`` (the
-    NMS-targeting subset); otherwise every mode with an index **greater than**
-    ``skip_first_real`` is kept, so the default of ``5`` drops indices 0-5 — the six
-    translation/rotation modes ORCA prints for a non-linear molecule (a linear one has
-    five, and its sixth mode is discarded with them).
+    NMS-targeting subset); otherwise the real vibrations, every mode past the translations
+    and rotations — six of them, or five for a molecule ORCA recognizes as linear.
 
     Neither subset is the whole table — see :func:`parse_mode_table_from_text`.
     """
+    table = _frequency_rows(text)
     return {
         index: value
-        for index, value, is_imaginary in _frequency_rows(text)
-        if (is_imaginary if only_imaginary else index > skip_first_real)
+        for index, value, is_imaginary in table.rows
+        if (is_imaginary if only_imaginary else index > table.last_trivial)
     }
 
 
@@ -134,19 +141,21 @@ def parse_imaginary_frequencies_from_text(text: str) -> dict[int, float]:
 def parse_mode_table_from_text(text: str) -> dict[int, float]:
     """Every mode worth naming: the real vibrations *and* the imaginary ones.
 
-    The union of the two subsets above rather than one index window, because ORCA sorts
-    the table ascending and so prints a transition state's imaginary mode at index 0 —
-    inside the very window :func:`parse_frequencies_from_text` skips as translations and
-    rotations. Selecting by index alone would drop the one mode a TS is looked at for;
-    widening the window to keep it would add five modes at ~0 cm⁻¹ that nobody animates.
+    ORCA prints the translations and rotations first, at 0.00 cm⁻¹, and the vibrations after
+    them in ascending order, so a transition state's imaginary mode leads the vibrations.
+    The table is the union of the two subsets above rather than the index window alone so
+    that :attr:`~chemrefine.state.Structure.imaginary_freqs` is a subset of it by
+    construction, not by that layout.
 
-    This is the table a viewer offers and :func:`chemrefine.agent_tools.analyze_mode`
-    names a frequency from, so ``imaginary_freqs`` stays a subset of it by construction.
+    This is the table a viewer offers, :func:`chemrefine.agent_tools.analyze_mode` names a
+    frequency from and ``random`` normal-mode sampling draws from, so ``imaginary_freqs``
+    stays a subset of it by construction.
     """
+    table = _frequency_rows(text)
     return {
         index: value
-        for index, value, is_imaginary in _frequency_rows(text)
-        if is_imaginary or index > LAST_TRIVIAL_MODE
+        for index, value, is_imaginary in table.rows
+        if is_imaginary or index > table.last_trivial
     }
 
 

@@ -3,16 +3,13 @@
 One section, one module — the NMS feed: ``imaginary_freqs`` and ``normal_modes`` are
 what :mod:`chemrefine.nms` displaces along, parsed in the same pass as everything else.
 
-**The mode-index contract.** Q-Chem's ``VIBRATIONAL ANALYSIS`` prints only the 3N-6
+**The mode-index contract.** Q-Chem's ``VIBRATIONAL ANALYSIS`` prints only the
 vibrational modes, numbered from 1 — translations and rotations are already projected
-out. ChemRefine's NMS contract counts the opposite way: the tensor carries the six
-trivial modes *first* (:class:`~chemrefine.engines.api.NmsCapableEngine`,
-``_TRIVIAL_MODES`` in :mod:`chemrefine.nms`), and ``random`` sampling skips the leading
-six by index. So this parser pads six zero columns in front and maps Q-Chem's 1-based
-mode ``k`` to tensor index ``k + 5`` — a zero column can never be selected
-(``minimum``/``ts`` displace only along imaginary indices, ``random`` draws real
-vibrations, and a zero displacement would move nothing), so the padding is inert by
-construction. An imaginary mode is a **negative** ``Frequency:`` value.
+out. The tensor and the table share one index
+(:class:`~chemrefine.engines.api.NmsCapableEngine`): this parser puts six zero columns in
+front and maps Q-Chem's 1-based mode ``k`` to index ``k + 5``. The table never names a zero
+column, and ``minimum``, ``ts`` and ``random`` all displace along modes the table names, so
+the padding is never selected. An imaginary mode is a **negative** ``Frequency:`` value.
 """
 
 from __future__ import annotations
@@ -31,11 +28,7 @@ _FREQ_LINE_RE = re.compile(r"^\s*Frequency:\s+(-?\d+\.\d+(?:\s+-?\d+\.\d+)*)\s*$
 _DISPLACEMENT_HEADER_RE = re.compile(r"^\s*(?:X\s+Y\s+Z\s*)+$")
 
 _TRIVIAL_MODES = 6
-"""Leading zero-padded columns of the tensor — the NMS ordering contract's trivial modes.
-
-The same constant as :mod:`chemrefine.nms`'s, restated rather than imported: the engine
-subsystem sits below the NMS coordinator and must not import it.
-"""
+"""Leading zero columns of the tensor; the table's keys start after them."""
 
 
 def parse_frequency_block(
@@ -78,9 +71,9 @@ def parse_frequency_block(
     if not freqs:
         # marker present, nothing parsed: no data, not a verified minimum
         return None, None, None
-    # Q-Chem numbers only the non-trivial modes, from 1; the NMS index space counts the
-    # six translations and rotations first. The whole table is shifted into that space
-    # once, and the imaginary subset taken from it, so the two cannot come to disagree.
+    # Q-Chem numbers only the vibrational modes, from 1. The whole table is shifted past
+    # the padding once, and the imaginary subset taken from it, so the two cannot come to
+    # disagree.
     table = {index + _TRIVIAL_MODES - 1: v for index, v in freqs.items()}
     imaginary = {index: v for index, v in table.items() if v < 0.0}
     if not columns:

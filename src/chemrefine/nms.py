@@ -5,8 +5,8 @@ two-round algorithm — read each structure's imaginary modes, displace along th
 re-optimise the ± children, resolve to a stationary point — and drives the compute
 engine *only* through :class:`chemrefine.engines.api.NmsCapableEngine` (its one
 ``nms_input_info`` hook plus the standard lifecycle). The frequency *values* it reads come
-off each ``Structure`` (``imaginary_freqs`` / ``normal_modes``, parsed in the same pass as
-geometry), so it imports no engine package and never re-parses an output.
+off each ``Structure`` (``imaginary_freqs`` / ``frequencies`` / ``normal_modes``, parsed in the
+same pass as geometry), so it imports no engine package and never re-parses an output.
 
 Unified "attempt" model (shared with the on_failure convergence retry): a structure
 lives at ``stepN/<id>/``; resolving it is an *attempt* whose displaced ± re-opts run
@@ -60,20 +60,6 @@ from chemrefine.state import (
 )
 
 logger = logging.getLogger(__name__)
-
-_TRIVIAL_MODES = 6
-"""Leading modes of the ``normal_modes`` tensor that are not vibrations.
-
-A frequency table lists all ``3N`` modes with the translations and rotations first — six of
-them for a non-linear molecule, five for a linear one. ``random`` sampling skips them, since
-displacing along a translation just moves the molecule and re-computes the same energy.
-
-Six for every molecule, deliberately. Distinguishing the linear case means deciding whether a
-geometry is collinear to some tolerance, and being wrong in the permissive direction spends a
-job on a translated copy. Being wrong the conservative way — which this is — costs a linear
-molecule one candidate vibration out of a random draw. `minimum` and `ts` are unaffected:
-they displace along the modes the parse flagged imaginary, whatever their index."""
-
 
 # ---------------------------------------------------------------------------
 # Options + pure displacement maths (engine-independent)
@@ -181,11 +167,20 @@ def _reaction_coordinate(imag_freqs: dict[int, float], opts: NmsOptions) -> int:
 
 
 def _selected_modes(
-    imag_freqs: dict[int, float], n_modes: int, opts: NmsOptions, rng: np.random.Generator
+    imag_freqs: dict[int, float],
+    vibrations: dict[int, float],
+    opts: NmsOptions,
+    rng: np.random.Generator,
 ) -> list[int]:
-    """Mode indices to displace along, per ``target``."""
+    """Mode indices to displace along, per ``target``.
+
+    ``random`` draws from ``vibrations``, the modes the engine's parse named as such
+    (:attr:`~chemrefine.state.Structure.frequencies`): displacing along a translation or a
+    rotation moves the molecule and recomputes the same energy, and which modes those are
+    is the program's to say — five for a linear molecule, six for any other.
+    """
     if opts.target == "random":
-        candidates = list(range(_TRIVIAL_MODES, n_modes))
+        candidates = sorted(vibrations)
         if not candidates:
             return []
         k = min(opts.num_random_displacements, len(candidates))
@@ -213,7 +208,7 @@ def select_displacements(
     positions = struct.atoms.get_positions()
     n_modes = modes.shape[2]
     out: list[tuple[str, NDArray[np.float64]]] = []
-    for idx in _selected_modes(imag_freqs, n_modes, opts, rng):
+    for idx in _selected_modes(imag_freqs, struct.frequencies or {}, opts, rng):
         if idx >= n_modes:
             logger.warning(
                 "NMS %s: mode %d outside the %d-mode tensor; skipping", struct.id, idx, n_modes
@@ -668,6 +663,12 @@ def _children_for(structure: Structure, opts: NmsOptions) -> list[Structure]:
     """
     if structure.normal_modes is None:
         logger.warning("NMS %s: no normal-mode tensor; cannot displace (unresolved)", structure.id)
+        return []
+    if opts.target == "random" and structure.frequencies is None:
+        logger.warning(
+            "NMS %s: no frequency table to draw a random mode from; cannot displace (unresolved)",
+            structure.id,
+        )
         return []
     return _children_of(
         structure,

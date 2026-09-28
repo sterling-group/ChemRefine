@@ -33,9 +33,10 @@ One job, one product          :class:`CalculationEngine` +    ``prepare`` / ``su
 
 * **Capabilities** — never a flag, always a Protocol detected via ``isinstance``. NMS:
   implement :class:`NmsCapableEngine`'s ``nms_input_info`` hook and populate
-  ``imaginary_freqs`` / ``normal_modes`` on each parsed ``Structure`` (the generic coordinator
-  is :mod:`chemrefine.nms`). Managed backend envs: implement :class:`ProvisionableEngine`'s
-  ``backend_requirement`` (the generic provisioner is :mod:`chemrefine.engines._provision`).
+  ``imaginary_freqs`` / ``frequencies`` / ``normal_modes`` on each parsed ``Structure`` (the
+  generic coordinator is :mod:`chemrefine.nms`). Managed backend envs: implement
+  :class:`ProvisionableEngine`'s ``backend_requirement`` (the generic provisioner is
+  :mod:`chemrefine.engines._provision`).
 * **YAML knobs** — a Pydantic model in ``engines/<name>/options.py`` subclassing
   :class:`~chemrefine.engines._options.EngineOptions`; read it in the primitives and declare
   it as ``options_cls`` (the :class:`OptionsDeclaring` capability), so second readers —
@@ -509,16 +510,17 @@ class NmsCapableEngine(CalculationEngine, StructureArtifacts, Protocol):
     The two-round NMS algorithm — displacement, round-2 submission, resolution, retry — is
     engine-independent and lives in :mod:`chemrefine.nms`, which drives any engine through this
     hook plus the standard lifecycle. The *output* half is no hook at all: the engine's
-    :meth:`parse` already carries ``imaginary_freqs`` + ``normal_modes`` on each
-    :class:`~chemrefine.state.Structure` (parsed in the same single pass as energy/geometry),
-    so NMS reads them off the structures it already holds. A new NMS-capable engine implements
-    ``nms_input_info`` and :meth:`~StructureArtifacts.artifact_paths` — which
-    :class:`~chemrefine.engines._job.JobEngine` already provides — and populates those two
-    structure fields; capability is detected with ``isinstance``.
+    :meth:`parse` already carries ``imaginary_freqs``, ``frequencies`` and ``normal_modes`` on
+    each :class:`~chemrefine.state.Structure` (parsed in the same single pass as
+    energy/geometry), so NMS reads them off the structures it already holds. A new NMS-capable
+    engine implements ``nms_input_info`` and :meth:`~StructureArtifacts.artifact_paths` —
+    which :class:`~chemrefine.engines._job.JobEngine` already provides — and populates those
+    three structure fields; capability is detected with ``isinstance``.
 
-    ``normal_modes`` is indexed with the trivial translation/rotation modes first: NMS skips
-    the leading six (five for a linear molecule) when drawing at random, so an engine
-    populating the tensor must use that ordering.
+    ``normal_modes`` is indexed by the same mode indices as ``frequencies``, the table of
+    vibrations (and imaginary modes) the parse names: ``random`` sampling draws from that
+    table's keys, so the engine, not the coordinator, decides which modes are translations
+    and rotations.
     """
 
     def nms_input_info(self, ctx: StepContext) -> NmsInputInfo:

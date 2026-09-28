@@ -477,16 +477,18 @@ def _register_fake_nms():
                 if "_m" in sid:  # a displaced child
                     imaginary = {} if "RESOLVED" in text else {3: -9.0}
                     modes = None
+                    table = None
                 else:  # a round-1 parent reaching NMS
                     _FakeNms2.nms_seen.append(sid)
-                    # A real parse always carries the full tensor — trivial modes, the
-                    # (possibly) imaginary one, and real vibrations `random` can draw —
-                    # and only the imaginary set depends on what the output says.
+                    # A real parse always carries the full tensor and the table of its
+                    # vibrations `random` draws from, and only the imaginary set depends
+                    # on what the output says.
                     modes = np.zeros((1, 3, 8))
                     modes[0, 0, 5] = 0.1
                     modes[0, 0, 6] = 0.2
                     modes[0, 0, 7] = 0.3
                     imaginary = {} if ("CLEAN" in text or "RESOLVED" in text) else {5: -42.0}
+                    table = {6: 600.0, 7: 700.0} | imaginary
                 out.append(
                     Structure(
                         id=sid,
@@ -495,6 +497,7 @@ def _register_fake_nms():
                         terminated_normally="CRASHED" not in text,
                         converged=True,
                         imaginary_freqs=imaginary,
+                        frequencies=table,
                         normal_modes=modes,
                     )
                 )

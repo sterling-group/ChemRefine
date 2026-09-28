@@ -40,6 +40,14 @@ from chemrefine.state import (
 _Freq = namedtuple("_Freq", ["imaginary", "modes"])
 
 
+def _table(freq: _Freq) -> dict[int, float] | None:
+    """The vibration table a real parse reports beside a tensor: modes past the six
+    translations and rotations of a non-linear molecule, and the imaginary ones."""
+    if freq.modes is None:
+        return None
+    return {i: 100.0 * i for i in range(6, freq.modes.shape[2])} | (freq.imaginary or {})
+
+
 def _modes(n_modes: int = 6) -> np.ndarray:
     """(2 atoms, 3, n_modes): mode k moves atom0 +0.1(k+1) and atom1 -0.1(k+1) in x."""
     t = np.zeros((2, 3, n_modes))
@@ -125,13 +133,26 @@ def test_select_displacements_ts_keeps_reaction_coordinate():
 
 def test_select_displacements_random_draws_from_modes():
     out = nms.select_displacements(
-        _h2("0"),
+        replace(_h2("0"), frequencies={6: 600.0, 7: 700.0}),
         {},
         _modes(8),
         nms.NmsOptions(target="random", num_random_displacements=1),
         np.random.default_rng(1),
     )
     assert len(out) == 2  # one ± pair
+
+
+def test_random_sampling_draws_a_linear_molecules_only_vibration():
+    """A diatomic's one vibration sits at index 5, where a non-linear molecule's last
+    rotation does; the parse's table says which, and random draws from it."""
+    out = nms.select_displacements(
+        replace(_h2("0"), frequencies={5: 4400.0}),
+        {},
+        _modes(6),
+        nms.NmsOptions(target="random", num_random_displacements=2),
+        np.random.default_rng(1),
+    )
+    assert [suffix for suffix, _ in out] == ["m5_pos", "m5_neg"]
 
 
 def test_select_displacements_skips_out_of_range_mode():
@@ -203,17 +224,25 @@ def test_select_displacements_random_no_candidates_is_empty():
 
 
 def test_random_never_displaces_along_a_translation():
-    """A molecule with no vibrational modes to draw from yields nothing, not a translation.
+    """A structure with no vibration table yields nothing, not a translation.
 
-    A diatomic has six tensor columns and one vibration, so the non-trivial slice is empty at
-    the ``_TRIVIAL_MODES`` cut. Falling back to the whole range put pure translations in the
-    candidate set — displacing along one moves the molecule and re-computes the same energy,
-    a job spent to learn nothing.
+    ``random`` draws only from the modes the parse named as vibrations. Falling back to the
+    tensor's columns put pure translations in the candidate set — displacing along one
+    moves the molecule and re-computes the same energy, a job spent to learn nothing.
     """
     out = nms.select_displacements(
         _h2("0"), {}, _modes(6), nms.NmsOptions(target="random"), np.random.default_rng(0)
     )
     assert out == []
+
+
+def test_a_random_target_with_no_table_warns_and_resolves_nothing(caplog):
+    """An engine that parses a tensor but no table is named in the log, not left silent."""
+    structure = replace(_h2("0"), normal_modes=_modes(8))
+    with caplog.at_level("WARNING", logger="chemrefine.nms"):
+        children = nms._children_for(structure, nms.NmsOptions(target="random"))
+    assert children == []
+    assert "no frequency table" in caplog.text
 
 
 def test_select_displacements_skips_mode_shape_mismatch():
@@ -489,6 +518,7 @@ class _FakeNms:
                     energy_hartree=-1.0,
                     imaginary_freqs=freq.imaginary,
                     normal_modes=freq.modes,
+                    frequencies=_table(freq),
                 )
             )
         return StepResults(structures=tuple(out))
@@ -766,6 +796,7 @@ def test_random_mode_selection_is_per_structure_not_stream_order():
             id=structure_id,
             atoms=Atoms("H3", positions=np.zeros((3, 3))),
             normal_modes=modes,
+            frequencies={6: 600.0, 7: 700.0, 8: 800.0},
         )
         [first_child, _neg] = nms._children_for(struct, opts)
         return first_child.id.removeprefix(f"{structure_id}_")

@@ -18,10 +18,9 @@ from chemrefine.engines.orca.output.frequencies import (
     parse_normal_modes_tensor_from_text,
 )
 
-# A transition state as ORCA actually prints one: the table is sorted ascending, so the
-# imaginary mode is index *0* and the five remaining translations/rotations follow it. The
-# synthetic block above puts its imaginary modes at 37/38, above the trivial window, where
-# the difference between "every real mode" and "every mode" cannot show.
+# A transition state as ORCA 6.1.1 printed one (the HCN/HNC saddle of the ts_pes recording):
+# the translations and rotations first at 0.00, then the vibrations ascending, so the
+# imaginary mode leads them at index 6.
 _TS_BLOCK = """
 -----------------------
 VIBRATIONAL FREQUENCIES
@@ -29,16 +28,20 @@ VIBRATIONAL FREQUENCIES
 
 Scaling factor for frequencies =  1.000000000  (already applied!)
 
-     0:    -512.44 cm**-1  ***imaginary mode***
+     0:       0.00 cm**-1
      1:       0.00 cm**-1
      2:       0.00 cm**-1
      3:       0.00 cm**-1
      4:       0.00 cm**-1
      5:       0.00 cm**-1
-     6:     284.90 cm**-1
-     7:    1103.68 cm**-1
+     6:   -1425.82 cm**-1  ***imaginary mode***
+     7:    2000.59 cm**-1
+     8:    2386.04 cm**-1
 
-trailing text
+
+------------
+NORMAL MODES
+------------
 """
 
 # ---------------------------------------------------------------------------
@@ -86,21 +89,16 @@ def test_parse_frequencies_empty_when_no_freq_block():
     assert parse_frequencies_from_text("no frequency block here\n") == {}
 
 
-def test_the_mode_table_keeps_the_imaginary_mode_the_index_window_would_drop():
-    """The whole point of the union, on the one output shape where it shows.
-
-    ORCA sorts the table ascending, so a transition state's imaginary mode is index 0 —
-    inside the translation/rotation window the real pass skips. Selecting by index alone
-    drops exactly the mode a TS is looked at for.
-    """
+def test_a_transition_states_table_holds_its_imaginary_mode_and_its_vibrations():
+    """The mode a TS is looked at for, and the real vibrations, under ORCA's own indices."""
     table = parse_mode_table_from_text(_TS_BLOCK)
-    assert table == {0: -512.44, 6: 284.90, 7: 1103.68}
-    assert 0 not in parse_frequencies_from_text(_TS_BLOCK)  # which is why the union exists
+    assert table == {6: -1425.82, 7: 2000.59, 8: 2386.04}
+    assert parse_imaginary_frequencies_from_text(_TS_BLOCK) == {6: -1425.82}
 
 
 def test_the_mode_table_leaves_the_translations_and_rotations_out():
-    """Five modes at ~0 cm⁻¹ that nobody animates, and that are not the molecule moving."""
-    assert not set(parse_mode_table_from_text(_TS_BLOCK)) & {1, 2, 3, 4, 5}
+    """Six modes at 0.00 cm⁻¹ that nobody animates, and that are not the molecule moving."""
+    assert not set(parse_mode_table_from_text(_TS_BLOCK)) & {0, 1, 2, 3, 4, 5}
 
 
 def test_the_imaginary_modes_are_a_subset_of_the_table():
@@ -124,11 +122,11 @@ def test_every_selector_reads_the_same_block_when_a_ts_reprints_the_table():
     answer from an earlier one — a converged structure reported with the imaginary mode it
     had on the way there.
     """
-    stale = _TS_BLOCK.replace("-512.44", "-1999.99").replace("284.90", "111.11")
+    stale = _TS_BLOCK.replace("-1425.82", "-1999.99").replace("2000.59", "111.11")
     both = stale + _TS_BLOCK
     assert parse_mode_table_from_text(both) == parse_mode_table_from_text(_TS_BLOCK)
-    assert parse_imaginary_frequencies_from_text(both) == {0: -512.44}
-    assert parse_frequencies_from_text(both) == {6: 284.90, 7: 1103.68}
+    assert parse_imaginary_frequencies_from_text(both) == {6: -1425.82}
+    assert parse_frequencies_from_text(both) == {6: -1425.82, 7: 2000.59, 8: 2386.04}
 
 
 # ---------------------------------------------------------------------------
@@ -245,3 +243,40 @@ def test_parse_normal_modes_tensor_raises_without_the_banner():
         parse_normal_modes_tensor_from_text(
             "VIBRATIONAL FREQUENCIES\n  0: 1.0 cm**-1\n", num_atoms=1
         )
+
+
+_LINEAR_BLOCK = """\
+-----------------------
+VIBRATIONAL FREQUENCIES
+-----------------------
+
+Scaling factor for frequencies =  1.000000000  (already applied!)
+
+     0:       0.00 cm**-1
+     1:       0.00 cm**-1
+     2:       0.00 cm**-1
+     3:       0.00 cm**-1
+     4:       0.00 cm**-1
+     5:    1871.38 cm**-1
+
+
+Temperature         ...   298.15 K
+Total Mass          ...     7.95 AMU
+{statement}
+"""
+"""LiH's frequency table and the thermochemistry after it, as ORCA 6.1.1 printed them."""
+
+
+def test_a_linear_molecule_keeps_the_vibration_at_index_five():
+    """ORCA says when a molecule is linear, and then only indices 0-4 are trivial.
+
+    Read as six trivial modes, a diatomic's only vibration was dropped: its frequency job
+    read as "no frequency data", and NMS ledgered a converged minimum unresolved.
+    """
+    linear = _LINEAR_BLOCK.format(statement="The molecule is recognized as being linear")
+    assert parse_mode_table_from_text(linear) == {5: 1871.38}
+    assert parse_frequencies_from_text(linear) == {5: 1871.38}
+
+
+def test_a_molecule_orca_does_not_call_linear_keeps_six_trivial_modes():
+    assert parse_mode_table_from_text(_LINEAR_BLOCK.format(statement="")) == {}
