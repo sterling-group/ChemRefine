@@ -28,8 +28,6 @@ from chemrefine.io import read_xyz_frames
 
 pytestmark = pytest.mark.integration
 
-CASES_DIR = Path(__file__).resolve().parent / "data" / "e2e" / "cases"
-
 
 def _real_orca() -> str | None:
     """The quantum-chemistry ORCA, or None.
@@ -122,7 +120,7 @@ def test_live_case(
     """
     requirements = _REQUIRES[name]
     _skip_unless_available(requirements)
-    shutil.copytree(CASES_DIR / name, tmp_path, dirs_exist_ok=True)
+    shutil.copytree(replay.CASES_DIR / name, tmp_path, dirs_exist_ok=True)
 
     config = load_config(tmp_path / "input.yaml")
     if "orca" in requirements:

@@ -14,7 +14,14 @@ from pathlib import Path
 
 import pytest
 import replay
-from replay import extract_case, forbid_run_batch, forget_provenance, relocate, replay_run_batch
+from replay import (
+    extract_case,
+    forbid_run_batch,
+    forget_provenance,
+    recording,
+    relocate,
+    replay_run_batch,
+)
 
 from chemrefine import cache, pipeline
 from chemrefine.config import Config, MinSample, load_config
@@ -28,7 +35,7 @@ ORCA_CASES = ["conformers", "nms_minimum", "ts_pes", "host_guest"]
 
 A parse-only rebuild needs no backend at all, so the drift detector — the one thing
 standing between a recording and becoming a fossil — covers every recording on disk
-instead, each as far as `replay.VERIFIABLE_STEPS` says it can be re-derived."""
+instead, each as far as `replay.verifiable_prefix` says it can be re-derived."""
 
 
 def _with_step_update(config: Config, step_number: int, **updates: object) -> Config:
@@ -44,7 +51,7 @@ def test_relocated_tree_is_a_full_cache_hit(
     name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A captured tree moved to a new path must revalidate without submissions."""
-    case = extract_case(name, tmp_path)
+    case = extract_case(recording(name), tmp_path)
     relocate(case)
     monkeypatch.setattr(RUN_BATCH, forbid_run_batch)
 
@@ -59,13 +66,13 @@ def test_rebuild_cache_reparses_outputs_without_submitting(
     name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`rebuild-cache N` re-parses each step from disk and lands on the same survivors."""
-    baseline_case = extract_case(name, tmp_path / "baseline")
+    baseline_case = extract_case(recording(name), tmp_path / "baseline")
     relocate(baseline_case)
     monkeypatch.setattr(RUN_BATCH, forbid_run_batch)
     baseline = pipeline.run(load_config(baseline_case.config_path))
 
     for step_number in range(1, len(baseline) + 1):
-        case = extract_case(name, tmp_path / f"rebuild{step_number}")
+        case = extract_case(recording(name), tmp_path / f"rebuild{step_number}")
         relocate(case)
         outcomes = pipeline.run(
             load_config(case.config_path),
@@ -89,7 +96,7 @@ def test_rebuilt_records_match_the_archived_ones_field_for_field(
     of record/replay rests on the difference.
 
     Every recording on disk is checked, as far as it can be: one that is verifiable only
-    up to a step (`replay.VERIFIABLE_STEPS`) is rebuilt over that prefix and must carry no
+    up to a step (`replay.verifiable_prefix`) is rebuilt over that prefix and must carry no
     cache document past it — nothing could check one, so it would be a fossil from the
     day it was packed.
 
@@ -97,11 +104,11 @@ def test_rebuilt_records_match_the_archived_ones_field_for_field(
     regenerating (a parse-only rebuild from these same archived outputs — no ORCA and
     no MLIP stack required), not that the assertion is too strict.
     """
-    case = extract_case(name, tmp_path)
+    case = extract_case(recording(name), tmp_path)
     relocate(case)
     monkeypatch.setattr(RUN_BATCH, forbid_run_batch)
     config = load_config(case.config_path)
-    prefix = replay.VERIFIABLE_STEPS.get(name, len(config.steps))
+    prefix = replay.verifiable_prefix(config)
     verifiable, beyond = config.steps[:prefix], config.steps[prefix:]
     config = config.model_copy(update={"steps": verifiable})
 
@@ -171,7 +178,7 @@ def test_rebuilt_records_match_the_archived_ones_field_for_field(
 
 def _fail_one_step2_structure(tmp_path: Path) -> tuple[object, Config, str]:
     """Extract conformers, delete one step-2 archived output, return (case, config, sid)."""
-    case = extract_case("conformers", tmp_path)
+    case = extract_case(recording("conformers"), tmp_path)
     victim_dir = sorted(case.captured.glob("step2/*"))[0]
     if victim_dir.name == "_cache":
         victim_dir = sorted(case.captured.glob("step2/*"))[1]
@@ -255,7 +262,7 @@ def test_resume_after_stop_resubmits_only_the_failed_structure(
         pipeline.run(config)
 
     # Restore the deleted output from a pristine extraction, then resume.
-    pristine = extract_case("conformers", tmp_path / "pristine")
+    pristine = extract_case(recording("conformers"), tmp_path / "pristine")
     shutil.copytree(pristine.captured / "step2" / sid, case.captured / "step2" / sid)
     resumed = replay_run_batch(case)
     monkeypatch.setattr(RUN_BATCH, resumed)

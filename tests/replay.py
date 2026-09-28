@@ -22,6 +22,9 @@ it after a job finishes (a convergence retry seals the first attempt into ``atte
 re-runs in the same directory; NMS promotes a child's copy to its parent's), so one
 directory holds several submissions, or none, and nothing on disk tells which.
 
+A case may also carry ``case.yaml``: the scenario a run of it takes (:class:`CaseSpec`),
+driven the same way live and in replay by :func:`drive`. Without one, a case is one ``run``.
+
 An archive extracts and runs wherever it lands: nothing under ``_cache/``
 names an absolute path any more, manifests included (they spell their files
 relative to the step directory). Recordings packed before that spelling
@@ -39,16 +42,25 @@ import json
 import shutil
 import tarfile
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
-from chemrefine import cache
+import yaml
+
+from chemrefine import cache, recovery
+from chemrefine.config import Config, load_config
 from chemrefine.engines import api
-from chemrefine.engines.api import CompletionSink
+from chemrefine.engines.api import ArtifactEngine, CompletionSink, get_engine
+from chemrefine.errors import ChemRefineError
 from chemrefine.state import JobBatch, JobTriple, StepContext, StepInputs
 
+CASES_DIR = Path(__file__).resolve().parent / "data" / "e2e" / "cases"
 DATA_DIR = Path(__file__).resolve().parent / "data" / "e2e" / "recordings"
+
+CASE_SPEC = "case.yaml"
+"""A case's scenario: beside its ``input.yaml`` in the case dir, and at an archive's root."""
 
 SUBMISSIONS = "submissions.json"
 """The submission log's name, in a live run's directory and at an archive's root."""
@@ -60,6 +72,127 @@ Submissions = dict[str, list[list[dict[str, str]]]]
 def recorded_cases() -> list[str]:
     """Every recording on disk, by case name — what the drift detector has to cover."""
     return sorted(path.name.removesuffix(".tar.xz") for path in DATA_DIR.glob("*.tar.xz"))
+
+
+def recording(name: str) -> Path:
+    """The shipped archive of case ``name``."""
+    return DATA_DIR / f"{name}.tar.xz"
+
+
+# ---------------------------------------------------------------------------
+# A case's scenario, driven the same way live and in replay
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Act:
+    """One recovery action of a scenario, and the step it is declared to halt at (if any)."""
+
+    action: recovery.Action
+    target: str | int | None = None
+    halts_at: int | None = None
+
+
+@dataclass(frozen=True)
+class CaseSpec:
+    """What a case declares beside its config: the actions a run of it takes.
+
+    ``case.yaml`` holds ``scenario: [{action, target?, halts_at?}]``; without the file a
+    case is one ``run``. Unknown keys are refused at both levels: a misspelled
+    ``halts_at`` would let a halt pass as a completion no check asserted.
+    """
+
+    scenario: tuple[Act, ...] = (Act(recovery.Action.RUN),)
+
+    @property
+    def halts_at(self) -> int | None:
+        """The step the scenario leaves the tree halted at: its last action's declared halt."""
+        return self.scenario[-1].halts_at
+
+    @classmethod
+    def read(cls, root: Path) -> CaseSpec:
+        """The spec in ``root`` (a case dir, a run dir or an extracted archive)."""
+        path = root / CASE_SPEC
+        if not path.is_file():
+            return cls()
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        _refuse_unknown(path, data, {"scenario"})
+        acts = []
+        for entry in data.get("scenario") or [{"action": "run"}]:
+            _refuse_unknown(path, entry, {"action", "target", "halts_at"})
+            acts.append(
+                Act(recovery.Action(entry["action"]), entry.get("target"), entry.get("halts_at"))
+            )
+        return cls(tuple(acts))
+
+
+def _refuse_unknown(path: Path, data: Mapping[str, Any], known: set[str]) -> None:
+    """Fail on any key of ``data`` outside ``known``, naming the file."""
+    unknown = sorted(set(data) - known)
+    assert not unknown, f"{path}: unknown key(s) {unknown}; known: {sorted(known)}"
+
+
+def drive(config: Config, spec: CaseSpec) -> None:
+    """Take ``spec``'s actions on ``config`` through the CLI's own dispatcher.
+
+    A halt is declared, never tolerated. An action with no declared halt must complete,
+    leaving the last step cached; a halting one raises through. An action declared to halt
+    at step k must raise the halt naming step k and leave the tree :func:`assert_halted`
+    describes; one that completes instead fails.
+    """
+    for act in spec.scenario:
+        if act.halts_at is None:
+            recovery.execute(config, act.action, act.target)
+            last = config.steps[-1]
+            assert cache.load(config.step_dir(last).resolve()) is not None, (
+                f"{act.action.value} completed without caching step {last.step}"
+            )
+            continue
+        try:
+            recovery.execute(config, act.action, act.target)
+        except ChemRefineError as e:
+            assert f"step {act.halts_at} halted" in str(e), (
+                f"{act.action.value} was declared to halt at step {act.halts_at}: {e}"
+            )
+        else:
+            raise AssertionError(
+                f"{act.action.value} was declared to halt at step {act.halts_at} and completed"
+            )
+        assert_halted(config, act.halts_at)
+
+
+def assert_halted(config: Config, step_number: int) -> None:
+    """The tree a halt at ``step_number`` leaves: that step pending, nothing after it cached.
+
+    The step is an ``on_failure: stop`` step with a non-empty ledger — what ``resume`` and
+    ``rerun-errors`` read to know what to re-attempt — and no later step has a cache, since
+    the halt is what stopped them running.
+    """
+    step = config.find_step(step_number)
+    assert step.on_failure == "stop", f"step {step_number} halted but is {step.on_failure!r}"
+    assert cache.load_failure_records(config.step_dir(step).resolve()), (
+        f"step {step_number} halted with an empty ledger"
+    )
+    later = [
+        s.step
+        for s in config.steps
+        if s.step > step_number and cache.load(config.step_dir(s).resolve()) is not None
+    ]
+    assert not later, f"steps {later} were cached after the halt at step {step_number}"
+
+
+def verifiable_prefix(config: Config) -> int:
+    """How many leading steps a parse-only rebuild can re-derive: those before an artifact step.
+
+    An artifact step's product is not archived (:func:`_stub_artifact`), and every step
+    after it keys that product's bytes, which no stub reproduces. So the drift detector
+    rebuilds only the prefix, and :func:`pack_case` archives no cache document past it — one
+    nothing could verify is a fossil from the day it was packed.
+    """
+    for index, step in enumerate(config.steps):
+        if isinstance(get_engine(step.engine), ArtifactEngine):
+            return index
+    return len(config.steps)
 
 
 @dataclass(frozen=True)
@@ -113,9 +246,9 @@ def _locate(captured: Path, entry: dict[str, str]) -> Path | None:
     return None
 
 
-def extract_case(name: str, dest: Path) -> ReplayCase:
-    """Extract ``tests/data/e2e/recordings/<name>.tar.xz`` into ``dest``."""
-    with tarfile.open(DATA_DIR / f"{name}.tar.xz") as tar:
+def extract_case(archive: Path, dest: Path) -> ReplayCase:
+    """Extract the recording at ``archive`` into ``dest``."""
+    with tarfile.open(archive) as tar:
         tar.extractall(dest, filter="data")
     return ReplayCase(root=dest, captured=dest / "captured_outputs")
 
@@ -131,7 +264,8 @@ class ReplaySubmitter:
     not hold fails loudly, so nondeterminism drift (changed child IDs, renamed dirs, a
     retry the live run did not make) is diagnosed, not swallowed. An id in
     ``allow_missing`` whose recorded files a test deleted is served nothing and leaves its
-    submission unspent, to simulate a job that produced no output.
+    submission unspent, to simulate a job that produced no output. An artifact step's
+    product, which no recording holds, is stubbed (:func:`_stub_artifact`).
     """
 
     case: ReplayCase
@@ -158,6 +292,7 @@ class ReplaySubmitter:
         while True:
             self.calls.append(batch)
             self._satisfy(batch)
+            _stub_artifact(engine, ctx)
             if sink is None or not (follow := api.sweep(batch, sink)):
                 return JobBatch(jobs={})
             batch = StepInputs(follow)
@@ -201,6 +336,25 @@ class ReplaySubmitter:
         assert dict(self.served) == recorded, (
             f"served {dict(self.served)} but the recording holds {recorded}"
         )
+
+
+ARTIFACT_STUB = b"replayed-stub-model"
+
+
+def _stub_artifact(engine: object, ctx: StepContext) -> None:
+    """Stand in for an artifact step's product, which no recording holds.
+
+    A trained model is megabytes of weights nothing offline parses: the pipeline checks it
+    exists and digests its bytes. So it is not archived, and the replay writes stub bytes
+    where the engine looks for it, when it is absent. The steps after it then key the stub
+    consistently; a parse-only rebuild stops before it (:func:`verifiable_prefix`).
+    """
+    if not isinstance(engine, ArtifactEngine):
+        return
+    product = engine.artifact(ctx)
+    if not product.exists():
+        product.parent.mkdir(parents=True, exist_ok=True)
+        product.write_bytes(ARTIFACT_STUB)
 
 
 def replay_run_batch(case: ReplayCase, allow_missing: set[str] | None = None) -> ReplaySubmitter:
@@ -329,18 +483,6 @@ KEEP_PATTERNS = (
 # the generic *.json keep-pattern must not swallow them into the archive.
 DROP_SUFFIXES = (".result.json", ".property.json")
 
-VERIFIABLE_STEPS: dict[str, int] = {"mlip_train": 1}
-"""Recordings a parse-only rebuild can verify only up to a step; every other one, whole.
-
-`mlip_train` stops at step 1: step 2 adopts a trained model whose 4.7 MB cannot live in a
-1 MB recording, and step 3's fingerprint covers that model's **bytes**
-(`option_file_digests`) — no stub can hash like the original. :func:`pack_case` archives
-no cache document past the prefix, since a document nothing can verify is a fossil by
-construction, and the drift detector (``test_e2e_relocate``) rebuilds the prefix and
-asserts the rest is absent. The steps past it are covered by
-``test_e2e_replay.test_mlip_train_full_pipeline``, a fresh replay that computes its
-fingerprints from a stubbed model self-consistently."""
-
 
 def _step_number(dir_name: str) -> int:
     """The step a ``stepN`` / ``stepN_name`` output directory belongs to."""
@@ -365,16 +507,15 @@ def pack_case(run_dir: Path, name: str, dest_dir: Path = DATA_DIR) -> Path:
     """Pack a finished live run into ``dest_dir/<name>.tar.xz`` (the recording).
 
     Trims ``run_dir/outputs`` to what the parsers read (see ``KEEP_PATTERNS``) and a
-    parse-only rebuild can verify (``VERIFIABLE_STEPS``), refuses a ``_cache`` document
-    that names the machine it was made on, and stages ``input.yaml`` + ``templates/`` +
-    the seed + the run's ``submissions.json`` alongside the trimmed ``captured_outputs/``
+    parse-only rebuild can verify (:func:`verifiable_prefix`), refuses a ``_cache`` document
+    that names the machine it was made on, and stages ``input.yaml`` + ``case.yaml`` +
+    ``templates/`` + the seed + the run's ``submissions.json`` alongside the trimmed
+    ``captured_outputs/``
     tree, which is packed as the run left it. Refuses a log that names a file the tree
     no longer holds, and fails when the archive would exceed ``MAX_ARCHIVE_BYTES`` —
     recordings stay light by construction.
     """
     import tempfile
-
-    import yaml
 
     run_dir = run_dir.resolve()
     config = yaml.safe_load((run_dir / "input.yaml").read_text(encoding="utf-8"))
@@ -391,6 +532,8 @@ def pack_case(run_dir: Path, name: str, dest_dir: Path = DATA_DIR) -> Path:
             f"{run_dir} has no {SUBMISSIONS} — record the run with SubmissionRecorder"
         )
         shutil.copy2(run_dir / SUBMISSIONS, staging / SUBMISSIONS)
+        if (run_dir / CASE_SPEC).is_file():
+            shutil.copy2(run_dir / CASE_SPEC, staging / CASE_SPEC)
         seed = config.get("input")
         if seed is not None and not Path(seed).is_absolute():
             seed_path = (run_dir / seed).resolve()
@@ -401,7 +544,7 @@ def pack_case(run_dir: Path, name: str, dest_dir: Path = DATA_DIR) -> Path:
 
         captured = staging / "captured_outputs"
         kept = 0
-        verifiable = VERIFIABLE_STEPS.get(name)
+        verifiable = verifiable_prefix(load_config(run_dir / "input.yaml"))
         for path in sorted(outputs.rglob("*")):
             rel = path.relative_to(outputs)
             if not path.is_file() or not _kept(rel, verifiable):
