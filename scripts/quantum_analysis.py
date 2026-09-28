@@ -4,11 +4,61 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import xml.etree.ElementTree as ET
 from collections import Counter
 from pathlib import Path
 
 from quantum_benchmarks import summarize, write_csv
+
+
+def validate_samples(manifest: dict, rows: list[dict]) -> None:
+    """Require unique, ordered iterations and truthful timing/failure records."""
+    cases = manifest["cases"]
+    ids = [case["case_id"] for case in cases]
+    if not ids or len(ids) != len(set(ids)):
+        raise ValueError("manifest requires nonempty, unique case IDs")
+    warmups, repeats = manifest["warmups"], manifest["repeats"]
+    if (
+        type(warmups) is not int
+        or type(repeats) is not int
+        or warmups < 0
+        or repeats < 1
+        or manifest["device"] not in {"cpu", "cuda"}
+    ):
+        raise ValueError("invalid campaign repetition or device settings")
+    positions: Counter = Counter()
+    failed = set()
+    for row in rows:
+        key = row["case_id"]
+        if row["device"] != manifest["device"]:
+            raise ValueError(f"{key}: sample device differs from manifest")
+        if key in failed:
+            raise ValueError(f"{key}: samples after terminal failure")
+        iteration = positions[key]
+        if row["status"] == "ok":
+            if type(row.get("iteration")) is not int or row["iteration"] != iteration:
+                raise ValueError(f"{key}: duplicate or out-of-order iteration")
+            phase = "warmup" if iteration < warmups else "measure"
+            if iteration >= warmups + repeats or row["phase"] != phase:
+                raise ValueError(f"{key}: invalid iteration phase or repetition count")
+            seconds = row.get("seconds")
+            if type(seconds) not in {int, float} or not math.isfinite(seconds) or seconds <= 0:
+                raise ValueError(f"{key}: successful timing must be finite and positive")
+            positions[key] += 1
+        elif row["status"] in {"error", "unsupported", "timeout"}:
+            if row["phase"] != "failure" or row.get("seconds") is not None:
+                raise ValueError(f"{key}: failure must have no timing")
+            if "iteration" in row and (
+                type(row["iteration"]) is not int or row["iteration"] != iteration
+            ):
+                raise ValueError(f"{key}: invalid failure iteration")
+            failed.add(key)
+        else:
+            raise ValueError(f"{key}: unknown sample status")
+    for key in ids:
+        if key not in failed and positions[key] != warmups + repeats:
+            raise ValueError(f"{key}: unexpected repetition count")
 
 
 def load_campaign(path: Path) -> tuple[dict, list[dict], list[dict]]:
@@ -20,6 +70,7 @@ def load_campaign(path: Path) -> tuple[dict, list[dict], list[dict]]:
         raise ValueError(f"{path}: incomplete campaign or unknown case IDs")
     if not (path / "summary.csv").exists():
         raise ValueError(f"{path}: campaign has not finalized")
+    validate_samples(manifest, rows)
     for row in rows:
         row["campaign"] = path.name
         row["requested_qubits"] = cases[row["case_id"]].get("qubits")

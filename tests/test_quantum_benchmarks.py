@@ -175,11 +175,20 @@ def test_analysis_rejects_partial_campaign_and_incomplete_repeats(benchmark, tmp
     from quantum_analysis import load_campaign
 
     case = {"case_id": "x", "family": "sampler", "qubits": 4}
-    (tmp_path / "manifest.json").write_text(json.dumps({"cases": [case], "repeats": 2}))
+    (tmp_path / "manifest.json").write_text(
+        json.dumps({"cases": [case], "repeats": 2, "warmups": 0, "device": "cpu"})
+    )
     (tmp_path / "samples.jsonl").write_text("")
     with pytest.raises(ValueError, match="incomplete campaign"):
         load_campaign(tmp_path)
-    row = {**case, "device": "cpu", "status": "ok", "phase": "measure", "seconds": 1}
+    row = {
+        **case,
+        "device": "cpu",
+        "status": "ok",
+        "phase": "measure",
+        "seconds": 1,
+        "iteration": 0,
+    }
     (tmp_path / "samples.jsonl").write_text(json.dumps(row) + "\n")
     with pytest.raises(ValueError, match="not finalized"):
         load_campaign(tmp_path)
@@ -187,9 +196,63 @@ def test_analysis_rejects_partial_campaign_and_incomplete_repeats(benchmark, tmp
     with pytest.raises(ValueError, match="repetition count"):
         load_campaign(tmp_path)
     (tmp_path / "samples.jsonl").write_text((json.dumps(row) + "\n") * 2)
+    with pytest.raises(ValueError, match="duplicate"):
+        load_campaign(tmp_path)
+    (tmp_path / "samples.jsonl").write_text(
+        json.dumps(row) + "\n" + json.dumps({**row, "iteration": 1}) + "\n"
+    )
     _, rows, summaries = load_campaign(tmp_path)
     assert all(r["requested_qubits"] == 4 for r in rows)
     assert summaries[0]["samples"] == 2
+
+
+@pytest.mark.parametrize("seconds", [0, -1, float("nan"), float("inf"), None, True, "1"])
+def test_analysis_rejects_invalid_successful_timings(benchmark, seconds):
+    from quantum_analysis import validate_samples
+
+    manifest = {"cases": [{"case_id": "x"}], "device": "cpu", "repeats": 1, "warmups": 0}
+    row = {
+        "case_id": "x",
+        "device": "cpu",
+        "status": "ok",
+        "phase": "measure",
+        "iteration": 0,
+        "seconds": seconds,
+    }
+    with pytest.raises(ValueError, match="finite and positive"):
+        validate_samples(manifest, [row])
+
+
+def test_analysis_validates_warmups_failure_order_and_manifest(benchmark):
+    from quantum_analysis import validate_samples
+
+    manifest = {"cases": [{"case_id": "x"}], "device": "cpu", "repeats": 2, "warmups": 1}
+    warmup = {
+        "case_id": "x",
+        "device": "cpu",
+        "status": "ok",
+        "phase": "warmup",
+        "iteration": 0,
+        "seconds": 1,
+    }
+    failure = {**warmup, "status": "error", "phase": "failure", "seconds": None, "iteration": 1}
+    validate_samples(manifest, [warmup, failure])
+    # Older timeout rows legitimately have no iteration because the worker was killed.
+    validate_samples(manifest, [{k: v for k, v in failure.items() if k != "iteration"}])
+    invalid = [
+        ({**manifest, "cases": manifest["cases"] * 2}, [warmup], "unique"),
+        ({**manifest, "repeats": True}, [warmup], "settings"),
+        (manifest, [{**warmup, "device": "cuda"}], "device"),
+        (manifest, [{**warmup, "phase": "measure"}], "phase"),
+        (manifest, [warmup, failure, failure], "terminal failure"),
+        (manifest, [warmup, {**failure, "seconds": 0}], "no timing"),
+        (manifest, [warmup, {**failure, "iteration": 0}], "failure iteration"),
+        (manifest, [{**warmup, "status": "ignored"}], "unknown"),
+        (manifest, [{**warmup, "iteration": False}], "iteration"),
+    ]
+    for settings, rows, message in invalid:
+        with pytest.raises(ValueError, match=message):
+            validate_samples(settings, rows)
 
 
 def test_analysis_never_pairs_failed_or_partial_cases(benchmark):
