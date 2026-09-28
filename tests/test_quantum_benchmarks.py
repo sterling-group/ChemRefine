@@ -169,3 +169,46 @@ def test_command_timeout_retains_failed_case(benchmark, monkeypatch, tmp_path):
     row = json.loads((output / "samples.jsonl").read_text())
     assert row["status"] == "timeout" and row["seconds"] is None
     assert (output / "summary.csv").is_file()
+
+
+def test_analysis_rejects_partial_campaign_and_incomplete_repeats(benchmark, tmp_path):
+    from quantum_analysis import load_campaign
+
+    case = {"case_id": "x", "family": "sampler", "qubits": 4}
+    (tmp_path / "manifest.json").write_text(json.dumps({"cases": [case], "repeats": 2}))
+    (tmp_path / "samples.jsonl").write_text("")
+    with pytest.raises(ValueError, match="incomplete campaign"):
+        load_campaign(tmp_path)
+    row = {**case, "device": "cpu", "status": "ok", "phase": "measure", "seconds": 1}
+    (tmp_path / "samples.jsonl").write_text(json.dumps(row) + "\n")
+    with pytest.raises(ValueError, match="not finalized"):
+        load_campaign(tmp_path)
+    (tmp_path / "summary.csv").touch()
+    with pytest.raises(ValueError, match="repetition count"):
+        load_campaign(tmp_path)
+    (tmp_path / "samples.jsonl").write_text((json.dumps(row) + "\n") * 2)
+    _, rows, summaries = load_campaign(tmp_path)
+    assert all(r["requested_qubits"] == 4 for r in rows)
+    assert summaries[0]["samples"] == 2
+
+
+def test_analysis_never_pairs_failed_or_partial_cases(benchmark):
+    from quantum_analysis import comparisons
+
+    cpu = [{"case_id": "x", "status": "ok", "median_seconds": 2, "campaign": "cpu"}]
+    gpu = [{"case_id": "x", "status": "ok", "median_seconds": 1, "campaign": "gpu"}]
+    assert comparisons(cpu, gpu)[0]["cpu_over_gpu"] == 2
+    gpu[0]["status"] = "error,ok"
+    assert comparisons(cpu, gpu) == []
+
+
+def test_analysis_distinguishes_cpu_wheel_from_cuda_build(benchmark):
+    from quantum_analysis import provider_versions
+
+    cpu = {"packages": {"qiskit-aer": "0.17.2", "Qiskit": "2.5.2"}}
+    gpu = {
+        **cpu,
+        "conda_packages": [{"name": "qiskit-aer", "build": "cuda129_py312"}],
+    }
+    assert provider_versions(cpu) != provider_versions(gpu)
+    assert provider_versions(cpu)["qiskit"] == "2.5.2"
