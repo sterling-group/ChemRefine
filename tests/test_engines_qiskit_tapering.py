@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import pickle
 from pathlib import Path
 
 import numpy as np
@@ -145,6 +146,31 @@ def test_molecular_actual_reference_pool_and_observables_share_one_transform(h2,
     numbers = h2.problem.properties.particle_number.second_q_ops()["ParticleNumber"]
     assert initial.expectation_value(context.mapper.map_observable(numbers)) == pytest.approx(2)
     assert context.mapping_metadata["symmetry_tapering"]["base_mapper"] == base
+
+
+@pytest.mark.parametrize("ansatz", ["uccsd", "ucc_ranks"])
+def test_tapered_ucc_preserves_sector_through_parallel_compilation(h2, ansatz, qiskit_spawn_pool):
+    """QNSPSA can send a Nature circuit and its reference-aware mapper to subprocesses."""
+    from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
+
+    context = map_problem(h2, "z2_tapered")
+    restored = pickle.loads(pickle.dumps(context.mapper))
+    assert restored.chemrefine_tapering.metadata == context.mapper.chemrefine_tapering.metadata
+    assert restored.map(h2.fermionic_hamiltonian) == context.qubit_hamiltonian
+    reference = build_selected_reference(context, ComponentSelection.named("hartree_fock"))
+    circuit = ANSATZE.build(
+        ComponentSelection.named(ansatz), context=context, initial_state=reference
+    ).circuit
+    copied = pickle.loads(pickle.dumps(circuit))
+    values = np.random.default_rng(31).uniform(-0.2, 0.2, circuit.num_parameters)
+    manager = generate_preset_pass_manager(
+        optimization_level=1, basis_gates=["rz", "sx", "x", "cx"], seed_transpiler=31
+    )
+    compiled = manager.run([circuit, copied], num_processes=2)
+    for actual in compiled:
+        assert Statevector(actual.assign_parameters(values)).equiv(
+            Statevector(circuit.assign_parameters(values))
+        )
 
 
 def test_non_aufbau_selected_determinant_controls_taper_sector_and_rejects_incompatible_reference(

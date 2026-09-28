@@ -7,7 +7,7 @@ their eigenvalues are verified by a bounded statevector calculation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal, Self
 
 import numpy as np
@@ -346,8 +346,6 @@ def build_reference_tapered_mapper(
     prepared: Any = None,
 ) -> Any:
     """Build a Nature-compatible mapper from the actually selected untapered reference."""
-    from qiskit_nature.second_q.mappers import TaperedQubitMapper
-
     from chemrefine.engines.qiskit.context import ElectronicStructureContext
     from chemrefine.engines.qiskit.options import ComponentSelection
     from chemrefine.engines.qiskit.registry import INITIAL_STATES, MAPPERS
@@ -379,6 +377,17 @@ def build_reference_tapered_mapper(
     transform.metadata["base_mapper"] = options.base_mapper
     reduced_reference = transform.prepare_reference(reference)
     reduced_reference.metadata = dict(reference.metadata or {})
+    # Explicit determinant preparation needs register facts, not Nature's
+    # non-picklable integral tensors or the already transformed Hamiltonian.
+    context = replace(context, problem=None, qubit_hamiltonian=None)
+    return _reference_tapered_mapper(base, context, transform, reduced_reference, selection)
+
+
+def _reference_tapered_mapper(
+    base: Any, context: Any, transform: TaperingTransform, reduced_reference: Any, selection: Any
+) -> Any:
+    """Restore a lazy Nature subclass without rediscovering its verified symmetry sector."""
+    from qiskit_nature.second_q.mappers import TaperedQubitMapper
 
     class ReferenceTaperedMapper(TaperedQubitMapper):
         """Nature's pool/list contract with a reference-validated general Clifford transform."""
@@ -386,6 +395,14 @@ def build_reference_tapered_mapper(
         chemrefine_tapering = transform
         chemrefine_reference = reduced_reference
         chemrefine_reference_selection = selection
+
+        def __reduce__(self) -> tuple[Any, tuple[Any, ...], dict[str, Any]]:
+            """Preserve the exact transform across Qiskit's parallel transpiler boundary."""
+            return (
+                _reference_tapered_mapper,
+                (self.mapper, context, transform, reduced_reference, selection),
+                self.__dict__,
+            )
 
         def _map_clifford_single(
             self, second_q_op: Any, *, register_length: int | None = None
