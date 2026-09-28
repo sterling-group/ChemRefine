@@ -1,26 +1,31 @@
-# Capture case: ORCA ExtOpt optimisation + NumFreq of water over a CPU MACE server.
-#
-# The NumFreq half is the point: the ExtOpt engines are NMS-capable *because* ORCA computes
-# the numerical Hessian over the server's gradients, and no fake-server contract can produce
-# ORCA's NumFreq output. (`NumFreq`, spelled out — a bare `FREQ` is silently dropped in
-# ExtOpt mode, since ORCA has no analytic Hessian to fall back to.) Water keeps that Hessian
-# to ~20 gradient calls against the one resident model. The pyscf_extopt case runs the same
-# template shape and additionally asserts the modes are all real — MACE-small's own surface
-# gives optimised water a spurious imaginary bend, which is the model's physics, not the
-# protocol's.
+# ORCA's optimiser over an MLIP gradient server (mlip-extopt), at its own seam: one H2, one
+# step, one ORCA job and the one server it starts, in the MACE backend's env, on one core.
+# What every ExtOpt engine shares (the wrapper and bridge, the read of a run cut short, the
+# retry, NumFreq, NMS) is the pyscf_extopt case's to show. This one holds the part only the
+# MLIP engine has: its adapter. MACE answers in eV and eV/A; the adapter hands ORCA hartree and
+# hartree/bohr. The unit tests mock the library call, so only a live run tries that conversion
+# against a real model, and ORCA itself judges it: the energy change it observes after a step
+# matches the one it predicted from the gradient only when the two share units and sign.
 template_dir: ./templates
 output_dir: ./outputs
 executables: { orca: orca }  # the live harness injects the resolved absolute path
 dispatch: auto
-max_cores: 8
+max_cores: 1
 
-input: ./water.xyz
+# H2 stretched to 0.85 A, off its bond of about 0.74 A, so ORCA takes steps and judges them.
+input: ./h2.xyz
 charge: 0
 multiplicity: 1
 
 steps:
+  # `! ExtOpt Opt`, the operation read off the template (an optimisation). MACE-MP small, whose
+  # energies sit on its own reference scale: its H2, converged, is -0.24099 Eh (-6.558 eV),
+  # where MACE-OFF small's is -1.17051 Eh, so the energy also names the model the step asked
+  # for. MP rather than OFF keeps a live run on the mace_mp builder path; OFF was only about
+  # 1 s faster and 20 MB lighter here. ORCA's first step is cut to its 0.3 bohr trust radius
+  # and overshoots the minimum (0.85 -> 0.69 A, where MACE-MP's bond is 0.750 A), so the energy
+  # it observes is about a third of what it predicted; it converges in five cycles.
   - step: 1
+    name: relax
     engine: mlip-extopt
-    operation: opt_sp
-    options: { task_name: mace_off, model_name: small, device: cpu }
-    sample: { method: min, count: 1 }
+    options: { task_name: mace_mp, model_name: small, device: cpu }

@@ -1,2 +1,5 @@
-# Wall time a live run of this case may take, measured with headroom.
-budget_s: 30
+# One run (no scenario): one ORCA job and the MACE server it starts, on one core. The run
+# itself, which is what the live test times, took 9.7 s and 8.8 s (the server was ready
+# after 6 s and 5 s of that, most of it loading MACE) at a 1-minute load of about 2, under
+# nice 19. About twice the larger figure, rounded up.
+budget_s: 20

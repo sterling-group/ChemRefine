@@ -891,11 +891,68 @@ def _mlip_screen(run: Replayed) -> None:
 
 
 def _mlip_extopt(run: Replayed) -> None:
-    """ORCA's optimiser over MACE gradients through the wrapper, NumFreq included."""
-    rendered = (run.case.output_dir / "step1" / "0" / "step1_0.inp").read_text(encoding="utf-8")
-    assert "ProgExt" in rendered, "ExtOpt inputs must point ORCA at the gradient wrapper"
+    """ORCA's optimiser over MACE-MP gradients: the adapter's units, judged by ORCA itself.
+
+    One H2, one ExtOpt job. The rendered input sends ORCA to the step's wrapper, which relays
+    each geometry to the MLIP server; MACE answers in eV and eV/Å, and the adapter hands ORCA
+    hartree and hartree/bohr. H2 stretched to 0.85 Å relaxes to MACE-MP's bond and converges,
+    read at the energy the server gave for the converged geometry, below the one it gave for
+    the seed. That energy sits in a window around MACE-MP small's own H2, which holds the
+    energy's conversion (left in eV it is 27.2 times lower) and the model the step names
+    (MACE-OFF small's H2 is 0.93 Eh lower). The gradient's conversion is held by ORCA's own
+    ratio of the energy change it observed after its first step to the one it predicted from
+    the gradient: a gradient 51 times too large or too small (eV/Å against hartree/bohr)
+    takes it far outside [0.1, 10], and one of the wrong sign makes it negative. That needs
+    no reference number, only an energy and a gradient in the same units. The first ratio is
+    about 0.3, not 1, because the step is cut to ORCA's trust radius and overshoots.
+    """
+    (step,) = run.config.steps
+    step_dir = run.config.step_dir(step).resolve()
+    job = f"{step_dir.name}/0"
+    assert dict(run.submitter.served) == {job: 1}, "one job, converged on its first submission"
+
+    rendered = (step_dir / "0" / "step1_0.inp").read_text(encoding="utf-8")
+    (target,) = re.findall(r'^\s*ProgExt "([^"]+)"$', rendered, re.MULTILINE)
+    wrapper = step_dir / "mlip_extopt.sh"
+    assert Path(target).samefile(wrapper), "ORCA is sent to the step's own wrapper"
+    assert " --backend mlip " in wrapper.read_text(encoding="utf-8"), "relaying to the MLIP server"
+
+    out = run.case.submitted_file(job, 0, "step1_0.out")
+    text = out.read_text(encoding="utf-8")
+    parsed = parse_output(out, "opt_sp")[0]
+    assert parsed.terminated_normally and parsed.converged, "ORCA converged the optimisation"
     (survivor,) = run.outcomes[0].state.structures
-    assert survivor.converged and survivor.energy_hartree is not None
+    energy = survivor.energy_hartree
+    assert survivor.converged is True and energy is not None
+    assert energy == parsed.energy_hartree
+    external = [
+        float(e)
+        for e in re.findall(
+            r"FINAL SINGLE POINT ENERGY \(From external program\)\s+(-?\d+\.\d+)", text
+        )
+    ]
+    assert external and energy == external[-1], "the server's energy at the converged geometry"
+    assert energy < external[0], "below the seed's: not read at the first cycle"
+    # MACE-MP small's H2, converged: -0.24099058 Eh. Left in eV it is -6.558; MACE-OFF small's
+    # is -1.17051 Eh. The seed's own energy (-0.23511) is inside: the line above excludes it.
+    assert -0.25099058 < energy < -0.23099058, f"not MACE-MP small's H2 in hartree: {energy}"
+
+    ratios = [
+        float(r)
+        for r in re.findall(r"Ratio of predicted to observed change\s+\.+\s+(-?\d+\.\d+)", text)
+    ]
+    assert ratios, "the seed must sit off the minimum, so ORCA judges a step it took"
+    assert 0.1 <= ratios[0] <= 10, (
+        f"ORCA observed {ratios[0]} times the energy change it predicted from the gradient: "
+        "the gradient is not in hartree/bohr, or not the energy's slope"
+    )
+
+    # MACE-MP small's H2 bond: 0.7504 Å. The seed is off it, and the survivor is on it.
+    (seed,) = read_xyz_frames(run.case.root / "h2.xyz")
+    seed_bond = float(np.linalg.norm(seed.positions[1] - seed.positions[0]))
+    assert abs(seed_bond - 0.7504) > 0.05, f"the seed must be stretched: {seed_bond:.4f} Å"
+    bond = float(np.linalg.norm(survivor.atoms.positions[1] - survivor.atoms.positions[0]))
+    assert abs(bond - 0.7504) < 0.05, f"not relaxed to MACE-MP's bond: {bond:.4f} Å"
 
 
 def _mlip_train(run: Replayed) -> None:
