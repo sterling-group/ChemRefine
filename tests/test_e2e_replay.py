@@ -81,9 +81,9 @@ def _with_backend_python(config: Config) -> Config:
     return config.model_copy(update={"steps": steps})
 
 
-def replay(name: str, root: Path, monkeypatch: pytest.MonkeyPatch) -> Replayed:
-    """Extract ``name`` under ``root``, drive its scenario, and read back what it reached."""
-    case = extract_case(recording(name), root)
+def replay(archive: Path, root: Path, monkeypatch: pytest.MonkeyPatch) -> Replayed:
+    """Extract ``archive`` under ``root``, drive its scenario, and read back what it reached."""
+    case = extract_case(archive, root)
     config = _with_backend_python(load_config(case.config_path))
     spec = CaseSpec.read(case.root)
     submitter = ReplaySubmitter(case)
@@ -104,19 +104,18 @@ def _finite(value: float | None) -> bool:
     return value is not None and math.isfinite(value)
 
 
-@pytest.mark.parametrize("name", recorded_cases())
-def test_a_recording_replays_the_run_it_recorded(
-    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Every recorded submission is served once, the tree is whole, and the case holds.
+def check_recording(archive: Path, root: Path, monkeypatch: pytest.MonkeyPatch) -> Replayed:
+    """Replay ``archive`` under ``root`` and hold it to what every recording and its case must be.
 
-    Whole means what every tree must be: ``steps.csv`` reports each step's survivors with a
-    finite ranking energy, each step's survivors file holds one frame per survivor, every
-    cached structure with an energy has the canonical record of the job it came from (the
-    NMS child's, for a promoted winner), and a completed tree resumes without submitting
-    anything, to the same survivors.
+    Every recorded submission is served once, and the tree is whole: ``steps.csv`` reports
+    each step's survivors with a finite ranking energy, each step's survivors file holds one
+    frame per survivor, every cached structure with an energy has the canonical record of
+    the job it came from (the NMS child's, for a promoted winner), and a completed tree
+    resumes without submitting anything, to the same survivors. Then the case's own
+    :data:`CHECKS`. The live tier runs this on the archive it just packed, before it may
+    replace a recording.
     """
-    run = replay(name, tmp_path, monkeypatch)
+    run = replay(archive, root, monkeypatch)
 
     reported: dict[str, list[str]] = {}
     with (run.case.output_dir / "steps.csv").open(encoding="utf-8", newline="") as fh:
@@ -147,7 +146,7 @@ def test_a_recording_replays_the_run_it_recorded(
         }
         assert records >= wanted, f"step {step.step}: no record for {sorted(wanted - records)}"
 
-    CHECKS[name](run)
+    CHECKS[archive.name.removesuffix(".tar.xz")](run)
 
     if run.spec.halts_at is None:
         again = pipeline.run(run.config)
@@ -155,6 +154,15 @@ def test_a_recording_replays_the_run_it_recorded(
         assert [s.id for s in again[-1].state.structures] == [
             s.id for s in run.outcomes[-1].state.structures
         ]
+    return run
+
+
+@pytest.mark.parametrize("name", recorded_cases())
+def test_a_recording_replays_the_run_it_recorded(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each shipped recording, held to :func:`check_recording`."""
+    check_recording(recording(name), tmp_path, monkeypatch)
 
 
 @pytest.mark.parametrize("name", recorded_cases())
@@ -170,7 +178,7 @@ def test_a_recording_keys_every_step_the_same_at_two_roots(
     """
 
     def fingerprints(root: Path) -> dict[str, str]:
-        run = replay(name, root, monkeypatch)
+        run = replay(recording(name), root, monkeypatch)
         return {
             doc.parent.parent.name: json.loads(doc.read_text(encoding="utf-8"))["fingerprint"]
             for doc in sorted(run.case.output_dir.glob("step*/_cache/step.json"))
@@ -183,9 +191,13 @@ def test_a_recording_keys_every_step_the_same_at_two_roots(
 
 def test_every_case_has_one_recording_and_one_check() -> None:
     """A case without a recording is never replayed, and a recording without a check proves
-    only that it runs. Each is one directory, one archive and one entry here."""
+    only that it runs. Each is one directory, one archive and one entry here; a live check
+    names a case, or it never runs."""
+    from test_e2e_live import LIVE_CHECKS
+
     cases = sorted(p.name for p in CASES_DIR.iterdir() if (p / "input.yaml").is_file())
     assert cases == recorded_cases() == sorted(CHECKS)
+    assert set(LIVE_CHECKS) <= set(cases), "a live check for a case that does not exist"
 
 
 # ---------------------------------------------------------------------------
@@ -676,3 +688,104 @@ def test_a_parse_only_rebuild_can_verify_the_steps_before_an_artifact_step(tmp_p
     assert verifiable_prefix(load_config(with_training.config_path)) == 1
     without = extract_case(recording("conformers"), tmp_path / "conformers")
     assert verifiable_prefix(load_config(without.config_path)) == 3
+
+
+# ---------------------------------------------------------------------------
+# The harness: what a live run's archive may carry, and what the run must leave
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "absolute"),
+    [
+        ('"reason": "in /home/x/run/step1_0.out"', True),
+        ("scratch at /tmp/a/b", True),
+        ("server 127.0.0.1:47665", False),
+        ("see http://h:1/x", False),
+        ("./a/b and ../c/d", False),
+        ("no FINAL SINGLE POINT ENERGY in 3/step1_3.out", False),
+        ("[file orca_main/x.cpp, line 10711]: Error", False),
+    ],
+)
+def test_the_machine_path_guard_knows_an_absolute_path_from_a_relative_one(
+    text: str, absolute: bool
+) -> None:
+    from replay import ABSOLUTE_PATH_RE
+
+    assert bool(ABSOLUTE_PATH_RE.search(text)) is absolute
+
+
+@pytest.mark.parametrize(
+    ("err", "out", "kept"),
+    [
+        ("sh: orca_startup: not found\n", "ORCA finished by error termination in Startup\n", True),
+        ("a library's warning\n", "****ORCA TERMINATED NORMALLY****\n", False),
+        ("", "ORCA finished by error termination in Startup\n", False),
+        ("a script's traceback\n", None, False),
+    ],
+    ids=["orca-abort", "normal-run", "empty", "no-out"],
+)
+def test_a_jobs_stderr_is_kept_only_where_it_says_why_orca_died(
+    tmp_path: Path, err: str, out: str | None, kept: bool
+) -> None:
+    """The failure reason quotes it, so a replay needs it; anywhere else it is noise."""
+    from replay import _kept
+
+    (tmp_path / "step1_0.err").write_text(err, encoding="utf-8")
+    if out is not None:
+        (tmp_path / "step1_0.out").write_text(out, encoding="utf-8")
+    rel = Path("step1/0/step1_0.err")
+    assert _kept(tmp_path / "step1_0.err", rel, None) is kept
+
+
+def test_a_live_run_is_held_to_its_declared_budget() -> None:
+    within = CaseSpec(budget_s=10.0)
+    within.assert_within_budget(9.9)
+    with pytest.raises(AssertionError, match=r"ran 10\.5 s against a budget of 10 s"):
+        within.assert_within_budget(10.5)
+    with pytest.raises(AssertionError, match="declares budget_s"):
+        CaseSpec().assert_within_budget(1.0)
+
+
+_RUNLOG = """\
+[2026-09-28T00:46:25+02:00] ChemRefine orca step1 starting
+  host=h
+  job_id={job}
+  scratch=/s/ChemRefine_{job}
+  output=/o/step1/{job}
+  cores={cores}
+[{finish}] ChemRefine orca step1 finished
+  exit_code=0
+"""
+
+
+def test_the_throttle_bound_reads_every_runlog_once_per_job(tmp_path: Path) -> None:
+    """Two 2-core jobs side by side fit 4 cores and not 3; a repeated runlog counts once."""
+    from replay import assert_throttled, runlog_jobs
+
+    jobs = []
+    for job in ("1", "2"):
+        path = tmp_path / f"{job}.runlog"
+        path.write_text(
+            _RUNLOG.format(job=job, cores=2, finish="2026-09-28T00:46:30+02:00"), encoding="utf-8"
+        )
+        jobs += runlog_jobs(path)
+    assert [(j.job_id, j.cores, j.scratch.name) for j in jobs] == [
+        ("1", 2, "ChemRefine_1"),
+        ("2", 2, "ChemRefine_2"),
+    ]
+    assert_throttled(jobs + jobs[:1], max_cores=4)  # a promoted winner repeats its child's
+    with pytest.raises(AssertionError, match="4 cores ran"):
+        assert_throttled(jobs, max_cores=3)
+
+
+def test_a_job_that_finishes_as_another_starts_does_not_overlap_it(tmp_path: Path) -> None:
+    """Intervals are half-open; and a job that never finished holds its cores to the end."""
+    from replay import RunlogJob, assert_throttled
+
+    def job(job_id: str, start: str, finish: str | None) -> RunlogJob:
+        return RunlogJob("h", job_id, start, finish, 2, Path("/s"), Path("/o"))
+
+    assert_throttled([job("1", "t1", "t2"), job("2", "t2", "t3")], max_cores=2)
+    with pytest.raises(AssertionError):
+        assert_throttled([job("1", "t1", None), job("2", "t2", "t3")], max_cores=2)

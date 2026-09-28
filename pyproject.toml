@@ -479,6 +479,9 @@ markers = [
     # which still runs by default. This one is about cost: a tier that builds 10⁴ structures
     # to measure how the bookkeeping scales, and so does not belong in the edit loop.
     "perf: tests that measure scaling; too costly for the default loop",
+    # A live case whose load cannot be made small. The release gate runs it; a developer may
+    # leave it out with `-m "integration and not heavy"`. Declared in the case's case.yaml.
+    "heavy: a live e2e case whose load cannot be made small",
 ]
 
 [tool.coverage.run]

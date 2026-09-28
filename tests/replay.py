@@ -39,6 +39,8 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import json
+import os
+import re
 import shutil
 import tarfile
 from collections import Counter
@@ -52,9 +54,11 @@ import yaml
 from chemrefine import cache, recovery
 from chemrefine.config import Config, load_config
 from chemrefine.engines import api
-from chemrefine.engines.api import ArtifactEngine, CompletionSink, get_engine
+from chemrefine.engines.api import ArtifactEngine, CompletionSink, JobExecutable, get_engine
+from chemrefine.engines.orca.output import status as orca_status
 from chemrefine.errors import ChemRefineError
-from chemrefine.state import JobBatch, JobTriple, StepContext, StepInputs
+from chemrefine.state import JobBatch, JobTriple, PipelineState, StepContext, StepInputs
+from chemrefine.step import build_context
 
 CASES_DIR = Path(__file__).resolve().parent / "data" / "e2e" / "cases"
 DATA_DIR = Path(__file__).resolve().parent / "data" / "e2e" / "recordings"
@@ -95,14 +99,18 @@ class Act:
 
 @dataclass(frozen=True)
 class CaseSpec:
-    """What a case declares beside its config: the actions a run of it takes.
+    """What a case declares beside its config: the actions a run of it takes, and its cost.
 
-    ``case.yaml`` holds ``scenario: [{action, target?, halts_at?}]``; without the file a
-    case is one ``run``. Unknown keys are refused at both levels: a misspelled
-    ``halts_at`` would let a halt pass as a completion no check asserted.
+    ``case.yaml`` holds ``scenario: [{action, target?, halts_at?}]`` (one ``run`` without
+    it), ``budget_s`` — the wall time a live run of the scenario may take, so the tier
+    cannot grow unnoticed — and ``heavy``, for a case whose load cannot be made small (it
+    is marked, and a developer may deselect it). Unknown keys are refused at both levels:
+    a misspelled ``halts_at`` would let a halt pass as a completion no check asserted.
     """
 
     scenario: tuple[Act, ...] = (Act(recovery.Action.RUN),)
+    budget_s: float | None = None
+    heavy: bool = False
 
     @property
     def halts_at(self) -> int | None:
@@ -116,14 +124,28 @@ class CaseSpec:
         if not path.is_file():
             return cls()
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        _refuse_unknown(path, data, {"scenario"})
+        _refuse_unknown(path, data, {"scenario", "budget_s", "heavy"})
         acts = []
         for entry in data.get("scenario") or [{"action": "run"}]:
             _refuse_unknown(path, entry, {"action", "target", "halts_at"})
             acts.append(
                 Act(recovery.Action(entry["action"]), entry.get("target"), entry.get("halts_at"))
             )
-        return cls(tuple(acts))
+        budget = data.get("budget_s")
+        return cls(
+            tuple(acts),
+            budget_s=float(budget) if budget is not None else None,
+            heavy=bool(data.get("heavy", False)),
+        )
+
+    def assert_within_budget(self, seconds: float) -> None:
+        """A live run of the scenario took no longer than the case declares it may."""
+        assert self.budget_s is not None, f"a live case declares budget_s in {CASE_SPEC}"
+        assert seconds <= self.budget_s, (
+            f"the scenario ran {seconds:.1f} s against a budget of {self.budget_s:g} s — "
+            f"make the case lighter, or raise the budget with the reason (a busy machine "
+            f"is not one)"
+        )
 
 
 def _refuse_unknown(path: Path, data: Mapping[str, Any], known: set[str]) -> None:
@@ -445,7 +467,7 @@ class SubmissionRecorder:
         files = [
             {"name": path.name, "sha256": _sha256(path)}
             for path in sorted(job_dir.iterdir())
-            if path.is_file() and _kept(rel / path.name, None)
+            if path.is_file() and _kept(path, rel / path.name, None)
         ]
         self.log.setdefault(rel.as_posix(), []).append(files)
 
@@ -483,16 +505,43 @@ KEEP_PATTERNS = (
 # the generic *.json keep-pattern must not swallow them into the archive.
 DROP_SUFFIXES = (".result.json", ".property.json")
 
+ABSOLUTE_PATH_RE = re.compile(r"(?<![\w.:/])/[\w.@+-]+/")
+"""A ``/`` that opens a token and is followed by a segment and another ``/``: an absolute path.
+
+What no archived ``*.json`` and no kept ``.err`` may hold — a recording that names the
+machine it was made on cannot replay anywhere else. A URL, a ``host:port``, a ``./`` path,
+a step-relative label (``3/step1_3.out``) and a source location ORCA prints
+(``orca_main/x.cpp``) all pass."""
+
+
+def _stderr_says_why(err: Path) -> bool:
+    """Whether a job's ``.err`` is kept: non-empty, beside an ORCA output that died.
+
+    ORCA puts the cause of an abort on stderr, and the failure reason quotes it, so a replay
+    of that job needs it to reproduce the reason. A normal run's stderr (a library's
+    warnings) and a job with no ``.out`` explain nothing a replay reads.
+    """
+    out = err.with_suffix(".out")
+    return (
+        err.stat().st_size > 0
+        and out.is_file()
+        and not orca_status.parse_terminated_normally(
+            out.read_text(encoding="utf-8", errors="replace")
+        )
+    )
+
 
 def _step_number(dir_name: str) -> int:
     """The step a ``stepN`` / ``stepN_name`` output directory belongs to."""
     return int(dir_name.removeprefix("step").split("_", 1)[0])
 
 
-def _kept(rel: Path, verifiable: int | None) -> bool:
-    """Whether the file at ``rel`` (under the output dir) belongs in the archive."""
+def _kept(path: Path, rel: Path, verifiable: int | None) -> bool:
+    """Whether the file at ``path`` (``rel`` under the output dir) belongs in the archive."""
     if rel.name.endswith(DROP_SUFFIXES):
         return False
+    if rel.suffix == ".err":
+        return _stderr_says_why(path)
     if rel.parent.name == "_cache":
         if verifiable is not None and _step_number(rel.parts[0]) > verifiable:
             return False  # past what a rebuild can verify: a fossil by construction
@@ -547,7 +596,7 @@ def pack_case(run_dir: Path, name: str, dest_dir: Path = DATA_DIR) -> Path:
         verifiable = verifiable_prefix(load_config(run_dir / "input.yaml"))
         for path in sorted(outputs.rglob("*")):
             rel = path.relative_to(outputs)
-            if not path.is_file() or not _kept(rel, verifiable):
+            if not path.is_file() or not _kept(path, rel, verifiable):
                 continue
             target = captured / rel
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -555,21 +604,19 @@ def pack_case(run_dir: Path, name: str, dest_dir: Path = DATA_DIR) -> Path:
             kept += 1
         assert kept, f"nothing matched the keep patterns under {outputs}"
 
-        # The cache documents are what the harness *resolves*, so they are the ones that
-        # must name no machine. They used to, and extraction rewrote a token back into an
-        # absolute path; manifests are relative now, so the token is gone and this asserts
-        # the property it was compensating for — loudly, at record time, rather than as a
-        # relocated replay reading paths that are not there. Captured engine output is
-        # exempt on purpose: an ORCA log names the scratch dir it really ran in, and that
-        # is a record of the run, not an address anything follows.
+        # What the harness reads — every JSON document, and the stderr a failure reason
+        # quotes — must name no machine: loudly, at record time, rather than as a relocated
+        # replay reading paths that are not there. Captured engine output is exempt on
+        # purpose: an ORCA log names the scratch dir it really ran in, and that is a record
+        # of the run, not an address anything follows.
         machine_bound = sorted(
             str(doc.relative_to(captured))
-            for doc in captured.rglob("_cache/*.json")
-            if str(outputs) in doc.read_text(encoding="utf-8")
+            for doc in (*captured.rglob("*.json"), *captured.rglob("*.err"))
+            if ABSOLUTE_PATH_RE.search(doc.read_text(encoding="utf-8", errors="replace"))
         )
         assert not machine_bound, (
-            f"{machine_bound} name absolute paths under {outputs} — a recording that "
-            f"carries the machine it was made on cannot replay anywhere else"
+            f"{machine_bound} name absolute paths — a recording that carries the machine it "
+            f"was made on cannot replay anywhere else"
         )
 
         # Every logged output must still be in the tree. The pipeline only moves (a seal)
@@ -601,3 +648,136 @@ def pack_case(run_dir: Path, name: str, dest_dir: Path = DATA_DIR) -> Path:
     size = archive.stat().st_size
     assert size <= MAX_ARCHIVE_BYTES, f"{archive} exceeds {MAX_ARCHIVE_BYTES} bytes — trim the case"
     return archive
+
+
+# ---------------------------------------------------------------------------
+# What a live run must leave, beyond what its recording can carry
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RunlogJob:
+    """One job as its runlog reports it: where it ran, when, and on how many cores."""
+
+    host: str
+    job_id: str
+    start: str
+    finish: str | None
+    cores: int
+    scratch: Path
+    output: Path
+
+
+def runlog_jobs(path: Path) -> list[RunlogJob]:
+    """Every job a ``*.runlog`` reports, one per ``starting`` banner.
+
+    A ``finished`` banner closes the job before it; a job without one never finished and
+    is left open.
+    """
+    jobs: list[RunlogJob] = []
+    fields: dict[str, str] = {}
+    start: str | None = None
+
+    def close(finish: str | None) -> None:
+        if start is not None:
+            jobs.append(
+                RunlogJob(
+                    fields["host"],
+                    fields["job_id"],
+                    start,
+                    finish,
+                    int(fields["cores"]),
+                    Path(fields["scratch"]),
+                    Path(fields["output"]),
+                )
+            )
+
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("[") and line.rstrip().endswith("starting"):
+            close(None)
+            start, fields = line[1 : line.index("]")], {}
+        elif line.startswith("[") and line.rstrip().endswith("finished"):
+            close(line[1 : line.index("]")])
+            start = None
+        elif start is not None and "=" in line:
+            key, _, value = line.strip().partition("=")
+            fields.setdefault(key, value)
+    close(None)
+    return jobs
+
+
+def assert_throttled(jobs: list[RunlogJob], max_cores: int) -> None:
+    """At no moment did the jobs running together hold more than ``max_cores``.
+
+    Intervals are half-open, ``[start, finish)``, so a job that starts the second another
+    finishes does not overlap it; a job that never finished runs to the end. The runlogs
+    of a promoted NMS winner repeat its child's, so jobs are counted once by host, id and
+    start. An upper bound only: whole-second timestamps give a sub-second job no length,
+    so reaching the cap is never asserted.
+    """
+    unique = {(job.host, job.job_id, job.start): job for job in jobs}.values()
+    events = sorted(
+        [(job.start, 1, job.cores) for job in unique]
+        + [(job.finish, 0, -job.cores) for job in unique if job.finish is not None]
+    )
+    running = 0
+    for when, _order, delta in events:
+        running += delta
+        assert running <= max_cores, f"{running} cores ran at {when} under max_cores={max_cores}"
+
+
+def assert_live_invariants(config: Config, run_dir: Path) -> None:
+    """What every live run must leave, whatever its case.
+
+    ORCA's own ``property.json`` beside every output that terminated normally; the scratch
+    directories an engine copies home, present and non-empty wherever its jobs recorded a
+    result; no working directory left in the tree, and none under ``scratch_dir``; each
+    job's scratch where the config puts it; no process still naming the run; and the
+    throttle held.
+    """
+    outputs = config.output_dir
+    for out in outputs.rglob("*.out"):
+        text = out.read_text(encoding="utf-8", errors="replace")
+        if orca_status.parse_terminated_normally(text):
+            assert out.with_suffix(".property.json").is_file(), f"{out}: no property.json"
+
+    for step in config.steps:
+        engine = get_engine(step.engine)
+        if not isinstance(engine, JobExecutable):
+            continue
+        ctx = build_context(config, step, PipelineState(), engine)
+        wanted = engine.output_dirs(ctx)
+        if not wanted:
+            continue
+        homes = (
+            {engine.artifact(ctx).parent}
+            if isinstance(engine, ArtifactEngine)
+            else {record.parent for record in ctx.step_dir.rglob("*.result.json")}
+        )
+        for home in homes:
+            for name in wanted:
+                assert any((home / name).iterdir()), f"{home / name}: empty or missing"
+
+    assert not list(outputs.rglob("_work_*")), "a job's working directory was left behind"
+    jobs = [job for runlog in outputs.rglob("*.runlog") for job in runlog_jobs(runlog)]
+    for job in jobs:
+        if config.scratch_dir is not None:
+            assert job.scratch.is_relative_to(config.scratch_dir), job.scratch
+        else:
+            assert job.scratch.parent == job.output and job.scratch.name.startswith("_work_")
+    if config.scratch_dir is not None and config.scratch_dir.is_dir():
+        assert not list(config.scratch_dir.glob("ChemRefine_*")), "scratch left behind"
+
+    lingering = []
+    for proc in Path("/proc").iterdir():
+        if not proc.name.isdigit() or int(proc.name) == os.getpid():
+            continue
+        try:
+            argv = (proc / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+        except OSError:
+            continue
+        if str(run_dir) in argv:
+            lingering.append(argv)
+    assert not lingering, f"processes outlived the run: {lingering}"
+
+    assert_throttled(jobs, config.max_cores)

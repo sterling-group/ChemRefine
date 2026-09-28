@@ -1,30 +1,38 @@
 """Tier-3 live integration: the e2e cases run against the real binaries.
 
-The same case definitions the recordings were made from (``tests/data/e2e/cases``)
-run here for real — ORCA local dispatch, MLIP backends via their managed envs.
-Deselected by default (``addopts = "-m 'not integration'"``); opt in with
-``pytest -m integration`` on a machine with the binaries (ORCA ≥ 6 on PATH,
-≥ 4 physical cores for the %pal values, the mace stack for the MLIP cases).
-Passing runs re-pack the recorded archives when ``--record`` is given —
-recording and replay share one case definition, so they cannot drift.
+The same case definitions the recordings were made from (``tests/data/e2e/cases``) run here
+for real — ORCA local dispatch, the Python backends through their managed envs. Deselected by
+default (``addopts = "-m 'not integration'"``); opt in with ``pytest -m integration`` on a
+machine with the binaries, and leave out the one case whose load cannot be made small with
+``-m "integration and not heavy"``.
+
+What a case needs is read off its config: ORCA for any ORCA-family step, and whatever
+:func:`~chemrefine.engines._provision.preflight_backends` requires of the rest — the same
+answer the pipeline itself would give. A run is held to its declared budget and to what
+every live run must leave (:func:`replay.assert_live_invariants`), and to the facts only a
+live run shows (:data:`LIVE_CHECKS`). Then it is packed and the pack is replayed and checked
+like any shipped recording; only an archive that passes replaces one, under ``--record``.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import os
 import shutil
+import time
+from collections.abc import Callable
 from pathlib import Path
 
-import numpy as np
 import pytest
 import replay
+from _pytest.mark.structures import ParameterSet
+from test_e2e_replay import check_recording
 
-from chemrefine import pipeline
-from chemrefine.config import load_config
-from chemrefine.engines import _execution, backend_env_python
-from chemrefine.engines.orca.output import parse_dft
-from chemrefine.io import read_xyz_frames
+from chemrefine.config import Config, load_config
+from chemrefine.engines import _execution
+from chemrefine.engines._provision import preflight_backends
+from chemrefine.engines.api import get_engine
+from chemrefine.engines.orca.engine import OrcaEngine
+from chemrefine.errors import ConfigError
 
 pytestmark = pytest.mark.integration
 
@@ -45,166 +53,98 @@ def _real_orca() -> str | None:
     return found
 
 
-def _backend_available(import_name: str, extra: str) -> bool:
-    """Whether a compute backend can run here — importable, or a managed env exists.
-
-    Deliberately the same two conditions :func:`chemrefine.engines._provision.require_backend`
-    accepts, so a case is skipped exactly when the pipeline would refuse to start it, and
-    never when it would have run.
-
-    Called per test rather than answered once at import, because ``$CHEMREFINE_HOME`` decides
-    where a managed env is looked for and fixtures run after this module is imported. Sampled
-    at import, the answer is the one from *before* the environment the case will run in, and
-    the agreement with ``require_backend`` that this function exists for is only an agreement
-    when both read the same environment.
-    """
-    return importlib.util.find_spec(import_name) is not None or backend_env_python(extra).is_file()
-
-
 _ORCA = _real_orca()
 """Resolved once: it reads ``PATH``, which no fixture rewrites."""
 
-_REQUIRES = {
-    "conformers": {"orca"},
-    "nms_minimum": {"orca"},
-    "ts_pes": {"orca"},
-    "host_guest": {"orca"},
-    "fairchem_sp": {"fairchem"},
-    "mlip_screen": {"mace"},
-    "mlip_train": {"mace"},
-    "mlip_extopt": {"orca", "mace"},
-    "extopt_cycle_limit": {"orca", "mace"},
-    "pyscf_sp": {"pyscf"},
-    "pyscf_extopt": {"orca", "pyscf"},
-}
+
+def _cases() -> list[ParameterSet]:
+    """Every case directory, marked ``heavy`` where its ``case.yaml`` says so."""
+    return [
+        pytest.param(
+            case.name,
+            marks=[pytest.mark.heavy] if replay.CaseSpec.read(case).heavy else [],
+            id=case.name,
+        )
+        for case in sorted(replay.CASES_DIR.iterdir())
+        if (case / "input.yaml").is_file()
+    ]
 
 
-def _skip_unless_available(requirements: set[str]) -> None:
-    """Skip a case whose backend is absent — or fail, under ``CHEMREFINE_REQUIRE_LIVE``.
+def _needs_orca(config: Config) -> bool:
+    return any(isinstance(get_engine(step.engine), OrcaEngine) for step in config.steps)
+
+
+def _skip_unless_runnable(config: Config) -> None:
+    """Skip a case this machine cannot run — or fail, under ``CHEMREFINE_REQUIRE_LIVE``.
 
     Skipping is right for a developer running the tier on a laptop with only some of the
     stacks installed. It is wrong for the release gate, whose whole purpose is that the
-    real binaries ran: ``release-check.sh`` guards ORCA by hand precisely because "the
-    tier-3 suite skips every live case and the gate passes having tested nothing", but the
-    same hole was open for every other backend. Setting the variable closes it — a missing
-    stack then fails by name instead of quietly shrinking what the gate covered.
+    real binaries ran: set the variable and a missing stack fails by name instead of
+    quietly shrinking what the gate covered. The backends are judged by the pipeline's
+    own preflight, so a case is skipped exactly when a run of it would be refused.
     """
     missing = []
-    if "orca" in requirements and _ORCA is None:
+    if _needs_orca(config) and _ORCA is None:
         missing.append("ORCA on PATH")
-    if "mace" in requirements and not _backend_available("mace", "mlip-mace"):
-        missing.append("a mace stack (importable or `chemrefine backends install mlip-mace`)")
-    if "fairchem" in requirements and not _backend_available("fairchem", "mlip-fairchem"):
-        missing.append(
-            "a fairchem stack (importable or `chemrefine backends install mlip-fairchem`; "
-            "the UMA checkpoint also needs HuggingFace access to facebook/UMA)"
-        )
-    if "pyscf" in requirements and not _backend_available("pyscf", "pyscf"):
-        missing.append("pyscf (importable or `chemrefine backends install pyscf`)")
+    try:
+        preflight_backends(config.steps)
+    except ConfigError as e:
+        missing.append(str(e))
     if not missing:
         return
-    message = f"live case needs {', '.join(missing)}"
+    message = f"live case needs {'; '.join(missing)}"
     if os.environ.get("CHEMREFINE_REQUIRE_LIVE"):
         pytest.fail(f"{message} — CHEMREFINE_REQUIRE_LIVE is set, so this may not be skipped")
     pytest.skip(message)
 
 
-@pytest.mark.parametrize("name", sorted(_REQUIRES))
+def _pyscf_extopt(config: Config) -> None:
+    """``save_tensors`` delivers through ``output_dirs``, the one copy-back path that moves a
+    whole directory; the tensors are not archived, so only the live run can show them."""
+    assert list(config.output_dir.rglob("tensors/*.npz")), "save_tensors delivered nothing"
+
+
+LIVE_CHECKS: dict[str, Callable[[Config], None]] = {
+    "pyscf_extopt": _pyscf_extopt,
+}
+"""Facts a live run shows that its recording cannot carry, by case."""
+
+
+@pytest.mark.parametrize("name", _cases())
 def test_live_case(
     name: str, tmp_path: Path, request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Run the case for real, assert the workflow invariants, optionally record.
+    """Run the case's scenario for real, hold it to its budget and invariants, pack, replay.
 
     Every case runs under :class:`replay.SubmissionRecorder`, recording or not, so the log a
     recording needs is made the way every live run makes it.
     """
-    requirements = _REQUIRES[name]
-    _skip_unless_available(requirements)
-    shutil.copytree(replay.CASES_DIR / name, tmp_path, dirs_exist_ok=True)
-
-    config = load_config(tmp_path / "input.yaml")
-    if "orca" in requirements:
+    run_dir = tmp_path / "run"
+    shutil.copytree(replay.CASES_DIR / name, run_dir)
+    spec = replay.CaseSpec.read(run_dir)
+    config = load_config(run_dir / "input.yaml")
+    _skip_unless_runnable(config)
+    if _needs_orca(config):
         assert _ORCA is not None
         # ORCA needs its absolute path for MPI; the case config ships a placeholder.
         config = config.model_copy(
             update={"executables": {**config.executables, "orca": str(Path(_ORCA).resolve())}}
         )
 
-    recorder = replay.SubmissionRecorder(_execution.run_batch, tmp_path / "outputs")
+    recorder = replay.SubmissionRecorder(_execution.run_batch, config.output_dir)
     monkeypatch.setattr(_execution, "run_batch", recorder)
-    outcomes = pipeline.run(config)
-    recorder.write(tmp_path)
+    started = time.monotonic()
+    try:
+        replay.drive(config, spec)
+    finally:
+        recorder.write(run_dir)
+    spec.assert_within_budget(time.monotonic() - started)
 
-    assert outcomes[-1].state.structures, "the live pipeline must end with survivors"
-    outputs = tmp_path / "outputs"
-    assert list(outputs.rglob("*.result.json")), "every parsed job leaves its canonical record"
-    if "orca" in requirements:
-        assert list(outputs.rglob("*.property.json")), "ORCA >= 6 drops its native property.json"
+    replay.assert_live_invariants(config, run_dir)
+    if name in LIVE_CHECKS:
+        LIVE_CHECKS[name](config)
 
-    if name == "conformers":
-        ensemble = next(outputs.glob("step1/0/*.finalensemble.xyz"))
-        assert len(ensemble.read_text(encoding="utf-8").splitlines()) >= 3 * 12, (
-            "GOAT must yield >= 3 conformers"
-        )
-        assert all(s.gibbs_hartree is not None for s in outcomes[1].state.structures)
-    elif name == "nms_minimum":
-        assert list((outputs / "step1" / "0" / "attempt1").iterdir()), "NMS round 2 must run"
-        assert outcomes[0].state.structures[0].imaginary_freqs == {}, "a verified minimum"
-    elif name == "ts_pes":
-        (ts,) = outcomes[1].state.structures
-        assert ts.imaginary_freqs is not None and len(ts.imaginary_freqs) == 1
-    elif name == "host_guest":
-        assert outcomes[1].state.structures, "solvator output must parse"
-    elif name == "fairchem_sp":
-        # UMA's omol head on water sits near -76.4 Eh (-2079.9 eV). Asserting the number is
-        # what makes this a test of the *default backend* rather than of the harness: the
-        # checkpoint resolved through HuggingFace, the head built, and the energy is one a
-        # quantum chemist would recognise for water.
-        (structure,) = outcomes[0].state.structures
-        assert structure.energy_hartree is not None
-        assert -77.0 < structure.energy_hartree < -76.0, structure.energy_hartree
-    elif name == "mlip_extopt":
-        # The NumFreq half of the template ran through the server: ORCA's numerical Hessian
-        # over the backend's gradients. No fake-server contract can produce this output, so
-        # this is the proof of the NMS-capability claim on the ExtOpt engines. Only *parsed*
-        # is asserted here — MACE-small's surface gives optimised water a large spurious
-        # imaginary bend (verified against HF through the identical server machinery, which
-        # gives all-real textbook modes) — the clean-minimum assertion lives on pyscf_extopt.
-        (structure,) = outcomes[0].state.structures
-        assert structure.imaginary_freqs is not None, "NumFreq must yield parsed frequencies"
-    elif name == "extopt_cycle_limit":
-        # Stopped at its cycle limit, retried once from the last cycle it reached — not the
-        # seed — and, stopped again, carried forward by `best` as the retry's last cycle.
-        structure_dir = outputs / "step1" / "0"
-        assert len(recorder.log["step1/0"]) == 2, "one convergence retry"
-        stopped = parse_dft(structure_dir / "attempt1" / "step1_0.out")[0]
-        (retry_input,) = read_xyz_frames(structure_dir / "step1_0_inp.xyz")
-        assert np.allclose(retry_input.positions, stopped.positions)
-        (seed,) = read_xyz_frames(tmp_path / "water_distorted.xyz")
-        assert not np.allclose(retry_input.positions, seed.positions, atol=1e-3)
-        last = parse_dft(structure_dir / "step1_0.out")[0]
-        (structure,) = outcomes[0].state.structures
-        assert structure.converged is False
-        assert structure.energy_hartree == last.energy_hartree
-        assert np.allclose(structure.atoms.positions, last.positions)
-    elif name in ("pyscf_sp", "pyscf_extopt"):
-        # Water/HF/STO-3G is ~-74.96 Eh. Asserting the number, not just that something
-        # parsed, is the point of running PySCF for real: the contract goldens for both
-        # engines were hand-made from our own footer format rather than captured, so
-        # until now nothing had checked that this backend computes anything at all.
-        (structure,) = outcomes[0].state.structures
-        assert structure.energy_hartree is not None
-        assert -75.5 < structure.energy_hartree < -74.5, structure.energy_hartree
-        if name == "pyscf_extopt":
-            # NumFreq over the server's HF gradients: an optimised minimum on a clean
-            # surface must show computed, all-real modes.
-            assert structure.imaginary_freqs is not None, "NumFreq must yield frequencies"
-            assert structure.imaginary_freqs == {}, "HF water minimum has no imaginary modes"
-            # `save_tensors: true` delivers through `output_dirs` — the one copy-back path
-            # that moves a whole directory, live-proven only here.
-            tensor_files = list((outputs / "step1").rglob("tensors/*.npz"))
-            assert tensor_files, "save_tensors must deliver the tensors/ directory"
-
+    archive = replay.pack_case(run_dir, name, dest_dir=tmp_path / "pack")
+    check_recording(archive, tmp_path / "replayed", monkeypatch)
     if request.config.getoption("--record"):
-        archive = replay.pack_case(tmp_path, name)
-        assert archive.is_file()
+        shutil.copy2(archive, replay.DATA_DIR / archive.name)

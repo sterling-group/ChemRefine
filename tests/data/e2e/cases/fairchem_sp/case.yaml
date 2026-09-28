@@ -1,0 +1,4 @@
+# Wall time a live run of this case may take, measured with headroom.
+budget_s: 140
+# UMA's model is gigabytes; its load cannot be made small.
+heavy: true
