@@ -173,6 +173,10 @@ def build_aer_backend(
             f"qiskit Aer method {method!r} is unavailable in this Aer installation "
             f"(available: {list(available_methods)})"
         )
+    from chemrefine.engines.qiskit.aer_diagnostics import AerRun
+
+    # Keep an actual AerSimulator: EstimatorV2.from_backend preserves this instance.
+    backend.run = AerRun(backend, method, device, simulation_precision)
     return backend
 
 

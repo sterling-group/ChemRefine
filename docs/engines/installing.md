@@ -252,6 +252,10 @@ Use `statevector` or, within its memory budget, `density_matrix` for affected
 sampling workloads until the chosen CUDA/Aer build passes a real circuit check.
 Do not silently replace a failed configured method or report it as a successful
 GPU measurement.
+ChemRefine checks Aer's job and per-experiment status before primitive result
+decoding. Failures retain the provider status, requested method/device/precision,
+Aer version and available Conda build identity in CLI logs and GUI failure records.
+This improves diagnostics; it does not repair or certify the upstream method.
 
 A custom environment needs the same pinned
 Qiskit, Nature, Algorithms, PySCF, and ChemRefine source/version as the main

@@ -447,6 +447,27 @@ def test_dashboard_status_results_failures(client: Any, tmp_path: Path):
     assert failures["suggested_action"] == "rerun-errors"
 
 
+def test_dashboard_preserves_aer_provider_failure_and_remediation(client: Any, tmp_path: Path):
+    """The existing failure panel exposes the original provider error without another schema."""
+    from chemrefine.cache import save_failure_records
+    from chemrefine.engines.qiskit.aer_diagnostics import AerRun
+    from chemrefine.state import FailureKind, FailureRecord
+
+    config = _reported_tree(tmp_path)
+    reason = str(
+        AerRun(None, "tensor_network", "cuda", "double").failure(
+            "CUTENSORNET_STATUS_INTERNAL_ERROR"
+        )
+    )
+    save_failure_records(
+        tmp_path / "outputs/step1_screen",
+        [FailureRecord(structure_id="2", kind=FailureKind.MISSING_OUTPUT, reason=reason)],
+    )
+    response = _post(client, "/api/failures", {"config_path": str(config)})
+    assert response.status_code == 200
+    assert response.get_json()["failures"][0]["reason"] == reason
+
+
 @pytest.mark.parametrize(
     ("endpoint", "field", "value"),
     [
