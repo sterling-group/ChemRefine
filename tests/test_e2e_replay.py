@@ -54,6 +54,7 @@ from chemrefine.errors import ChemRefineError
 from chemrefine.io import read_xyz_frames
 from chemrefine.quantities import HARTREE_TO_KCALMOL
 from chemrefine.recovery import Action
+from chemrefine.scaffold import scaffold_templates
 from chemrefine.state import FailureKind, JobBatch, JobTriple, StepContext, StepInputs
 from chemrefine.step import RunPlan, StepMode, StepOutcome
 
@@ -948,17 +949,61 @@ def _mlip_train(run: Replayed) -> None:
     assert len(run.outcomes[2].state.structures) == 4
 
 
-def _pyscf_sp(run: Replayed) -> None:
-    """Water, HF/STO-3G through the PySCF script engine: about -74.96 Eh."""
-    (structure,) = run.outcomes[0].state.structures
-    assert structure.energy_hartree is not None
-    assert -75.5 < structure.energy_hartree < -74.5, structure.energy_hartree
+def _pyscf(run: Replayed) -> None:
+    """The engine's own starter on H2+: the stamp reaches ``gto.M``, the footer comes back.
+
+    The case's template is the starter ``chemrefine scaffold`` writes, so the live run tries
+    the file a user starts from; a change to the starter fails here until the case takes it
+    and is re-recorded. Rendered per frame, it carries the step's charge and multiplicity
+    (overriding the workflow's) into ``gto.M`` and the step's options into the SCF. H2+, one
+    electron, comes back converged at the energy its footer wrote, inside the B3LYP/STO-3G
+    window: with only one of the charge and the multiplicity PySCF refuses H2, and with
+    neither it is neutral H2, 0.52 Eh lower. HeH under the same stamp has two electrons as a
+    doublet, so PySCF refuses it before any SCF; the job leaves no output, and ``skip``
+    ledgers a missing output, never retried, while H2+ goes on alone.
+    """
+    (step,) = run.config.steps
+    step_dir = run.config.step_dir(step).resolve()
+
+    fresh = run.config.with_overrides(template_dir=run.case.root / "starters")
+    (starter,) = [path for path in scaffold_templates(fresh) if path.name == "step1.py"]
+    assert (run.config.template_dir / starter.name).read_text(encoding="utf-8") == (
+        starter.read_text(encoding="utf-8")
+    ), "the case runs the starter `chemrefine scaffold` writes: copy it in and re-record"
+
+    for sid in ("0", "1"):
+        rendered = (step_dir / sid / f"step1_{sid}.py").read_text(encoding="utf-8")
+        for line in (
+            "charge=1,",
+            "spin=2 - 1,",
+            'basis="sto-3g",',
+            'if "dft" == "hf":',
+            'mf = dft.KS(mol, xc="b3lyp")',
+            "if True:\n    mf = mf.density_fit()",
+        ):
+            assert line in rendered, f"frame {sid}: {line!r} is not in its rendered script"
+    assert dict(run.submitter.served) == {f"{step_dir.name}/0": 1, f"{step_dir.name}/1": 1}, (
+        "each frame runs once: a missing output is not retried"
+    )
+
+    footer = run.case.submitted_file(f"{step_dir.name}/0", 0, "step1_0.json")
+    written = json.loads(footer.read_text(encoding="utf-8"))
+    (survivor,) = run.outcomes[0].state.structures
+    assert survivor.id == "0"
+    assert survivor.converged is True, "the starter's `converged` comes back through the footer"
+    energy = survivor.energy_hartree
+    assert energy is not None and energy == written["energy_hartree"], energy
+    assert -0.60497 < energy < -0.58497, f"not UKS-B3LYP/STO-3G H2+: {energy}"
+
+    ledger = cache.load_failure_records(step_dir)
+    assert [(r.structure_id, r.kind) for r in ledger] == [("1", FailureKind.MISSING_OUTPUT)]
 
 
 def _pyscf_extopt(run: Replayed) -> None:
     """Water optimised over PySCF HF gradients, then NumFreq: a minimum with all-real modes."""
-    _pyscf_sp(run)
     (structure,) = run.outcomes[0].state.structures
+    assert structure.energy_hartree is not None
+    assert -75.5 < structure.energy_hartree < -74.5, structure.energy_hartree
     assert structure.imaginary_freqs == {}, "HF water minimum has no imaginary modes"
 
 
@@ -978,8 +1023,8 @@ CHECKS: dict[str, Callable[[Replayed], None]] = {
     "mlip_screen": _mlip_screen,
     "mlip_train": _mlip_train,
     "nms_recovery": _nms_recovery,
+    "pyscf": _pyscf,
     "pyscf_extopt": _pyscf_extopt,
-    "pyscf_sp": _pyscf_sp,
     "triage": _triage,
     "ts_path": _ts_path,
 }

@@ -1,0 +1,33 @@
+# The direct PySCF engine at its own seam. templates/step1.py is the starter `chemrefine
+# scaffold` writes, unmodified: rendered per structure, run under the pyscf backend's own
+# interpreter, its output footer read back. One step, two frames of h2.xyz, one core:
+#   0  H2+ at 1.06 A, about the ion's bond length (2 bohr). One electron is a doublet, so
+#      the stamp selects UKS, and B3LYP/STO-3G converges at about -0.595 Eh. The step's
+#      charge and multiplicity override the workflow's (0, 1), and each must reach gto.M:
+#      with only one of them, H2 has an electron count PySCF refuses; with neither, it is
+#      neutral H2, 0.52 Eh lower.
+#   1  HeH under the same stamp (code-only: the stamp is wrong for it on purpose; HeH+ has
+#      two electrons, a closed-shell singlet). Two electrons cannot be a doublet, so PySCF
+#      refuses it in gto.M, before any SCF, and the job leaves no output: a script-engine
+#      missing output, which `on_failure: skip` ledgers while frame 0 goes on alone.
+# An unparseable output is the mlip case's to show: this starter writes only
+# `energy_hartree` and `converged`, and PySCF raises on a coincident geometry rather than
+# return a non-finite energy.
+template_dir: ./templates
+output_dir: ./outputs
+dispatch: auto
+max_cores: 1
+
+input: ./h2.xyz
+charge: 0
+multiplicity: 1
+
+steps:
+  - step: 1
+    name: cation
+    engine: pyscf
+    charge: 1
+    multiplicity: 2
+    on_failure: skip
+    # `method: dft` renders dft.KS with `xc`; density fitting is on, the option's default.
+    options: { method: dft, xc: b3lyp, basis: sto-3g, device: cpu, cores: 1 }
