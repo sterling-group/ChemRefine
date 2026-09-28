@@ -115,19 +115,27 @@ def _build_fairchem(spec: CalculatorSpec) -> Any:
     most of the point of being able to train one. The unset-``model_name`` default —
     ``uma-s-1p2`` — lives here, with the library that owns the name, not on the shared
     options model where every other library's steps would inherit it too.
+
+    Both loaders take ``InferenceSettings()``, the dataclass's own defaults, which are the
+    same at every release from the floor: the model uncompiled, and its experts unmerged.
+    FAIRChem's ``"default"`` preset compiles on the first prediction from 2.22 on, a cost
+    each process pays once (25 to 72 s of a UMA single point on CPU), while every calculator
+    ChemRefine builds serves one job in one process. Unmerged, one predictor serves any
+    composition, charge and spin, as an ExtOpt server's does.
     """
     from fairchem.core import FAIRChemCalculator, pretrained_mlip
+    from fairchem.core.units.mlip_unit import InferenceSettings, load_predict_unit
 
+    settings = InferenceSettings()
     if spec.weights is not None:
-        # Imported in the branch that uses it, not beside the others: the two loaders live in
-        # different submodules, and a caller running a *named* release should not need the
-        # one it will not call to be importable.
-        from fairchem.core.units.mlip_unit import load_predict_unit
-
-        predictor = load_predict_unit(str(spec.weights), device=spec.device)
+        predictor = load_predict_unit(
+            str(spec.weights), inference_settings=settings, device=spec.device
+        )
     else:
         predictor = pretrained_mlip.get_predict_unit(
-            model_name=spec.model_name or _DEFAULT_MODEL, device=spec.device
+            model_name=spec.model_name or _DEFAULT_MODEL,
+            inference_settings=settings,
+            device=spec.device,
         )
     return FAIRChemCalculator(predictor, task_name=spec.task_name)
 

@@ -158,6 +158,10 @@ def test_the_legacy_alias_still_loads_a_checkpoint(monkeypatch, tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
+_SETTINGS = object()
+"""What the fake ``InferenceSettings()`` returns, so a test can see it reach a loader."""
+
+
 def _install_fake_fairchem(monkeypatch) -> tuple[MagicMock, MagicMock]:
     """Install a fake ``fairchem.core``; return ``(get_predict_unit, calc_class)``."""
     predict = MagicMock()
@@ -166,21 +170,24 @@ def _install_fake_fairchem(monkeypatch) -> tuple[MagicMock, MagicMock]:
     core = _fake_module("fairchem.core", FAIRChemCalculator=fairchem_calc, pretrained_mlip=predict)
     monkeypatch.setitem(sys.modules, "fairchem", _fake_module("fairchem", core=core))
     monkeypatch.setitem(sys.modules, "fairchem.core", core)
+    _install_fake_mlip_unit(monkeypatch)
     return predict.get_predict_unit, fairchem_calc
 
 
-def _install_fake_load_predict_unit(monkeypatch) -> MagicMock:
-    """Add the *other* loader — the one that takes a path — to the fake fairchem.
+def _install_fake_mlip_unit(monkeypatch) -> tuple[MagicMock, MagicMock]:
+    """Add ``fairchem.core.units.mlip_unit``; return ``(load_predict_unit, InferenceSettings)``.
 
-    It lives in a different submodule from `get_predict_unit`, which is why the builder
-    imports it inside the branch that uses it: a caller running a named release must not need
-    this one to be importable.
+    The submodule holds the loader that takes a path and the inference settings both loaders
+    are handed. ``InferenceSettings`` is called with no arguments, the dataclass's defaults.
     """
     loader = MagicMock(return_value="PATH_PREDICTOR")
-    unit = _fake_module("fairchem.core.units.mlip_unit", load_predict_unit=loader)
+    settings = MagicMock(return_value=_SETTINGS)
+    unit = _fake_module(
+        "fairchem.core.units.mlip_unit", load_predict_unit=loader, InferenceSettings=settings
+    )
     monkeypatch.setitem(sys.modules, "fairchem.core.units", _fake_module("fairchem.core.units"))
     monkeypatch.setitem(sys.modules, "fairchem.core.units.mlip_unit", unit)
-    return loader
+    return loader, settings
 
 
 def test_build_fairchem_loads_a_local_checkpoint_through_the_path_api(monkeypatch, tmp_path):
@@ -191,13 +198,13 @@ def test_build_fairchem_loads_a_local_checkpoint_through_the_path_api(monkeypatc
     that nothing in the pipeline could then load.
     """
     _get_predict_unit, fairchem_calc = _install_fake_fairchem(monkeypatch)
-    loader = _install_fake_load_predict_unit(monkeypatch)
+    loader, _settings = _install_fake_mlip_unit(monkeypatch)
     ckpt = tmp_path / "inference_ckpt.pt"
     ckpt.touch()
 
     calc = MlipCalculator(task_name="omol", model_path=str(ckpt), device="cpu")
 
-    loader.assert_called_once_with(str(ckpt), device="cpu")
+    loader.assert_called_once_with(str(ckpt), inference_settings=_SETTINGS, device="cpu")
     _get_predict_unit.assert_not_called()
     fairchem_calc.assert_called_once_with("PATH_PREDICTOR", task_name="omol")
     assert calc.calculator == "FAIRCHEM_CALC"
@@ -207,9 +214,28 @@ def test_build_fairchem_routes_through_predictor(monkeypatch):
     """The builder loads the checkpoint then constructs a ``FAIRChemCalculator``."""
     get_predict_unit, fairchem_calc = _install_fake_fairchem(monkeypatch)
     calc = MlipCalculator(task_name="omol", model_name="uma-s-1p2", device="cuda")
-    get_predict_unit.assert_called_once_with(model_name="uma-s-1p2", device="cuda")
+    get_predict_unit.assert_called_once_with(
+        model_name="uma-s-1p2", inference_settings=_SETTINGS, device="cuda"
+    )
     fairchem_calc.assert_called_once_with("PREDICTOR", task_name="omol")
     assert calc.calculator == "FAIRCHEM_CALC"
+
+
+def test_both_fairchem_loaders_get_the_settings_defaults(monkeypatch, tmp_path: Path):
+    """``InferenceSettings()`` with no arguments: uncompiled, unmerged, at every release.
+
+    FAIRChem's named ``"default"`` preset compiles on the first prediction from 2.22 on, so a
+    loader left to its own default paid a compile in every process.
+    """
+    get_predict_unit, _calc = _install_fake_fairchem(monkeypatch)
+    loader, settings = _install_fake_mlip_unit(monkeypatch)
+    ckpt = tmp_path / "inference_ckpt.pt"
+    ckpt.touch()
+    MlipCalculator(task_name="omol", device="cpu")
+    MlipCalculator(task_name="omol", model_path=str(ckpt), device="cpu")
+    assert settings.call_args_list == [((), {}), ((), {})]
+    assert get_predict_unit.call_args.kwargs["inference_settings"] is _SETTINGS
+    assert loader.call_args.kwargs["inference_settings"] is _SETTINGS
 
 
 @pytest.mark.parametrize("head", ["omat", "odac", "oc20", "oc22", "oc25", "omc"])
@@ -224,7 +250,9 @@ def test_build_fairchem_defaults_model_name(monkeypatch):
     """An empty ``model_name`` falls back to the default UMA checkpoint."""
     get_predict_unit, _calc = _install_fake_fairchem(monkeypatch)
     MlipCalculator(task_name="omol", model_name="", device="cpu")
-    get_predict_unit.assert_called_once_with(model_name="uma-s-1p2", device="cpu")
+    get_predict_unit.assert_called_once_with(
+        model_name="uma-s-1p2", inference_settings=_SETTINGS, device="cpu"
+    )
 
 
 # ---------------------------------------------------------------------------

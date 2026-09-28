@@ -300,6 +300,12 @@ for the full map.
 
 ### Changed
 
+- **A FAIRChem step loads its model uncompiled.** From fairchem-core 2.22, FAIRChem's
+  `"default"` inference preset compiles the model on its first prediction, which on CPU was
+  25 to 72 s of a UMA single point, paid again by every job, since each runs in a process of
+  its own. Both loaders now take `InferenceSettings()`, the defaults at every release from
+  the 2.18 floor: uncompiled, with the experts unmerged, so one predictor serves any
+  composition, charge and spin.
 - **An ORB model with a stress output fine-tunes with stress off.** It was refused, which
   left out the default loader and most of ORB's releases. ChemRefine's labels are molecular,
   so the trainer switches the model's stress output off and the job warns. `mlip-orb` now
