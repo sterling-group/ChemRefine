@@ -6,13 +6,15 @@ exactly like a passing test. This file asserts the readers against every real OR
 already in the repo, streamed straight out of the ``tests/data/e2e/recordings``
 archives (nothing is extracted to disk).
 
-Every recorded run passed its live test, and every one succeeded except those cut short on
-purpose — which ORCA announces in its own words, "did not converge but reached the maximum
-number of optimization cycles", a line no reader here uses. So the corpus-wide expectation
-stays simple, strong and independent of the parser: an output ORCA says ran out of cycles
-reads as unconverged, every other one as terminated and converged, and every frequency job
-yields a well-shaped normal-mode tensor. A reader that disagrees with ORCA here is wrong
-about real ORCA, whatever the unit tests say.
+Every recorded run passed its live test, and the ones that failed failed on purpose — and
+ORCA says so in its own words, which no reader here uses: an abort names the module and
+source line it died in (:data:`ORCA_ABORT_RE`), and an optimisation cut short says it
+"did not converge but reached the maximum number of optimization cycles"
+(:data:`CYCLE_LIMIT_RE`). So the corpus-wide expectation stays simple, strong and
+independent of the parser: an output reads as terminated exactly when ORCA printed no abort,
+a terminated one reads as unconverged exactly when ORCA says it ran out of cycles, and every
+frequency job yields a well-shaped normal-mode tensor. A reader that disagrees with ORCA
+here is wrong about real ORCA, whatever the unit tests say.
 
 Marked ``slow``, not ``integration``: it reads every ``.out`` out of the compressed archives,
 which is a second or so, but it invokes no ORCA, no SLURM and no external service. That
@@ -24,6 +26,7 @@ gate. ``slow`` still runs by default.
 
 from __future__ import annotations
 
+import re
 import tarfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -75,25 +78,58 @@ def test_the_corpus_is_actually_there():
     assert sum(1 for _ in _recorded_outputs()) >= 17
 
 
-_RAN_OUT_OF_CYCLES = "did not converge but reached the maximum number of"
-"""ORCA's own words for an optimisation that hit its cycle limit — read by no reader here."""
+ORCA_ABORT_RE = re.compile(
+    r"\[file orca_[a-z_]+/[^\]]*, line \d+\]|Error \(ORCA|ORCA finished by error termination"
+)
+"""ORCA's own words for a run it aborted — the source line it died at, its error banner.
+
+Read by no reader here. A run that died silently, killed with no word, prints neither this
+nor the normal-termination banner; such an output must never be recorded, since nothing in
+it says what happened."""
+
+CYCLE_LIMIT_RE = re.compile(
+    r"did\s+not\s+converge\s+but\s+reached\s+the\s+maximum\s+number\s+of\s+"
+    r"optimization\s+cycles"
+)
+"""ORCA's own notice for an optimisation that hit its cycle limit — read by no reader here.
+
+Whitespace-tolerant because ORCA wraps it differently by run type: an ``Opt Freq`` breaks the
+line before "number", an ExtOpt run after it."""
 
 
-def test_every_recorded_run_reads_as_orca_itself_reports_it():
-    """No false failures across the corpus, and the one real failure is read as one.
+def test_every_recorded_run_terminated_exactly_when_orca_printed_no_abort():
+    """A reader's termination verdict agrees with ORCA's own words, both ways.
 
-    This is the assertion that catches a bare ``NOT CONVERGED`` matching ORCA's
-    ``LOCALIZATION HAS NOT CONVERGED``, or any other over-broad negative — and, over the
-    optimisation recorded running out of cycles, a negative that stopped matching.
+    A run the recording aborted on purpose reads as not terminated, and nothing else does —
+    the half that catches an over-broad negative reading a finished run as dead.
     """
     wrong = [
         label
         for label, text in _recorded_outputs()
-        if status.parse_terminated_normally(text) is not True
-        or status.parse_converged(text) is (_RAN_OUT_OF_CYCLES in text)
+        if status.parse_terminated_normally(text) is bool(ORCA_ABORT_RE.search(text))
     ]
     assert wrong == []
-    assert any(_RAN_OUT_OF_CYCLES in text for _label, text in _recorded_outputs()), (
+
+
+def test_every_terminated_run_converged_exactly_when_orca_did_not_run_out_of_cycles():
+    """No false failures across the corpus, and the cycle-limited runs read as failures.
+
+    This is the assertion that catches a bare ``NOT CONVERGED`` matching ORCA's
+    ``LOCALIZATION HAS NOT CONVERGED``, or any other over-broad negative — and, over the
+    optimisations recorded running out of cycles, a negative that stopped matching.
+    """
+    terminated = [
+        (label, text)
+        for label, text in _recorded_outputs()
+        if status.parse_terminated_normally(text)
+    ]
+    wrong = [
+        label
+        for label, text in terminated
+        if status.parse_converged(text) is bool(CYCLE_LIMIT_RE.search(text))
+    ]
+    assert wrong == []
+    assert any(CYCLE_LIMIT_RE.search(text) for _label, text in terminated), (
         "no cycle-exhausted optimisation in the corpus — has the recording set changed?"
     )
 
@@ -113,7 +149,11 @@ def test_pending_optimisation_lines_are_never_the_last_verdict_in_a_finished_run
         if "The optimization has not yet converged" in text
     ]
     assert pending, "no optimisation outputs in the corpus — has the recording set changed?"
-    finished = [text for _label, text in _recorded_outputs() if _RAN_OUT_OF_CYCLES not in text]
+    finished = [
+        text
+        for _label, text in _recorded_outputs()
+        if status.parse_terminated_normally(text) and not CYCLE_LIMIT_RE.search(text)
+    ]
     assert all(status.parse_converged(text) for text in finished)
 
 
