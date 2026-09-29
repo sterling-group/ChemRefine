@@ -30,6 +30,21 @@ installed anywhere else. If it passes, CI will too, apart from the jobs this
 machine cannot run (named at the end of the run, and explained under
 [Releases](#releases)).
 
+Every step of the gate is a named section, and any of them runs on its own:
+`--list` names the sections and the live cases and marks what a set of options
+would run, `--only` and `--skip` pick sections (always run in gate order),
+`--case` runs chosen live cases, `--no-heavy` leaves the heavy ones out, and
+arguments after `--` go to the live tier's pytest:
+
+```bash
+scripts/release-check.sh --only types,docs
+scripts/release-check.sh --only live --no-heavy
+scripts/release-check.sh --case mlip -- --record   # re-record one case, capped
+```
+
+A selection passes as that selection, never as the gate, and runs on a dirty
+tree unless it includes lint, whose ruff hook writes its fixes.
+
 For the inner loop, the individual gates are still the fastest way round:
 
 ```bash
@@ -132,7 +147,8 @@ pytest 'tests/test_e2e_relocate.py::test_rebuilt_records_match_the_archived_ones
 Review the re-packed archives in the git diff like any golden. This covers a
 *parser* change only — a behavioural change (different jobs, different
 survivors, a new operation) is not a re-parse, and needs the live tier:
-`pytest -m integration --record` on a machine with the binaries.
+`pytest -m integration --record` on a machine with the binaries, or, capped for
+a desktop, `scripts/release-check.sh --case NAME -- --record`.
 
 ## Conventions
 
@@ -163,7 +179,8 @@ survivors, a new operation) is not a re-parse, and needs the live tier:
   holds this, with `NOT_LIVE` naming what cannot run and why). Each case's
   `case.yaml` declares its scenario (a halted run, then `resume`, …), the
   `budget_s` its live run must fit, and `heavy` when its load cannot be made
-  small — `-m "integration and not heavy"` leaves those out. What a case exists
+  small — `-m "integration and not heavy"` leaves those out (`--no-heavy`
+  through the release script). What a case exists
   for is its `CHECKS` entry in `tests/test_e2e_replay.py`, run on every replay;
   facts only a live run can show go in `LIVE_CHECKS` in `tests/test_e2e_live.py`.
   After a parser-only change, re-pack offline instead — no binaries needed:
