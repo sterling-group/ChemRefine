@@ -185,16 +185,10 @@ selected() {
 if [ -n "$cases$no_heavy" ] || [ ${#pytest_args[@]} -gt 0 ]; then
     selected live || usage_error "--case, --no-heavy and pytest arguments narrow the live section, which this selection does not run"
 fi
-# --no-heavy adds to the live section's own -m. A -m after -- replaces that, and would take
-# the filter with it, so the tier would run the heavy cases under a cap sized without them;
-# named cases leave --no-heavy nothing to decide.
+# Named cases leave --no-heavy nothing to decide. Whether arguments passed through to pytest
+# undo it is pytest's to say, and the live preconditions ask it before anything runs.
 if [ -n "$no_heavy" ]; then
     [ -z "$cases" ] || usage_error "--case names the cases outright; drop --no-heavy"
-    for arg in ${pytest_args[@]+"${pytest_args[@]}"}; do
-        case "$arg" in
-            -m*) usage_error "a -m after -- replaces the one --no-heavy adds to; drop one of them" ;;
-        esac
-    done
 fi
 
 # Anything short of the mode's whole gate is partial, and says so instead of passing.
@@ -203,6 +197,9 @@ partial=""
 if [ "$selection" != "$(echo $full)" ] || [ -n "$cases$no_heavy" ] || [ ${#pytest_args[@]} -gt 0 ]; then
     partial=1
 fi
+# What a run of this selection passes as: `selection`, `pr` or `release`. --list says it and
+# the run's ending acts on it, so the preview and the verdict cannot come apart.
+verdict() { if [ -n "$partial" ]; then echo selection; else echo "$mode"; fi; }
 
 if [ -n "$list" ]; then
     printf 'sections (* runs with these options):\n'
@@ -225,11 +222,12 @@ if [ -n "$list" ]; then
         printf 'live runs: %s%s%s\n' "$(if [ -n "$cases" ]; then echo $cases; else echo every case; fi)" \
             "${no_heavy:+, the heavy ones left out}" "${pytest_args[*]:+, pytest given: ${pytest_args[*]}}"
     fi
-    if [ -n "$partial" ]; then
-        printf 'passes as: a selection, not the gate\n'
-    else
-        printf 'passes as: the %s gate\n' "$mode"
-    fi
+    # The order the run loop takes, from the variable it iterates.
+    printf 'runs, in order: %s\n' "$selection"
+    case "$(verdict)" in
+        selection) printf 'passes as: a selection, not the gate\n' ;;
+        *) printf 'passes as: the %s gate\n' "$mode" ;;
+    esac
     exit 0
 fi
 
@@ -317,6 +315,42 @@ if selected live; then
     elif [ -z "$cases" ]; then
         fail "ORCA is not on PATH, so the live tier would test nothing.
   For a pre-PR check that needs no ORCA, run: scripts/release-check.sh --pr"
+    fi
+
+    # The tier's own argv, built once: the live section runs it, and pytest is asked what
+    # it selects. The script's -m comes first, so a -m among the pass-through arguments
+    # wins, in whatever spelling pytest accepts (`-m X`, `-mX`, `-xm X`, an @file) — which
+    # is why pytest, not a pattern here, says whether a heavy case is in the run.
+    live_marker="integration or perf"
+    if [ -n "$no_heavy" ]; then live_marker="($live_marker) and not heavy"; fi
+    live_targets=()
+    for case_name in $cases; do
+        live_targets+=("tests/test_e2e_live.py::test_live_case[$case_name]")
+    done
+    tier3=(env CHEMREFINE_REQUIRE_LIVE=1 PATH="${orca_dir:+$orca_dir:}$PATH" "$live_pytest"
+        -m "$live_marker" -q ${live_targets[@]+"${live_targets[@]}"}
+        ${pytest_args[@]+"${pytest_args[@]}"})
+
+    # What the run collects, against what `-m heavy` collects. Asked here rather than when
+    # the live section starts, so a --no-heavy the pytest arguments undo is refused in the
+    # first seconds, not after the suite; the section's memory check reads the same answer.
+    rc=0
+    chosen="$("${tier3[@]}" --collect-only 2>&1)" || rc=$?
+    case "$rc" in
+        0|5) ;;
+        *) printf '%s\n' "$chosen" >&2; fail "collecting the tier-3 selection failed (pytest exit $rc)" ;;
+    esac
+    rc=0
+    heavy="$("$live_pytest" -q -m heavy --collect-only tests/test_e2e_live.py 2>&1)" || rc=$?
+    case "$rc" in
+        0|5) ;;
+        *) printf '%s\n' "$heavy" >&2; fail "collecting the heavy tier-3 cases failed (pytest exit $rc)" ;;
+    esac
+    heavy_run="$(comm -12 <(grep '::' <<<"$chosen" | sort) <(grep '::' <<<"$heavy" | sort))"
+    need_g=4 why="no heavy case selected"
+    if [ -n "$heavy_run" ]; then
+        [ -z "$no_heavy" ] || usage_error "--no-heavy, but the pytest arguments select ${heavy_run//$'\n'/ }: a -m after -- replaces the one --no-heavy adds to; drop one of them"
+        need_g=7 why="the UMA load alone peaks at 5.1G; --no-heavy leaves it out"
     fi
 fi
 
@@ -492,15 +526,8 @@ section_live() {
     # ORCA precondition above exists because a silently skipped tier leaves this gate passing
     # having tested nothing — but that reasoning covers every backend, not just ORCA, and
     # pytest reports "N passed, M skipped" with exit 0 either way. With the variable set, a
-    # missing MACE or PySCF stack fails here by name.
-    local marker="integration or perf" targets=() name
-    if [ -n "$no_heavy" ]; then marker="($marker) and not heavy"; fi
-    for name in $cases; do
-        targets+=("tests/test_e2e_live.py::test_live_case[$name]")
-    done
-    # The script's -m comes first, so a -m among the pass-through arguments wins.
-    local args=(-m "$marker" -q ${targets[@]+"${targets[@]}"} ${pytest_args[@]+"${pytest_args[@]}"})
-    local tier3=(env CHEMREFINE_REQUIRE_LIVE=1 PATH="${orca_dir:+$orca_dir:}$PATH" "$live_pytest" "${args[@]}")
+    # missing MACE or PySCF stack fails here by name. The argv is the live preconditions'
+    # (`tier3`), built once.
 
     # Memory discipline: the UMA single point alone peaks at 5.1 GB RSS (measured), and on a
     # desktop this tier has OOM-killed VS Code instead of the test — the snap ships the editor
@@ -510,17 +537,8 @@ section_live() {
     # message rather than whatever the kernel fancies. The cap is what is available less 1G,
     # so the need is the peak plus 2G: 7G with a heavy case in the selection, 4G without —
     # every other case peaks near 1G of its own memory. Whether the selection holds one is
-    # pytest's answer, from the same marks the run selects by, with the heavy filter last so
-    # a -m passed through can never turn it into an underestimate (--no-heavy, which a -m
-    # passed through would undo, is refused with one).
+    # pytest's answer to the run's own argv, asked in the live preconditions (`need_g`).
     if command -v systemd-run >/dev/null 2>&1; then
-        local need_g=4 why="no heavy case selected" rc=0 out
-        out="$("${tier3[@]}" --collect-only -m "($marker) and heavy" 2>&1)" || rc=$?
-        case "$rc" in
-            0) need_g=7; why="the UMA load alone peaks at 5.1G; --no-heavy leaves it out" ;;
-            5) ;;
-            *) printf '%s\n' "$out" >&2; fail "collecting the tier-3 selection failed (pytest exit $rc)" ;;
-        esac
         local avail_g
         avail_g="$(awk '/MemAvailable/ {printf "%d", $2/1048576}' /proc/meminfo)"
         if [ "$avail_g" -lt "$need_g" ]; then
@@ -544,20 +562,23 @@ for name in $selection; do
     "section_$name"
 done
 
-if [ -n "$partial" ]; then
-    printf '\n\033[32m✓ passed: %s\033[0m\n' "$selection"
-    printf '  A selection, not the gate: before %s, run it whole.\n' \
-        "$([ "$mode" = pr ] && echo 'opening a pull request' || echo 'tagging')"
-    exit 0
-fi
-
-if [ "$mode" = "pr" ]; then
-    printf '\n\033[32m✓ PR gate passed\033[0m\n'
-    printf '  Still CI-only: the dependency floors, the matrix legs with no interpreter\n'
-    printf '  here (%s), CodeQL, Scorecard and dependency-review. All run on your\n' "$unmatched"
-    printf '  pull request.\n'
-    exit 0
-fi
+case "$(verdict)" in
+    selection)
+        printf '\n\033[32m✓ passed: %s\033[0m\n' "$selection"
+        if selected matrix; then
+            printf '  The matrix legs with no interpreter here (%s) did not run; CI runs them.\n' \
+                "$unmatched"
+        fi
+        printf '  A selection, not the gate: before %s, run it whole.\n' \
+            "$([ "$mode" = pr ] && echo 'opening a pull request' || echo 'tagging')"
+        exit 0 ;;
+    pr)
+        printf '\n\033[32m✓ PR gate passed\033[0m\n'
+        printf '  Still CI-only: the dependency floors, the matrix legs with no interpreter\n'
+        printf '  here (%s), CodeQL, Scorecard and dependency-review. All run on your\n' "$unmatched"
+        printf '  pull request.\n'
+        exit 0 ;;
+esac
 
 version="$("$PY" -c 'import chemrefine; print(chemrefine.__version__)')"
 printf '\n\033[32m✓ ready to tag v%s\033[0m\n' "$version"
