@@ -105,9 +105,14 @@ def test_skipping_a_section_is_a_selection_too(gate):
 
 @pytest.mark.parametrize("section", ["sdist", "matrix"])
 def test_a_section_reading_the_built_package_builds_it(gate, section: str):
+    """Run alone, it builds the package itself, and ``--list`` says so."""
     _, out, _ = gate("--list", "--only", section)
     assert _marked(out) == [section]
     assert "built first" in out
+    body = re.search(
+        rf"^section_{section}\(\) {{\n(.*?)^}}", _SCRIPT.read_text(encoding="utf-8"), re.M | re.S
+    )
+    assert body is not None and re.search(r"^\s*build_package$", body[1], re.M)
 
 
 def test_a_case_runs_the_live_section_alone(gate):
@@ -137,6 +142,9 @@ def test_an_unknown_name_is_refused_naming_the_real_ones(gate, args: tuple[str, 
         ("--pr", "--no-heavy"),
         ("--only", "docs", "--", "-x"),
         ("--case", _CASES[0], "--skip", "live"),
+        ("--case", _CASES[0], "--no-heavy"),
+        ("--no-heavy", "--", "-m", "integration"),
+        ("--no-heavy", "--", "-mintegration"),
         ("--only",),
         ("--frobnicate",),
     ],

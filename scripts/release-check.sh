@@ -185,6 +185,17 @@ selected() {
 if [ -n "$cases$no_heavy" ] || [ ${#pytest_args[@]} -gt 0 ]; then
     selected live || usage_error "--case, --no-heavy and pytest arguments narrow the live section, which this selection does not run"
 fi
+# --no-heavy adds to the live section's own -m. A -m after -- replaces that, and would take
+# the filter with it, so the tier would run the heavy cases under a cap sized without them;
+# named cases leave --no-heavy nothing to decide.
+if [ -n "$no_heavy" ]; then
+    [ -z "$cases" ] || usage_error "--case names the cases outright; drop --no-heavy"
+    for arg in ${pytest_args[@]+"${pytest_args[@]}"}; do
+        case "$arg" in
+            -m*) usage_error "a -m after -- replaces the one --no-heavy adds to; drop one of them" ;;
+        esac
+    done
+fi
 
 # Anything short of the mode's whole gate is partial, and says so instead of passing.
 partial=""
@@ -255,13 +266,18 @@ imports_this_checkout() {
 }
 imports_this_checkout "$PY"
 
+# Each section's own tool, checked before anything runs and only when that section does.
 # `pyproject-build` is the console script the `build` distribution ships (there is no
-# `build` binary); it stands here for the `$PY -m build` further down. Without it that
-# step failed several minutes in — after pre-commit, mypy, two whole suites and every
-# extras resolve — on a tool this loop exists to catch in the first second.
-for tool in pre-commit mypy pytest mkdocs pyproject-build; do
-    [ -x "$bin/$tool" ] || fail "$tool is not in $bin — run: pip install -e '.[dev]'"
-done
+# `build` binary); it stands here for the `$PY -m build` the packaging sections run.
+# Without it that step failed several minutes in — after pre-commit, mypy, two whole
+# suites and every extras resolve — on a tool this check exists to catch in the first
+# second.
+need_tool() { [ -x "$bin/$1" ] || fail "$1 is not in $bin — run: pip install -e '.[dev]'"; }
+if selected lint; then need_tool pre-commit; fi
+if selected types; then need_tool mypy; fi
+if selected suite || selected mutation; then need_tool pytest; fi
+if selected docs || selected sdist; then need_tool mkdocs; fi
+if selected package || selected sdist || selected matrix; then need_tool pyproject-build; fi
 
 if [ -n "$(git status --porcelain)" ]; then
     if [ -z "$partial" ] || selected lint; then
@@ -282,14 +298,26 @@ if selected live; then
     live_pytest="$(dirname "$LIVE_PY")/pytest"
     [ -x "$live_pytest" ] || fail "pytest is not in $(dirname "$LIVE_PY") — the tier-3 env needs '.[test]'"
 
-    ORCA="${ORCA:-$(command -v orca || true)}"
     # `which orca` is not enough: desktop Linux ships /usr/bin/orca, the GNOME screen reader.
     # A real ORCA keeps its helpers beside the main binary. Without this check the tier-3 suite
-    # skips every live case and the gate passes having tested nothing.
-    [ -n "$ORCA" ] || fail "ORCA is not on PATH, so the live tier would test nothing.
+    # skips every live case and the gate passes having tested nothing. Named cases may need
+    # no ORCA at all, and one that does fails by name inside the tier, which runs under
+    # CHEMREFINE_REQUIRE_LIVE and rejects a binary with no helpers the same way — so only
+    # the whole tier refuses to start without a real ORCA, and an ORCA named in the
+    # environment must be the real one whatever runs.
+    orca_dir="" found="${ORCA:-$(command -v orca || true)}"
+    if [ -n "$found" ]; then
+        orca_dir="$(cd "$(dirname "$(readlink -f "$found")")" && pwd)"
+        if [ ! -x "$orca_dir/orca_2json" ]; then
+            orca_dir=""
+            if [ -n "${ORCA:-}" ] || [ -z "$cases" ]; then
+                fail "$found is not the quantum-chemistry ORCA (no orca_2json beside it)"
+            fi
+        fi
+    elif [ -z "$cases" ]; then
+        fail "ORCA is not on PATH, so the live tier would test nothing.
   For a pre-PR check that needs no ORCA, run: scripts/release-check.sh --pr"
-    orca_dir="$(cd "$(dirname "$(readlink -f "$ORCA")")" && pwd)"
-    [ -x "$orca_dir/orca_2json" ] || fail "$ORCA is not the quantum-chemistry ORCA (no orca_2json beside it)"
+    fi
 fi
 
 work="$(mktemp -d)"
@@ -299,7 +327,7 @@ printf 'repo    %s\n' "$repo_root"
 printf 'python  %s (%s)\n' "$PY" "$("$PY" -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])')"
 printf 'mode    %s\n' "$mode"
 if [ -n "$partial" ]; then printf 'runs    %s%s\n' "$selection" "${dirty:-}"; fi
-if selected live; then printf 'orca    %s\n' "$orca_dir"; fi
+if selected live; then printf 'orca    %s\n' "${orca_dir:-none (a case that needs it fails by name)}"; fi
 
 # The GUI's JavaScript is executed by exactly seven tests, and without a Node they *skip* —
 # so on a machine with none this gate has been passing while checking the frontend not at
@@ -472,7 +500,7 @@ section_live() {
     done
     # The script's -m comes first, so a -m among the pass-through arguments wins.
     local args=(-m "$marker" -q ${targets[@]+"${targets[@]}"} ${pytest_args[@]+"${pytest_args[@]}"})
-    local tier3=(env CHEMREFINE_REQUIRE_LIVE=1 PATH="$orca_dir:$PATH" "$live_pytest" "${args[@]}")
+    local tier3=(env CHEMREFINE_REQUIRE_LIVE=1 PATH="${orca_dir:+$orca_dir:}$PATH" "$live_pytest" "${args[@]}")
 
     # Memory discipline: the UMA single point alone peaks at 5.1 GB RSS (measured), and on a
     # desktop this tier has OOM-killed VS Code instead of the test — the snap ships the editor
@@ -483,15 +511,16 @@ section_live() {
     # so the need is the peak plus 2G: 7G with a heavy case in the selection, 4G without —
     # every other case peaks near 1G of its own memory. Whether the selection holds one is
     # pytest's answer, from the same marks the run selects by, with the heavy filter last so
-    # a -m passed through can never turn it into an underestimate.
-    local need_g=4 why="no heavy case selected" rc=0 out
-    out="$("${tier3[@]}" --collect-only -m "($marker) and heavy" 2>&1)" || rc=$?
-    case "$rc" in
-        0) need_g=7; why="the UMA load alone peaks at 5.1G; --no-heavy leaves it out" ;;
-        5) ;;
-        *) printf '%s\n' "$out" >&2; fail "collecting the tier-3 selection failed (pytest exit $rc)" ;;
-    esac
+    # a -m passed through can never turn it into an underestimate (--no-heavy, which a -m
+    # passed through would undo, is refused with one).
     if command -v systemd-run >/dev/null 2>&1; then
+        local need_g=4 why="no heavy case selected" rc=0 out
+        out="$("${tier3[@]}" --collect-only -m "($marker) and heavy" 2>&1)" || rc=$?
+        case "$rc" in
+            0) need_g=7; why="the UMA load alone peaks at 5.1G; --no-heavy leaves it out" ;;
+            5) ;;
+            *) printf '%s\n' "$out" >&2; fail "collecting the tier-3 selection failed (pytest exit $rc)" ;;
+        esac
         local avail_g
         avail_g="$(awk '/MemAvailable/ {printf "%d", $2/1048576}' /proc/meminfo)"
         if [ "$avail_g" -lt "$need_g" ]; then
