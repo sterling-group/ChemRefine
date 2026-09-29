@@ -295,20 +295,6 @@ def _parse_frequency_block(
     return imaginary, table, modes
 
 
-def parse_text(text: str, operation: str, *, src: str = "<text>") -> list[ParsedResult]:
-    """Parse a ``.out``-based operation from already-read text (parse-once).
-
-    Only the :data:`TEXT_BASED_OPERATIONS` are handled here; the sidecar ensemble operations
-    use :func:`parse_output`.
-    """
-    op = canonical_operation(operation)
-    if op in _DFT_OPERATIONS:
-        return parse_dft_from_text(text, src=src)
-    if op == "pes":
-        return ensembles.parse_pes_from_text(text, src=src)
-    raise OutputParseError(f"{operation!r} is not a text-based ORCA operation")
-
-
 def _stamp_run_status(frames: list[ParsedResult], text: str) -> list[ParsedResult]:
     """Copy the ``.out``'s termination verdict onto every sidecar frame.
 

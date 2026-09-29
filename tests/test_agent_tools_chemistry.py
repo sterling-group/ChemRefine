@@ -669,7 +669,7 @@ def test_get_frequencies_serves_the_whole_table_from_the_cache(tmp_path: Path):
     table was persisted answers ``null`` rather than ``{}`` — nothing known, not "no modes"
     — and ``rebuild-cache`` fills it in.
     """
-    parsed = orca_coordinator.parse_text(_FREQ_OUT.read_text(encoding="utf-8"), "freq")[0]
+    parsed = orca_coordinator.parse_dft(_FREQ_OUT)[0]
     path = _cache_step(
         tmp_path,
         (
@@ -707,7 +707,7 @@ def test_list_structures_offers_the_ids_and_each_ones_modes(tmp_path: Path):
     no output files and no ORCA — which is exactly where naming a structure by guesswork
     became a request that could only fail.
     """
-    parsed = orca_coordinator.parse_text(_FREQ_OUT.read_text(encoding="utf-8"), "freq")[0]
+    parsed = orca_coordinator.parse_dft(_FREQ_OUT)[0]
     path = _cache_step(
         tmp_path,
         (

@@ -15,7 +15,6 @@ from chemrefine.engines.orca.output.coordinator import (
     parse_dft,
     parse_dft_from_text,
     parse_output,
-    parse_text,
 )
 
 __all__ = [
@@ -25,5 +24,4 @@ __all__ = [
     "parse_dft",
     "parse_dft_from_text",
     "parse_output",
-    "parse_text",
 ]
