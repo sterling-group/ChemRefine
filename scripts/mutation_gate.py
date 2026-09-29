@@ -538,11 +538,11 @@ _BUNDLED: tuple[Mutation, ...] = (
     Mutation(
         id="best-backfill-is-a-geometry",
         path="src/chemrefine/lifecycle.py",
-        old="    return replace(\n        submitted,\n        energy_hartree=None,",
-        new=(
-            "    return submitted\n    return replace(\n        submitted,\n"
-            "        energy_hartree=None,"
+        old=(
+            "    return Structure(id=submitted.id, atoms=submitted.atoms, "
+            "parent_id=submitted.parent_id)"
         ),
+        new="    return submitted",
         tests="tests/test_step.py",
         breaks="an `on_failure: best` backfill carries the previous step's energy into this "
         "step's filter and steps.csv — ranked and reported on a number this step never "

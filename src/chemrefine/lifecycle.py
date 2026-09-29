@@ -822,34 +822,27 @@ def _backfill_for(failure: Failure, prev_by_id: dict[str, Structure]) -> Structu
 
     The input is carried as a **geometry with its lineage and nothing else**. The
     structure the step was given is the previous step's result, energies and
-    thermochemistry included — and a backfill that kept them handed this step a number
-    it never computed: the previous level of theory's energy, ranked by this step's
-    filter against this step's energies and printed in ``steps.csv`` under this step.
-    The docs describe the backfill as "the input it was submitted with", and a submitted
-    input is a geometry; every field that only a calculation of *this* step could have
-    filled is left unfilled, exactly as a step-1 seed arrives. The best geometry obtained
-    is different: it was parsed from this step's own output and its values are this
-    step's.
+    thermochemistry included — and a backfill that kept them would hand this step a
+    number it never computed: the previous level of theory's energy, ranked by this
+    step's filter against this step's energies and printed in ``steps.csv`` under this
+    step. The docs describe the backfill as "the input it was submitted with", and a
+    submitted input is a geometry: the backfill is built as a step-1 seed is, from the
+    input's id, atoms and ``parent_id`` alone, and every other field takes the default
+    :class:`~chemrefine.state.Structure` declares for it, a field added later included.
+    The best geometry obtained is different: it was parsed from this step's own output
+    and its values are this step's.
+
+    Dropping every field this call does not name is the point. :func:`retry_unconverged`
+    can pass its structures whole because a retry runs again and its parse builds every
+    result afresh; nothing recomputes a backfill. A field declared without a default is a
+    type error here until this call names it.
     """
     if failure.best is not None:
         return failure.best
     submitted = prev_by_id.get(failure.sid)
     if submitted is None:
         return None
-    return replace(
-        submitted,
-        energy_hartree=None,
-        forces_ev_per_a=None,
-        converged=None,
-        terminated_normally=None,
-        gibbs_hartree=None,
-        enthalpy_hartree=None,
-        energy_zpe_hartree=None,
-        imaginary_freqs=None,
-        frequencies=None,
-        normal_modes=None,
-        resolved_from=None,
-    )
+    return Structure(id=submitted.id, atoms=submitted.atoms, parent_id=submitted.parent_id)
 
 
 def _in_parent_order(

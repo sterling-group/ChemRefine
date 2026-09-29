@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import fields
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from unittest.mock import patch
 
+import numpy as np
 import pytest
 from ase import Atoms
 from fake_engine import FakeEngine
@@ -397,25 +399,38 @@ def test_on_failure_best_backfills_the_submitted_input_as_a_geometry_alone(tmp_p
     """A step-N backfill of the submitted input carries no energy from step N-1.
 
     The structures a step is given are the previous step's results, energies and
-    thermochemistry included. Carried whole, a missing-output backfill handed this step
-    the previous level of theory's energy — ranked by this step's filter against this
-    step's energies, and printed in ``steps.csv`` under this step. The geometry and the
-    lineage are the input; every field only this step's calculation could fill stays
+    thermochemistry included. Carried whole, a missing-output backfill would hand this
+    step the previous level of theory's energy — ranked by this step's filter against
+    this step's energies, and printed in ``steps.csv`` under this step. The geometry and
+    the lineage are the input; every field only this step's calculation could fill stays
     unfilled. The best-obtained backfill is different: its values are this step's own.
+
+    Every field of ``Structure`` beside the id and the geometry is given a value here, in
+    ``lineage``, which the backfill carries, or in ``results``, which it leaves unfilled.
+    A field added to ``Structure`` fails the roster check until it is placed on one side,
+    and the backfill is then held to that side.
     """
     from chemrefine.engines.api import ENGINES
 
+    lineage: dict[str, Any] = {"parent_id": "seed"}
+    results: dict[str, Any] = {
+        "energy_hartree": -40.0,
+        "forces_ev_per_a": np.zeros((1, 3)),
+        "converged": True,
+        "terminated_normally": True,
+        "gibbs_hartree": -39.0,
+        "enthalpy_hartree": -39.5,
+        "energy_zpe_hartree": -39.9,
+        "imaginary_freqs": {6: -120.0},
+        "frequencies": {6: -120.0, 7: 900.0},
+        "normal_modes": np.zeros((1, 3, 8)),
+        "resolved_from": "2_m6_pos",
+    }
+    assert {"id", "atoms", *lineage, *results} == {f.name for f in fields(Structure)}, (
+        "place each Structure field in `lineage` (carried) or `results` (left unfilled)"
+    )
     given = tuple(
-        Structure(
-            id=i,
-            atoms=Atoms("H", positions=[[float(i), 0.0, 0.0]]),
-            parent_id="seed",
-            energy_hartree=-40.0 - int(i),
-            gibbs_hartree=-39.0 - int(i),
-            converged=True,
-            terminated_normally=True,
-            resolved_from=f"{i}_m6_pos",
-        )
+        Structure(id=i, atoms=Atoms("H", positions=[[float(i), 0.0, 0.0]]), **lineage, **results)
         for i in ["0", "1", "2"]
     )
     eng = _register_fail_engine()
@@ -427,14 +442,10 @@ def test_on_failure_best_backfills_the_submitted_input_as_a_geometry_alone(tmp_p
         assert set(by_id) == {"0", "1", "2"}
         backfilled = by_id["2"]
         assert backfilled.atoms.get_positions()[0] == pytest.approx([2.0, 0.0, 0.0])
-        assert backfilled.parent_id == "seed"
-        assert (
-            backfilled.energy_hartree,
-            backfilled.gibbs_hartree,
-            backfilled.converged,
-            backfilled.terminated_normally,
-            backfilled.resolved_from,
-        ) == (None, None, None, None, None), "the submitted input is a geometry, not a result"
+        lost = [name for name, sent in lineage.items() if getattr(backfilled, name) is not sent]
+        assert lost == [], f"the submitted input keeps its lineage: {lost}"
+        kept = [name for name in results if getattr(backfilled, name) is not None]
+        assert kept == [], f"the submitted input is a geometry, not a result: {kept}"
         # The best geometry obtained keeps this step's own parse.
         assert by_id["1"].energy_hartree == pytest.approx(-1.0 - 1e-3)
     finally:
