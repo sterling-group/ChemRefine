@@ -49,13 +49,15 @@ _TRAINER_RELEASES = {
     "mace_off": {size: f"{size}_off" for size in ("small", "medium", "large")},
     "mace_omol": {"extra_large": "mace_omol"},
 }
-"""How MACE's ``run_train`` names a released foundation model, where it differs from the name
-the family's loader takes.
+"""Each family's released foundation models, by the name its loader takes, spelled the way
+MACE's ``run_train`` reads them.
 
-``run_train`` reads a bare size as a Materials Project model, so MACE-OFF's are ``small_off``
-and so on, and MACE-OMOL's one release is ``mace_omol``. A Materials Project size, and
-anything else (a checkpoint's path, which ``run_train`` loads as a file), is read the same
-by both."""
+``run_train`` reads a bare name as a Materials Project model before anything else, so
+MACE-OFF's sizes are ``small_off`` and so on to it, and MACE-OMOL's one release is
+``mace_omol``. ``mace_mp`` is absent because ``run_train`` reads its names as its loader
+does. Under the families listed, any other bare name would reach ``run_train`` as a
+Materials Project model, so :meth:`MaceTrainer.foundation_name` refuses it; a checkpoint's
+path (:func:`_names_a_file`) is loaded as a file by the loaders and ``run_train`` alike."""
 
 LEGACY_MACE_TASK = "custom_mace"
 """A back-compat alias for MACE, kept only so configs written against v1 still resolve.
@@ -66,6 +68,17 @@ module's docstring. Configs naming this should say which MACE family they mean
 (:data:`FAMILIES`) instead; it is registered here on the MACE library so that saying nothing
 still works. MACE policy, so it lives in MACE's module — the shared registry houses no
 library's aliases."""
+
+
+def _names_a_file(model_name: str) -> bool:
+    """Whether ``model_name`` is spelled as a checkpoint file: with a directory or a suffix.
+
+    MACE's loaders and ``run_train`` load as a file whatever they do not recognise as a
+    release, and no release name carries either part, so the spelling is what tells a
+    checkpoint from a release.
+    """
+    path = Path(model_name)
+    return path.name != model_name or bool(path.suffix)
 
 
 @MACE.calculator(*FAMILIES, LEGACY_MACE_TASK)
@@ -175,11 +188,33 @@ class MaceTrainer(TrainerBase):
     def foundation_name(self, task_name: str, model_name: str) -> str:
         """``model_name`` in ``task_name``'s family, as ``run_train`` names it.
 
-        A bare ``small`` is MACE-MP-0 to ``run_train``, so a ``mace_off`` step fine-tuned
-        the Materials Project model while its runlog said it started from ``small``. See
-        :data:`_TRAINER_RELEASES`.
+        A release of ``mace_off`` or ``mace_omol`` is translated (:data:`_TRAINER_RELEASES`);
+        a ``mace_mp`` name and a checkpoint's path pass through, since ``run_train`` reads
+        them as the loaders do. Any other bare name is refused: ``run_train`` would read it
+        as a Materials Project model, and the step would fine-tune another family than the
+        one it names while its runlog recorded the name. :data:`LEGACY_MACE_TASK` names no
+        family, so a bare name under it is a release of none.
         """
-        return _TRAINER_RELEASES.get(task_name, {}).get(model_name, model_name)
+        if _names_a_file(model_name):
+            return model_name
+        if task_name == LEGACY_MACE_TASK:
+            raise ConfigError(
+                f"task_name={LEGACY_MACE_TASK!r} names no MACE family, so model_name="
+                f"{model_name!r} is a release of none. Name the family you mean "
+                f"({', '.join(FAMILIES)}), or give a checkpoint as `model_path`."
+            )
+        releases = _TRAINER_RELEASES.get(task_name)
+        if releases is None:
+            return model_name
+        if model_name not in releases:
+            raise ConfigError(
+                f"{task_name} has no release {model_name!r} (its releases: "
+                f"{', '.join(releases)}). MACE's trainer reads any other name as a Materials "
+                f"Project model, so the step would fine-tune that instead. Name one of the "
+                f"releases, a Materials Project model under `task_name: mace_mp`, or a "
+                f"checkpoint as `model_path`."
+            )
+        return releases[model_name]
 
     def write_split(self, plan: TrainingPlan, name: str, structures: tuple[Structure, ...]) -> Path:
         """One split as extxyz with MACE's own ``REF_*`` label keys.

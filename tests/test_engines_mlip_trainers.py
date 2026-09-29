@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import subprocess
 from pathlib import Path
 from typing import ClassVar
@@ -178,6 +179,27 @@ def test_a_mace_release_reaches_run_train_in_its_own_family(
     the same by the loader and by ``run_train``.
     """
     assert MaceTrainer().foundation_name(task, model_name) == spelled
+
+
+@pytest.mark.parametrize(
+    ("task", "model_name"),
+    [
+        ("mace_omol", "medium"),
+        ("mace_off", "medium-mpa-0"),
+        ("mace_off", "extra_large"),
+        ("custom_mace", "small"),
+    ],
+)
+def test_a_bare_name_that_is_no_release_of_the_family_is_refused(task: str, model_name: str):
+    """``run_train`` reads any other bare name as a Materials Project model.
+
+    A ``mace_omol`` step naming ``medium`` fine-tuned MACE-MP-0 medium while its runlog said
+    it started from ``medium``: MACE-OMOL's one release is ``extra_large``, and its loader
+    refuses ``medium`` when the same options run a model. The legacy alias names no family,
+    so a bare name under it is a release of none.
+    """
+    with pytest.raises(ConfigError, match=re.escape(repr(model_name))):
+        MaceTrainer().foundation_name(task, model_name)
 
 
 @pytest.mark.integration
@@ -1346,6 +1368,21 @@ def test_a_template_architecture_must_be_the_one_the_step_starts_from(monkeypatc
     monkeypatch.chdir(tmp_path)
     with pytest.raises(SystemExit, match="starts from 'orb_v3_conservative_inf_omat'"):
         OrbTrainer().run_training(_orb_config(base_model="orb_v2"))
+
+
+def test_a_template_may_name_the_steps_loader_by_any_of_orbs_spellings(monkeypatch, tmp_path: Path):
+    """orb registers a loader under its key, the key with underscores and its own name.
+
+    The step's default is the function's name; a template naming the same loader by orb's
+    registry key names the same model, and it trains rather than being refused as another.
+    """
+    from chemrefine.engines.mlip.backends.orb import OrbTrainer
+
+    recorded = _install_fake_orb_stack(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    for spelling in ("orb-v3-conservative-inf-omat", "orb_v3_conservative_inf_omat"):
+        assert OrbTrainer().run_training(_orb_config(base_model=spelling)) == 0
+    assert recorded["loader_fn"].call_count == 2
 
 
 def test_a_config_without_a_device_is_refused_not_guessed(monkeypatch, tmp_path: Path):

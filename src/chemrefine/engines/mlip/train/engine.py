@@ -173,15 +173,16 @@ class MlipTrainEngine(MlipBackend):
         """
         return trainer_for(self._opts(ctx).task_name)()
 
-    def _foundation(self, ctx: StepContext) -> str:
-        """The release this step starts from, as the step names it; empty for from scratch.
+    @staticmethod
+    def _foundation(opts: MlipTrainOptions) -> str:
+        """The release a step starts from, as the step names it; empty for from scratch.
 
         The step's ``model_name``, or, unset, its trainer's
         :attr:`~chemrefine.engines.mlip.train.base.TrainerBase.default_foundation`. Resolved
-        here once, so the plan the job runs and the sidecar the model is cited by cannot
-        name two different starts.
+        here once, so the plan the job runs, the sidecar the model is cited by and the t=0
+        check cannot name three different starts.
         """
-        return self._opts(ctx).model_name or self._trainer(ctx).default_foundation
+        return opts.model_name or trainer_for(opts.task_name).default_foundation
 
     def run_dir(self, ctx: StepContext) -> Path:
         """Where the run's files live: the training job's own directory under the step.
@@ -248,7 +249,7 @@ class MlipTrainEngine(MlipBackend):
             weights=Path(opts.model_path) if opts.model_path else None,
             foundation=(
                 trainer.foundation_name(opts.task_name, foundation)
-                if (foundation := self._foundation(ctx))
+                if (foundation := self._foundation(opts))
                 else None
             ),
             launcher=Path(_provision.launcher_for(self, ctx.step_cfg.options)),
@@ -290,6 +291,11 @@ class MlipTrainEngine(MlipBackend):
                 f"{step_cfg.on_failure}`, which has nothing to act on — a training step "
                 f"has no per-structure failures to skip or backfill. Remove it."
             )
+        if foundation := self._foundation(opts):
+            # The trainer's own reading of the release, made now rather than when the job
+            # is rendered: a name its library would take for another family's model is
+            # refused before the steps that compute the labels have run.
+            trainer_for(opts.task_name)().foundation_name(opts.task_name, foundation)
 
     def prepare(self, ctx: StepContext) -> StepInputs:
         """Write the dataset and render the trainer config; return the one job.
@@ -369,7 +375,7 @@ class MlipTrainEngine(MlipBackend):
             # A checkpoint by its file name, the cache key's rule for a path-valued option:
             # its bytes are what the key pins, and its directory names a machine.
             "started_from": (
-                Path(opts.model_path).name if opts.model_path else self._foundation(ctx) or None
+                Path(opts.model_path).name if opts.model_path else self._foundation(opts) or None
             ),
             "seed": opts.seed,
             "charge": ctx.charge,

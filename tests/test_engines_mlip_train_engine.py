@@ -195,6 +195,14 @@ def test_the_refusals_fire_at_the_runs_preflight_walk_not_thursday():
     with pytest.raises(ConfigError, match="invalid mliptrain options"):
         preflight_steps([typoed], charge=0, multiplicity=1)
 
+    another_family = StepConfig(
+        step=4,
+        engine="mlip-train",
+        options={"task_name": "mace_omol", "model_name": "medium", "device": "cpu"},
+    )
+    with pytest.raises(ConfigError, match="mace_omol has no release 'medium'"):
+        preflight_steps([another_family], charge=0, multiplicity=1)
+
 
 # ---------------------------------------------------------------------------
 # prepare

@@ -38,9 +38,10 @@ class MlipOptions(EngineOptions):
     )
     """The model *weights* for the chosen backend, in that library's own spelling.
 
-    A MACE size (``small``/``medium``/``large``), a FAIRChem checkpoint
-    (``uma-s-1p2``/``uma-s-1p1``/``esen-…``), a SevenNet id (``7net-0``), an ORB
-    loader (``orb_v3_…``). YAML aliases: ``model``, ``size``.
+    A MACE family's release (``small``/``medium``/``large``; ``extra_large`` for
+    ``mace_omol``), a FAIRChem checkpoint (``uma-s-1p2``/``uma-s-1p1``/``esen-…``), a
+    SevenNet id (``7net-0``), an ORB loader (``orb_v3_…``). YAML aliases: ``model``,
+    ``size``.
 
     Unset means **the chosen library's own default** — FAIRChem's builder fills in
     ``uma-s-1p2``, MACE's and SevenNet's loaders theirs — because a default spelled

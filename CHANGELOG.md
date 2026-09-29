@@ -472,6 +472,20 @@ for the full map.
 
 ### Fixed
 
+- **A MACE fine-tune starts from the family its step names, or is refused before the run.**
+  MACE's `run_train` reads any bare name it does not know as a Materials Project model, so
+  a `mace_omol` step naming `medium` — MACE-OMOL's one release is `extra_large` —
+  fine-tuned MACE-MP-0 medium while its runlog and `trained_model.json` said it started
+  from `medium`; `mace_off` with a Materials Project name did the same. A `mace_off` or
+  `mace_omol` training step now names one of its family's releases or a checkpoint path,
+  and anything else is refused when the run starts (and by `chemrefine validate`), naming
+  the releases. Under the legacy `custom_mace` alias a bare name is refused the same way:
+  it names no family.
+- **An ORB template may name its step's loader in any of orb's spellings.** orb-models
+  registers one loader under its key, the key with underscores, and the function's own
+  name, and a step resolves all three, but the training job compared a template's
+  `base_model` with the step's loader as written. A template naming the default loader by
+  its registry key was refused as another model once the labelling steps had run.
 - **An ORB model is found by the name orb-models registers it under.** A step named its
   loader by function name only, so the names orb-models documents for its aliases
   (`orbmol_v1_direct`, `orbmol_v1_conservative`) were unknown models. A `model_name` now
