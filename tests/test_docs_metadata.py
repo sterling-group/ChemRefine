@@ -17,9 +17,8 @@ the range ends, and the ceiling is the half that goes stale. ``requires-python``
 checked against the lowest classifier instead, so the two cannot drift from each other
 either.
 
-Skipping is **per file**, not module-wide: the sdist ships ``/README.md`` and
-``/pyproject.toml`` but deliberately not ``/docs``, so a distro packager's run must still
-check the README rather than skip the whole module the way ``test_docs_drift`` does.
+Nothing here skips: ``README.md`` and ``pyproject.toml`` ship wherever this suite does, so
+a missing one is the packaging regression ``test_docs_xrefs`` names, and fails.
 """
 
 from __future__ import annotations
@@ -50,10 +49,6 @@ _EN_DASH = "\N{EN DASH}"
 the wrong dash would pass while checking nothing."""
 
 _RANGE_RE = re.compile(r"Python[^\n]{0,4}\*{0,2}\s*(3\.\d+" + _EN_DASH + r"3\.\d+)")
-
-pytestmark = pytest.mark.skipif(
-    not _PYPROJECT.is_file(), reason="pyproject.toml is the source of truth and is absent"
-)
 
 
 def _supported() -> list[tuple[int, int]]:
@@ -111,10 +106,7 @@ def test_the_documented_python_range_matches_the_package(relative: str):
     says it differently — a sentence in the README, a bolded bullet in the install guide
     — and what has to hold is the numbers, not the phrasing around them.
     """
-    path = _REPO_ROOT / relative
-    if not path.is_file():
-        pytest.skip(f"{relative} is a repository artifact and does not ship in the sdist")
-    text = path.read_text(encoding="utf-8")
+    text = (_REPO_ROOT / relative).read_text(encoding="utf-8")
     wanted = _documented_range()
     stated = _RANGE_RE.findall(text)
     assert stated, f"{relative} states no Python range; it used to, and the guard needs one"

@@ -41,14 +41,9 @@ _CONFIG_PAGE = _DOCS / "workflow" / "configuration.md"
 _ENGINE_PAGES = _DOCS / "engines"
 _ENGINES_PAGE = _ENGINE_PAGES / "index.md"
 
-# A guard on the repository's prose, not on the package: the sdist ships the suite so a
-# distro packager can run it, but `docs/` (14 MB of site assets) deliberately does not
-# ship — so with no page to check, the guard has nothing to say. In the repo the file
-# always exists and the guard always runs.
-pytestmark = pytest.mark.skipif(
-    not _CONFIG_PAGE.is_file(),
-    reason="docs/ is a repository artifact and does not ship in the sdist",
-)
+# `docs/` ships wherever this suite does — the repository, the sdist (pyproject's include
+# list) and the mutation gate's scratch copy — so a missing page fails these tests rather
+# than standing them down: its absence is the packaging regression `test_docs_xrefs` names.
 
 
 class _Documented(NamedTuple):

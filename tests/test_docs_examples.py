@@ -104,8 +104,6 @@ def _engine_guide_python() -> list[str]:
     the file you create rather than one that exists — so it is not held to compiling. Every
     other fence is the worked engine, which is copied verbatim by whoever writes the next one.
     """
-    if not _ENGINE_GUIDE.is_file():  # pragma: no cover - docs/ is absent from the sdist
-        pytest.skip("docs/ not shipped in this tree")
     fences = _PY_FENCE_RE.findall(_ENGINE_GUIDE.read_text(encoding="utf-8"))
     return [f for f in fences if "<name>" not in f]
 

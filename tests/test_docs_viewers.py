@@ -12,8 +12,8 @@ file. What it cannot see is the failure that put those six panes on the site in 
 place: a viewer that is *emitted* perfectly and simply has no molecule in it. That is what
 these tests are, along with the caption's numbers agreeing with the file they describe.
 
-``docs/`` ships in the repository but not in the sdist, so every test skips rather than
-fails when the directory is absent — the same rule as ``test_docs_tables``.
+``docs/`` and ``examples/`` ship wherever this suite does, so a missing file fails these
+tests rather than skipping them — the packaging regression ``test_docs_xrefs`` names.
 """
 
 from __future__ import annotations
@@ -31,10 +31,6 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _HOOK = _REPO_ROOT / "docs" / "hooks" / "viewers.py"
 _MODES = _REPO_ROOT / "docs" / "tutorials" / "modes"
 _DOCS = _REPO_ROOT / "docs"
-
-pytestmark = pytest.mark.skipif(
-    not _HOOK.is_file(), reason="docs/ is a repository artifact and does not ship in the sdist"
-)
 
 
 def _hook() -> Any:
@@ -170,8 +166,6 @@ def test_the_good_mode_is_drawn_on_the_geometry_the_tutorial_ships():
     both files open would ever catch.
     """
     example = _REPO_ROOT / "examples" / "tutorials" / "transition_state" / "step1.xyz"
-    if not example.is_file():
-        pytest.skip("examples/ is absent")
     shipped = [
         line.split()[:4]
         for line in example.read_text(encoding="utf-8").splitlines()[2:]

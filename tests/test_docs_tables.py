@@ -13,8 +13,8 @@ still has to be authored by hand — no saving, and a worse page. What the code 
 is the set of codes, which is exactly what went stale (``RunLockError``'s ``10`` was
 missing from two pages until ``4390ebf``), so that is what is checked here.
 
-``docs/`` ships in the repository but not in the sdist, so every test skips rather than
-fails when the directory is absent — the same rule as ``test_docs_drift``.
+``docs/`` ships wherever this suite does, so a missing page fails these tests rather than
+skipping them — the packaging regression ``test_docs_xrefs`` names.
 """
 
 from __future__ import annotations
@@ -38,10 +38,6 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _HOOK = _REPO_ROOT / "docs" / "hooks" / "tables.py"
 _RUN_FAILS = _REPO_ROOT / "docs" / "running" / "when-a-run-fails.md"
 _AGENTS = _REPO_ROOT / "docs" / "workflow" / "agents.md"
-
-pytestmark = pytest.mark.skipif(
-    not _HOOK.is_file(), reason="docs/ is a repository artifact and does not ship in the sdist"
-)
 
 
 def _hook() -> Any:
@@ -175,7 +171,6 @@ def test_a_directive_inside_prose_is_left_alone():
     assert _hook().on_page_markdown(prose) == prose
 
 
-@pytest.mark.skipif(not _RUN_FAILS.is_file(), reason="docs/ does not ship in the sdist")
 def test_every_exit_code_is_documented():
     """The hand-written table's one machine-checkable claim: that it covers every code.
 
@@ -192,7 +187,6 @@ def test_every_exit_code_is_documented():
     )
 
 
-@pytest.mark.skipif(not _AGENTS.is_file(), reason="docs/ does not ship in the sdist")
 def test_the_confirmation_gate_names_every_mutating_tool_and_no_others():
     """Guarded, not generated — the roster is a clause inside a sentence that teaches.
 

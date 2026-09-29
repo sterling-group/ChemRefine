@@ -36,25 +36,13 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import pytest
-
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _MKDOCS = _REPO_ROOT / "mkdocs.yml"
 _DOCS = _REPO_ROOT / "docs"
 
-# The sibling docs guards say this with `pytestmark = pytest.mark.skipif(...)`, and for them
-# that is enough: they only touch `docs/` from inside a test body. This module cannot — every
-# constant below is a function of `mkdocs.yml`, read while the module is still importing, and
-# a mark is not consulted until after the import it is written in has finished. So in the
-# unpacked sdist, where `mkdocs.yml` deliberately does not ship, the read raised first and the
-# skip never got a turn: one FileNotFoundError, collection interrupted, the whole suite red on
-# a guard that had already decided it had nothing to check. A module-level skip is the form
-# that runs early enough to keep that promise.
-if not _MKDOCS.is_file():
-    pytest.skip(
-        "mkdocs.yml declares the canonical URLs and does not ship in the sdist",
-        allow_module_level=True,
-    )
+# Every constant below is a function of `mkdocs.yml`, read while the module imports. It ships
+# wherever this suite does — the repository, the sdist, the mutation gate's scratch copy — so a
+# tree without it fails here, at collection: the packaging regression `test_docs_xrefs` names.
 
 
 def _declared(key: str) -> str:
@@ -181,9 +169,6 @@ def test_every_self_referential_url_resolves_to_something_in_the_tree():
     ``--strict`` validates the inside of a *relative* link only, so it walks straight past
     every absolute one — which is the only form the dual-context files can use.
     """
-    if not _DOCS.is_dir():
-        pytest.skip("docs/ is a repository artifact and does not ship in the sdist")
-
     found, missing = 0, []
     for path, text in _iter_text():
         for m in _SELF_RE.finditer(text):
