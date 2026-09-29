@@ -108,7 +108,12 @@ def test_the_imaginary_modes_are_a_subset_of_the_table():
     subset. If a mode could be in the subset and not the table, it would be reported as
     imaginary with no frequency — the null it was changed to stop returning.
     """
-    for block in (_SYNTH_BLOCK, _TS_BLOCK):
+    # And by construction, not by layout: a rotation ORCA printed imaginary — a geometry
+    # short of a stationary point — sits inside the window the table otherwise skips.
+    rotation = _TS_BLOCK.replace(
+        "     5:       0.00 cm**-1", "     5:     -35.10 cm**-1  ***imaginary mode***"
+    )
+    for block in (_SYNTH_BLOCK, _TS_BLOCK, rotation):
         assert parse_imaginary_frequencies_from_text(block).items() <= (
             parse_mode_table_from_text(block).items()
         )

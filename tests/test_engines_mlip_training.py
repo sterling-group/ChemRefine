@@ -576,6 +576,7 @@ def test_a_molecular_dataset_is_boxed_exactly_when_the_library_is_periodic_only(
         assert all(new.atoms.cell.rank == 3 and new.atoms.pbc.all() for _, new in pairs)
         assert all(old.atoms.cell.rank == 0 for old, _ in pairs), "the split was not moved"
         assert f"{len(pairs)} structure(s) with no cell" in caplog.text
+        assert caplog.text.count("structure(s) with no cell") == 1, "said once"
         assert library.periodic_reason in caplog.text
     else:
         assert all(new is old for old, new in pairs)
@@ -647,10 +648,12 @@ def test_no_trainer_mutates_the_pipelines_structures(tmp_path: Path, task: str):
     downstream cache keys.
     """
     structures = [_labelled(str(i)) for i in range(8)]
+    positions = [struct.atoms.get_positions().copy() for struct in structures]
     split = split_structures(structures, valid_fraction=0.25, test_fraction=0.125, seed=1)
     trainer = trainer_for(task)()
     trainer.write_dataset(_plan(tmp_path), split)
-    for struct in structures:
+    for struct, before in zip(structures, positions, strict=True):
+        assert np.array_equal(struct.atoms.get_positions(), before), f"{task}: moved in place"
         assert struct.atoms.calc is None
         assert not struct.atoms.info, f"{task}: the seed's info dict gained training keys"
         assert struct.forces_ev_per_a is not None and not struct.forces_ev_per_a.flags.writeable

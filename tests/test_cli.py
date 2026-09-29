@@ -397,7 +397,8 @@ def test_rebuild_nms_on_a_config_with_no_nms_step_says_so(tmp_path: Path):
 
     result = runner.invoke(app, ["rebuild-nms", str(config_path)])
 
-    assert result.exit_code == ChemRefineError.exit_code, "the typed code, not a traceback's 1"
+    assert result.exit_code == ChemRefineError.exit_code
+    assert isinstance(result.exception, SystemExit), f"a typed refusal, not {result.exception!r}"
     assert not list((tmp_path / "outputs").glob("*/*/attempt*")), (
         "and it refused before touching anything — no step was redone"
     )

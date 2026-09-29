@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import inspect
 import json
 import math
 import re
@@ -50,8 +51,7 @@ from test_engines_orca_corpus import CYCLE_LIMIT_RE
 
 from chemrefine import cache, filtering, ids, pipeline
 from chemrefine.config import BoltzmannSample, Config, StepConfig, load_config
-from chemrefine.engines.api import ArtifactEngine, get_engine
-from chemrefine.engines.mlip.registry import VACUUM_PADDING_ANGSTROM
+from chemrefine.engines.api import NULL_SINK, ArtifactEngine, get_engine
 from chemrefine.engines.mlip.train.engine import SIDECAR_NAME
 from chemrefine.engines.orca.output import parse_output
 from chemrefine.errors import ChemRefineError
@@ -263,6 +263,22 @@ def test_every_engine_library_and_trainer_runs_live_in_some_case() -> None:
     uncovered, stale = gaps(_required(), _covered(), NOT_LIVE)
     assert not uncovered, f"no live case covers {uncovered}: add one, or excuse it in NOT_LIVE"
     assert not stale, f"NOT_LIVE excuses {stale}, which a case covers or nothing registers"
+
+
+def test_the_submission_guard_takes_run_batchs_own_arguments() -> None:
+    """A stray submission is reported as one, whichever way the engine submits it.
+
+    Job engines call ``run_batch(..., sink=sink)``; a guard without the keyword reported a
+    cache-only run's submission as a ``TypeError`` about itself.
+    """
+    from chemrefine.engines import _execution
+
+    assert list(inspect.signature(forbid_run_batch).parameters) == list(
+        inspect.signature(_execution.run_batch).parameters
+    )
+    inputs = StepInputs(files=((Path("0.inp"), Path("0.out"), "0"),))
+    with pytest.raises(AssertionError, match=r"unexpected submission of \['0'\]"):
+        forbid_run_batch(object(), inputs, cast(StepContext, None), sink=NULL_SINK)
 
 
 def test_an_exclusion_nothing_needs_is_stale() -> None:
@@ -1109,9 +1125,8 @@ def _mlip_train(run: Replayed) -> None:
                     f"{task}/{sid}: minus ORCA's gradient, in eV/Å"
                 )
                 if task == "chgnet":
-                    side = (
-                        float(np.ptp(frame.positions, axis=0).max()) + 2 * VACUUM_PADDING_ANGSTROM
-                    )
+                    # 10 Å each side, as the docs promise: past CHGNet's 6 Å atom graph.
+                    side = float(np.ptp(frame.positions, axis=0).max()) + 2 * 10.0
                     assert frame.pbc.all() and np.allclose(frame.cell.array, np.eye(3) * side), (
                         f"{sid}: fitted in a cubic vacuum box"
                     )

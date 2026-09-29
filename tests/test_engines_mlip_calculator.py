@@ -23,7 +23,6 @@ from ase.calculators.calculator import Calculator, CalculatorSetupError, all_cha
 
 from chemrefine.engines.mlip.calculator import MlipCalculator, build_calculator
 from chemrefine.engines.mlip.registry import (
-    VACUUM_PADDING_ANGSTROM,
     MlipLibrary,
     backend_spec,
     registered_backends,
@@ -821,7 +820,9 @@ def test_a_box_leaves_the_padding_on_every_side_and_the_caller_untouched():
     box = _BOXING.boxed(atoms)
 
     assert box is not atoms and atoms.cell.rank == 0
-    side = 0.74 + 2 * VACUUM_PADDING_ANGSTROM
+    # 10 Å each side, as the docs promise: past CHGNet's 6 Å atom graph, so no periodic
+    # image of the molecule enters a neighbour list.
+    side = 0.74 + 2 * 10.0
     np.testing.assert_allclose(box.cell.lengths(), [side] * 3)
     np.testing.assert_allclose(box.positions.mean(axis=0), [side / 2] * 3)
     assert box.pbc.all()

@@ -413,8 +413,18 @@ def _stub_artifact(engine: object, ctx: StepContext) -> None:
         product.write_bytes(ARTIFACT_STUB)
 
 
-def forbid_run_batch(engine: object, inputs: StepInputs, ctx: StepContext) -> JobBatch:
-    """A ``run_batch`` stand-in that fails the test on any submission."""
+def forbid_run_batch(
+    engine: object,
+    inputs: StepInputs,
+    ctx: StepContext,
+    *,
+    sink: CompletionSink | None = None,
+) -> JobBatch:
+    """A ``run_batch`` stand-in that fails the test on any submission.
+
+    Its signature is ``run_batch``'s, ``sink`` included: a job engine submits with ``sink=``,
+    and a stand-in without it failed as a ``TypeError`` rather than saying what happened.
+    """
     ids = [sid for _inp, _out, sid in inputs.files]
     raise AssertionError(f"unexpected submission of {ids} — this run must be cache-only")
 

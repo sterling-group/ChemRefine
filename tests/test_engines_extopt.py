@@ -321,9 +321,7 @@ def test_write_server_url_cleans_up_temp_on_failure(tmp_path: Path):
     target = tmp_path / "server.url"
     with patch("os.replace", side_effect=OSError("denied")), pytest.raises(OSError):
         sidecar.write_server_url(target, "x:1")
-    # Ensure no tempfiles linger
-    leftovers = [p for p in tmp_path.iterdir() if p.name.startswith(".url.")]
-    assert leftovers == []
+    assert list(tmp_path.iterdir()) == [], "no temp file lingers, and no half-written URL"
 
 
 def test_write_and_read_server_token_round_trip(tmp_path: Path):

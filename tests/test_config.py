@@ -239,15 +239,23 @@ def test_a_negative_nms_seed_is_refused_at_the_boundary():
 
 
 @pytest.mark.parametrize(
-    ("build", "value"),
+    ("build", "value", "field"),
     [
-        (lambda v: NmsKnobs(displacement_value=v), float("inf")),
-        (lambda v: NmsKnobs(displacement_value=v), float("nan")),
-        (lambda v: NmsKnobs(displacement_value=v), 0.0),
-        (lambda v: NmsKnobs(displacement_value=v), -1.0),
-        (lambda v: MinSample(method="min", window_kcalmol=v), float("inf")),
-        (lambda v: BoltzmannSample(method="boltzmann", temperature_k=v), float("inf")),
-        (lambda v: Config(**_minimal_config(job_timeout_seconds=v)), float("inf")),
+        (lambda v: NmsKnobs(displacement_value=v), float("inf"), "displacement_value"),
+        (lambda v: NmsKnobs(displacement_value=v), float("nan"), "displacement_value"),
+        (lambda v: NmsKnobs(displacement_value=v), 0.0, "displacement_value"),
+        (lambda v: NmsKnobs(displacement_value=v), -1.0, "displacement_value"),
+        (lambda v: MinSample(method="min", window_kcalmol=v), float("inf"), "window_kcalmol"),
+        (
+            lambda v: BoltzmannSample(method="boltzmann", temperature_k=v),
+            float("inf"),
+            "temperature_k",
+        ),
+        (
+            lambda v: Config(**_minimal_config(job_timeout_seconds=v)),
+            float("inf"),
+            "job_timeout_seconds",
+        ),
     ],
     ids=[
         "displacement-inf",
@@ -259,15 +267,17 @@ def test_a_negative_nms_seed_is_refused_at_the_boundary():
         "job-timeout-inf",
     ],
 )
-def test_a_float_knob_refuses_non_finite_and_degenerate_values(build, value):
+def test_a_float_knob_refuses_non_finite_and_degenerate_values(build, value, field: str):
     """`gt=0` refuses NaN (the comparison is false) but admits `+inf`; YAML spells both.
 
     Each of these once passed validation and failed somewhere a person cannot act on it:
     a non-finite displacement inside every round-2 child geometry, a zero displacement as a
     batch of children identical to their parents. The config boundary is the one place that
-    can refuse the value by the name of the field that carries it.
+    can refuse the value by the name of the field that carries it — the field's own
+    constraint, which the match holds: models forbid extra keys, so a renamed field would
+    raise too, as "Extra inputs are not permitted" under the old name.
     """
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match=rf"{field}\n\s+Input should be"):
         build(value)
 
 

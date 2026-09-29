@@ -1419,8 +1419,19 @@ def test_wait_for_jobs_times_out_when_a_deadline_is_set():
 
 
 def test_wait_for_jobs_returns_when_all_drain():
-    """No deadline configured (the default) keeps the old wait-forever behaviour."""
-    slurm.wait_for_jobs(["1", "2"], poll_interval=0.01, poll=_all_done)
+    """No deadline configured (the default) keeps the old wait-forever behaviour.
+
+    The queue drains on the second poll, so the loop sits through one that finishes
+    nothing, with no deadline to trip.
+    """
+    asked: list[frozenset[str]] = []
+
+    def poll(ids: Collection[str]) -> slurm.QueueState:
+        asked.append(frozenset(ids))
+        return _all_done(ids) if len(asked) > 1 else _stuck_at(*ids)(ids)
+
+    slurm.wait_for_jobs(["1", "2"], poll_interval=0.01, poll=poll)
+    assert asked == [frozenset({"1", "2"})] * 2
 
 
 def test_wait_for_jobs_deadline_bounds_the_stall_not_the_whole_drain():

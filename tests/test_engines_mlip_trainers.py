@@ -155,8 +155,8 @@ def test_the_dataset_uses_maces_own_label_keys(tmp_path: Path):
     data = MaceTrainer().write_dataset(plan, split)
 
     text = data.train.read_text(encoding="utf-8")
-    assert f"{ENERGY_KEY}=" in text
-    assert FORCES_KEY in text
+    assert "REF_energy=" in text
+    assert "REF_forces" in text
 
 
 @pytest.mark.parametrize(
@@ -1310,7 +1310,20 @@ def test_the_orb_hook_trains_a_stress_carrying_model_with_stress_off(
     from chemrefine.engines.mlip.backends.orb import OrbTrainer
 
     recorded = _install_fake_orb_stack(monkeypatch)
-    recorded["model"].has_stress = True
+    model = recorded["model"]
+    model.has_stress = True
+    # orb-models' own behaviour: the two switches set `has_stress`, and `loss` reads the
+    # stress target while it is on — a target molecular batches do not carry.
+    model.disable_stress.side_effect = lambda: setattr(model, "has_stress", False)
+    model.enable_stress.side_effect = lambda: setattr(model, "has_stress", True)
+    trained = model.loss.return_value
+
+    def loss(batch):
+        if model.has_stress:
+            raise KeyError("stress")
+        return trained
+
+    model.loss.side_effect = loss
     monkeypatch.chdir(tmp_path)
     with caplog.at_level(logging.WARNING, logger="chemrefine.engines.mlip.backends.orb"):
         assert OrbTrainer().run_training(_orb_config()) == 0

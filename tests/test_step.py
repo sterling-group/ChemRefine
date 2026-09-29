@@ -2456,6 +2456,8 @@ def test_a_scheduled_engine_that_reads_no_template_is_not_asked_for_one(
     """
     from chemrefine import step as step_module
 
+    asked: list[str] = []
+
     class Templateless:
         """Satisfies the scheduler's protocol and declares no template."""
 
@@ -2470,6 +2472,7 @@ def test_a_scheduled_engine_that_reads_no_template_is_not_asked_for_one(
             return 1
 
         def slurm_layout(self, ctx):
+            asked.append("slurm_layout")
             return (1, 1)
 
         def single_node(self, ctx):
@@ -2479,7 +2482,8 @@ def test_a_scheduled_engine_that_reads_no_template_is_not_asked_for_one(
             return 0
 
         def memory_mb(self, ctx):
-            return None
+            asked.append("memory_mb")
+            return
 
         def output_dirs(self, ctx):
             return ()
@@ -2492,3 +2496,4 @@ def test_a_scheduled_engine_that_reads_no_template_is_not_asked_for_one(
     step_module.preflight_batches(
         _config(tmp_path), [StepConfig(step=2, engine="fake")], local=True
     )
+    assert {"slurm_layout", "memory_mb"} <= set(asked), "its batch was planned"

@@ -421,17 +421,28 @@ def test_run_batch_raises_when_jobs_outlive_the_configured_timeout(
         _execution.run_batch(engine, inputs, ctx)
 
 
-@patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
-@patch.object(slurm, "submit", side_effect=lambda *a, **k: "1001")
-def test_run_batch_waits_indefinitely_when_no_timeout_is_configured(
-    _submit, _finished, tmp_path: Path
-):
-    """`None` is the default and must preserve the old behaviour exactly."""
+def test_run_batch_waits_indefinitely_when_no_timeout_is_configured(tmp_path: Path):
+    """`None` is the default and waits for as long as the job takes, with no deadline.
+
+    The job finishes on the second poll, so the run has to sit through an empty one: a
+    `None` read as a zero-second budget raises there.
+    """
     engine = _FakeJobEngine()
     ctx = _ctx(tmp_path)
     assert ctx.job_timeout_seconds is None
+    polls: list[set[str]] = []
 
-    assert _execution.run_batch(engine, engine.prepare(ctx), ctx).jobs
+    def finished(ids, **_):
+        polls.append(set(ids))
+        return set(ids) if len(polls) > 1 else set()
+
+    with (
+        patch.object(slurm, "submit", side_effect=lambda *a, **k: "1001"),
+        patch.object(slurm, "finished_jobs", side_effect=finished),
+        patch("chemrefine.throttle.time.sleep"),
+    ):
+        assert _execution.run_batch(engine, engine.prepare(ctx), ctx).jobs
+    assert len(polls) >= 2, "it waited through a poll that finished nothing"
 
 
 # ---------------------------------------------------------------------------
