@@ -373,6 +373,16 @@ class TrainerBase(ABC):
         """
         return model_name
 
+    def check_template(self, plan: TrainingPlan, identifiers: frozenset[str]) -> None:
+        """Refuse a template whose placeholders cannot carry this plan; none by default.
+
+        :attr:`required_placeholders` is what every run of this library needs. A rule that
+        depends on the plan — which placeholder can carry a checkpoint as well as a release —
+        is the trainer's to state here, and :func:`render_config` asks it, with the
+        placeholders the template references, before the config is written.
+        """
+        return
+
     # -- the machinery: written once, driven by the declarations -----------------------
 
     def write_dataset(self, plan: TrainingPlan, split: DatasetSplit) -> DatasetFiles:
@@ -655,6 +665,7 @@ def render_config(
     *,
     required: frozenset[str],
     dest: Path,
+    check: Callable[[frozenset[str]], None] | None = None,
 ) -> Path:
     """Substitute ``placeholders`` into the trainer template; write it to ``dest``.
 
@@ -665,11 +676,14 @@ def render_config(
 
     A template that references none of ``required`` is refused **here**, before the step
     submits anything, rather than an hour later inside a library complaining about a path the
-    user never wrote. The message names the placeholder to add.
+    user never wrote. The message names the placeholder to add. ``check`` then receives the
+    placeholders the template references, for a rule that depends on the run rather than
+    the library (:meth:`TrainerBase.check_template`).
     """
     source = ids.require_template(template, label="MLIP training")
     text = io.read_utf8(source, what="MLIP training template")
-    missing = required - set(Template(text).get_identifiers())
+    identifiers = frozenset(Template(text).get_identifiers())
+    missing = required - identifiers
     if missing:
         wanted = ", ".join(f"${name}" for name in sorted(missing))
         raise ConfigError(
@@ -677,6 +691,8 @@ def render_config(
             f"config would not point at the dataset chemrefine writes for it. Add it where "
             f"your trainer expects the dataset — e.g. `train_file: $TRAIN_SET`."
         )
+    if check is not None:
+        check(identifiers)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(Template(text).safe_substitute(placeholders), encoding="utf-8")
     return dest

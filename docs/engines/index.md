@@ -237,8 +237,10 @@ submits:
   [MLIP training tutorial](../tutorials/mlip_training.md) walks a complete one.
 - **FAIRChem** — fairchem's hydra config per the note above; requires `$TRAIN_SET`,
   `$VAL_SET`, `$RUN_DIR`, `$RUN_NAME`, `device_type: $DEVICE`, the `seed: $SEED` keys the
-  shipped example threads through `job` and the dataset stanzas, and `$FOUNDATION_MODEL`
-  as `starting_checkpoint`'s `model_name`.
+  shipped example threads through `job` and the dataset stanzas, and the start as
+  `starting_checkpoint: $STARTING_CHECKPOINT`, which renders FAIRChem's name lookup for a
+  release and the checkpoint itself for `model_path`. `$FOUNDATION_MODEL` as the lookup's
+  `model_name` carries a release start only; with `model_path` set it is refused.
 - **SevenNet** — SevenNet's own `input.yaml` (start from `sevenn preset fine_tune >
   step{N}.yaml`), with `$TRAIN_SET` in `data.load_trainset_path` and `device: $DEVICE`
   (absent, SevenNet takes cuda whenever torch sees one — the step's own device must win);

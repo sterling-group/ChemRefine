@@ -472,6 +472,13 @@ for the full map.
 
 ### Fixed
 
+- **A FAIRChem fine-tune can continue from a local checkpoint.** A training step with
+  `model_path` rendered the checkpoint's path into FAIRChem's release-name lookup, so the
+  job died with `KeyError: Model '…' not found` once the steps that labelled its data had
+  run. A FAIRChem template now takes its start as `starting_checkpoint:
+  $STARTING_CHECKPOINT`, which renders the name lookup for a release and the checkpoint
+  itself for `model_path`. `$FOUNDATION_MODEL` inside the lookup still carries a release
+  start, and a `model_path` start through it is refused before the job is submitted.
 - **A MACE fine-tune starts from the family its step names, or is refused before the run.**
   MACE's `run_train` reads any bare name it does not know as a Materials Project model, so
   a `mace_omol` step naming `medium` — MACE-OMOL's one release is `extra_large` —
@@ -499,9 +506,9 @@ for the full map.
   failed. ORB's trainer refused the step. Each trainer now declares where an unset
   `model_name` starts, the release its builder runs unset or from scratch, and the plan
   names it, so the argv, the runlog and `trained_model.json` agree. The backend table in
-  the docs lists each library's start. A FAIRChem template must reference
-  `$FOUNDATION_MODEL`: one naming its checkpoint literally fine-tuned that checkpoint
-  while both records named the step's.
+  the docs lists each library's start. A FAIRChem template must take its start from a
+  placeholder, `$STARTING_CHECKPOINT` or `$FOUNDATION_MODEL`: one naming its checkpoint
+  literally fine-tuned that checkpoint while both records named the step's.
 - **`Config.with_overrides` takes any field.** Overriding a field that declares no
   constraint, such as `template_dir`, raised a bare `TypeError` instead of copying the
   value in. Every field is now validated by its own declaration, and the copy carries the

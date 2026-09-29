@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 import numpy as np
 import pytest
+import yaml
 from ase import Atoms
 
 from chemrefine.config import StepConfig
@@ -486,6 +487,56 @@ def test_a_config_trained_trainer_renders_the_default_release(tmp_path: Path):
     rendered = MlipTrainEngine().prepare(ctx).files[0][0].read_text(encoding="utf-8")
 
     assert "starting_checkpoint: {model_name: uma-s-1p2}" in rendered
+
+
+@pytest.mark.parametrize(
+    ("options", "start"),
+    [
+        (
+            {"model_name": ""},
+            {
+                "_target_": (
+                    "fairchem.core.calculate.pretrained_mlip.pretrained_checkpoint_path_from_name"
+                ),
+                "model_name": "uma-s-1p2",
+            },
+        ),
+        (
+            {"model_name": "", "model_path": "/prev/checkpoints/final/inference_ckpt.pt"},
+            "/prev/checkpoints/final/inference_ckpt.pt",
+        ),
+    ],
+    ids=["release", "checkpoint"],
+)
+def test_a_fairchem_start_renders_in_the_shape_its_config_reads(
+    tmp_path: Path, options: dict[str, str], start: object
+):
+    """A release goes through FAIRChem's name lookup; a ``model_path`` checkpoint as itself.
+
+    Through ``$FOUNDATION_MODEL`` alone, a ``model_path`` start reached the lookup as a path
+    and the job died with ``KeyError: Model '/…/inference_ckpt.pt' not found``, after every
+    step that labelled its data had run.
+    """
+    template = _FAIRCHEM_TEMPLATE.replace(
+        "starting_checkpoint: {model_name: $FOUNDATION_MODEL}",
+        "starting_checkpoint: $STARTING_CHECKPOINT",
+    )
+    ctx = _ctx(tmp_path, template=template, task_name="omol", **options)
+    rendered = MlipTrainEngine().prepare(ctx).files[0][0].read_text(encoding="utf-8")
+    assert yaml.safe_load(rendered)["starting_checkpoint"] == start
+
+
+def test_a_fairchem_checkpoint_start_cannot_go_through_the_release_name(tmp_path: Path):
+    """``$FOUNDATION_MODEL`` is the name lookup's argument, which a checkpoint path is not."""
+    ctx = _ctx(
+        tmp_path,
+        template=_FAIRCHEM_TEMPLATE,
+        task_name="omol",
+        model_name="",
+        model_path="/prev/checkpoints/final/inference_ckpt.pt",
+    )
+    with pytest.raises(ConfigError, match=r"needs `starting_checkpoint: \$STARTING_CHECKPOINT`"):
+        MlipTrainEngine().prepare(ctx)
 
 
 def test_the_record_names_the_default_start_the_plan_ran(tmp_path: Path):

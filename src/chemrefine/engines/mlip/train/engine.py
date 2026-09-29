@@ -30,6 +30,7 @@ import json
 import logging
 from collections.abc import Mapping
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -330,6 +331,7 @@ class MlipTrainEngine(MlipBackend):
             dest=ids.structure_artifact_path(
                 ctx.step_dir, ctx.step_cfg.step, ids.TRAINING_ID, self.template_suffix
             ),
+            check=partial(trainer.check_template, plan),
         )
         logger.info(
             "step %d: training %s on %s",
