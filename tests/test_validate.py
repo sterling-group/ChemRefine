@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 from chemrefine.validate import ValidationReport, validate_config_file, validate_config_text
@@ -367,6 +368,26 @@ def test_existing_template_and_header_do_not_warn(tmp_path: Path):
     report = _validate(tmp_path, steps=[{"step": 1, "engine": "orca"}])
     assert report.ok
     assert report.warnings == ()
+
+
+@pytest.mark.parametrize(
+    ("name", "kind"), [("step1.inp", "template"), ("cpu.slurm.header", "slurm-header")]
+)
+def test_a_template_or_header_that_is_not_utf8_is_an_issue(tmp_path: Path, name: str, kind: str):
+    """What the run refuses before it starts, validate refuses too, rather than saying ok.
+
+    A latin-1 ``Å`` in a comment passed here as OK; the run then bootstrapped its seeds and
+    refused the template at ``prepare``, or the header at the first submission.
+    """
+    templates = tmp_path / "templates"
+    templates.mkdir()
+    (templates / "step1.inp").write_text("! Opt\n", encoding="utf-8")
+    (templates / "cpu.slurm.header").write_text("#SBATCH -N1\n", encoding="utf-8")
+    (templates / name).write_bytes("# Ångström\n! Opt\n".encode("latin-1"))
+    report = _validate(tmp_path, steps=[{"step": 1, "engine": "orca"}])
+    assert not report.ok
+    assert _kinds(report) == [kind]
+    assert "is not UTF-8 text" in report.issues[0].message
 
 
 def test_a_gpu_step_is_held_to_the_cuda_header(tmp_path: Path):

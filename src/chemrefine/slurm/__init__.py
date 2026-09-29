@@ -47,6 +47,7 @@ from chemrefine.slurm.dispatch import (
 from chemrefine.slurm.script import (
     build_array_script,
     build_script,
+    read_header,
     write_array_manifests,
 )
 
@@ -64,6 +65,7 @@ __all__ = [
     "lease_path",
     "load_leases",
     "poll_jobs",
+    "read_header",
     "record_lease",
     "release_leases",
     "resolve_gpu_budget",

@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from chemrefine.engines.orca.inspect import inspect_template
+from chemrefine.errors import ConfigError
 
 
 def _write(tmp_path: Path, body: str) -> Path:
@@ -292,3 +293,15 @@ def test_a_template_without_maxcore_declares_no_memory(tmp_path: Path):
 def test_a_commented_maxcore_is_not_a_declaration(tmp_path: Path):
     """The same comment-stripping the keywords get: ``# %maxcore 9000`` declares nothing."""
     assert inspect_template(_write(tmp_path, "! B3LYP Opt\n# %maxcore 9000\n")).maxcore is None
+
+
+def test_a_template_that_is_not_utf8_is_refused_as_its_writer_refuses_it(tmp_path: Path):
+    """The inspector reads a template by the writer's rule, not by a guess at the bytes.
+
+    Decoded with replacement, a latin-1 ``Å`` in a comment inferred a run and a PAL here,
+    while the writer refused the same file at the step's ``prepare``.
+    """
+    path = tmp_path / "step1.inp"
+    path.write_bytes("# Ångström\n! B3LYP Opt\n%pal nprocs 4 end\n".encode("latin-1"))
+    with pytest.raises(ConfigError, match=r"ORCA template .* is not UTF-8 text"):
+        inspect_template(path)

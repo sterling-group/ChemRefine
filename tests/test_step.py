@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import cast
 from unittest.mock import patch
@@ -2403,6 +2404,24 @@ def test_the_walk_refuses_what_would_stop_a_steps_jobs(
     _templates(tmp_path, *present)
     mlip = StepConfig(step=2, engine="mlip", options={"device": "cpu"})
     with pytest.raises(ConfigError, match=refusal):
+        preflight_batches(_config(tmp_path), [mlip], local=True)
+
+
+@pytest.mark.parametrize("latin1", ["step2.py", "cpu.slurm.header"])
+def test_the_walk_refuses_a_template_or_header_its_job_could_not_read(tmp_path: Path, latin1: str):
+    """Not UTF-8 text is refused at t=0, where the job's own reader would refuse it later.
+
+    Checked for existence only, a latin-1 ``Å`` in a comment passed the walk: the run
+    bootstrapped its seeds and was refused at the step's ``prepare`` (the template), or at
+    its first submission with the step's manifest already stamped (the header).
+    """
+    from chemrefine.errors import ConfigError
+    from chemrefine.step import preflight_batches
+
+    _templates(tmp_path, "step2.py", "cpu.slurm.header")
+    (tmp_path / "templates" / latin1).write_bytes("# Ångström\n".encode("latin-1"))
+    mlip = StepConfig(step=2, engine="mlip", options={"device": "cpu"})
+    with pytest.raises(ConfigError, match=rf"{re.escape(latin1)} is not UTF-8 text"):
         preflight_batches(_config(tmp_path), [mlip], local=True)
 
 

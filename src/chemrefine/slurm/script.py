@@ -85,7 +85,7 @@ def _compute_work_dir_expr(output_dir: Path | str, scratch_dir: Path | None) -> 
     return f"{scratch_dir}/ChemRefine_{suffix}"
 
 
-def _read_header(template_path: Path) -> tuple[list[str], list[str]]:
+def read_header(template_path: Path) -> tuple[list[str], list[str]]:
     """Split a SLURM header template into ``(#SBATCH lines we keep, body lines)``.
 
     Drops any ``#SBATCH`` *option* we override later (``--ntasks`` /
@@ -209,7 +209,7 @@ def _apply_memory(
         per_cpu,
     )
     # Strip the memory directive, not its line: a directive sharing a line with others
-    # (`#SBATCH --mem=2G --time=…`) must lose only the memory half — the `_read_header`
+    # (`#SBATCH --mem=2G --time=…`) must lose only the memory half — the `read_header`
     # rule, applied to the one directive this function replaces.
     kept = []
     for line in sbatch_lines:
@@ -390,7 +390,7 @@ def build_script(
     _refuse_shell_unsafe(
         ("output_dir", output_dir), ("input_path", input_path), ("scratch_dir", scratch_dir)
     )
-    sbatch_lines, body_lines = _read_header(template_path)
+    sbatch_lines, body_lines = read_header(template_path)
     sbatch_lines = _apply_memory(
         sbatch_lines, memory_mb, ntasks=ntasks, cpus_per_task=cpus_per_task, job_name=job_name
     )
@@ -520,7 +520,7 @@ def build_array_script(
     manifest that did not exist. The argument channel has no such character.
     """
     _refuse_shell_unsafe(("output_dir", output_dir), ("scratch_dir", scratch_dir))
-    sbatch_lines, body_lines = _read_header(template_path)
+    sbatch_lines, body_lines = read_header(template_path)
     sbatch_lines = _apply_memory(
         sbatch_lines,
         memory_mb,

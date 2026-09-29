@@ -32,6 +32,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from chemrefine import io
+
 # A relaxed surface scan is a ``Scan`` sub-block inside ``%geom`` → the ``pes`` parser. The
 # block's body is what lies between the ``%geom`` opener and the next element of the input —
 # another ``%`` block, a ``*`` coordinate section or a ``!`` keyword line — and ``scan`` is
@@ -162,9 +164,11 @@ def inspect_template(template_path: str | Path) -> OrcaInputInfo:
     ``.out`` like ``sp``. A many-geometry kind wins over an optimisation keyword beside it,
     because the optimisation is then one stage of it: ``! OptTS Freq IRC`` refines a saddle
     and walks the path, and the path is the product. ``OptTS`` and any ``…Freq`` are flagged
-    regardless. Comments are ignored and matching is case-insensitive.
+    regardless. Comments are ignored and matching is case-insensitive. The template is read
+    as every consumer of it reads it (:func:`chemrefine.io.read_utf8`), so one that is not
+    UTF-8 text is refused here too.
     """
-    text = Path(template_path).read_text(encoding="utf-8", errors="replace")
+    text = io.read_utf8(Path(template_path), what="ORCA template")
     decommented = _strip_orca_comments(text)
     # The keyword surface is the set of ``!`` simple-input lines (comments removed),
     # split into whole tokens. Matching substrings against the joined line instead

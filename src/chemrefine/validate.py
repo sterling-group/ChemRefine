@@ -69,7 +69,7 @@ from chemrefine.engines.api import (
     get_engine,
 )
 from chemrefine.errors import ChemRefineError, ConfigError
-from chemrefine.ids import step_template_path
+from chemrefine.ids import require_template, step_template_path
 from chemrefine.nms import NmsOptions
 from chemrefine.state import PipelineState
 from chemrefine.step import build_context
@@ -417,6 +417,18 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
                         ),
                     )
                 )
+            else:
+                # The run's own check of the file, which reads it as every consumer does:
+                # a template that is there but is not UTF-8 text is refused before the run
+                # starts, so it is an issue here, not a row the run contradicts.
+                try:
+                    require_template(template, label=engine.label)
+                except ConfigError as e:
+                    issues.append(
+                        ValidationIssue(
+                            loc=("steps", index, "template"), kind="template", message=str(e)
+                        )
+                    )
         # The same "does not exist yet" the input, the template and the header get, for the
         # option values the config declares to be paths — keyed to that declaration, so the
         # next path-valued knob is covered by being declared, and read off the engine's own
@@ -480,6 +492,18 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
                         f"SLURM header {path} (used by step(s) {steps}) does not exist yet "
                         "(chemrefine scaffold creates a starter)"
                     ),
+                )
+            )
+            continue
+        # Read as the job script reads it, which the run's t=0 walk does too.
+        try:
+            slurm.read_header(path)
+        except ConfigError as e:
+            issues.append(
+                ValidationIssue(
+                    loc=("template_dir",),
+                    kind="slurm-header",
+                    message=f"{e} (used by step(s) {steps})",
                 )
             )
     if (clash := shared_template_clash(config)) is not None:

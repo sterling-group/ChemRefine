@@ -472,6 +472,13 @@ for the full map.
 
 ### Fixed
 
+- **A template or SLURM header that is not UTF-8 text is refused before the run starts.**
+  `chemrefine validate` and the run's t=0 checks tested only that a step's template and
+  its SLURM header existed, so a latin-1 `Å` in a comment passed both. The run then
+  bootstrapped its seeds and refused the template at the step's `prepare`, or the header
+  at the first submission with the step's manifest already stamped. Both are now read
+  when they are checked, the way the job reads them: `validate` reports the file as an
+  issue, and the run refuses it before anything runs.
 - **A FAIRChem fine-tune can continue from a local checkpoint.** A training step with
   `model_path` rendered the checkpoint's path into FAIRChem's release-name lookup, so the
   job died with `KeyError: Model '…' not found` once the steps that labelled its data had
