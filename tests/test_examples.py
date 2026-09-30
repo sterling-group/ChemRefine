@@ -21,6 +21,7 @@ import yaml
 from chemrefine.config import (
     BoltzmannSample,
     Config,
+    DedupeConfig,
     MaxSample,
     MinSample,
     StepConfig,
@@ -298,9 +299,13 @@ REQUIRED = {
 
 TESTS_ONLY = {
     "config": {"max_gpus", "slurm_array", "dispatch", "job_timeout_seconds"},
-    "step": {"slurm_template", "on_failure"},
+    # `dedupe` itself: no shipped example demonstrates it yet (the tutorials all cap
+    # each step's `sample.count` low enough that a converged duplicate is unlikely to
+    # show up), so it is filed here rather than in REQUIRED until one does.
+    "step": {"slurm_template", "on_failure", "dedupe"},
     "sample": {"by_parent", "temperature_k", "energy_type"},
     "nms": {"ts_mode_index", "seed"},
+    "dedupe": {"rmsd_angstrom", "include_hydrogens", "by_parent"},
 }
 
 _SAMPLE_FIELDS = (
@@ -323,6 +328,7 @@ _UNIVERSE = {
     "step": set(StepConfig.model_fields),
     "sample": _SAMPLE_FIELDS,
     "nms": set(NmsOptions.model_fields),
+    "dedupe": set(DedupeConfig.model_fields),
     **{model.__name__: set(model.model_fields) for model in _ENGINE_MODELS},
 }
 

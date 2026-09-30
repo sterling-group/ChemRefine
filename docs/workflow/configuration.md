@@ -90,6 +90,7 @@ steps:
 | `charge` / `multiplicity` | int | global | Per-step overrides of the global values. |
 | `options` | map | `{}` | Engine-specific knobs (see below). |
 | `sample` | map | `None` | Survivor filter (see below). `None` keeps every structure. |
+| `dedupe` | map | `None` | Collapse structural duplicates before `sample` ranks survivors (see below). `None` = no dedup. |
 | `nms` | bool | `False` | Opt-in normal-mode sampling (honoured only for an NMS-capable engine — the `NMS` column of the [engine table](../engines/index.md) says which). Requires a frequency calc: an NMS step whose template computes no frequencies is rejected before any job is submitted — and an explicit `operation` does not bypass the check, since `operation` never changes the generated input (it only picks the parser). The `target` (`minimum`/`ts`) is inferred from the template — `OptTS` → `ts`, else `minimum` — unless `options.target` is set. |
 | `on_failure` | `stop`/`skip`/`best` | `stop` | What to do when some structures fail (after the convergence auto-retry below): `stop` (default) caches the successes then halts so failures are never silently dropped; `skip` drops them and continues; `best` keeps all, backfilling a failed structure with the best geometry obtained for it or, failing that, the input it was submitted with — including on step 1, where that input is a seed with no energy computed yet. A structure that *did not converge* is first retried once from its best geometry — the failed attempt is archived under `stepN/<id>/attemptK/` — before this policy applies. An `mlip-train` step refuses `skip`/`best` outright: a training step has no per-structure failures for either to act on. |
 
@@ -111,6 +112,21 @@ raises a clear error if the chosen energy wasn't computed.
 | `boltzmann` | `percent_cumulative` (default `99`) | Structures until the cumulative Boltzmann weight reaches the percentage. |
 | `min` | `count` **or** `window_kcalmol` | The `count` lowest-energy structures (`0` = keep all), or all within `window_kcalmol` of the minimum. |
 | `max` | `count` (≥ 1) **or** `window_kcalmol` | The `count` *highest*-energy structures, or all within `window_kcalmol` of the maximum (PES-style sampling). |
+
+## Dedupe (structural duplicate collapse)
+
+Two structures that started as distinct conformers (e.g. from a GOAT step-1 search)
+can relax onto the same minimum during a later optimization step; `sample` only ever
+reasons about energy, so nothing else catches this. `dedupe` collapses them first —
+structures are grouped by atomic-number sequence, then within a group the
+lowest-energy structure is kept and anything within `rmsd_angstrom` of an already-kept
+structure (after optimal rigid-body alignment) is dropped.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `rmsd_angstrom` | `0.125` | RMSD threshold (Å) below which two structures count as the same geometry — matches GOAT/CREST's own conformer-dedup default. |
+| `include_hydrogens` | `True` | Compare all atoms. Set `False` to compare heavy atoms only. |
+| `by_parent` | `False` | Compare only within each parent-ID group instead of across the whole step. Off by default, since collapsing structures that started as *different* step-1 conformers is the motivating case. |
 
 ## NMS options (when `nms: true`)
 

@@ -159,6 +159,36 @@ SampleConfig: TypeAlias = Annotated[
 
 
 # ---------------------------------------------------------------------------
+# Dedupe configuration
+# ---------------------------------------------------------------------------
+
+
+class DedupeConfig(BaseModel):
+    """Collapse structures that converged onto the same geometry during this step.
+
+    Distinct from ``sample:`` — ``sample`` ranks survivors by energy, this removes
+    structural duplicates first, so a ``sample: {method: min, count: 15}`` step
+    keeps 15 truly distinct minima rather than 15 slots some of which are the same
+    geometry counted twice. Compared pairwise by Kabsch-aligned RMSD within groups
+    that share an atomic-number sequence (see :mod:`chemrefine.dedupe`).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    rmsd_angstrom: float = Field(0.125, gt=0)
+    """RMSD threshold (Å) below which two structures count as the same geometry.
+    Defaults to GOAT/CREST's own conformer-dedup default."""
+
+    include_hydrogens: bool = True
+    """Compare all atoms (default) rather than only heavy atoms."""
+
+    by_parent: bool = False
+    """Compare only within each parent-ID group instead of across the whole step —
+    off by default, since collapsing structures that started as *different* step-1
+    conformers but converged together is the motivating case."""
+
+
+# ---------------------------------------------------------------------------
 # Per-step configuration
 # ---------------------------------------------------------------------------
 
@@ -203,6 +233,11 @@ class StepConfig(BaseModel):
 
     sample: SampleConfig | None = None
     """How to filter survivors at the end of the step. ``None`` = keep all."""
+
+    dedupe: DedupeConfig | None = None
+    """Collapse structural duplicates before ``sample`` ranks survivors. ``None`` = no
+    dedup — the step's raw parsed results may contain geometries that converged onto
+    the same minimum from different starting conformers."""
 
     nms: bool = False
     """Opt-in normal-mode sampling — honored only for an NMS-capable engine

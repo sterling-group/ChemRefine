@@ -28,7 +28,7 @@ from typing import assert_never
 
 from pydantic import ValidationError
 
-from chemrefine import attempts, cache, filtering, ids, io, lifecycle, nms
+from chemrefine import attempts, cache, dedupe, filtering, ids, io, lifecycle, nms
 from chemrefine.config import Config, StepConfig
 from chemrefine.engines.api import (
     ArtifactEngine,
@@ -287,8 +287,16 @@ def _step_outcome(
     ensemble duplicates the previous step's geometries under this step's number —
     deliberate uniformity: every step directory answers "what did this step end with" the
     same way.
+
+    A ``dedupe:`` config collapses structural duplicates (see :mod:`chemrefine.dedupe`)
+    before ``sample`` ranks and slices survivors — otherwise a ``min: count: 15`` step
+    could silently return fewer than 15 truly distinct minima. It runs only here, not on
+    the cached ``results``, so it stays free to recompute on every cache hit: it reshapes
+    the survivor set, not the calculation. ``stepN_ensemble.xyz`` still shows every
+    computed structure, duplicates included — it is the cache's own record.
     """
-    state = filtering.apply(results, step_cfg.sample)
+    deduped = dedupe.apply(results.structures, step_cfg.dedupe)
+    state = filtering.apply(StepResults(structures=deduped), step_cfg.sample)
     ranking = filtering.ranking_energy(step_cfg.sample)
     io.write_ensemble_xyz(
         results.structures,

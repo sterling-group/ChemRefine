@@ -149,6 +149,7 @@ nav:
   - Writing a workflow:
       - Configuration reference: workflow/configuration.md
       - Filtering survivors: workflow/filtering.md
+      - Dedupe: workflow/dedupe.md
       - Normal-mode sampling: workflow/nms.md
       - Workflow builder (GUI): workflow/builder.md
       - AI agents: workflow/agents.md
@@ -180,6 +181,7 @@ nav:
               - Attempt Directories: api/attempts.md
               - Normal-Mode Sampling: api/nms.md
               - Filtering: api/filtering.md
+              - Dedupe: api/dedupe.md
               - Recovery Actions: api/recovery.md
           - Engines:
               - Contract & Registry: api/engines_api.md
