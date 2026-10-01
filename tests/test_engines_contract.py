@@ -25,7 +25,6 @@ import pytest
 from chemrefine import cache
 from chemrefine.config import StepConfig
 from chemrefine.engines.api import (
-    ENGINES,
     CalculationEngine,
     OperationInferring,
     OperationsDeclaring,
@@ -40,7 +39,6 @@ CASES = sorted(path for path in DATA.glob("*/*") if path.is_dir())
 CASE_IDS = [f"{path.parent.name}-{path.name}" for path in CASES]
 
 _CONTRACT_EXEMPT = {
-    "fake",  # test scaffolding registered by conftest, not a shipped plugin
     "mlip-train",  # pass-through trainer: parses no calculation output
 }
 
@@ -135,9 +133,9 @@ def test_operations_said_to_read_alike_read_a_real_output_alike(case_dir: Path) 
         assert read[first] == read[second], f"{first!r} and {second!r} read {out} differently"
 
 
-def test_every_registered_engine_ships_a_contract_case() -> None:
+def test_every_registered_engine_ships_a_contract_case(shipped_engines: dict[str, type]) -> None:
     """Registering an engine without its shortened real output fails here."""
-    for name in sorted(set(ENGINES) - _CONTRACT_EXEMPT):
+    for name in sorted(set(shipped_engines) - _CONTRACT_EXEMPT):
         cases = list((DATA / name).glob("*/expected.json"))
         assert cases, (
             f"engine {name!r} ships no contract fixture under tests/data/engines/{name}/ "

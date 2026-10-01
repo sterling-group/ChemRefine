@@ -1,15 +1,12 @@
 """``ScriptEngine`` — the engine kind whose per-structure input is a user Python script.
 
-Both ``pyscf`` and ``mlip`` (direct) take a user-supplied ``step{N}.py``, render it per
-structure, run each rendered script through the SLURM-or-local machinery, and parse the JSON
+A script engine takes a user-supplied ``step{N}.py``, renders it per structure, runs each
+rendered script through the SLURM-or-local machinery, and parses the JSON
 its appended footer writes. A thin :class:`~chemrefine.engines._job.JobEngine`: it supplies
 only the primitives — render the ``.py`` (:mod:`chemrefine.engines._script.render`), parse the
 ``.json`` (:mod:`chemrefine.engines._script.output`), the run command, the core budget — while
 the base owns ``prepare`` / ``submit`` / ``parse``. Concrete engines set ``name`` + ``label``
 and (optionally) override ``_vars_from``.
-
-This is the ``.py``-format sibling of :mod:`chemrefine.engines.orca.input` /
-:mod:`chemrefine.engines.orca.output` — the script kind's input writer + output reader.
 """
 
 from __future__ import annotations
@@ -34,8 +31,8 @@ OptsT = TypeVar("OptsT", bound=EngineOptions)
 class ScriptEngine(JobEngine, Generic[OptsT]):
     """A ``JobEngine`` whose per-structure input is a user ``step{N}.py`` run with ``python``.
 
-    Generic in its options model so a subclass declares ``ScriptEngine[MlipOptions]`` and
-    reads its own fields by name in :meth:`_vars_from`, type-checked.
+    Generic in its options model so a subclass declares ``ScriptEngine[<its options model>]``
+    and reads its own fields by name in :meth:`_vars_from`, type-checked.
     """
 
     name: ClassVar[str]
@@ -47,8 +44,8 @@ class ScriptEngine(JobEngine, Generic[OptsT]):
     """This engine's validated ``step.options`` model — the single reader of those knobs.
 
     Subclasses point it at their own model so ``pal`` / ``gpus`` and the template
-    placeholders all resolve the same defaults; the ExtOpt engines declare the same
-    ClassVar for the same reason."""
+    placeholders all resolve the same defaults, as every
+    :class:`~chemrefine.engines.api.OptionsDeclaring` engine does."""
 
     output_fields: ClassVar[tuple[OutputField, ...]] = SCRIPT_OUTPUT
     """What this engine's ``step{N}.py`` may report back — the output side's ``_vars_from``.
@@ -143,14 +140,14 @@ class ScriptEngine(JobEngine, Generic[OptsT]):
     def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> RunBlock:
         """Run the rendered Python script inside ``$WORK_DIR``, capped to its core budget.
 
-        Script engines (pyscf / mlip direct) are OpenMP/MKL/torch-threaded with no MPI, so the
-        thread count is pinned to what the job is actually *granted* — the
+        A script engine's job is one Python process threaded by OpenMP/MKL/torch, with no
+        MPI, so the thread count is pinned to what the job is actually *granted* — the
         :meth:`slurm_layout` product, which is ``options.cores`` clamped to ``max_cores``,
         the same number the SLURM directives request and the throttler charges. The raw
         :meth:`pal` here let a step asking for more than the budget export the ask rather
         than the grant: charged ``max_cores``, threading ``cores`` — the exact
-        oversubscription this export exists to prevent, on every local run. (ORCA is the
-        opposite — MPI ranks, ``OMP=1``.) The script's interpreter comes from the
+        oversubscription this export exists to prevent, on every local run. (An MPI engine
+        is the opposite and spells its own layout.) The script's interpreter comes from the
         provisioner (a managed backend env when one exists), so conflicting backends can run
         side by side in one pipeline.
         """

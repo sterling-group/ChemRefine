@@ -1,4 +1,4 @@
-"""Pydantic models + YAML loader for the v4 ChemRefine config.
+"""Pydantic models + YAML loader for the ChemRefine config.
 
 The config is the **single source of truth**: every runtime knob comes
 from here, never from `sys.argv` reads in the pipeline, never from
@@ -17,14 +17,14 @@ Schema shape (see ``examples/`` for full examples):
     multiplicity: 1
     max_cores: 64
     slurm_template: cpu.slurm.header
-    executables: { orca: /opt/orca/orca }   # tool -> path, for external-binary engines
+    executables: { <program>: /path/to/program }   # for the engines that run one
 
     steps:
       - step: 1
         name: screen        # optional human-readable label
-        engine: mlip
+        engine: <engine>    # `chemrefine engines` lists them
         operation: opt_sp
-        options: { model: mace_off23 }
+        options: { ... }    # the engine's own knobs
         sample: { method: boltzmann, percent_cumulative: 99 }
 """
 
@@ -303,12 +303,14 @@ class StepConfig(BaseModel):
     (:func:`fold_engine_name`)."""
 
     operation: str | None = None
-    """Engine-defined operation (``opt_sp``, ``goat``, ``pes``, ``docker``,
-    ``solvator``...), read in any case with ``+`` for ``_`` (``OPT+SP`` is ``opt_sp``).
-    **Optional**: when omitted, an engine that can inspect its input (ORCA reads the
-    template's keywords) auto-detects the run type; an explicit value always wins, and an
-    engine that declares its vocabulary refuses any other before the run starts. Provide
-    it when inspection can't decide."""
+    """The step's operation, as its engine defines it: one of the vocabulary the engine
+    declares (:class:`~chemrefine.engines.api.OperationsDeclaring`; ``chemrefine engines
+    --json`` lists each), or a free label for an engine that declares none. Read in any case
+    with ``+`` for ``_`` (``OPT+SP`` is ``opt_sp``). **Optional**: when omitted, an engine
+    that can inspect its input (:class:`~chemrefine.engines.api.OperationInferring`) infers
+    the run type from it; an explicit value always wins, and an engine that declares its
+    vocabulary refuses any other before the run starts. Provide it when inspection can't
+    decide."""
 
     template: str | None = None
     """Engine input template (basename relative to ``template_dir`` if not absolute)."""
@@ -564,16 +566,16 @@ def reject_shell_unsafe(text: str, *, what: str, fix: str) -> None:
     ``scratch_dir``             (:func:`shell_unsafe_after_resolution`), and again at render
                                 on the *resolved* path bash receives
                                 (:mod:`chemrefine.slurm.script`)
-    ``executables``             this rule — embedded raw in the runlog heredoc; the
-                                engine-documented root paths (qchem's ``qc``/``qcaux``)
-                                are additionally shell-quoted where their run block
-                                exports them
+    ``executables``             this rule — embedded raw in the runlog heredoc; an engine
+                                that exports a root path in its run block also
+                                shell-quotes it there
     ``operation``               this rule — same heredoc; the declared value at load, and
                                 the one the step resolves (declared or inferred) where
                                 :func:`chemrefine.job_log.bash_header` writes it
-    ``tensor_folder``           this rule (via :class:`~chemrefine.engines.pyscf.options.\
-PyscfExtOptOptions`, the subclass that declares the field) — reaches ``cp -r "…"``, and \
-bash substitutes *inside* double quotes
+    ``tensor_folder``           this rule (from the field validator of the options model
+                                that declares it, which is why the rule is public) —
+                                reaches ``cp -r "…"``, and bash substitutes *inside*
+                                double quotes
     ``engine``                  safe by construction — must be a registry key
     ``step.name``               safe by construction — matched against :data:`_NAME_RE`
     ``step`` / ``cores``        safe by construction — integers
@@ -634,9 +636,11 @@ def shell_unsafe_after_resolution(config: Config) -> str | None:
     exists at all: a value that reaches generated bash is refused before a script is written,
     not after one runs.
 
-    Unlike the whitespace rule (which belongs to ORCA's input format and lives in the ORCA
-    input writer), this one is engine-independent: every engine's job script exports these
-    three paths, so there is nothing to scope it to.
+    Unlike the whitespace rule (which belongs to the input formats that cannot quote a path,
+    and lives with the engines that declare it —
+    :class:`~chemrefine.engines.api.WhitespacePathIntolerant`), this one is
+    engine-independent: every engine's job script exports these three paths, so there is
+    nothing to scope it to.
 
     This pass sees the anchored path with its symlinks intact, and the step directory the
     script exports is the ``.resolve()``d one — so a symlink whose *target* carries a refused
@@ -744,17 +748,17 @@ class Config(BaseModel):
     ``slurm`` requires ``sbatch`` and fails fast when it is missing instead of
     silently running locally."""
     executables: dict[str, str] = Field(default_factory=dict)
-    """Global tool-name → path map for external-binary engines (e.g.
-    ``{"orca": "/opt/orca/orca"}``). Set once and shared by every step using
-    that engine. Importable backends (mlip, pyscf, …) are installed as extras
-    and need no entry here; conda/module activation belongs in the SLURM header.
+    """Global program-key → path map for the engines that run an external program. Each
+    engine declares the keys it reads (:class:`~chemrefine.engines.api.ExecutablesDeclaring`;
+    ``chemrefine engines --json`` lists them), and an entry is set once and shared by every
+    step that runs that program. Importable backends are installed as extras and need no
+    entry here; conda/module activation belongs in the SLURM header.
 
-    An engine may document keys of its own beyond its binary — the qchem engine reads
-    ``qc`` and ``qcaux`` as *install-root* paths and exports them as ``QC``/``QCAUX`` in
-    its run block. They live in this map rather than in ``step.options`` because they are
-    facts about the machine, not about a step: one install serves every qchem step, exactly
-    as one ``orca`` binary does. Every value here is held to the same shell-safety rule and
-    warned about when it names an absent path, whatever kind of path it is."""
+    A key may name an *install root* rather than a binary — a directory the engine exports
+    in its run block. Both kinds live in this map rather than in ``step.options`` because
+    they are facts about the machine, not about a step: one install serves every step that
+    uses it. Every value here is held to the same shell-safety rule and warned about when it
+    names an absent path, whatever kind of path it is."""
     steps: list[StepConfig]
 
     @field_validator("template_dir", "output_dir", "scratch_dir")
@@ -779,18 +783,17 @@ class Config(BaseModel):
         """Hold ``executables`` to the same rule as the directory paths.
 
         These values reach generated bash by two routes with different protections.
-        Where the binary is *run*, the engine shell-quotes it
-        (:meth:`chemrefine.engines.orca.engine.OrcaEngine.orca_command`). But the runlog
-        header embeds it raw inside ``cat <<EOF`` — a heredoc that must stay unquoted so
-        ``$(hostname)``, ``$WORK_DIR`` and ``${SLURM_JOB_ID:-$$}`` expand — so
-        ``executables: {orca: /opt/orca-$(id -un)/orca}`` is a command substitution the job
+        Where the binary is *run*, the engine shell-quotes it. But the runlog header embeds
+        it raw inside ``cat <<EOF`` — a heredoc that must stay unquoted so ``$(hostname)``,
+        ``$WORK_DIR`` and ``${SLURM_JOB_ID:-$$}`` expand — so
+        ``executables: {tool: /opt/tool-$(id -un)/tool}`` is a command substitution the job
         would run, and an innocent ``$`` in a path corrupts the runlog without saying so.
 
         Quoting the header is not the fix: the heredoc's expansion is load-bearing for
         the fields around it. Refusing the character at the boundary is, and it is the
         rule this config already applies to every other value that reaches bash.
 
-        Spaces stay legal — the run site quotes them correctly and ``/opt/my orca/orca``
+        Spaces stay legal — the run site quotes them correctly and ``/opt/my tool/tool``
         is a perfectly ordinary path.
         """
         for tool, value in v.items():

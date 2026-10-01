@@ -42,11 +42,10 @@ def begin(structure_dir: Path) -> Path:
 def seal(structure_dir: Path, attempt_dir: Path) -> None:
     """Move a structure's canonical artifacts into ``attempt_dir``.
 
-    Everything the attempt produced moves — loose files and any engine-written sub-directory
-    such as ``pyscf-extopt``'s ``tensors/`` (an ``output_dirs`` entry). A ``tensors/`` left at
-    the canonical path is the same disagreement this module exists to prevent: whatever runs
-    there next writes its own files beside the stale ones, and the directory describes two
-    calculations at once.
+    Everything the attempt produced moves — loose files and any engine-written sub-directory,
+    such as one an engine names in ``output_dirs``. One left at the canonical path is the
+    same disagreement this module exists to prevent: whatever runs there next writes its own
+    files beside the stale ones, and the directory describes two calculations at once.
 
     ``attempt*/`` sub-directories stay where they are.
     """
@@ -76,8 +75,9 @@ def archive_previous(step_dir: Path, structure_ids: Iterable[str]) -> list[Path]
     run's output from a leftover — so without this, a re-executed step whose job dies before
     writing anything re-reads the *previous* run's result and reports it as current. The
     exposed paths are those that do not truncate their output in place: the script engines
-    (whose JSON is written in ``$WORK_DIR`` and only copied back on success) and every ORCA
-    ensemble operation (which reads a ``*.finalensemble.xyz``-style sidecar, not the ``.out``).
+    (whose JSON is written in ``$WORK_DIR`` and only copied back on success) and every
+    operation read from a sidecar beside the output (an ensemble file) rather than from the
+    output itself.
 
     What counts as prior work is whatever :func:`seal` would move — every entry that is not
     an ``attempt*/`` directory, engine-written sub-directories included. Loose files alone

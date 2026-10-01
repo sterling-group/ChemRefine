@@ -155,7 +155,10 @@ a desktop, `scripts/release-check.sh --case NAME -- --record`.
 - **Engines** are plugins. Read the
   [Adding an Engine recipe](https://sterling-group.github.io/ChemRefine/developer/adding-an-engine/)
   before adding one — it names the base class to subclass for each shape of
-  backend, and the contract fixture every engine must ship.
+  backend, and the contract fixture every engine must ship. Outside
+  `engines/<name>/`, core names no engine — it describes one by its role.
+  `tests/test_package_boundaries.py` holds the names; an engine's keywords and
+  formats are left to review.
 - **Legacy YAML/CLI vocabulary** lives in exactly two quarantine zones:
   `config_legacy.py` (YAML keys) and `cli_legacy.py` (v1 flag-style argv).
   New legacy spellings go there, nowhere else. Both are scheduled for removal in

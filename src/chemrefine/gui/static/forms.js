@@ -312,7 +312,8 @@ function apiUrl(path, params) {
  * from the config as a number, so `===` on the raw values is false for the selected row and
  * the box then displays something other than the state. And `:selected` has to be on the
  * option rather than `:value` on the select, because Alpine renders templated options after
- * the select binds — the engine dropdown would show `mlip` for an `orca` step that way.
+ * the select binds — the engine dropdown would show the first engine for a step set to
+ * another that way.
  *
  * Sentinels stay in the markup: each select has a different one ("input (seeds)", "all
  * steps", "—") meaning a different thing, and none of them is a step.

@@ -103,8 +103,8 @@ def structure_artifact_path(step_dir: Path, step: int, structure_id: str, ext: s
     """Canonical per-structure artifact path.
 
     Each structure gets its **own directory** under the step dir, so a
-    calculation's files (input, output, optimized geometry, ORCA scratch
-    copied back, pyscf tensors) sit together and never collide across
+    calculation's files (input, output, optimized geometry, whatever the
+    engine copies back from scratch) sit together and never collide across
     structures: ``step_dir/{structure_id}/step{step}_{structure_id}.{ext}``.
     Keeping the naming convention here means a layout change touches one file.
     """
@@ -178,7 +178,7 @@ def input_geometry_path(step_dir: Path, step: int, structure_id: str) -> Path:
     """Path of a structure's **input** geometry, distinct from any output xyz.
 
     Named ``step{step}_{structure_id}_inp.xyz`` (an ``_inp`` stem) so it never
-    shares a name with an engine's *output* geometry (e.g. ORCA writes the
+    shares a name with an engine's *output* geometry (an engine may write its
     optimized geometry to ``step{step}_{structure_id}.xyz``); both survive the
     copy-back into the structure's directory.
     """

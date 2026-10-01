@@ -5,17 +5,9 @@ modules don't grow their own XYZ-handling code. ``write_xyz`` accepts
 either :class:`ase.Atoms` objects or ``(symbol, x, y, z)`` tuples for
 back-compatibility with parsers that produce raw coordinate lists.
 
-Two engine-side XYZ *readers* stay deliberately outside this module, each for a
-stated price — the rule for a new engine is "use :func:`read_xyz_frames` /
-:func:`write_single_xyz` unless you can name your price too":
-
-* the ExtOpt wrapper's plain-format reader
-  (``chemrefine.engines.orca.extopt.protocol._read_xyz``) runs in a fresh process
-  once per ORCA optimizer step, and :func:`read_xyz_frames` imports ~0.5 s of
-  ``ase.io`` on its first call;
-* the ORCA ensemble walkers (:mod:`chemrefine.engines.orca.output.ensembles`)
-  parse per-format energy headers and skip corrupt frames mid-file — neither of
-  which ASE's reader can express.
+An engine may keep an XYZ reader of its own only for a stated price, stated where the
+reader lives; the rule for a new engine is "use :func:`read_xyz_frames` /
+:func:`write_single_xyz` unless you can name your price too".
 """
 
 from __future__ import annotations
@@ -349,13 +341,13 @@ def read_xyz_frames(path: str | Path) -> list[Atoms]:
 
     ``format="extxyz"`` selects ASE's robust reader: the naive ``"xyz"`` parser
     loops ``int(lines.pop(0))`` over every line and dies (``invalid literal for
-    int(): '\\n'``) on the trailing blank lines that editors and ORCA routinely
+    int(): '\\n'``) on the trailing blank lines that editors and programs routinely
     leave on real files. ``index=":"`` returns all frames; a single-frame file
     yields a one-element list, so callers never special-case frame count.
 
     ``ase.io`` is imported here, on the first read, rather than with the module: it costs
     about half a second, and importing this module is how every process in the package
-    starts — the CLI answering ``--help``, and the ExtOpt wrapper ORCA spawns once per
+    starts — the CLI answering ``--help``, and the ExtOpt wrapper spawned once per
     optimizer step, which never reads a frame through here.
     """
     from ase.io import read as ase_read

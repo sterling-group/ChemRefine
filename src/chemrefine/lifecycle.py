@@ -740,11 +740,11 @@ def _drain(
 ) -> None:
     """Submit a batch, block, hand every job to ``sink``; repeat for the follow-ups.
 
-    ``submit`` is called before the emptiness test rather than gated on it. ``mlip-train``
-    prepares no files at all and does its entire job inside ``submit`` — a loop that skipped
-    an empty batch would skip the training, with no jobs and no error to show for it. Nothing
-    else changes for it: the sweep is empty, and the step yields no structures exactly as it
-    does today.
+    ``submit`` is called before the emptiness test rather than gated on it. An artifact step
+    can prepare no per-structure files and do its whole job inside ``submit`` — a loop that
+    skipped an empty batch would skip that job, with nothing run and no error to show for
+    it. Nothing else changes for it: the sweep is empty, and the step yields no structures
+    exactly as it does today.
 
     Follow-up batches are submitted with the step context. Submission does not read
     ``prev_state`` — the context that matters for a re-run is the one it is *parsed* with,

@@ -78,8 +78,7 @@ class Structure:
 
     ``True`` means **success**, which is why the name carries ``_normally``: a bare
     ``terminated`` reads as "the job was killed" and inverts the flag that decides whether a
-    calculation counts. It matches ORCA's own banner (``ORCA TERMINATED NORMALLY``) and
-    :attr:`FailureKind.NOT_TERMINATED_NORMALLY`'s wording.
+    calculation counts. It matches :attr:`FailureKind.NOT_TERMINATED_NORMALLY`'s wording.
 
     A structure is a *failure* only when a flag is explicitly ``False`` (see
     :func:`chemrefine.lifecycle.succeeded`)."""
@@ -213,8 +212,8 @@ class StepContext:
     max_cores: int
     slurm_template: str
     executables: dict[str, str] = field(default_factory=dict)
-    """Tool-name → binary-path map (from ``Config.executables``); an engine
-    reads its own key, e.g. ``executables.get("orca", "orca")``."""
+    """Program-key → path map (from ``Config.executables``); an engine reads the
+    keys it declares (:class:`~chemrefine.engines.api.ExecutablesDeclaring`)."""
     max_gpus: int | None = None
     """Configured GPU budget (``Config.max_gpus``); ``None`` = auto-resolve at
     submit time (unlimited under SLURM, detected device count locally)."""
@@ -260,10 +259,10 @@ class RunBlock:
     handler.
 
     The split matters because bash keeps one handler per signal. An engine that wrote its own
-    ``trap … EXIT`` would replace the whole of that — and the loss is quiet, because ORCA
-    redirects its ``.out`` straight to ``$OUTPUT_DIR``, so parsing still succeeds while
-    ``.gbw``/``.hess`` stay in scratch and every job leaks its ``$WORK_DIR``. With teardown as
-    a field, an engine has no reason to trap at all.
+    ``trap … EXIT`` would replace the whole of that — and the loss is quiet, because an
+    engine that redirects its output straight to ``$OUTPUT_DIR`` still parses, while the
+    files only the copy-back brings home stay in scratch and every job leaks its
+    ``$WORK_DIR``. With teardown as a field, an engine has no reason to trap at all.
 
     Note what this does and does not guarantee. The handler is armed *before* the body runs —
     it has to be, or a failure inside the body would clean up nothing — so an engine that

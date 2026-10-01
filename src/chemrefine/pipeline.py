@@ -639,15 +639,16 @@ def run(config: Config, plan: RunPlan | None = None) -> list[StepOutcome]:
         # nothing else. A guard for something that will not happen is just a wall: it would
         # make `chemrefine rebuild-cache` refuse to run wherever the backend is not installed,
         # which is exactly where you want to rebuild — a login node, or any machine holding
-        # the output tree but not the MLIP/PySCF stack that produced it.
+        # the output tree but not the backend stack that produced it.
         #
         # Asking `may_submit` rather than excluding `REBUILD` by name is what makes that hold
         # for the whole command. `rebuild-cache N` puts N in `REBUILD` and every *other* step
         # in `CACHE_ONLY`, which equally cannot submit — so excluding only the named step
-        # leaves the wall standing on all the others, and a two-step MLIP config still cannot
-        # be rebuilt off-cluster. Nothing is weakened by the wider exemption: a step that
-        # cannot submit reaches `ChemRefineError` from `run_step` if its cache is unusable,
-        # never the engine, so it never reaches the `prepare` this walk stands before.
+        # leaves the wall standing on all the others, and a two-step config of provisioned
+        # backends still cannot be rebuilt off-cluster. Nothing is weakened by the wider
+        # exemption: a step that cannot submit reaches `ChemRefineError` from `run_step` if
+        # its cache is unusable, never the engine, so it never reaches the `prepare` this
+        # walk stands before.
         submittable = [cfg for cfg in config.steps if plan.for_step(cfg.step).may_submit()]
         preflight_backends(submittable)
         preflight_steps(submittable, charge=config.charge, multiplicity=config.multiplicity)

@@ -796,7 +796,7 @@ def list_structures(config_path: str, step: int | str | None = None) -> dict[str
     ``step`` of ``None`` means the **input seeds**, as everywhere else here. Seeds have no
     modes and report ``modes: {}`` — an empty offering is the honest answer to "which
     mode?" and stops the question being asked at all. A structure whose step computed no
-    frequencies (a GOAT search, an MLIP screen) reports ``modes: null``: no table, as
+    frequencies (a conformer search, a screen) reports ``modes: null``: no table, as
     :func:`get_frequencies` says it, rather than an empty one.
 
     Reads the step cache only, never an output file, so it works on a tree copied off a

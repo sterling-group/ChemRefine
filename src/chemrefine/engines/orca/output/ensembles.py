@@ -6,6 +6,10 @@ These parsers yield a **list** of structures (vs the single-structure ``.out`` a
 points are segments of the ``.out`` text itself. PES reuses the shared energy reader
 (:mod:`chemrefine.engines.orca.output.energy`) + the run-status reader
 (:mod:`chemrefine.engines.orca.output.status`); the ``.xyz`` walkers are self-contained.
+
+They are not :func:`chemrefine.io.read_xyz_frames`, and the price is stated here: they parse
+each format's own energy header and skip a corrupt frame mid-file, neither of which ASE's
+reader can express.
 """
 
 from __future__ import annotations

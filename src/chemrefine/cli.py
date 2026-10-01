@@ -21,8 +21,8 @@ This is the **only** module that calls :func:`sys.exit` or reads
   so re-resolving costs a read rather than a re-run of the frequencies.
 
 ``chemrefine backends {install,list,path}`` manages the per-backend environments
-(conflicting MLIP stacks live in one managed env each, resolved by name — see
-:mod:`chemrefine.engines._provision`).
+(backends whose dependency trees conflict live in one managed env each, resolved by name —
+see :mod:`chemrefine.engines._provision`).
 
 ``chemrefine schema`` / ``chemrefine engines [--json]`` print the machine-readable
 config schema document and the engine registry (see :mod:`chemrefine.introspect`) —
@@ -596,7 +596,7 @@ def engines(
 
 backends_app = typer.Typer(
     no_args_is_help=True,
-    help="Manage per-backend environments (conflicting MLIP stacks, one env each).",
+    help="Manage per-backend environments (one managed env per backend extra).",
 )
 app.add_typer(backends_app, name="backends")
 
@@ -604,7 +604,10 @@ app.add_typer(backends_app, name="backends")
 @backends_app.command("install")
 def backends_install(
     extras: Annotated[
-        list[str], typer.Argument(help="Backend extra(s), e.g. mlip-mace mlip-fairchem pyscf.")
+        list[str],
+        typer.Argument(
+            help="Backend extra(s) to provision — `chemrefine backends list` names them."
+        ),
     ],
     python: Annotated[
         str | None,
@@ -667,7 +670,9 @@ def backends_list() -> None:
 
 @backends_app.command("path")
 def backends_path(
-    extra: Annotated[str, typer.Argument(help="Backend extra, e.g. mlip-fairchem.")],
+    extra: Annotated[
+        str, typer.Argument(help="Backend extra — `chemrefine backends list` names them.")
+    ],
 ) -> None:
     """Print the managed env's python for one backend (exit 1 if not provisioned)."""
     from chemrefine.engines import backend_env_python

@@ -132,9 +132,9 @@ _SCRATCH_CLEANUP = 'scratch_kept=false; cd "$OUTPUT_DIR" && rm -rf "$WORK_DIR"'
 
 Unconditional on both paths: no config knob keeps scratch. An engine that needs something
 out of it has two ways, both honoured on the array path as well: it copies a directory home
-by naming it in ``output_dirs`` (``pyscf-extopt``'s ``tensors/``), or runs its own teardown
-by returning it as :attr:`~chemrefine.state.RunBlock.cleanup` (``qchem``'s
-``options.save``, which copies ``$QCSCRATCH/$QCSAVE``; the ExtOpt server stop).
+by naming it in ``output_dirs`` (a tensor directory, say), or runs its own teardown by
+returning it as :attr:`~chemrefine.state.RunBlock.cleanup` (a scratch copy an engine's
+option asks for; the ExtOpt server stop).
 
 ``scratch_kept`` stays in the runlog: the footer is a published artifact, the field still
 reports truthfully, and changing that format is a decision of its own."""
@@ -243,8 +243,8 @@ def _apply_single_node(sbatch: tuple[str, ...], single_node: bool) -> tuple[str,
     ``False`` leaves the header byte-untouched, which is what every job gets whose shape
     already decides the matter — one task with N CPUs cannot be split, and MPI ranks may
     span. ``True`` is the ExtOpt case (:meth:`~chemrefine.engines.api.JobExecutable.
-    single_node`): N tasks for ORCA's ranks *and* one process threading N, which is only
-    right on one machine. The directive is written by the script rather than asked of
+    single_node`): N tasks for the program's MPI ranks *and* one process threading N, which
+    is only right on one machine. The directive is written by the script rather than asked of
     every header, because a header that forgets it produces a job that is wrong only on
     the partitions that split it — the failure that is never reproduced on a laptop. A
     header's own ``--nodes`` is stripped in place so the two cannot disagree.
@@ -275,7 +275,7 @@ def _run_body_lines(
 
     Sets up ``$WORK_DIR`` (a fresh ``ts``/``rand``-suffixed dir), copies the input
     in, and installs an ``EXIT`` trap that always copies ``globs_expr`` (files) and
-    each ``output_dirs`` entry (a whole directory, e.g. pyscf's ``tensors/``) back
+    each ``output_dirs`` entry (a whole directory) back
     to ``$OUTPUT_DIR`` and emits the runlog footer — success or failure — before
     running ``run_block.body``.
 

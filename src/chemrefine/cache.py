@@ -607,7 +607,7 @@ def save_result_records(structures: Sequence[Structure], job_dir: Path, step: in
     """Write each structure's canonical ``*.result.json`` record into ``job_dir``.
 
     The engine-independent parsed-result artifact: whatever native output a
-    backend produced (ORCA ``.out``, a script footer JSON, …), the pipeline
+    backend produced (a program's output file, a script footer JSON, …), the pipeline
     drops the normalized :func:`structure_record` next to it after parsing.
     A derived artifact — inspection, tooling, and contract goldens read it;
     the pipeline itself never does (rebuilds re-parse the native output).
@@ -759,7 +759,7 @@ def _require_finite_arrays(structure: Structure, step_dir: Path) -> None:
     bypassed, which is why this raises rather than repairs.
 
     Forces are held to the same rule for the reason the parse boundary gives: a non-finite
-    force is what an ``mlip-train`` step would go on to fit.
+    force is what a downstream training step would go on to fit.
     """
     for field, array in (
         ("coordinates", structure.atoms.get_positions()),

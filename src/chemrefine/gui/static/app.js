@@ -460,8 +460,8 @@ function builder() {
     },
     descriptorFor(step) {
       // The step's engine as the config reads it — `engine:` in any case — so a step
-      // naming `ORCA` gets `orca`'s operations, fields and template, as the loader and
-      // the run give it. Every lookup of a step's engine goes through here.
+      // naming an engine in capitals gets that engine's operations, fields and template, as
+      // the loader and the run give it. Every lookup of a step's engine goes through here.
       return this.schema.engines?.[foldEngineName(step.engine)];
     },
     engineNamesFor(step) {

@@ -368,8 +368,8 @@ def terminate_local_jobs(job_ids: Collection[str] | None = None) -> None:
     then waits. ``proc.terminate()`` reaches only the shell, which defers its ``TERM``
     trap until that child returns, so the grace period expires, the shell is SIGKILLed,
     and the calculation goes on running, reparented to init — silently, because the EXIT
-    trap never fires either: no copy-back, no scratch teardown, no runlog footer, while
-    ORCA's ``.out``, redirected straight to ``$OUTPUT_DIR``, still parses. Signalling the
+    trap never fires either: no copy-back, no scratch teardown, no runlog footer, while an
+    output redirected straight to ``$OUTPUT_DIR`` still parses. Signalling the
     group reaches both, which is why :func:`_submit_local` gives each job a session of its
     own.
 

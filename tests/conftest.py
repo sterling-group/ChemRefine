@@ -117,6 +117,33 @@ def _restore_engine_registries() -> Iterator[None]:
     registry._BACKENDS.update(backends_before)
 
 
+@pytest.fixture(scope="session")
+def shipped_engines() -> dict[str, type]:
+    """The registered engines ChemRefine ships: each whose class lives in a plugin package.
+
+    A plugin is a bare-named package under ``chemrefine/engines/``, discovered as the
+    registry discovers them; a test double the suite registers (``fake``, a scratch plugin)
+    lives elsewhere and is not one. Selected by where the class lives rather than by a list
+    of names, so a new plugin is covered by existing and no test double passes for one.
+    """
+    import chemrefine.engines as engines_pkg
+    from chemrefine.engines.api import ENGINES
+
+    root = Path(engines_pkg.__file__).parent
+    plugins = {
+        p.name
+        for p in root.iterdir()
+        if p.is_dir() and not p.name.startswith("_") and (p / "__init__.py").is_file()
+    }
+    return {
+        name: cls
+        for name, cls in ENGINES.items()
+        if cls.__module__.split(".")[:2] == ["chemrefine", "engines"]
+        and cls.__module__.split(".")[2:3] != []
+        and cls.__module__.split(".")[2] in plugins
+    }
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _keep_model_requests_offline() -> Iterator[None]:
     """Hold PydanticAI's ``ALLOW_MODEL_REQUESTS`` at ``False`` for the whole session.

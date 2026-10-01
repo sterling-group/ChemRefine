@@ -13,9 +13,8 @@ surface is discovered by Python's default module visibility (no
 reassignment.
 
 Values follow CODATA 2022 unless noted; ``HARTREE_TO_EV`` and
-``BOHR_TO_ANGSTROM`` match the precision ORCA itself uses (CODATA
-2018) so back-and-forth conversions round-trip cleanly with ORCA's
-output.
+``BOHR_TO_ANGSTROM`` keep CODATA 2018's digits, so a value read from an
+output printed with them converts back to the same digits.
 """
 
 from __future__ import annotations
@@ -47,10 +46,10 @@ HARTREE_TO_J: Final[float] = 4.3597447222060e-18
 """1 Hartree in Joules (CODATA 2022)."""
 
 HARTREE_TO_EV: Final[float] = 27.211386245988
-"""1 Hartree in electron-volts (matches ORCA's internal value)."""
+"""1 Hartree in electron-volts (CODATA 2018)."""
 
 BOHR_TO_ANGSTROM: Final[float] = 0.529177210903
-"""1 Bohr in Ångström (matches ORCA's internal value)."""
+"""1 Bohr in Ångström (CODATA 2018)."""
 
 # ---------------------------------------------------------------------------
 # Derived energy conversions
@@ -74,7 +73,7 @@ KCALMOL_TO_HARTREE: Final[float] = 1.0 / HARTREE_TO_KCALMOL
 # ---------------------------------------------------------------------------
 
 HARTREE_PER_BOHR_TO_EV_PER_A: Final[float] = HARTREE_TO_EV / BOHR_TO_ANGSTROM
-"""ORCA gradients are in Hartree/Bohr; ASE forces are in eV/Å.
+"""Quantum-chemistry gradients are in Hartree/Bohr; ASE forces are in eV/Å.
 
 Multiply ``-∂E/∂x`` by this factor to get an ASE-compatible force.
 """

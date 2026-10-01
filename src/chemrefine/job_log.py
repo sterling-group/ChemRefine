@@ -20,8 +20,8 @@ engine emits the same skeleton:
 
 * A start header with host, job_id, mode, engine, operation, step,
   structure_id, scratch path, output path, and cores. Engines append
-  their own ``(key, value)`` rows via ``extra_fields`` (e.g. ORCA adds
-  ``orca_executable``).
+  their own ``(key, value)`` rows via ``extra_fields`` (e.g. the binary
+  an engine ran).
 * The execution phase content (engine-specific stdout interleaved).
 * A finish footer with exit_code, elapsed_seconds, files_copied,
   scratch_kept.

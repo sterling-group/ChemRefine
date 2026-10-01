@@ -12,10 +12,9 @@ working file instead of authoring one from a blank page.
 Starters are deliberately minimal echoes of the shipped examples (``examples/first_run``
 et al.). Each template-driven engine declares its own
 (:attr:`~chemrefine.engines.api.TemplateDriven.template_starter`, which registration
-requires), so the text travels with the engine and adding one edits nothing here. The
-trainer's starter is honest about its limits: a real ``mlip-train`` template is
-load-bearing in ways a stub cannot be, so it points at the worked example rather than
-pretending.
+requires), so the text travels with the engine and adding one edits nothing here. A
+starter is honest about its limits: where a real template is load-bearing in ways a stub
+cannot be, it points at a worked example rather than pretending.
 
 Which header a step needs is :func:`chemrefine.validate.effective_header`'s answer —
 the same resolution dispatch uses — so the plan and the run cannot disagree about the

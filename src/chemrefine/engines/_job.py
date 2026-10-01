@@ -12,7 +12,7 @@ This module also owns :func:`build_structures`, the engine-independent assembler
 step's ``ParsedResult``s into :class:`~chemrefine.state.Structure` objects with IDs + lineage
 (used by :meth:`JobEngine.parse`).
 
-Engines that aren't per-structure jobs (the fake engine, ``mlip-train``) implement
+Engines that aren't per-structure jobs (an artifact engine, a test double) implement
 :class:`chemrefine.engines.api.CalculationEngine` directly instead.
 """
 
@@ -120,7 +120,7 @@ def _require_elements(symbols: Sequence[str], sid: str) -> None:
 
 
 class JobEngine(abc.ABC):
-    """Shared lifecycle for one-job-per-structure engines (ORCA, the script engines).
+    """Shared lifecycle for one-job-per-structure engines.
 
     The four primitives below are abstract, so an incomplete subclass fails at construction —
     which is where :func:`chemrefine.engines.api.get_engine` builds it. Left as runtime
@@ -143,12 +143,10 @@ class JobEngine(abc.ABC):
     which no ``ABCMeta`` machinery sees: unset, ``output_suffix`` surfaces as a bare
     ``AttributeError`` inside ``prepare``, and ``template_suffix`` stops the engine satisfying
     :class:`~chemrefine.engines.api.TemplateDriven`, so the step reports the user's template as
-    missing while it sits on disk. Naming them here is the same move
-    :meth:`chemrefine.engines.mlip.registry.MlipLibrary.trainer` makes with its
-    ``required = [...]``, and for the same stated reason.
+    missing while it sits on disk. Naming them is what lets the gate see them.
 
     A base extends the tuple rather than replacing it, so a kind's requirements accumulate
-    down the chain (see :class:`~chemrefine.engines.orca.extopt.engine.ExtOptOrcaEngine`)."""
+    down the chain."""
 
     name: ClassVar[str]
     label: ClassVar[str]
@@ -282,9 +280,9 @@ class JobEngine(abc.ABC):
         The question is the model's — :attr:`~chemrefine.engines._options.EngineOptions.
         gpu_demand` — asked here once for every job engine that declares a model, through
         :attr:`options_cls`: the same model the engine renders its template from and the
-        ExtOpt server validates against, so the step's GPU demand, its SLURM header and its
+        gradient server validates against, so the step's GPU demand, its SLURM header and its
         script can never disagree about what ``device`` was asked for. An engine configured
-        through its template alone (ORCA) declares no model and asks for none.
+        through its template alone declares no model and asks for none.
         """
         if isinstance(self, OptionsDeclaring):
             return self.options_cls.from_raw_lenient(ctx.step_cfg.options).gpu_demand
@@ -293,8 +291,8 @@ class JobEngine(abc.ABC):
     def memory_mb(self, ctx: StepContext) -> int | None:
         """Total MB one job requires; ``None`` (the default) leaves the header's policy alone.
 
-        An engine whose input declares its memory — ORCA's ``%maxcore``, Q-Chem's
-        ``mem_total`` — overrides this with that declaration (plus its own headroom rule),
+        An engine whose input declares its memory — a per-core or whole-job setting in its
+        template — overrides this with that declaration (plus its own headroom rule),
         and the script builder then extends a header allocation that falls short of it.
         """
         return None

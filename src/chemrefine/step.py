@@ -331,7 +331,7 @@ def _step_outcome(
     ordered and captioned by the step's own ranking energy
     (:func:`chemrefine.filtering.ranking_energy`), the same energy ``steps.csv`` reports.
 
-    An artifact step (``mlip-train``) passes its structures through unchanged, so its
+    An artifact step passes its structures through unchanged, so its
     ensemble duplicates the previous step's geometries under this step's number —
     deliberate uniformity: every step directory answers "what did this step end with" the
     same way.

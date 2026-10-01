@@ -117,13 +117,17 @@ __all__ = ["MyEngine"]
 ```
 
 Nothing outside `engines/<name>/` changes — underscored packages (building blocks) and plain
-modules are never treated as plugins. Legacy YAML engine spellings are rewritten to the
+modules are never treated as plugins, and core names no engine (it describes one by its role,
+which `tests/test_package_boundaries.py` holds). Legacy YAML engine spellings are rewritten to the
 canonical name by `config_legacy.normalize` (the single place that knows the legacy
 vocabulary) — never the registry.
 
 ## Resources
 
-An external binary reads its path from `ctx.executables.get("<name>")`. An importable backend
+An external binary reads its path from `ctx.executables.get("<key>")`, a key the engine
+declares in `executable_keys` (`ExecutablesDeclaring`): the GUI suggests the declared keys, the
+engine table lists them, and a test holds every key an engine package reads to its
+declaration. An importable backend
 ships as a `pip install chemrefine[<name>]` extra and is imported **lazily** (inside the function
 that needs it) so the package imports cleanly when the optional dependency is absent — declare
 the extra + pip package + import name at registration so a missing library reports the extra to
@@ -350,6 +354,7 @@ class DemoqmEngine(JobEngine):
     )
     output_suffix: ClassVar[str] = "out"  # output-file extension
     output_globs: ClassVar[tuple[str, ...]] = ("*.out",)
+    executable_keys: ClassVar[tuple[str, ...]] = ("demoqm",)  # what run_block reads
 
     def build_input(
         self,

@@ -9,9 +9,6 @@ and it fails silently in the direction that matters: a quantity the footer harve
 sweep does not know about is written by the script, read onto the structure, and skips the
 guard that stops a diverged calculation being cached as a result.
 
-The same shape :data:`chemrefine.engines.mlip.options.CALCULATOR_KNOBS` gives the MLIP knob
-list, for the reason it gives: spelled once, beside the thing that defines it.
-
 Because the contract is a *value*, an engine can extend it:
 :attr:`chemrefine.engines._script.engine.ScriptEngine.output_fields` is a ClassVar a subclass
 overrides — the mirror of ``_vars_from`` on the input side. A script engine that reports
@@ -151,7 +148,7 @@ def forces_from_gradient(value: Any, seed: Atoms) -> NDArray[np.float64] | None:
     none, so the flat ``3N`` list the positions guard names as "the natural mistake"
     (``grad.ravel()``) reads here as a perfectly valid ``(3N,)`` array. Unrefused it becomes
     :attr:`~chemrefine.state.Structure.forces_ev_per_a`, which declares no shape, and
-    round-trips the cache into any downstream ``mlip-train`` dataset. Nothing between this line
+    round-trips the cache into any downstream training dataset. Nothing between this line
     and the trainer re-checks, so this is the one place the contract can be held.
     """
     if not value:

@@ -166,7 +166,8 @@ def _require_finite(value: Any, *, what: str, label: str, src: str) -> float:
     ``on_failure`` policy decides what happens next.
 
     The gradient is held to the same rule: it is the other half of the same diverged
-    calculation, and a non-finite force is what the MLIP trainer would go on to train on.
+    calculation, and a non-finite force is what a downstream training step would go on to
+    fit.
 
     So is the geometry, and it is the one with two ways to go wrong. A NaN coordinate reaches
     :func:`chemrefine.cache.structure_record`, whose positions are inline in the

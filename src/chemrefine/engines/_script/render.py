@@ -1,7 +1,7 @@
 """Shared Python-script template renderer for engines that take a user template.
 
-Both `engines.pyscf.engine.PyscfEngine` and `engines.mlip.engine.MlipEngine`
-take a user-supplied ``step{N}.py`` template, substitute geometry
+Every script engine (:class:`~chemrefine.engines._script.ScriptEngine`) takes a
+user-supplied ``step{N}.py`` template, substitute geometry
 placeholders, and append a footer that harvests well-known variable
 names from the template's locals and writes a canonical JSON output.
 This module owns that renderer so adding a template-driven backend

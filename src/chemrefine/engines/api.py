@@ -21,18 +21,19 @@ Adding a new engine — pick a *kind* and provide the requested pieces
 Kind                          Base                            The engine provides
 ============================  ==============================  =====================================
 Per-structure program         :class:`._job.JobEngine`        ``build_input`` / ``run_block`` /
-(own input format, like ORCA)                                 ``parse_one`` / ``pal`` / ``gpus``
+(own input format)                                            ``parse_one`` / ``pal`` / ``gpus``
                                                               + the ClassVars
 User Python script            :class:`._script.ScriptEngine`  ``template_starter``, usually
                                                               ``_vars_from``
-ORCA-driven gradients         :class:`.orca.extopt.engine.    ``backend`` / ``wrapper_filename`` /
-                              ExtOptOrcaEngine`               ``options_cls`` / ``calculator_cls``
 One job, one product          :class:`CalculationEngine` +    ``prepare`` / ``submit`` / ``parse`` /
-(mlip-train)                  :class:`ArtifactEngine`         ``artifact`` (+ ``JobExecutable`` to
+(a training step)             :class:`ArtifactEngine`         ``artifact`` (+ ``JobExecutable`` to
                                                               run through the scheduler, +
                                                               :class:`TemplateDriven`'s ClassVars
                                                               when it reads a template)
 ============================  ==============================  =====================================
+
+An engine package may publish a base of its own for the engines that plug into it; the
+developer guide lists each shipped one.
 
 * **Capabilities** — never a flag, always a Protocol detected via ``isinstance``. NMS:
   implement :class:`NmsCapableEngine`'s ``nms_input_info`` hook and populate
@@ -206,9 +207,9 @@ class TemplateDriven(CalculationEngine, Protocol):
     no, and the engine would silently read no template.
 
     A capability rather than part of :class:`CalculationEngine`, because being
-    template-driven is genuinely optional: ``mlip-train`` reads a template but writes no
-    per-structure inputs, and an engine that fabricates or passes structures through reads
-    none at all.
+    template-driven is genuinely optional: an artifact engine may read a template but write
+    no per-structure inputs, and an engine that fabricates or passes structures through
+    reads none at all.
 
     ``template_suffix`` means the template's extension and only that. Declared on
     :class:`~chemrefine.engines._job.JobEngine` instead, it would have to mean the
@@ -238,18 +239,17 @@ class WhitespacePathIntolerant(Protocol):
 
     **Declarations only**, like :class:`TemplateDriven` — one ClassVar carrying the reason,
     so a caller can say *why* without importing the engine that knows. It exists because the
-    constraint is real for exactly one family and invisible everywhere else: ORCA reads each
-    geometry through ``* xyzfile <path>``, a whitespace-delimited field it does not treat as
-    quotable, and execs an ExtOpt wrapper through ``sh``. Every other shipped engine is
-    unaffected — Q-Chem inlines the geometry into ``$molecule``, the script engines
-    substitute a path the template quotes, and the generated bash quotes everything it
-    interpolates.
+    constraint belongs to the input formats that read a geometry through a
+    whitespace-delimited path field, or exec a wrapper through ``sh``, and is invisible
+    everywhere else: a format that inlines the geometry, or quotes the path it substitutes,
+    is unaffected, and the generated bash quotes everything it interpolates.
 
     A capability rather than a rule in :mod:`chemrefine.config`, and that placement is the
     whole point. Held at config load it would make *validity depend on where a project sits
-    on disk*: a relative ``output_dir`` inherits the config file's directory, so an mlip-only
-    workflow under ``~/My Drive`` — which runs perfectly well — would be refused, and this
-    repository's own example suite would fail whenever the checkout path contains a space.
+    on disk*: a relative ``output_dir`` inherits the config file's directory, so a workflow
+    none of whose engines is affected, under ``~/My Drive`` — which runs perfectly well —
+    would be refused, and this repository's own example suite would fail whenever the
+    checkout path contains a space.
     The engine that cannot express the path is the one that should refuse it, and it refuses
     the *resolved* path it is about to write, which is also what closes the symlinked-parent
     case that a check on the configured value cannot see.
@@ -267,16 +267,16 @@ class WhitespacePathIntolerant(Protocol):
 class AuxFileConsuming(Protocol):
     """An engine whose templates can name auxiliary input files the jobs then read.
 
-    An ORCA template can quote a file beside the method blocks — a docking guest
-    (``%DOCKER GUEST "../templates/cl.xyz"``), a point-charge file — and the job's
-    result then depends on that file's *bytes* exactly as it depends on the template
-    text. The template digest covers only the path string, so without this hook an
-    edit to the referenced file would change every job's answer while every fingerprint
-    stands still, and ``resume`` would serve results computed from the old file.
+    A template can quote a file beside its method settings — a guest geometry, a
+    point-charge file — and the job's result then depends on that file's *bytes* exactly
+    as it depends on the template text. The template digest covers only the path string,
+    so without this hook an edit to the referenced file would change every job's answer
+    while every fingerprint stands still, and ``resume`` would serve results computed from
+    the old file.
 
     A capability rather than a rule in :mod:`chemrefine.cache` because only the engine
-    knows its template grammar: what counts as a reference in an ORCA ``.inp`` is not a
-    question a ``.py`` script template answers the same way, and the cache module keys
+    knows its template grammar: what counts as a reference is a question each input format
+    answers its own way, and the cache module keys
     values it does not interpret. :func:`chemrefine.step.derive_step_key` asks with
     ``isinstance``, the way it asks :class:`OptionsDeclaring` for the options reading,
     and folds the named files' digests into :meth:`chemrefine.cache.StepKey.of`.
@@ -306,9 +306,9 @@ class OptionsDeclaring(Protocol):
 
     A capability and a **claim**, not boilerplate: declaring a model asserts the engine
     reads its fields, and the cross-engine invariants hold every declaring engine's
-    ``gpus()`` to its model's ``device``. That is why ORCA declares nothing — its knobs
-    live in the step template, its ``options:`` dict is read only by NMS, and a model
-    here would advertise a ``device`` knob the engine ignores. A consumer meeting a
+    ``gpus()`` to its model's ``device``. That is why an engine configured entirely
+    through its template declares nothing — its ``options:`` dict is read only by NMS, and
+    a model here would advertise a ``device`` knob the engine ignores. A consumer meeting a
     non-declaring engine reports "no engine options" (introspection) or falls back to
     the base :class:`~chemrefine.engines._options.EngineOptions` for the shared knobs
     (provisioning), rather than inventing a schema the engine does not honour.
@@ -390,7 +390,8 @@ class NmsInputInfo:
 
     ``is_transition_state`` drives the default NMS target (``ts`` vs ``minimum``);
     ``computes_frequencies`` gates NMS (a step that won't produce frequencies cannot be
-    resolved). Both are read from the engine's own input (ORCA: its template keywords).
+    resolved). Both are read from the engine's own input (its template, for a
+    template-driven engine).
     """
 
     is_transition_state: bool
@@ -448,8 +449,8 @@ class JobExecutable(Protocol):
         """Loose files to copy back out of the job's scratch directory.
 
         A read-only property declaration rather than a ``ClassVar``, so an engine may
-        *compute* the answer at read time — ``mlip-train`` derives it from its trainer
-        registry, which is only populated after the engine's class body has run. A plain
+        *compute* the answer at read time — an engine may derive it from a registry
+        populated only after its class body has run. A plain
         class attribute satisfies it just the same, and that is what every other engine
         declares. Read on instances only, without a :class:`~chemrefine.state.
         StepContext` — which is why it cannot be exact per step the way
@@ -469,8 +470,8 @@ class JobExecutable(Protocol):
         """How this job's cores are spelled to SLURM: ``(ntasks, cpus_per_task)``.
 
         The same core count means different directives to different programs: MPI ranks
-        (ORCA) are ``(pal, 1)``, one threaded process (Q-Chem's ``-nt``) is ``(1, pal)``,
-        and a hybrid MPI+OpenMP job is ``(ranks, threads)``. The scheduler charges the
+        are ``(pal, 1)``, one threaded process is ``(1, pal)``, and a hybrid MPI+OpenMP job
+        is ``(ranks, threads)``. The scheduler charges the
         product against ``max_cores`` and writes both directives, so the allocation and
         the program's own idea of its parallelism cannot disagree.
         """
@@ -481,9 +482,9 @@ class JobExecutable(Protocol):
 
         ``False`` for almost everything: a threaded program is one task with N CPUs,
         which cannot be split, and an MPI program's ranks may land anywhere. ``True`` for
-        a job that is both at once — ORCA driven by an ExtOpt server runs its ``%pal``
-        MPI processes *and* a gradient server threading the same count in one process,
-        so the ranks need the tasks and the server needs them on one machine. The script
+        a job that is both at once — an MPI program driven by a gradient server in the same
+        job runs its ranks *and* a server threading the same count in one process, so the
+        ranks need the tasks and the server needs them on one machine. The script
         then carries ``#SBATCH --nodes=1`` itself, so no header has to remember it.
         """
         ...
@@ -495,9 +496,9 @@ class JobExecutable(Protocol):
     def memory_mb(self, ctx: StepContext) -> int | None:
         """Total MB one job requires, or ``None`` when the engine declares nothing.
 
-        Read from the step's own input where the program reads it — ORCA's ``%maxcore``,
-        Q-Chem's ``mem_total`` — and already carrying the engine's headroom rule, so the
-        script builder can compare it against the header's allocation whole. ``None``
+        Read from the step's own input where the program reads it — a per-core or whole-job
+        memory setting in its template — and already carrying the engine's headroom rule, so
+        the script builder can compare it against the header's allocation whole. ``None``
         leaves the header's memory policy untouched.
         """
         ...
@@ -631,9 +632,9 @@ class ArtifactEngine(CalculationEngine, Protocol):
         run finished before the driver died, so it must be derivable from ``ctx`` alone
         rather than from anything the submission returned.
 
-        May sit *inside* :meth:`run_dir` rather than directly in it — FAIRChem's is at
-        ``checkpoints/final/inference_ckpt.pt`` under a directory it names itself — which is
-        why the two are separate questions.
+        May sit *inside* :meth:`run_dir` rather than directly in it — a library that names
+        its own checkpoint directory puts it there — which is why the two are separate
+        questions.
         """
         ...
 
@@ -657,12 +658,13 @@ class BackendRequirement:
 class ProvisionableEngine(CalculationEngine, Protocol):
     """An engine whose compute backend can live in its own managed environment.
 
-    The MLIP libraries' torch/e3nn trees conflict, so one Python process can host only one
-    backend family; a *provisionable* engine names the environment it needs
+    Python backends' dependency trees can conflict (torch and e3nn pins), so one process
+    hosts one backend family; a *provisionable* engine names the environment it needs
     (:class:`BackendRequirement`) and the generic provisioner
     (:mod:`chemrefine.engines._provision`) checks it before any job submits and launches the
     step's Python from the matching managed env. Like NMS, this is a capability detected via
-    ``isinstance`` — ORCA (a binary, not a Python backend) simply doesn't implement it.
+    ``isinstance`` — an engine that runs a binary rather than a Python backend simply
+    doesn't implement it.
     Both methods are required for the capability to be detected.
     """
 
@@ -807,11 +809,10 @@ disagree with the contracts it enforces."""
 def register(name: str) -> Callable[[type[CalculationEngine]], type[CalculationEngine]]:
     """Decorator: register ``cls`` under ``name`` in :data:`ENGINES`, if it qualifies.
 
-    **The decorator is the gate**, in the shape
-    :meth:`chemrefine.engines.mlip.registry.MlipLibrary.trainer` already sets one subsystem
-    over: a class that cannot serve as an engine is refused *here*, at its own decorator line
-    during discovery, naming what is missing — rather than at the first step that submits, by
-    which time ``run_step`` has built a context, derived a cache key and created a directory.
+    **The decorator is the gate**: a class that cannot serve as an engine is refused
+    *here*, at its own decorator line during discovery, naming what is missing — rather than
+    at the first step that submits, by which time ``run_step`` has built a context, derived
+    a cache key and created a directory.
     Four ways a class can fail to qualify, each with its own reason:
 
     * **It does not satisfy the contract.** ``ENGINES`` is annotated

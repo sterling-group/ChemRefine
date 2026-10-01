@@ -117,10 +117,10 @@
         <div class="fields execrows">
           <template x-for="(row, ei) in execRows" :key="'exec-' + ei">
             <label title="Program name → path, as the step's engine reads it">
-              <input class="execname" type="text" :value="row.name" placeholder="orca"
+              <input class="execname" type="text" :value="row.name" placeholder="program"
                      list="exec-names" @input="setExecName(ei, $event.target.value)">
               <span class="pathrow">
-                <input type="text" :value="row.path" placeholder="/opt/orca/orca"
+                <input type="text" :value="row.path" placeholder="/path/to/program"
                        @input="setExecPath(ei, $event.target.value)">
                 <button type="button" class="mini" x-show="!staticMode" title="Browse"
                         @click="browseExec(ei)">📁</button>
@@ -537,9 +537,9 @@
             Show</button>
         </div>
         <p class="muted" x-show="viewer.step !== 'input' && !modeChoices().length">
-          This step has no frequency data, so it offers no modes. A GOAT search or an MLIP
-          screen computes none; a frequency step cached before ChemRefine kept the whole
-          table needs <code>rebuild-cache</code>.
+          This step has no frequency data, so it offers no modes. A step that computes no
+          frequencies — a conformer search, a screen — has none; a frequency step cached
+          before ChemRefine kept the whole table needs <code>rebuild-cache</code>.
         </p>
       </div>
       <!-- The canvas and the status line sit OUTSIDE the savedPath gate, unlike the step

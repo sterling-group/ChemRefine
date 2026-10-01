@@ -148,8 +148,9 @@ def create_app(calculator: ComputeBackend, *, token: str | None = None) -> Flask
         except Exception as e:
             # The full exception — message, paths, backend internals — goes to the
             # server log, which only the job owner can read. The response carries a
-            # correlation id instead: the client is ORCA's wrapper script, which does
-            # nothing with the text beyond surfacing it, and the server is reachable
+            # correlation id instead: the client is the wrapper script a driving program
+            # runs per geometry, which does nothing with the text beyond surfacing it, and
+            # the server is reachable
             # by any same-host user who gets hold of the token.
             request_id = secrets.token_hex(8)
             logger.exception("[req=%s] calculate failed: %s", request_id, e)
@@ -169,9 +170,8 @@ def _payload_to_data(payload: dict[str, Any]) -> CalculationData:
 
     The top-level ``tag`` (the bridge's per-call correlation id, derived
     from the ``.extinp.tmp`` stem) is folded into ``settings['tag']`` so
-    backends that key per-call artefacts on it — e.g. PySCF active-space
-    tensor dumps — can read it through the same ``settings`` channel as
-    every other knob.
+    backends that key per-call artefacts on it — a tensor dump, say — can
+    read it through the same ``settings`` channel as every other knob.
     """
     import numpy as np
 

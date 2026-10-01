@@ -14,7 +14,7 @@ via ``isinstance`` (:class:`~chemrefine.engines.api.TemplateDriven`,
 :class:`~chemrefine.engines.api.OptionsDeclaring`, …), never a parallel table — so a
 drop-in engine package is described the moment it registers. An engine that declares no
 options model is reported with ``options_schema: None`` rather than a schema it does not
-honour: ORCA's knobs live in its step template, and inventing a form for it would
+honour: an engine configured through its template alone gets no invented form, which would
 advertise fields the engine never reads.
 """
 
@@ -161,7 +161,8 @@ def schema_document() -> dict[str, Any]:
     every engine's model), one :class:`EngineDescriptor` per registered engine, and the
     ``operation:`` vocabulary. That last one is deliberately *not* in the config schema
     — the model keeps the field a free string because engines interpret it themselves
-    (ORCA even infers it from the template) — so the top-level list is the **union of
+    (an :class:`~chemrefine.engines.api.OperationInferring` one reads it off its input) —
+    so the top-level list is the **union of
     every engine's declared vocabulary**, kept for flat-list consumers; the per-engine
     truth is each descriptor's ``operations``, which is what the GUI's dropdown reads. The
     sixth is the recovery-action vocabulary (:func:`chemrefine.recovery.describe_actions`)

@@ -72,8 +72,8 @@ class EngineOptions(BaseModel):
 
         The scheduler's read of ``device`` — the header it picks, the budget it charges, the
         device it assigns — belongs to the model beside the field, not to a helper that peeks
-        at subclass fields by name: a model with another way to ask overrides this (PySCF's
-        ``gpu``), and :meth:`chemrefine.engines._job.JobEngine.gpus` asks every declaring
+        at subclass fields by name: a model with another way to ask overrides this (a GPU
+        switch of its own), and :meth:`chemrefine.engines._job.JobEngine.gpus` asks every declaring
         engine's model the same question. Read through the model rather than off the raw
         dict because a second reader with its own idea of "unset" can disagree with the
         field default: a step that named no device could render ``$DEVICE=cuda`` into its
@@ -89,7 +89,7 @@ class EngineOptions(BaseModel):
 
         Strict — ``extra="forbid"`` means a typoed knob fails the step rather than
         being silently ignored. Subclasses override to add engine-specific
-        required-field checks (e.g. PySCF's ``basis`` / ``xc``).
+        required-field checks (a level of theory the user must name, say).
         """
         raw = raw or {}
         cls._reject_ambiguous_spellings(raw)

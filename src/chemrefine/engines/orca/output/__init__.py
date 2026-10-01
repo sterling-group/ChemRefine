@@ -6,6 +6,9 @@ The per-section extractors live in sibling modules — :mod:`.geometry`, :mod:`.
 every extractor over the shared text to assemble one
 :class:`~chemrefine.engines.api.ParsedResult`. This package re-exports the coordinator's entry
 points, so ``from chemrefine.engines.orca import output`` then ``output.parse_output(...)`` works.
+
+ORCA prints with CODATA 2018, the digits :mod:`chemrefine.quantities` keeps, so a value
+converted from this output round-trips with it.
 """
 
 from chemrefine.engines.orca.output.coordinator import (

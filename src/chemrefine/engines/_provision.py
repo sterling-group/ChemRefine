@@ -1,11 +1,12 @@
 """Managed per-backend environments + launcher resolution (a generic building block).
 
-One Python process can host only one MLIP dependency family (their torch/e3nn trees conflict),
-so ChemRefine keeps its core install light and runs each backend from an **isolated managed
-environment**, resolved **by name** — never a path in the YAML. This module is fully generic:
-what a step needs arrives as a :class:`~chemrefine.engines.api.BackendRequirement` from the
-engine's ``backend_requirement`` hook (capability by Protocol, like NMS), and everything here
-works off that DTO — no backend names, tasks, or tables.
+Python backends' dependency trees can conflict (torch and e3nn pins), so one process hosts one
+backend family: ChemRefine keeps its core install light and runs each backend from an
+**isolated managed environment**, resolved **by name** — never a path in the YAML. This module
+is fully generic: what a step needs arrives as a
+:class:`~chemrefine.engines.api.BackendRequirement` from the engine's ``backend_requirement``
+hook (capability by Protocol, like NMS), and everything here works off that DTO — no backend
+names, tasks, or tables.
 
 * :func:`preflight_backends` — validate every step **before any job submits**: a backend is
   runnable if an explicit ``backend_python`` override is set, a managed env exists (and, where
@@ -82,9 +83,8 @@ Anchored on ``3.`` so the bare ``:: 3`` classifier and the implementation ones
 def known_backend_extras() -> frozenset[str]:
     """Every backend extra the registered engines can require.
 
-    The union of each provisionable engine's ``backend_extras()`` — registration-driven
-    (the MLIP extras come from the backend specs, PySCF's from its engines), never a
-    hardcoded list. Drives ``chemrefine backends`` listing + name validation.
+    The union of each provisionable engine's ``backend_extras()`` — registration-driven,
+    never a hardcoded list. Drives ``chemrefine backends`` listing + name validation.
     """
     extras: set[str] = set()
     for name in ENGINES:
@@ -118,12 +118,12 @@ def chemrefine_home() -> Path:
 def backend_env_path(extra: str) -> Path:
     """The managed env directory for ``extra`` (``<chemrefine_home>/backends/<extra>``).
 
-    A ``-gpu`` extra shares the env of the extra it extends. ``[pyscf-gpu]`` *is* ``[pyscf]``
-    plus gpu4pyscf and cutensor — a superset, not a rival — so both belong in one directory,
-    and ``chemrefine backends install pyscf-gpu`` adds the accelerator packages to the env
-    ``… install pyscf`` already built. The one-env-per-extra rule everywhere else exists
-    because the MLIP stacks genuinely *conflict* (MACE pins ``e3nn==0.4.4``, FAIRChem needs
-    ``>=0.5``); where nothing conflicts it would only duplicate a large PySCF tree.
+    A ``-gpu`` extra shares the env of the extra it extends. It is its base extra plus
+    accelerator packages — a superset, not a rival — so both belong in one directory, and
+    ``chemrefine backends install <extra>-gpu`` adds the accelerator packages to the env
+    ``… install <extra>`` already built. The one-env-per-extra rule everywhere else exists
+    because some backend stacks genuinely *conflict* (incompatible pins of one shared
+    dependency); where nothing conflicts it would only duplicate a large tree.
 
     Keyed to the suffix rather than to a table, for the same reason
     :func:`chemrefine.config.reject_shell_unsafe` is keyed to a property: a second
@@ -189,8 +189,8 @@ def _importable_by(python: Path, import_name: str) -> bool:
     """Whether ``import_name`` can be found by *another* interpreter.
 
     The env's own answer, not this process's. Asking the path whether the directory exists
-    cannot tell a ``pyscf`` env from a ``pyscf-gpu`` one — they are the same directory —
-    so a GPU step would pass against a CPU-only env and PySCF would fall back to CPU
+    cannot tell a base env from its ``-gpu`` superset — they are the same directory —
+    so a GPU step would pass against a CPU-only env and the backend would fall back to CPU
     mid-run, which is the failure this exists to prevent: it is logged to the backend
     server's log and nowhere the user looks, so the run *succeeds* with the wrong hardware.
 
@@ -222,13 +222,14 @@ def require_backend(requirement: BackendRequirement, override: str | None = None
     A managed env is proved by its **name** — and, where its own dist can be read off disk,
     by holding the ChemRefine that is running (:func:`_require_matched`) — wherever the
     name determines its contents, and that is everywhere except the shared-env case:
-    ``[pyscf]`` and ``[pyscf-gpu]`` live in one directory (see :func:`backend_env_path`),
-    so ``backends/pyscf`` existing says nothing about whether gpu4pyscf is in it. Only
+    a base extra and its ``-gpu`` superset live in one directory (see
+    :func:`backend_env_path`), so the directory existing says nothing about whether the
+    accelerator packages are in it. Only
     there is the env asked, and asking costs one subprocess for one kind of step.
 
     Probing *everywhere* was the obvious alternative and is wrong: it would make a faked env
     — CI's `provisioned-backend` job, which symlinks a bare interpreter precisely to prove
-    the suite does not depend on real backends — need MACE and FAIRChem actually installed
+    the suite does not depend on real backends — need the real backend libraries installed
     before it could pass.
 
     The override is taken on trust: it is the documented escape hatch for an environment the
@@ -799,9 +800,9 @@ def build_backend_env(
     outright (:func:`_require_supported_env`) rather than installed into, for the same
     reason: pip succeeds there having installed nothing.
 
-    **The install always runs**, even when the env's ``python`` exists: ``pyscf`` and
-    ``pyscf-gpu`` share a directory (see :func:`backend_env_path`), so returning early would
-    make ``backends install pyscf-gpu`` a silent no-op on a machine with a ``pyscf`` env —
+    **The install always runs**, even when the env's ``python`` exists: a base extra and its
+    ``-gpu`` superset share a directory (see :func:`backend_env_path`), so returning early
+    would make ``backends install <extra>-gpu`` a silent no-op on a machine with the base env —
     success reported, nothing installed, and the GPU step on CPU. pip is idempotent and
     cheap when the requirement is already satisfied, and this is an explicit user command
     rather than a per-run path, so letting pip decide costs a few seconds and removes a
@@ -823,8 +824,8 @@ def build_backend_env(
     A half-built env is removed on the way out, because leaving it is worse than not
     building it: an env whose *create* succeeded and whose *install* failed would be served
     to every later run as though it were provisioned, and the step would fail on the import
-    instead. Only an env **this call created** is removed — tearing down a working ``pyscf``
-    env because a later ``pyscf-gpu`` install hit a resolver wall would lose work the user
+    instead. Only an env **this call created** is removed — tearing down a working base env
+    because a later ``-gpu`` install into it hit a resolver wall would lose work the user
     already has.
     """
     env_python = backend_env_python(extra)

@@ -13,11 +13,18 @@ there could be none.
 
 Checked over ``src/`` only. Tests reach into internals on purpose — that is what a unit
 test is — and holding them to this would say the opposite of what the rule is for.
+
+A boundary holds names too. Outside an engine's own package, core describes an engine by
+its role, so adding, renaming or removing one never sends anybody through the core to fix
+its prose: :func:`test_core_names_no_engine` holds the names, read off the registries. An
+engine's vocabulary — its keywords, its file formats — is left to review.
 """
 
 from __future__ import annotations
 
 import ast
+import re
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 import chemrefine
@@ -184,6 +191,123 @@ def _underscored_engine_imports(tree: ast.AST) -> list[str]:
                 ):
                     found.append(alias.name)
     return found
+
+
+#: Core files that may name an engine, each with the reason it must.
+_CORE_MAY_NAME: dict[str, str] = {
+    "config_legacy.py": "translates v1.3.1's spellings into the engines that replace them, "
+    "which is naming them",
+    "data/agent_guide.md": "tells an agent which shipped engine serves which job, which it "
+    "cannot do without their names",
+}
+
+
+def _engine_vocabulary(shipped: Mapping[str, type]) -> tuple[re.Pattern[str], re.Pattern[str]]:
+    """What names a shipped engine: its words, matched whole in any case, and its classes,
+    matched exactly.
+
+    The words are the registry keys, the plugin package names, the template labels, and each
+    MLIP library's import name and trainer label; the classes are every plugin class in the
+    MRO of a shipped engine, of its options model and of its gradient calculator. All of it
+    is read off the registries, so an engine that joins is named by existing. Operation
+    names and ``executables`` keys are a config's vocabulary rather than an engine's name,
+    and are left out.
+    """
+    from chemrefine.engines.api import TemplateDriven, get_engine
+    from chemrefine.engines.mlip import registry
+
+    packages = {cls.__module__.split(".")[2] for cls in shipped.values()}
+    words = set(shipped) | packages
+    for name in shipped:
+        engine = get_engine(name)
+        if isinstance(engine, TemplateDriven):
+            words.add(engine.label)
+    for task in registry.registered_backends():
+        spec = registry.backend_spec(task)
+        words.add(spec.library.import_name)
+        if spec.trainer is not None:
+            words.add(spec.trainer.label)
+
+    def plugin_classes(cls: type) -> set[str]:
+        return {
+            c.__name__
+            for c in cls.__mro__
+            if c.__module__.split(".")[:2] == ["chemrefine", "engines"]
+            and c.__module__.split(".")[2:3] != []
+            and c.__module__.split(".")[2] in packages
+        }
+
+    classes: set[str] = set()
+    for cls in shipped.values():
+        classes |= plugin_classes(cls)
+        for attr in ("options_cls", "calculator_cls"):
+            if (model := getattr(cls, attr, None)) is not None:
+                classes |= plugin_classes(model)
+
+    def alternation(names: set[str]) -> str:
+        return "|".join(sorted(map(re.escape, names), key=len, reverse=True))
+
+    return (
+        re.compile(rf"\b(?:{alternation(words)})\b", re.IGNORECASE),
+        re.compile(rf"\b(?:{alternation(classes)})\b"),
+    )
+
+
+def _core_files() -> Iterator[tuple[str, str]]:
+    """Every UTF-8 text file of core, as ``(package-relative path, text)``.
+
+    Core is everything under the package but an engine's own package (a bare-named one under
+    ``engines/``) and the GUI's vendored libraries, which are other people's text.
+    """
+    for path in sorted(_PACKAGE_ROOT.rglob("*")):
+        rel = path.relative_to(_PACKAGE_ROOT)
+        if not path.is_file() or "__pycache__" in rel.parts:
+            continue
+        if rel.parts[0] == "engines" and len(rel.parts) > 2 and not rel.parts[1].startswith("_"):
+            continue
+        if rel.parts[:3] == ("gui", "static", "vendor"):
+            continue
+        try:
+            yield rel.as_posix(), path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+
+
+def test_core_names_no_engine(shipped_engines: dict[str, type]):
+    """Outside an engine's own package, the code and its text describe an engine by its role.
+
+    A name in core is a fact about one engine kept where that engine cannot keep it true:
+    renamed, removed or joined by another, the core goes on saying the old thing, and a new
+    engine has to read the core to learn which sentences are about someone else. Said by
+    role — "an engine configured through its template", "an MPI program" — the sentence is
+    true of every engine it is true of, and stays so.
+    """
+    words, classes = _engine_vocabulary(shipped_engines)
+    offences = [
+        f"{rel}:{lineno}: {match.group(0)}"
+        for rel, text in _core_files()
+        if rel not in _CORE_MAY_NAME
+        for lineno, line in enumerate(text.splitlines(), 1)
+        for pattern in (words, classes)
+        for match in pattern.finditer(line)
+    ]
+    assert not offences, (
+        "core names an engine:\n  "
+        + "\n  ".join(offences)
+        + "\n\nSay it by the engine's role, or move the fact into the engine's own package."
+    )
+
+
+def test_every_core_exemption_still_names_an_engine(shipped_engines: dict[str, type]):
+    """An exemption that names nothing has outlived its reason; it goes."""
+    words, classes = _engine_vocabulary(shipped_engines)
+    texts = dict(_core_files())
+    stale = [
+        rel
+        for rel in _CORE_MAY_NAME
+        if not (words.search(texts[rel]) or classes.search(texts[rel]))
+    ]
+    assert stale == []
 
 
 def test_the_flat_pipeline_imports_the_engine_subsystem_through_its_public_face():

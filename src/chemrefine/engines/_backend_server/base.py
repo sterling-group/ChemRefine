@@ -63,14 +63,14 @@ class CalculationData:
     multiplicity
         Spin multiplicity (``2S + 1``).
     nthreads
-        Worker threads available for this call (passed by ORCA).
+        Worker threads available for this call (passed by the driving program).
     dograd
-        Whether ORCA requested gradients on this call. ``False`` means
-        "energy only" — the backend may still return a gradient list,
-        but the client will write only the energy to the ``.engrad``.
+        Whether the driving program requested gradients on this call. ``False``
+        means "energy only" — the backend may still return a gradient list, but
+        the client writes only the energy back.
     settings
         Backend-specific knobs forwarded from the wrapper-script POST
-        payload (e.g. ``{"method": "dft", "xc": "pbe"}`` for PySCF).
+        payload (e.g. a method and a functional, for a DFT backend).
     """
 
     symbols: tuple[str, ...]
@@ -85,9 +85,8 @@ class CalculationData:
 class ComputeBackend(ABC):
     """Contract every ExtOpt-served backend implements — the base it subclasses.
 
-    An ABC rather than a Protocol, by the subsystem's own rule
-    (:class:`~chemrefine.engines.mlip.train.base.TrainerBase` states it: an ABC where
-    an explicit declaration channel exists, Protocols across package boundaries). The
+    An ABC rather than a Protocol, by the subsystem's own rule: an ABC where an explicit
+    declaration channel exists, a Protocol across package boundaries. The
     declaration channel is :class:`ExtOptServed` — an engine *names* its backend in
     ``calculator_cls`` — and both shipped backends subclass this class for its
     :meth:`settings_from_args` default. A ``runtime_checkable`` Protocol would be
@@ -98,11 +97,10 @@ class ComputeBackend(ABC):
     Abstract hooks close that: an incomplete backend cannot be instantiated, and
     Python's own error names the missing methods.
 
-    What ``abstractmethod`` cannot watch, the engine gate still does
-    (:meth:`chemrefine.engines.orca.extopt.engine.ExtOptOrcaEngine.__init_subclass__`):
-    abstract *classmethods* stay callable on the class — nothing instantiates a
-    backend before ``from_args`` runs inside the job — and ``name`` is a bare ClassVar
-    no ``ABCMeta`` machinery sees, so it rides :attr:`required_declarations`, the
+    What ``abstractmethod`` cannot watch, the gate of the engine that declares the backend
+    checks at class creation: abstract *classmethods* stay callable on the class — nothing
+    instantiates a backend before ``from_args`` runs inside the job — and ``name`` is a bare
+    ClassVar no ``ABCMeta`` machinery sees, so it rides :attr:`required_declarations`, the
     idiom :class:`~chemrefine.engines._job.JobEngine` set.
 
     Concrete backends own their CLI surface (no backend literals in the
@@ -197,7 +195,7 @@ def tokens_from_options(
 
     The shared ``server_cli_from_options`` body for every backend: ``value_flags`` are
     ``(option_key, cli_flag)`` pairs emitted as ``[cli_flag, str(value)]`` when the value is
-    truthy (covering MLIP's kebab mapping ``model_name → --model`` and PySCF's plain
+    truthy (covering a kebab mapping like ``model_name → --model`` and a plain one like
     ``method → --method`` alike); ``bool_flags`` are option keys emitted as ``--{key}`` when
     truthy. Falsy values are omitted so the engine's ``run_block`` emits only flags the user set.
 

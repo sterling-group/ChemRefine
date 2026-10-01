@@ -16,8 +16,8 @@ become issues or warnings up front:
 * a bad value for a knob the engine's declared options model reads — through
   ``from_raw_lenient``, the engine's own read, so validation and the run cannot
   disagree,
-* a backend selection no registered backend answers to (an MLIP ``task_name`` typo) —
-  the registry half of the run's ``preflight_backends``, and only that half: the lookup
+* a backend selection no registered backend answers to (a typo in the option that picks
+  it) — the registry half of the run's ``preflight_backends``, and only that half: the lookup
   imports no backend, so a config authored on a laptop for a cluster still validates
   without the cluster's environments,
 * invalid NMS knobs on an ``nms: true`` step — and ``nms: true`` on an engine that
