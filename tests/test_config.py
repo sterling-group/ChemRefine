@@ -1052,6 +1052,49 @@ def test_v1s_sevennet_spelling_translates_where_v1_chose_sevennet(
     assert out["options"] == options
 
 
+def test_v1s_readme_step_keys_are_honoured_on_a_server_step():
+    """The README's SOLVATOR step named its model on the step; v1.3.1 ran MACE-OFF medium.
+
+    v2 runs the model the user named — as it does CHGNet's ignored ``model_name`` — and
+    each row says what v1.3.1 ran instead."""
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    seen, sink = _collect()
+    step = {
+        "step": 3,
+        "operation": "SOLVATOR",
+        "engine": "MLFF",
+        "model_name": "uma-s-1",
+        "task_name": "omol",
+    }
+    out = _normalize_legacy({"steps": [step]}, report=sink)["steps"][0]
+    assert out["options"] == {"model_name": "uma-s-1", "task_name": "omol", "device": "cuda"}
+    assert "model_name" not in out and "task_name" not in out
+    assert "ran its default" in dict(seen)[("steps", 0, "model_name")]
+
+
+def test_the_block_outranks_a_step_level_key_v1_never_read():
+    """Where both name a key, the block's value is the one v1.3.1 ran."""
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    seen, sink = _collect()
+    step = {"step": 1, "engine": "MLFF", "mlff": {"task_name": "mace_mp"}, "task_name": "omol"}
+    out = _normalize_legacy({"steps": [step]}, report=sink)["steps"][0]
+    assert out["options"]["task_name"] == "mace_mp"
+    assert "outranks `omol`" in dict(seen)[("steps", 0, "task_name")]
+
+
+def test_a_step_level_model_name_off_a_server_step_is_left_to_the_schema():
+    """v1.3.1's docs placed these keys on an MLFF step only; elsewhere the layer leaves them,
+    and the schema refuses an input it does not have — as it would a v2 typo."""
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    step = {"step": 1, "engine": "orca", "model_name": "medium"}
+    assert _normalize_legacy({"steps": [step]}, report=_silent) == {"steps": [step]}
+    with pytest.raises(ValidationError, match=r"steps\.0\.model_name"):
+        Config.model_validate({"template_dir": "./t", "steps": [step]})
+
+
 def test_a_v1_block_moves_only_the_keys_v1_read():
     """A key v1.3.1 never read from the block is dropped, so it cannot collide with one
     it did — ``task`` beside a written-out ``task_name`` would be two spellings of one

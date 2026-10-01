@@ -14,6 +14,9 @@ by hand:
 - a training step's template, which moves from MACE's own YAML in `stepN.inp` to a
   `stepN.yaml` with placeholders — see [Training steps](#training-steps).
 
+v1.3.1's README also showed a `sampling:` key on a step, which v1.3.1 never read (it read
+`sample_type:`) and v2 refuses: write `sample:` — see [Sampling](#sampling).
+
 !!! warning "The compatibility layer is scheduled for removal in 3.0"
 
     Reading a v1 file is a **2.x** guarantee, not a permanent one. Every key on this
@@ -96,6 +99,11 @@ v1.3.1 chose SevenNet by a `model_name` starting `sevenn` and read the release f
 task matched; that pair is translated to `task_name: sevenn` with the release as
 `model_name`.
 
+v1.3.1's README also put `model_name` and `task_name` on an MLFF step itself, beside or
+instead of the block. v1.3.1 read only the block, so such a step ran its defaults (MACE-OFF
+`medium`); the translation honours what the step names and moves the values into
+`options:`, unless the block names the same key, whose value is the one v1.3.1 ran.
+
 Each written-out default and each dropped key is reported with a deprecation warning of
 its own. Any other key in the block configured nothing in v1.3.1 and is dropped, reported;
 so is a block on a step v1.3.1 never used it on — an `mlff:` block beside `engine: DFT`
@@ -111,9 +119,11 @@ A v1.3.1 `engine: MLIP` step with an `mlip:` block is translated the same way, t
 server for it, so the step ran its template as ORCA's own method — give the template
 `! ExtOpt` to run the model the block names, or write `engine: orca` to keep what v1.3.1
 computed. Without a block, `engine: MLIP` keeps its name: in v2 that is the direct engine,
-a different path, where the model runs a Python template with no ORCA. FAIRChem's model names are the installed `fairchem-core`'s, and v1.3.1's
-`uma-s-1` is not among the current library's — name a current one, such as `uma-s-1p2`;
-the library refuses a name it does not have when the job loads the model.
+a different path, where the model runs a Python template with no ORCA.
+
+FAIRChem's model names are the installed `fairchem-core`'s, and v1.3.1's `uma-s-1` is not
+among the current library's — name a current one, such as `uma-s-1p2`; the library refuses
+a name it does not have when the job loads the model.
 
 ### Training steps
 

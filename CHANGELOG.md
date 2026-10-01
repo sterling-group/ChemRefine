@@ -515,7 +515,9 @@ for those and the full map.
   reported, so a translated step runs the model v1.3.1 ran; a block on a step v1.3.1
   never used it on is dropped, reported. v1.3.1's `engine: MLIP` with an `mlip:` block,
   whose server v1.3.1 never started, is translated the same way; a bare `mlip` names
-  v2's direct engine. A v1.3.1 training step keeps its partition: `trainer.valid_fraction`,
+  v2's direct engine. The step-level `model_name` / `task_name` v1.3.1's README put on an
+  MLFF step, which v1.3.1 ignored, move into `options:`, so the step runs the model it
+  names. A v1.3.1 training step keeps its partition: `trainer.valid_fraction`,
   v1.3.1's *test* split, is `test_fraction`, `valid_fraction: 0` leaves validation to the
   template as before, and `task_name: mace_off` and `device: cuda` are written out where
   the step names none.

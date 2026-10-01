@@ -8,6 +8,9 @@ untouched, and each rewrite logs one deprecation warning naming what to change.
 It translates a v1.3.1 step into the step v1.3.1 ran. A key v1.3.1 read keeps the meaning
 it had there — including the default v1.3.1 read in its absence, written out where v2's
 would differ — and a key or block v1.3.1 never read configured nothing, so it is dropped.
+The one exception is a value v1.3.1's own docs told users to write and v1.3.1 then
+ignored: its README's step-level ``model_name`` / ``task_name`` on an MLFF step are
+honoured, as 2.0 honours the CHGNet ``model_name`` v1.3.1 ignored.
 Every rewrite, written-out default and dropped key reaches the :data:`DeprecationSink` at
 its own ``loc``. :func:`normalize` reads no file and changes nothing it is handed, so the
 validator can run it twice over one mapping.
@@ -325,6 +328,38 @@ def _names_a_file(value: object) -> bool:
     return isinstance(value, str) and "/" in value and not value.startswith("https:")
 
 
+def _move_step_keys(s: dict[str, Any], loc: tuple[str | int, ...], sink: DeprecationSink) -> None:
+    """Move v1.3.1's step-level ``model_name`` / ``task_name`` into a server step's ``options``.
+
+    v1.3.1's README put them on an MLFF step itself, but v1.3.1 read only the block, so the
+    step ran its defaults. Written where v1.3.1's docs said to write them, they are honoured:
+    each moves into ``options`` — before the defaults are written out, so no default stands in
+    for a value the step names — unless the block names the key too, whose value is the one
+    v1.3.1 read. Each move, and each value the block outranks, is reported.
+    """
+    for key in ("model_name", "task_name"):
+        if key not in s:
+            continue
+        value = s.pop(key)
+        options = _mapping(
+            s.get("options"), what=f"steps[{loc[1]}].options", of="option names to values"
+        )
+        if key in options:
+            sink(
+                (*loc, key),
+                f"step-level `{key}` is deprecated, and the block's `{key}: {options[key]}` "
+                f"outranks `{value}`, as v1.3.1 read only the block; dropped",
+            )
+            continue
+        options[key] = value
+        s["options"] = options
+        sink(
+            (*loc, key),
+            f"step-level `{key}` is deprecated; use `options:` — v1.3.1 read it only from the "
+            f"block and ran its default, and the translated step runs `{key}: {value}`",
+        )
+
+
 def _write_out_v1_server(
     s: dict[str, Any], loc: tuple[str | int, ...], sink: DeprecationSink
 ) -> None:
@@ -471,6 +506,7 @@ def _normalize_step(step: Any, index: int, sink: DeprecationSink) -> Any:
     _move_blocks(s, loc, sink)
     engine = _folded(s.get("engine"))
     if v1_server and engine == "mlip-extopt":
+        _move_step_keys(s, loc, sink)
         _write_out_v1_server(s, loc, sink)
     elif v1_training and engine == "mlip-train":
         _write_out_v1_training(s, loc, sink)
