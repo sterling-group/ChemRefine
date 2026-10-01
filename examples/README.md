@@ -24,6 +24,6 @@ cd <example> && chemrefine run input.yaml
 | [tutorials/spin/benzophenone](tutorials/spin/benzophenone/) | benzophenone | Singlet/triplet gaps and TDDFT. |
 | [tutorials/spin/heme_catalyst](tutorials/spin/heme_catalyst/) | Fe heme model | Quintet/triplet/singlet spin ladder on DFT and MLIP. |
 
-The ChemRefine paper's workflows sit in `tutorials/`, beside examples added
-since; see the
+The ChemRefine paper's workflows sit in `tutorials/`, beside examples that go
+beyond it; see the
 [documentation](https://sterling-group.github.io/ChemRefine/) for walkthroughs.

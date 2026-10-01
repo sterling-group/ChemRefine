@@ -657,13 +657,13 @@ def main() -> int:
     _require_font()
     ASSETS.mkdir(parents=True, exist_ok=True)
     GUI_BRAND.mkdir(parents=True, exist_ok=True)
-    # A directory of its own, made and removed here: a fixed name under `$HOME` adopted
-    # whatever was already there and then deleted it with the build's own files.
+    # A directory of its own, made and removed here: a fixed name under `$HOME` would adopt
+    # whatever was already there and then delete it with the build's own files.
     with tempfile.TemporaryDirectory(prefix="chemrefine_logo_") as scratch:
         wd = Path(scratch)
         (wd / "favicon.svg").write_text(icon_svg(boost=True), encoding="utf-8")
         # The square display canvas is a raster source and nothing else - no page or
-        # stylesheet ever wanted a mark with a third of its height empty - so it lives
+        # stylesheet wants a mark with a third of its height empty - so it lives
         # here for the export and is not part of the kit.
         (wd / "icon.svg").write_text(icon_svg(), encoding="utf-8")
 
@@ -676,10 +676,10 @@ def main() -> int:
         shutil.copy2(wd / "logo-wordmark-dark.svg", ASSETS / "logo-wordmark-dark.svg")
 
         # Two optical sizes, so two sources. The boost is a 16-48 px treatment and the
-        # docstring says so; rasterizing everything from it put stroke widths meant for a
-        # 16 px tab onto a 512 px launcher tile, where the drawing reads as a heavier mark
-        # than the one on every other surface. Above the boosted range the display mark is
-        # the source, which is what makes "for 16-48 px legibility only" true of the code.
+        # docstring says so; rasterizing everything from it would put stroke widths meant
+        # for a 16 px tab onto a 512 px launcher tile, where the drawing reads as a heavier
+        # mark than the one on every other surface. Above the boosted range the display mark
+        # is the source, which is what makes "for 16-48 px legibility only" true of the code.
         sizes = {
             "favicon-16.png": (16, "favicon.svg"),
             "favicon-32.png": (32, "favicon.svg"),
@@ -696,8 +696,8 @@ def main() -> int:
         shutil.copy2(wd / "logo-wordmark-1200.png", ASSETS / "logo-wordmark-1200.png")
 
         # The hand-written SVGs land last, once every inkscape step has succeeded: written
-        # first, a failed text-to-path left the kit half new and half old, which no check
-        # could tell from a finished one.
+        # first, a failed text-to-path would leave the kit half new and half old, which no
+        # check can tell from a finished one.
         (ASSETS / "logo.svg").write_text(mark_svg(), encoding="utf-8")
         (ASSETS / "logo-dark.svg").write_text(mark_svg(dark=True), encoding="utf-8")
         (ASSETS / "favicon.svg").write_text(icon_svg(boost=True), encoding="utf-8")

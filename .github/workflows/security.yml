@@ -54,8 +54,8 @@ jobs:
         run: pip-audit --skip-editable
 
       # The environment audit above covers what the base install resolves to — which
-      # excludes every heavy extra, so the MLIP/PySCF stacks' pins (torch, e3nn,
-      # gpu4pyscf, …) were never audited by anything. Installing them is out of the
+      # excludes every heavy extra, so without this step the MLIP/PySCF stacks' pins
+      # (torch, e3nn, gpu4pyscf, …) go unaudited. Installing them is out of the
       # question here, but auditing needs only names and versions: resolve each extra
       # with `--dry-run --report` (metadata only, the same trick ci.yml's
       # extras-resolve uses — no torch wheel is downloaded), merge the pinned

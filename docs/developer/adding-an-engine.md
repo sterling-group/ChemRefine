@@ -464,9 +464,9 @@ environment.
 ### Adding a calculator knob
 
 The calculator surface is deliberately **closed**: `CalculatorSpec` is frozen with no
-catch-all `**extra`, so a knob no field names has nowhere to hide — the property that ended a
-bug class where builders silently swallowed knobs the dispatch was passing. The price is that
-a new knob is declared in four places, each visible and typed:
+catch-all `**extra`, so a knob no field names has nowhere to hide, and no builder can
+silently swallow a knob the dispatch passes. The price is that a new knob is declared in
+four places, each visible and typed:
 
 1. `mlip/options.py` — the field on `MlipOptions`, and its name appended to
    `CALCULATOR_KNOBS`.

@@ -23,7 +23,7 @@ concurrency:
 
 env:
   FORCE_COLOR: "1"
-  # The seven tests that execute the GUI's JavaScript skip without a Node, and a skip
+  # The tests that execute the GUI's JavaScript skip without a Node, and a skip
   # exits 0 — so they can stop testing anything without a red build. This catches a runner
   # image dropping Node, not a regression in our own lookup: runners ship one, so every
   # job here takes the PATH branch. The step that exercises the *other* branch is in the
@@ -96,9 +96,9 @@ jobs:
           PY="$(command -v python)"
           PATH="$(dirname "$PY")" "$PY" -m pytest tests/test_gui_assets.py -q
 
-  # Every extra is a promise the resolver has to be able to keep. The test job only
-  # installs [test], so a broken extra — a bad pin, a missing marker — reached users
-  # rather than CI. Resolution only: the heavy backends are never downloaded.
+  # Every extra is a promise the resolver has to be able to keep. The test job only installs
+  # [test], so without this job a broken extra — a bad pin, a missing marker — would reach
+  # users rather than CI. Resolution only: the heavy backends are never downloaded.
   extras-resolve:
     runs-on: ubuntu-latest
     strategy:
@@ -123,10 +123,8 @@ jobs:
         run: |
           pip install --upgrade pip
           # Read the extras out of the metadata that declares them rather than restating
-          # them here. The hand-written list drifted: `mlff` (the back-compat alias) and
-          # `pyscf-gpu` (whose gpu4pyscf/cutensor pins are the likeliest here to rot) were
-          # never on it, so two of the promises this job exists to check went unchecked for
-          # as long as they have existed. tomllib is stdlib on every matrix Python.
+          # them here: a hand-written list drifts, and an extra missing from it is a
+          # promise this job never checks. tomllib is stdlib on every matrix Python.
           extras=$(python -c "import tomllib;print(' '.join(sorted(tomllib.load(open('pyproject.toml','rb'))['project']['optional-dependencies'])))")
           echo "resolving: $extras"
           for extra in $extras; do
@@ -163,7 +161,7 @@ jobs:
       # that changes the marker, with no matching edit to this file.
       #
       # `--only-binary` names the held-back packages, never `:all:`: resolution is
-      # transitive, and a wheels-only rule over the whole tree failed on mace's
+      # transitive, and a wheels-only rule over the whole tree fails on mace's
       # `python-hostlist` and chgnet's `nvidia-ml-py3` — sdist-only pure-Python
       # packages that build in a second anywhere — *regardless* of whether the capped
       # package gained wheels, so the reminder could never fire for those two extras.
@@ -171,12 +169,12 @@ jobs:
       # capped package still has to answer with a wheel. It is the *native* build this
       # catches — dm-tree compiling a vendored abseil for an hour, or torch from
       # source — and the step above cannot: `--dry-run` prepares metadata, and an sdist
-      # yields metadata without compiling anything, which is how `[mlip-orb]` stayed
-      # green here for a Python `backends install` could never finish on.
+      # yields metadata without compiling anything, so `[mlip-orb]` would stay green
+      # there on a Python `backends install` can never finish on.
       #
       # Ceilings only. A floor is policy rather than a wheel fact — orb-models resolves fine
-      # below its floor, to a release from two years ago, which is what the floor refuses —
-      # and the step above holds that one.
+      # below its floor, to a 2024 release, which is what the floor refuses — and the step
+      # above holds that one.
       - name: No capped extra has outlived its cap
         run: |
           pip install --quiet packaging
@@ -242,7 +240,7 @@ jobs:
           print(f"every cap still binds on {here}")
           PY
 
-  # extras-resolve proves the declared versions *resolve*; nothing proved the floors
+  # extras-resolve proves the declared versions *resolve*; this job proves the floors
   # *run*. Every other job tests whatever pip picks today — always the newest allowed —
   # so a floor could sit years behind the first version the code actually needs and the
   # matrix would stay green until a distro or a cluster site pinned low and hit it.
@@ -364,7 +362,7 @@ jobs:
 
   # build-and-inspect validates the metadata but never installs the result, so a
   # packaging regression — a missing py.typed, a broken console script, a module
-  # left out of the wheel — would have shipped. Install the real artifact into a
+  # left out of the wheel — would ship. Install the real artifact into a
   # clean env and use it.
   install-smoke-test:
     name: Install the built wheel
@@ -426,11 +424,11 @@ jobs:
           PY
 
       # The sdist ships tests and examples precisely so the suite can be run from it —
-      # and nothing else executes that suite, which is exactly how docs/ and examples/
-      # silently fell out of it (16 tests failed from the tarball while every other job
-      # stayed green). Unpack the artifact, install it with the same extras the test job
-      # uses, and run the suite inside the unpacked tree; the repo-only guards skip
-      # themselves there with named reasons.
+      # and nothing else executes that suite: a file the suite reads that falls out of
+      # the tarball fails here while every job that runs from the checkout stays green.
+      # Unpack the artifact, install it with the same extras the test job uses, and run
+      # the suite inside the unpacked tree; the repo-only guards skip themselves there
+      # with named reasons.
       - name: The suite must pass from the unpacked sdist
         run: |
           tar -xzf dist/*.tar.gz -C "$RUNNER_TEMP"

@@ -15,9 +15,9 @@ permissions:
 jobs:
   # The full CI matrix, as one call rather than a reduced copy. `ci.yml` triggers on
   # pushes to main and on pull requests, neither of which a tag is — so without this the
-  # release path skipped pytest, mypy, ruff, the extras resolution and the wheel smoke
-  # test, and `build-and-inspect` (metadata only) was everything standing between a tag
-  # and PyPI. Every publish job below waits on it.
+  # release path would skip pytest, mypy, ruff, the extras resolution and the wheel
+  # smoke test, and `build-and-inspect` (metadata only) would be everything standing
+  # between a tag and PyPI. Every publish job below waits on it.
   ci:
     name: CI
     uses: ./.github/workflows/ci.yml

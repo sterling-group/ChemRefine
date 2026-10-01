@@ -1,13 +1,13 @@
-"""MkDocs hook: the engine and backend tables, generated from the registry.
+"""MkDocs hook: the engine, backend and extras tables, generated from the code.
 
-Every roster the docs used to type by hand already exists in the code — the engines in
+The rosters these tables show already exist in the code — the engines in
 :data:`chemrefine.engines.api.ENGINES` with their capabilities detected by ``isinstance``,
 the backends in each provisionable engine's ``backend_extras()``, the MLIP task names in
-:mod:`chemrefine.engines.mlip.registry`, the pip extras in ``pyproject.toml``. Typing them
-a second time in prose is what let ``qchem`` go missing from seven pages and exit code
-``10`` from the CLI list. So the pages carry a directive and this hook fills it in at
-build time: a registered engine is described the moment it registers, and no roster can
-disagree with the registry because there is only one.
+:mod:`chemrefine.engines.mlip.registry`, the pip extras in ``pyproject.toml``. A roster
+typed a second time in prose drifts from the registry with the next engine. So the pages
+carry a directive and this hook fills it in at build time: a registered engine is
+described the moment it registers, and no roster can disagree with the registry because
+there is only one.
 
 Facts only. What a knob *means* — that Q-Chem takes its parallelism on the command line
 where ORCA takes it in ``%pal`` — is not in the models (they declare no field
@@ -153,7 +153,7 @@ def _backends_table() -> str:
 
 
 def _extras_table() -> str:
-    """Every pip extra in ``pyproject.toml`` — the half the install page never listed."""
+    """Every pip extra in ``pyproject.toml``: what each installs and which extras it pulls in."""
     optional = _optional_dependencies()
     rows: list[tuple[str, ...]] = []
     for extra in sorted(optional):

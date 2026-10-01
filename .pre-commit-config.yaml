@@ -32,7 +32,7 @@ repos:
         pass_filenames: false
 
   # Biome is ruff's opposite number for the GUI: it formats the JavaScript and CSS and
-  # lints all three languages, for a layer that had a syntax check and nothing else.
+  # lints all three languages.
   # `language: node` — the only non-Python hook here — so pre-commit uses the system Node
   # where there is one (CI runners) and downloads one with nodeenv where there is not.
   # No setup-node step in ci.yml, and nothing for a contributor to install.

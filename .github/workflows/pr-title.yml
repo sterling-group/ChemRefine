@@ -2,8 +2,8 @@ name: PR title
 
 # PRs are squash-merged, so GitHub discards the branch's commit messages and the title
 # becomes the one commit on `main`. Checking the convention per commit would therefore
-# check exactly the text that never lands and leave unchecked the text that does — which
-# is how "Core cleanup", "Hot fix" and "Dev" reached the log.
+# check exactly the text that never lands and leave unchecked the text that does — a
+# subject like "Hot fix" would reach the log.
 #
 # Its own file rather than a job in ci.yml: publish.yml calls that workflow at a tag,
 # where there is no pull request to have a title.

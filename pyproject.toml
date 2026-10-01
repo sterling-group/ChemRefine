@@ -56,9 +56,9 @@ dependencies = [
     "pandas>=2.2.3",
     "ase>=3.26.0",
     "rdkit>=2024.9.1",
-    # 2.12, not 2.5: the `floors` job installs the suite's extras alongside these pins,
-    # and both `[mcp]` and `[agent]` require pydantic>=2.12 — so `pydantic==2.5` was a
-    # floor no configuration could resolve (`pip install pydantic==2.5 'mcp>=2,<3'` is
+    # 2.12: the `floors` job installs the suite's extras alongside these pins, and both
+    # `[mcp]` and `[agent]` require pydantic>=2.12, so any lower floor is one no
+    # configuration can resolve (`pip install pydantic==2.5 'mcp>=2,<3'` is
     # ResolutionImpossible, with no older 2.x mcp to back off to). A floor is the lowest
     # version the tested configuration can actually install; this is it.
     "pydantic>=2.12",
@@ -72,8 +72,8 @@ dependencies = [
 [project.optional-dependencies]
 # Flask/waitress live here only: every extra that needs the ExtOpt HTTP server or the
 # GUI cross-references `chemrefine[server]` rather than re-pinning them, so the server
-# deps have a single source of truth. Stated as the rule rather than a list of which
-# extras — the list was written when there were two and is now eight.
+# deps have a single source of truth. Stated as the rule rather than as a list of
+# extras, which would go stale with the next one.
 server = [
     "flask>=3.0",
     "waitress>=3.0",
@@ -138,7 +138,7 @@ mlip-sevenn = ["sevenn>=0.11.1", "chemrefine[server]"]
 # `==` puts 0.1.9's cp313 and 0.1.10's cp314 out of reach — and its sdist vendors an abseil
 # snapshot no GCC >= 13 compiles. Lift the ceiling when orb loosens that pin. The floor is
 # load-bearing too: unpinned, orb-models resolves on any Python by backtracking to a 2024
-# release, which is both the silent downgrade this refuses and what stopped CI telling a
+# release, which is both the silent downgrade this refuses and what would stop CI telling a
 # cap that still binds from one that has expired. 0.6 is the first line requiring 3.12, and
 # 0.6.2 the first whose models have `disable_stress()`, which fine-tuning a stress-carrying
 # model on molecular labels needs.
@@ -166,8 +166,8 @@ pyscf = [
 # gpu4pyscf needs pyscf, so cross-reference `[pyscf]` for a complete stack.
 # The floors are the first stable line that resolves alongside `pyscf>=2.6` (verified by
 # a pinned `--dry-run` resolution): 1.0 is gpu4pyscf's first stable release, and the
-# cutensor 2.x line is what it requires. These were the last unfloored pins in the file —
-# an extra with no floor promises whatever pip picks today, which is no promise at all.
+# cutensor 2.x line is what it requires. An extra with no floor promises whatever pip
+# picks today, which is no promise at all.
 pyscf-gpu = [
     "gpu4pyscf-cuda12x>=1.0",
     "cutensor-cu12>=2.0.0",
@@ -183,15 +183,14 @@ test = [
     # (test_engines_extopt), the builder (test_gui), the MCP session (test_mcp_server)
     # and the embedded agent (test_agent_embedded) against the real SDKs. Declaring that
     # here rather than on each install line is what stops a job installing `[test]` alone
-    # and collecting a suite it cannot run — which is exactly what ci.yml's mutation-gate
-    # and provisioned-backend jobs were doing. `server` is named rather than left to
-    # arrive via `gui`, because the extopt tests need it for their own reason.
+    # and collecting a suite it cannot run. `server` is named rather than left to arrive
+    # via `gui`, because the extopt tests need it for their own reason.
     "chemrefine[server,mcp,gui,agent]",
-    # A Node for tests/test_gui_assets.py — `node --check` on the four scripts and `node -e`
-    # on the pure form logic, the one layer no Python gate can see. Declared rather than
-    # left to whatever is on PATH because a machine without one turned seven tests into
-    # skips while the suite still exited 0; CHEMREFINE_REQUIRE_NODE (set by ci.yml and
-    # release-check.sh) is what makes that impossible to ship.
+    # A Node for tests/test_gui_assets.py — `node --check` on every script the page loads
+    # and `node -e` on the pure form logic, the one layer no Python gate can see. Declared
+    # rather than left to whatever is on PATH because on a machine without one those tests
+    # skip and the suite still exits 0; CHEMREFINE_REQUIRE_NODE (set by ci.yml and
+    # release-check.sh) turns that skip into a failure, so it cannot ship.
     #
     # `>=24` is a *tool* floor and follows a different rule from the dependency floors
     # above: the stable majors are 20, 22 and 24, and 24 is the only one still in active
@@ -218,7 +217,7 @@ dev = [
     # here. twine stays out on purpose: it publishes rather than gates, and the script
     # puts it in a throwaway venv of its own.
     "build>=1.2",
-    # The same promise, for the gate it left out: the full check runs `pip-audit
+    # The same promise for the audit gate: the full check runs `pip-audit
     # --skip-editable`. A tool floor rather than a resolution one, like the Node pin —
     # 2.7 is where the flags this repo passes settled. (security.yml installs its own
     # beside `[server]`: that job audits the runtime tree, not this one.)
@@ -256,7 +255,7 @@ packages = ["src/chemrefine"]
 # the example sweep and one ORCA-inspect fixture read them, so without them the suite
 # the sdist promises fails.
 #
-# `docs` + `mkdocs.yml` ship so the tarball can rebuild its own site (92 KB) and the
+# `docs` + `mkdocs.yml` ship so the tarball can rebuild its own site and the
 # documentation guards check the artifact we publish: a page that falls out of the
 # include list fails them rather than passing unseen.
 # CONTRIBUTING.md and SECURITY.md are not courtesies in that list: `pymdownx.snippets`
@@ -265,9 +264,10 @@ packages = ["src/chemrefine"]
 # should carry its citation.
 #
 # Every pattern is anchored with a leading `/`. Hatchling patterns are
-# gitignore-style and a bare name matches at any depth — the unanchored
-# `README.md` shipped `examples/README.md` alone, which is how the drift went
-# unnoticed. CI runs this suite from the built sdist, so the promise is gated.
+# gitignore-style and a bare name matches at any depth, so an unanchored
+# `README.md` would also ship the README.md of a directory this list leaves
+# out — a directory that looks shipped while the rest of it is missing. CI runs
+# this suite from the built sdist, so the promise is gated.
 include = [
     "/src/chemrefine",
     "/tests",
@@ -293,9 +293,9 @@ target-version = "py311"
 # Engine step templates are rendered through `string.Template` before they are
 # executed, so they legitimately contain bare `$PLACEHOLDER` tokens (e.g.
 # `charge=$CHARGE`) and are not parseable Python on their own. The e2e case
-# templates are the same kind of file and belong here for the same reason — they
-# only escaped notice while the first of them happened to keep every placeholder
-# inside a string literal, which is not a property worth relying on.
+# templates are the same kind of file and belong here for the same reason, even
+# one that keeps every placeholder inside a string literal and so happens to
+# parse: that is not a property worth relying on.
 extend-exclude = [
     "examples/*/templates/*.py",
     "examples/*/*/templates/*.py",
@@ -337,22 +337,21 @@ exclude = ["tests", "examples", "build", "dist"]
 # ── the type gate: `mypy` ───────────────────────────────────────────────────────────────────────
 
 [tool.mypy]
-# The lowest version the *installed* dependency set can be checked at, which is no longer
-# the same as `requires-python`. numpy 2.5 requires Python >= 3.12 and its stubs use PEP
-# 695 `type` statements, so mypy targeting 3.11 fails parsing numpy's own `__init__.pyi` —
+# The lowest version the *installed* dependency set can be checked at, which sits above
+# `requires-python`. numpy 2.5 requires Python >= 3.12 and its stubs use PEP 695 `type`
+# statements, so mypy targeting 3.11 fails parsing numpy's own `__init__.pyi` —
 # a configuration (3.11 + numpy 2.5) pip cannot produce, since 3.11 resolves numpy 2.4.x.
 # There is no way to scope that away: it is a parse error, so per-module `follow_imports`,
 # `ignore_errors` and `disable_error_code` all fail to suppress it (python/mypy#21178).
 #
-# 3.11 support is not weakened by this — it is held where it always mattered, by CI's
-# `test` matrix *running* the suite on 3.11 under a 100% coverage gate, so a 3.12-only
-# syntax or API in any line fails there. Raise this only when the floor of what the deps
-# allow rises again.
+# 3.11 support is not weakened by this — it is held by CI's `test` matrix *running* the
+# suite on 3.11 under a 100% coverage gate, so a 3.12-only syntax or API in any line fails
+# there. Raise this only when the floor of what the deps allow rises.
 python_version = "3.12"
 # Every directory ruff lints is type-checked too. `tools/`, `scripts/` and `docs/hooks/`
 # are not the package and get the relaxed settings below, but they are Python that runs —
-# and `tools/` sat outside this list long enough to collect three real type confusions
-# (a list rebound to a tuple, a float to a list) that `mypy .` reported and `mypy` did not.
+# and a directory left off this list is one `mypy .` checks and a bare `mypy` (what CI
+# runs) does not.
 files = ["src/chemrefine", "tests", "scripts", "tools", "docs/hooks"]
 # Step templates are `string.Template` sources, not modules: they carry bare
 # `$PLACEHOLDER` tokens and are rendered before anything executes them. Excluded for
@@ -361,8 +360,9 @@ files = ["src/chemrefine", "tests", "scripts", "tools", "docs/hooks"]
 #
 # This list must cover the same files as `[tool.ruff].extend-exclude`, and it is a regex
 # where ruff's is a glob. `files` above means a bare `mypy` (what CI runs) never reaches
-# `examples/`, but `mypy .` did, and failed on a template's bare `$PLACEHOLDER` — a stop
-# that says "invalid syntax" about a file that is not Python and never claimed to be.
+# `examples/`, but `mypy .` does, and without this list it stops on a template's bare
+# `$PLACEHOLDER` with "invalid syntax" about a file that is not Python and never claimed
+# to be.
 exclude = [
     "tests/data/e2e/cases/.*/templates/.*\\.py$",
     "examples/.*/templates/.*\\.py$",

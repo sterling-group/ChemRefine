@@ -64,7 +64,7 @@ access control.
 - Every `/api/*` request must carry a **per-session token**
   (`secrets.token_urlsafe(16)`), rejected in a `before_request` gate before any
   handler runs, and compared with `secrets.compare_digest` on the **encoded
-  bytes** — same latin-1 reason as above, and the two were fixed a day apart.
+  bytes**, for the same latin-1 reason as above.
 - The token is handed over once in the URL `chemrefine gui` prints, so it reaches
   the page without a login form, and it lasts only as long as the server process. The
   page moves it out of that URL before its first request — into `sessionStorage`,
@@ -143,10 +143,10 @@ And it is asked a third time where a path becomes bash: the script builders
 refuse the *resolved* directory they are about to interpolate. Both load-time
 passes see the path as written and as anchored, with symlinks intact, and the
 directory the script exports is the resolved one — so a symlink whose target
-carries the character reached neither pass and would have reached the script.
-The render-time ask is the same placement the runlog rows have, for the same
-reason: on the exact string bash receives, no route around the loaders reaches
-the script.
+carries the character passes both, and only this third ask keeps it out of the
+script. The render-time ask is the same placement the runlog rows have, for the
+same reason: on the exact string bash receives, no route around the loaders
+reaches the script.
 
 The rule is attached to that property, not to a list of fields — a value that
 reaches bash by a new route inherits it automatically:

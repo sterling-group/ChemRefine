@@ -219,9 +219,12 @@ release tag in a trailing comment:
 
 Tags are mutable — re-pointing `v1` at a malicious commit is how the
 `tj-actions/changed-files` attack leaked CI secrets from every repo tracking a
-tag — and two of the actions used here publish only a moving `release/v1` branch, so a SHA
-is the only way to pin them at all. Dependabot reads the trailing comment and
-bumps both, so pinning costs nothing in freshness. Resolve a tag with:
+tag. Dependabot reads the trailing comment and bumps the SHA and the comment
+together, so pinning costs nothing in freshness. That goes for
+`pypa/gh-action-pypi-publish` and `re-actors/alls-green` too: pin them to a
+release tag like the rest, not to the moving `release/v1` branch both also
+publish, which has no version for Dependabot to compare against.
+Resolve a tag with:
 
 ```bash
 sha=$(gh api repos/$REPO/git/ref/tags/$TAG --jq '.object.sha')

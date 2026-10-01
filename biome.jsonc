@@ -13,8 +13,7 @@
     // Scoped positively rather than by exclusion: `site/` is the built mkdocs output
     // sitting untracked in the tree, and Biome does not read .gitignore unless told to
     // (`vcs.useIgnoreFile` defaults to false), so a `["**"]` include would lint every
-    // minified bundle the docs build copied. Four files are the whole frontend; there is
-    // no other JavaScript in this repository.
+    // minified bundle the docs build copied. Four files are the GUI's own frontend code.
     "includes": [
       "src/chemrefine/gui/static/**",
       // The vendored bundles must stay byte-identical to what upstream published — that
@@ -28,9 +27,8 @@
   },
 
   "formatter": {
-    // Biome's default is "tab". The frontend is 2-space throughout — app.js alone has 299
-    // lines at 6 columns, 154 at 4 and 108 at 8, which are 2-space steps — so leaving
-    // this out would convert all four files to tabs for no reason anyone asked for.
+    // Biome's default is "tab". The frontend is 2-space throughout, so leaving this out
+    // would convert every file it formats to tabs for no reason anyone asked for.
     // indentWidth is omitted because its default, 2, is already the right answer.
     "indentStyle": "space",
     // Biome's default is 80; [tool.ruff] line-length is 100. One number governs the
@@ -54,10 +52,11 @@
         // Three a11y rules read this page wrongly, and all three for one reason: Alpine
         // fills the element at runtime and a static parser cannot see it. `<h3
         // x-text="browse.title">` and `<a x-text="entry.name">` look empty; a `<label>`
-        // whose input sits inside a `<template x-if>` looks unattached. Every hit was
-        // checked by hand and every one is a false positive, so these are off for the
-        // page rather than suppressed 7 times in it. The rest of the a11y set stays on —
-        // `useButtonType` found 30 real ones, and `useValidAnchor` still does.
+        // whose input sits inside a `<template x-if>` looks unattached. Every hit is a
+        // false positive of that kind, so these are off for the page rather than
+        // suppressed hit by hit. The rest of the a11y set stays on: its rules read this
+        // page correctly, so a hit from `useButtonType` or `useValidAnchor` is a real
+        // defect.
         "useHeadingContent": "off",
         "useAnchorContent": "off",
         "noLabelWithoutControl": "off"
@@ -70,9 +69,9 @@
     // both are the current defaults, and a Biome release that flips either cannot do it
     // quietly. The formatter is still marked experimental, and index.html is not ordinary
     // markup: tests/test_gui_assets.py reads it with a regex that assumes one Alpine
-    // attribute per `attr="value"` on a single line. A formatter that rewraps 522 lines
-    // of that can move an attribute across a line break, and the binding guards would
-    // then pass while checking fewer expressions than they report.
+    // attribute per `attr="value"` on a single line. A formatter that rewraps that markup
+    // can move an attribute across a line break, and the binding guards would then pass
+    // while checking fewer expressions than they report.
     "formatter": { "enabled": false },
     "linter": { "enabled": true }
   }

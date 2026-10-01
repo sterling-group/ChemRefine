@@ -191,8 +191,8 @@ three- or four-character label is scaled down rather than sprawling over its nei
 Each number is sized from **its own atom's distance from the camera**, so it keeps the same
 proportion to the atom it names wherever that atom sits in the structure. The spheres are
 perspective-projected — a hydrogen at the front of an 8 Å-deep molecule is drawn about 1.4×
-the size of an identical one at the back — and a label that ignored that fitted its blob at
-one depth and overflowed it at another. A number whose atom passes behind the camera
+the size of an identical one at the back — and a label that ignored that would fit its blob
+at one depth and overflow it at another. A number whose atom passes behind the camera
 disappears with it.
 
 Each number's texture is **re-drawn at the resolution it is being shown at**, so a label

@@ -10,7 +10,7 @@ renders live signatures), so the import here adds no new requirement.
 
 The asset path comes from :data:`chemrefine.gui.STATIC_DIR`, not from
 :mod:`chemrefine.gui.app`, which imports Flask at module scope — the ``[docs]`` extra
-installs no server. Reading it from the package rather than deriving a fourth path from
+installs no server. Reading it from the package rather than deriving another path from
 ``__file__`` keeps one answer to "where do the assets live".
 """
 

@@ -42,9 +42,9 @@ NMS runs as two rounds sharing **one** core budget:
 A structure's children are submitted **the moment its own round-1 job finishes**, into the
 same queue, alongside whatever is still running — so the slots freed by the early finishers
 go to round-2 work instead of idling until the last round-1 job lands. Every parent's
-children share that one queue, too: resolving them one parent at a time meant a step with 50
-unresolved structures ran 50 sequential batches, each using one parent's worth of the budget.
-Raising `max_cores` could not help, because each batch was one parent wide.
+children share that one queue, too: resolved one parent at a time, a step with 50
+unresolved structures would run 50 sequential batches, each one parent wide, and raising
+`max_cores` could not shorten it.
 
 Picking each parent's winner still happens once, after the queue drains. It is a decision plus
 a file promotion, nothing downstream consumes a resolved structure until the step ends, and
@@ -130,9 +130,9 @@ about.
 `rebuild-nms` re-resolves the NMS step from the outputs already on disk and submits
 nothing — the same rebuild `rebuild-cache` performs, but aimed at the step setting
 `nms: true` instead of the last one. Reach for it when nothing should be *submitted*
-at all (inspection, or adopting a pre-provenance tree); reach for `resume` when the
-displacement children should actually run, and for `rerun` when round 1 itself must
-be recomputed.
+at all (inspection, or adopting a tree whose manifest has no row provenance); reach
+for `resume` when the displacement children should actually run, and for `rerun` when
+round 1 itself must be recomputed.
 
 See the [Normal-Mode Sampling API](../api/nms.md) for the coordinator and the two
 engine hooks documented in the [ORCA engine API](../api/engines_orca.md).

@@ -4,18 +4,17 @@ Two kinds of figure, one mechanism. A **structure** viewer shows a tutorial's st
 geometry; a **mode** viewer animates one imaginary mode of a frequency run. Both are a
 ``.xyz`` from this tree, inlined into the page, handed to 3Dmol.
 
-Neither used to work this way and both were broken by it. The mode figures were two
-animated GIFs — 13.6 MB, 90% of ``docs/``, and the only reason this directory could not
-ship in the sdist — with no geometry, no frequency and no tie to the run behind them. The
-structure viewers fetched from ``raw.githubusercontent.com/…/main/`` at page load, which
-makes a figure depend on a branch having been merged, on the reader having a network, and
-on a path never moving: all six of them render an empty pane today, because ``main`` is
-still the layout this branch replaced. A blank rectangle is the worst possible failure —
-it looks like a slow load, it survives every gate, and nothing in the build can see it.
+Both are inlined because the alternatives fail where nothing can see them. A mode drawn
+as an animated image carries no geometry, no frequency and no tie to the run behind it,
+and costs megabytes the sdist would have to ship. A structure fetched at page load
+depends on a branch having been merged, on the reader having a network, and on a path
+never moving, and when any of those fails the pane renders empty. A blank rectangle is
+the worst possible failure — it looks like a slow load, it survives every gate, and
+nothing in the build can see it.
 
 Inlined, a structure costs about 2 KB in the page and a mode about 3 KB. That is cheaper
-than the fetch it replaces in every way that matters, and it is what lets the built docs
-work with no network at all — including from the unpacked sdist.
+than a fetch in every way that matters, and it is what lets the built docs work with no
+network at all — including from the unpacked sdist.
 
 **Transform, never compute.** The Hessian is not run here and must never be: ORCA is
 licensed, a docs build has to work in CI and from the sdist, and ``mkdocs build`` is 4
@@ -59,7 +58,7 @@ _DIRECTIVE = re.compile(
 _INFO = re.compile(r'(\w+)=("(?:[^"]*)"|\S+)')
 
 #: The keys :func:`viewer_file` writes and a mode caption needs. A file without them is a
-#: file whose numbers nobody can trace, which is the state this hook exists to leave behind.
+#: file whose numbers nobody can trace, so the build refuses it.
 _REQUIRED = ("method", "mode", "frequency_cm1", "imaginary", "source")
 
 #: The vendored 3Dmol bundle, as the playground hook publishes it into the site — the same
@@ -72,10 +71,10 @@ def _library(page_url: str) -> str:
 
     Emitted once per page; a classic ``<script src>`` blocks until it has run, so every
     init below it can rely on ``$3Dmol`` being there. The *vendored* bundle rather than a
-    CDN, because the CDN tag quietly took back what inlining the geometries bought: the
+    CDN, because a CDN tag would take back what inlining the geometries buys: the
     module's whole claim is that the built docs work with no network at all — including
     from the unpacked sdist — and offline, a CDN library is the blank rectangle the
-    docstring above calls the worst possible failure. The copy is already in the site:
+    module docstring calls the worst possible failure. The copy is already in the site:
     :mod:`playground` publishes ``STATIC_DIR`` (vendor bundle included) on every build.
 
     Relative to the page rather than site-absolute, because ``file://`` browsing — the
@@ -121,7 +120,7 @@ def _atom_lines(text: str, source: str, *, columns: int) -> list[str]:
 
     Every failure here is deliberate. The alternative — a viewer div whose data never
     arrives or never parses — renders as a blank rectangle that no test and no reviewer
-    sees, which is exactly how six viewers came to point at paths that 404.
+    sees.
     """
     lines = text.splitlines()
     if len(lines) < 2:
@@ -205,8 +204,8 @@ def _structure(relative: str) -> str:
     """A still viewer for one geometry in this tree, named from the repository root.
 
     From the root rather than from the page, because these files live in ``examples/`` and
-    the pages that show them live in ``docs/`` — the same spelling the fetch used, so the
-    directive reads as the attribute it replaces.
+    the pages that show them live in ``docs/``: a path from the root names the same file
+    from every page.
     """
     path = _REPO_ROOT / relative
     if not path.is_file():

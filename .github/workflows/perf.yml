@@ -2,10 +2,9 @@ name: Perf tier
 
 # The `perf` marker is deselected by the default addopts and belongs out of the edit
 # loop — a tier that builds 10⁴ structures to measure how the bookkeeping scales. But a
-# gate nothing runs is not a gate: its assertions were written precisely because
-# "measured-but-unasserted, a superlinear pandas regression was printed and never
-# failed" — and with no job passing `-m perf`, they still never failed anything
-# automatically. Weekly, because a scaling regression is introduced by a code change
+# gate nothing runs is not a gate: a measurement nobody asserts prints a superlinear
+# regression and never fails, and an assertion no job runs with `-m perf` never fails
+# anything either. Weekly, because a scaling regression is introduced by a code change
 # and caught fine a few days later; per-PR would put a minutes-long, variance-prone
 # tier into the edit loop the marker exists to keep it out of.
 #

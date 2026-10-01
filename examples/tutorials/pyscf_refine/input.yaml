@@ -1,4 +1,4 @@
-# Minimal direct-PySCF workflow (a v2 addition, not part of the v1 paper set):
+# Minimal direct-PySCF workflow (not one of the paper's workflows):
 # single-point refinement of a small molecule via a step1.py PySCF template.
 template_dir: ./templates
 scratch_dir: /scratch/
