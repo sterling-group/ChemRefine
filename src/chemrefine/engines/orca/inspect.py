@@ -22,6 +22,9 @@ The returned :attr:`OrcaInputInfo.operation` is one of the strings
 run kind whose output has no reader of its own yet — a reaction path (``irc``), a band of
 images (``neb``), a trajectory (``md``) — which the engine reads as its final structure
 until a reader joins the dispatch, so a template that names one runs and says what it is.
+A run whose last stage is a transition-state optimisation — a relaxed scan refined at its
+highest point (``ScanTS``), a band refined at its climbing image (``NEB-TS``) — is that
+optimisation (``opt_sp``, flagged :attr:`OrcaInputInfo.is_ts`): the saddle is its product.
 With no run-type keyword at all it defaults to ``sp`` — ORCA's own fallback (a single
 point).
 """
@@ -54,7 +57,7 @@ _SCAN_TOKEN_RE = re.compile(r"\bscan\b", re.IGNORECASE)
 # ``COptTS`` and ``ExtOptTS`` outright ("UNRECOGNIZED OR DUPLICATED KEYWORD"). A tightness
 # level for a saddle-point search is written as its own keyword — ``! OptTS TightOpt`` —
 # which this reads as the two tokens it is. That is also why :attr:`OrcaInputInfo.is_ts`
-# can test for the exact token ``optts`` and not a family of spellings.
+# can test for the exact token ``optts`` among the optimisation keywords.
 _OPT_TOKEN_RE = re.compile(
     r"(?:sloppy|loose|normal|verytight|tight|c|ext)?opt|optts", re.IGNORECASE
 )
@@ -66,10 +69,16 @@ _GOAT_TOKEN_RE = re.compile(r"goat(?:-explore|-react|-entropy|-diversity|-coarse
 
 # The run kinds whose product is many geometries rather than one. Whole-token spellings
 # again: the nudged-elastic-band family is one keyword with optional prefixes (the ``Fast``
-# and ``Zoom`` variants, a convergence level) and suffixes (``-CI`` climbing image, ``-TS``
-# saddle refinement, ``-IDPP`` path only); a reaction path is the bare ``IRC``; a
-# trajectory is driven from a ``%md … end`` block rather than a keyword.
-_NEB_TOKEN_RE = re.compile(r"(?:fast-|zoom-|loose-|tight-)?neb(?:-ci|-ts|-idpp)?", re.IGNORECASE)
+# and ``Zoom`` variants, a convergence level) and suffixes (``-CI`` climbing image,
+# ``-IDPP`` path only); a reaction path is the bare ``IRC``; a trajectory is driven from a
+# ``%md … end`` block rather than a keyword.
+_NEB_TOKEN_RE = re.compile(r"(?:fast-|zoom-|loose-|tight-)?neb(?:-ci|-idpp)?", re.IGNORECASE)
+
+# The runs whose last stage is a transition-state optimisation, so the saddle is the product
+# (ORCA 6.1.1 manual §4.3.3): a relaxed scan whose highest point is refined (``ScanTS``,
+# with its ``%geom … Scan`` block), and a band whose climbing image is (``NEB-TS``, with
+# any of the band's prefixes). Each is read as the optimisation it ends in.
+_TS_RUN_TOKEN_RE = re.compile(r"scants|(?:fast-|zoom-|loose-|tight-)?neb-ts", re.IGNORECASE)
 _MD_BLOCK_RE = re.compile(r"%md\b.*?\bend\b", re.IGNORECASE | re.DOTALL)
 
 # ORCA runs a docking or a solvation from its block alone, exactly as from the ``!`` keyword.
@@ -101,7 +110,8 @@ class OrcaInputInfo:
     """Facts read from an ORCA input template in one pass.
 
     ``operation`` is the parser key (see :mod:`chemrefine.engines.orca.output`); ``is_ts``
-    marks an ``OptTS`` (drives the NMS ``ts`` target); ``has_freq`` marks a frequency calc
+    marks a run that optimises a transition state — ``OptTS``, ``ScanTS``, ``NEB-TS`` —
+    (drives the NMS ``ts`` target); ``has_freq`` marks a frequency calc
     (gates NMS); ``pal`` is the declared core count (``1`` if none); ``maxcore`` is the
     declared per-core memory in MB (``None`` if the template names none — absence means
     "the header's memory policy stands", so it is not defaulted).
@@ -155,18 +165,21 @@ def _has_geom_scan(decommented: str) -> bool:
 def inspect_template(template_text: str) -> OrcaInputInfo:
     """Infer run type + PAL from an ORCA template's text.
 
-    Ensemble runs are simple keywords (``! GOAT`` and its ``GOAT-…`` variants /
-    ``! DOCKER`` / ``! SOLVATOR``) or the
-    ``%docker`` / ``%solvator`` block ORCA accepts in their place (a keyword wins over a block,
-    and ``%solvator`` over ``%docker`` — see :data:`_DOCKER_BLOCK_RE`); a relaxed scan is a
-    ``%geom … Scan … end`` block; a reaction path (``! IRC``), a band of images
-    (``! NEB…``) and a trajectory (a ``%md … end`` block) are named for what they are
-    (``irc`` / ``neb`` / ``md``); an ``Opt`` (or ``OptTS``) is an optimization (``opt_sp``);
-    anything else — including a bare single point or a frequency-only job — parses from the
-    ``.out`` like ``sp``. A many-geometry kind wins over an optimisation keyword beside it,
-    because the optimisation is then one stage of it: ``! OptTS Freq IRC`` refines a saddle
-    and walks the path, and the path is the product. ``OptTS`` and any ``…Freq`` are flagged
-    regardless. Comments are ignored and matching is case-insensitive. The text is the one
+    Ensemble runs are simple keywords (``! GOAT`` and its ``GOAT-…`` variants, ``! DOCKER``,
+    ``! SOLVATOR``) or the ``%docker`` / ``%solvator`` block ORCA accepts in their place (a
+    keyword wins over a block, and ``%solvator`` over ``%docker`` — see
+    :data:`_DOCKER_BLOCK_RE`); a relaxed scan is a ``%geom … Scan … end`` block; a reaction
+    path (``! IRC``), a band of images (``! NEB…``) and a trajectory (a ``%md … end`` block)
+    are named for what they are (``irc`` / ``neb`` / ``md``); an ``Opt`` (or ``OptTS``) is an
+    optimization (``opt_sp``); anything else — including a bare single point or a
+    frequency-only job — parses from the ``.out`` like ``sp``. The product decides: a
+    many-geometry kind wins over an optimisation keyword beside it, because the
+    optimisation is then one stage of it (``! OptTS Freq IRC`` refines a saddle and walks
+    the path), and a run that ends in a TS optimisation is that optimisation
+    (:data:`_TS_RUN_TOKEN_RE`) — its scan or band is the stage before, so a ``ScanTS``
+    template's ``Scan`` block names no scan of its own, while an ``IRC`` beside it is still
+    the path after. A TS run and any ``…Freq`` are flagged regardless. Comments are
+    ignored and matching is case-insensitive. The text is the one
     the engine read (:func:`chemrefine.ids.require_template`), which refused a template that
     is not UTF-8 text before it reached here.
     """
@@ -182,6 +195,7 @@ def inspect_template(template_text: str) -> OrcaInputInfo:
         if line.lstrip().startswith("!")
         for token in line.lstrip().lstrip("!").split()
     }
+    ts_run = any(_TS_RUN_TOKEN_RE.fullmatch(token) for token in keywords)
     if any(_GOAT_TOKEN_RE.fullmatch(token) for token in keywords):
         operation = "goat"
     elif "docker" in keywords:
@@ -190,10 +204,12 @@ def inspect_template(template_text: str) -> OrcaInputInfo:
         operation = "solvator"
     elif _DOCKER_BLOCK_RE.search(decommented):
         operation = "docker"
-    elif _has_geom_scan(decommented):
+    elif not ts_run and _has_geom_scan(decommented):
         operation = "pes"
     elif "irc" in keywords:
         operation = "irc"
+    elif ts_run:
+        operation = "opt_sp"
     elif any(_NEB_TOKEN_RE.fullmatch(token) for token in keywords):
         operation = "neb"
     elif "md" in keywords or _MD_BLOCK_RE.search(decommented):
@@ -205,7 +221,7 @@ def inspect_template(template_text: str) -> OrcaInputInfo:
     maxcore = _MAXCORE_RE.search(decommented)
     return OrcaInputInfo(
         operation=operation,
-        is_ts="optts" in keywords,
+        is_ts="optts" in keywords or ts_run,
         has_freq=any(_FREQ_TOKEN_RE.fullmatch(token) for token in keywords),
         pal=_read_pal(decommented),
         maxcore=int(maxcore.group(1)) if maxcore else None,

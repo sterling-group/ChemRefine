@@ -116,7 +116,9 @@ for those and the full map.
   scan, a `%docker` or `%solvator` block a docking or a solvation (a `! GOAT`, `! DOCKER`
   or `! SOLVATOR` keyword outranks either block, and `%solvator` outranks `%docker`), and
   a reaction path, a band of images or a trajectory is named for what it is
-  (`irc` / `neb` / `md`) and read as its final structure until a reader of its own joins;
+  (`irc` / `neb` / `md`) and read as its final structure until a reader of its own joins,
+  while a run that ends in a TS optimisation — `OptTS`, `ScanTS`, `NEB-TS` — is read as
+  that saddle and targets `ts` for normal-mode sampling;
   a Q-Chem step reads its `JOBTYPE`. An explicit `operation:` always wins.
 - **Q-Chem engine** (`engine: qchem`): per-structure Q-Chem jobs from a `stepN.in`
   template, with the geometry generated into job 1's `$molecule` block (only job 1 of a

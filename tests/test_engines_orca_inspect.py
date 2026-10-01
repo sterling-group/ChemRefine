@@ -26,7 +26,7 @@ from chemrefine.engines.orca.inspect import inspect_template
         ("! HF def2-SVP\n", "sp"),  # no run-type keyword → ORCA's SP fallback
         ("! B3LYP def2-SVP IRC\n%irc MaxIter 50 end\n", "irc"),
         ("! B3LYP def2-SVP OptTS Freq IRC\n", "irc"),  # the path is the product
-        ('! XTB NEB-TS\n%neb NEB_End_XYZFile "product.xyz" end\n', "neb"),
+        ('! XTB NEB-CI\n%neb NEB_End_XYZFile "product.xyz" end\n', "neb"),
         ("! XTB ZOOM-NEB-CI\n", "neb"),
         ("! XTB Opt NEB-IDPP\n", "neb"),  # the band wins over the optimisation beside it
         ("! XTB\n%md\n  timestep 0.5_fs\n  run 100\nend\n", "md"),
@@ -35,6 +35,35 @@ from chemrefine.engines.orca.inspect import inspect_template
 )
 def test_inspect_picks_parser_from_keywords(body: str, operation: str):
     assert inspect_template(body).operation == operation
+
+
+@pytest.mark.parametrize(
+    ("body", "operation"),
+    [
+        ("! XTB ScanTS\n%geom scan B 1 0 = 2.0, 1.0, 15 end end\n", "opt_sp"),
+        ("! XTB ScanTS IRC\n%geom scan B 1 0 = 2.0, 1.0, 15 end end\n", "irc"),
+        ('! r2SCAN-3c NEB-TS\n%neb NEB_End_XYZFile "product.xyz" end\n', "opt_sp"),
+        ("! XTB FAST-NEB-TS\n", "opt_sp"),
+        ("! XTB Zoom-NEB-TS\n", "opt_sp"),
+        ("! XTB NEB-TS IRC\n", "irc"),
+    ],
+    ids=["scants", "scants-then-irc", "neb-ts", "fast-neb-ts", "zoom-neb-ts", "neb-ts-then-irc"],
+)
+def test_a_run_that_ends_in_a_ts_optimisation_is_that_optimisation(body: str, operation: str):
+    """The saddle is the product of a ``ScanTS`` or ``NEB-TS`` run, flagged as a TS search.
+
+    Its scan or band is the stage before the optimisation, so neither names the run; an
+    ``IRC`` beside it is the stage after, and the path stays the product.
+    """
+    run = inspect_template(body)
+    assert (run.operation, run.is_ts) == (operation, True)
+
+
+def test_a_band_that_ends_in_no_ts_optimisation_stays_a_band():
+    """``NEB``, ``NEB-CI`` and ``NEB-IDPP`` stop at the band: no saddle is refined."""
+    for keyword in ("NEB", "NEB-CI", "NEB-IDPP", "LOOSE-NEB"):
+        run = inspect_template(f"! XTB {keyword}\n")
+        assert (run.operation, run.is_ts) == ("neb", False), keyword
 
 
 def test_a_keyword_that_merely_contains_a_run_kind_does_not_name_it():

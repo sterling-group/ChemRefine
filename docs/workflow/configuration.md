@@ -90,7 +90,7 @@ steps:
 | `charge` / `multiplicity` | int / int ≥ 1 | global | Per-step overrides of the global values, held to the same bounds. |
 | `options` | map | `{}` | Engine-specific knobs (see below). |
 | `sample` | map | `None` | Survivor filter (see below). `None` keeps every structure. |
-| `nms` | bool | `False` | Opt-in normal-mode sampling (honoured only for an NMS-capable engine — the `NMS` column of the [engine table](../engines/index.md) says which). Requires a frequency calc: an NMS step whose template computes no frequencies is rejected before any job is submitted — and an explicit `operation` does not bypass the check, since `operation` never changes the generated input (it only picks the parser). The `target` (`minimum`/`ts`) is inferred from the template — `OptTS` → `ts`, else `minimum` — unless `options.target` is set. |
+| `nms` | bool | `False` | Opt-in normal-mode sampling (honoured only for an NMS-capable engine — the `NMS` column of the [engine table](../engines/index.md) says which). Requires a frequency calc: an NMS step whose template computes no frequencies is rejected before any job is submitted — and an explicit `operation` does not bypass the check, since `operation` never changes the generated input (it only picks the parser). The `target` (`minimum`/`ts`) is inferred from the template — a run that optimises a transition state (`OptTS`, `ScanTS`, `NEB-TS`) → `ts`, else `minimum` — unless `options.target` is set. |
 | `on_failure` | `stop`/`skip`/`best` | `stop` | What to do when some structures fail (after the convergence auto-retry below): `stop` (default) caches the successes then halts so failures are never silently dropped; `skip` drops them and continues; `best` keeps all, backfilling a failed structure with the best geometry obtained for it or, failing that, the input it was submitted with — as a geometry alone, carrying no energy from the step that produced it, so it is never ranked or reported on a number this step did not compute (a step-1 seed arrives the same way). A structure that *did not converge* is first retried once from its best geometry — the failed attempt is archived under `stepN/<id>/attemptK/` — before this policy applies. An `mlip-train` step refuses `skip`/`best` outright: a training step has no per-structure failures for either to act on. |
 
 ## Sample (survivor filter)
@@ -117,7 +117,7 @@ raises a clear error if the chosen energy wasn't computed.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `target` | inferred | `minimum` removes every imaginary mode; `ts` keeps the reaction coordinate and removes the rest; `random` explores. Default: **inferred** from the template (`OptTS` → `ts`, else `minimum`); set this to override. |
+| `target` | inferred | `minimum` removes every imaginary mode; `ts` keeps the reaction coordinate and removes the rest; `random` explores. Default: **inferred** from the template (a run that optimises a transition state — `OptTS`, `ScanTS`, `NEB-TS` — → `ts`, else `minimum`); set this to override. |
 | `displacement_value` | `1.0` | ± displacement (Å) per selected mode. |
 | `num_random_displacements` | `1` | `random` only: how many modes to draw. |
 | `ts_mode_index` | `None` | `ts` only: which imaginary mode to keep (default: the largest-magnitude one). Must name a mode the structure's frequency calculation flagged imaginary — an index that matches none is rejected per structure, since which modes are imaginary is a property of the result rather than of the config. |

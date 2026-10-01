@@ -43,13 +43,16 @@ keyword lines and run-kind blocks decide, case-insensitively, with `#` comments 
 | `! GOAT` or a `GOAT-EXPLORE` / `-REACT` / `-ENTROPY` / `-DIVERSITY` / `-COARSE` variant; `! DOCKER` or a `%docker … end` block; `! SOLVATOR` or a `%solvator … end` block | `goat`, `docker`, `solvator` — an ensemble |
 | a `%geom … Scan … end` block | `pes` — one structure per scan point |
 | `! IRC` | `irc` — the intrinsic reaction coordinate |
-| `! NEB`, `! NEB-TS`, `! NEB-CI`, `! ZOOM-NEB…`, `! FAST-NEB-TS` | `neb` — a band of images |
+| `! NEB`, `! NEB-CI`, `! NEB-IDPP`, `! ZOOM-NEB…` | `neb` — a band of images |
 | a `%md … end` block | `md` — a trajectory |
 | `! Opt` (any convergence level), `! OptTS` | `opt_sp` |
+| `! ScanTS` (with its `%geom … Scan` block), `! NEB-TS` and its `FAST-` / `ZOOM-` variants | `opt_sp` — the transition state they end on |
 | anything else — a bare single point, a frequency-only job | `sp` |
 
 A many-geometry kind wins over an optimisation keyword beside it (`! OptTS Freq IRC` is an
-`irc` run: the path is the product). A keyword wins over a block, and a `%solvator` block
+`irc` run: the path is the product), and a run that ends in a TS optimisation is that
+optimisation — a `ScanTS` scan or a `NEB-TS` band is the stage before the saddle it
+refines, so the step reads the saddle and normal-mode sampling targets `ts`. A keyword wins over a block, and a `%solvator` block
 over a `%docker` one, which a solvation reads as the settings of its own docking. An explicit `operation:` always wins — set it when
 inspection cannot decide. A word whose output has no reader of its own yet (`irc`, `neb`,
 `md`) still runs: the output is read as its final structure and the run log says so, and the

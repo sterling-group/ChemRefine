@@ -63,8 +63,8 @@ The cache identity is layered the way a step's work is layered:
   is keyed by its basename, so a tree copied elsewhere derives the same key), and the
   parent structure's own content (ID, symbols, coordinates, energy);
 - a **resolution key** for an NMS step — the flag plus the `nms` options, split into
-  the *criterion* (`target` as resolved — an `OptTS` template with no `target` keys
-  `ts` — and `ts_mode_index`) and the *search*
+  the *criterion* (`target` as resolved — a TS-optimising template with no `target`
+  keys `ts` — and `ts_mode_index`) and the *search*
   (`displacement_value`, `num_random_displacements`, `seed`). It touches no row key:
   round-1 jobs are byte-identical with NMS on or off, which is what makes turning
   `nms: true` on over a finished run cost only the displacement children;
