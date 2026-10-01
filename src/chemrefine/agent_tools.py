@@ -341,7 +341,8 @@ def _latest_log(output_dir: Path) -> Path | None:
 
 
 _TAIL_CHUNK = 64 * 1024
-"""How much of a log to pull back per step when tailing it — comfortably over 40 lines."""
+"""How much of a log to pull back per step when tailing it — comfortably over
+:func:`run_status`'s default tail."""
 
 
 def _tail_lines(path: Path, wanted: int) -> list[str]:

@@ -26,9 +26,10 @@ build gets the asset path.
 from __future__ import annotations
 
 import importlib
+import inspect
 import secrets
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, TypeVar
@@ -148,9 +149,26 @@ class _Request(BaseModel):
     ``1`` is not a string, and a field declared here cannot be read any other way. Keys
     beyond the model are ignored: the page sends its session's ``config_path`` wherever it
     chats.
+
+    A field the request may leave out defaults to what the tool behind the endpoint
+    declares (:func:`_tool_default`), or to ``None``, the wire's "absent", which the
+    callee resolves itself.
     """
 
     model_config = ConfigDict(strict=True, frozen=True)
+
+
+def _tool_default(tool: Callable[..., Any], name: str) -> Any:
+    """``tool``'s own default for its parameter ``name``, read off its signature.
+
+    The MCP server and the chat agent derive each tool's schema from the same signature,
+    so an endpoint and an agent asking one tool cannot be given two defaults. A parameter
+    the tool requires is refused at import, where the request model is declared.
+    """
+    default = inspect.signature(tool).parameters[name].default
+    if default is inspect.Parameter.empty:
+        raise TypeError(f"{tool.__name__}() gives {name!r} no default")
+    return default
 
 
 RequestT = TypeVar("RequestT", bound=_Request)
@@ -233,7 +251,7 @@ class _ConfigRequest(_Request):
 class _ScaffoldRequest(_ConfigRequest):
     """``/api/scaffold``: ``overwrite`` replaces every existing template with a starter."""
 
-    overwrite: bool = False
+    overwrite: bool = _tool_default(agent_tools.scaffold_templates, "overwrite")
 
 
 class _TemplateWriteRequest(_ConfigRequest):
@@ -254,7 +272,7 @@ class _StructureFileRequest(_Request):
 class _StatusRequest(_ConfigRequest):
     """``/api/status``: how much of the driver log to tail."""
 
-    log_tail_lines: _Count = 40
+    log_tail_lines: _Count = _tool_default(agent_tools.run_status, "log_tail_lines")
 
 
 class _FailuresRequest(_ConfigRequest):
@@ -266,14 +284,14 @@ class _FailuresRequest(_ConfigRequest):
 class _ResultsRequest(_FailuresRequest):
     """``/api/results``: one page of ``steps.csv``."""
 
-    limit: _Count = 20
-    offset: _Count = 0
+    limit: _Count = _tool_default(agent_tools.get_results, "limit")
+    offset: _Count = _tool_default(agent_tools.get_results, "offset")
 
 
 class _RunRequest(_ConfigRequest):
     """``/api/run``: the action, its step target, and the two budgets a child's argv carries."""
 
-    action: str = "run"
+    action: str = _tool_default(agent_tools.start_run, "action")
     target: Any = None
     max_cores: _CountOrUnset = None
     max_gpus: _CountOrUnset = None

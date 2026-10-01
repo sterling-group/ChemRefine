@@ -411,6 +411,50 @@ def test_dashboard_status_results_failures(client: Any, tmp_path: Path):
     assert failures["suggested_action"] == "rerun-errors"
 
 
+def test_a_field_the_page_leaves_out_takes_the_tools_own_default(
+    client: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """An endpoint asked with the config alone answers as the tool asked bare would.
+
+    The defaults are the tools' own, read off the signatures the MCP server and the chat
+    agent read too, so the GUI's tail and an agent's cannot be two numbers.
+    """
+    from chemrefine import agent_tools
+
+    config = _reported_tree(tmp_path)
+    asked: dict[str, Any] = {}
+    status = agent_tools.run_status
+
+    def recording(config_path: str, **kwargs: Any) -> dict[str, Any]:
+        asked.update(kwargs)
+        return status(config_path, **kwargs)
+
+    monkeypatch.setattr(agent_tools, "run_status", recording)
+    _post(client, "/api/status", {"config_path": str(config)})
+    assert asked == {"log_tail_lines": 40}
+
+    page = _post(client, "/api/results", {"config_path": str(config)}).get_json()
+    assert (page["total"], page["offset"], page["limit"]) == (2, 0, 20)
+
+    (tmp_path / "scaffolded").mkdir()
+    saved = _saved_config(tmp_path / "scaffolded")
+    _post(client, "/api/scaffold", {"config_path": str(saved)})
+    template = tmp_path / "scaffolded" / "templates" / "step1.inp"
+    template.write_text("! Mine\n", encoding="utf-8")
+    kept = _post(client, "/api/scaffold", {"config_path": str(saved)}).get_json()
+    assert kept["written"] == []
+    assert template.read_text(encoding="utf-8") == "! Mine\n"
+
+
+def test_a_request_default_must_be_one_the_tool_declares():
+    """A required parameter has no default to lend, and saying so beats inventing one."""
+    from chemrefine import agent_tools
+    from chemrefine.gui.app import _tool_default
+
+    with pytest.raises(TypeError, match=r"run_status\(\) gives 'config_path' no default"):
+        _tool_default(agent_tools.run_status, "config_path")
+
+
 @pytest.mark.parametrize(
     ("endpoint", "field", "value"),
     [
