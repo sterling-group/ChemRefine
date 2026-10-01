@@ -36,8 +36,8 @@ _KEY_VALUE_FLAGS: tuple[tuple[str, str], ...] = tuple(
 """YAML key → CLI flag, derived from the knob list — kebab-case plus the one override."""
 
 _FLAG_HELP = {
-    "model_name": "MLIP model weights (a MACE size or a FAIRChem/SevenNet/ORB id)",
-    "task_name": "MLIP method / head — selects the backend (omol, mace_off, …)",
+    "model_name": "MLIP model weights — a release of the --task-name library",
+    "task_name": "MLIP method / head — selects the library (a registered task name)",
     "device": "Compute device for the MLIP model",
     "model_path": "Local checkpoint to load instead of --model, with the --task-name library",
 }

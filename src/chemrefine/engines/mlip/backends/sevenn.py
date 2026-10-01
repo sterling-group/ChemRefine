@@ -1,8 +1,7 @@
 """SevenNet: the calculator chemrefine runs, and the trainer that fine-tunes it.
 
 One module for one library, so the environment is declared once (:data:`SEVENN`) and both
-capabilities hang off it — the shape :mod:`chemrefine.engines.mlip.registry` sets and the
-MACE and FAIRChem modules already follow.
+capabilities hang off it — the shape :mod:`chemrefine.engines.mlip.registry` sets.
 
 The trainer drives SevenNet's own CLI (``sevenn train input.yaml``, unified in v0.11.1 —
 the ``mlip-sevenn`` extra's floor) against a rendered copy of the user's ``input.yaml``.
@@ -46,7 +45,7 @@ def _build_sevenn(spec: CalculatorSpec) -> Any:
 
     if spec.weights is None and not spec.model_name:
         # Neither given: let SevenNet's own default release load — the library owns its
-        # default, exactly as FAIRChem's builder owns `uma-s-1p2`.
+        # default.
         return SevenNetCalculator(device=spec.device)
     return SevenNetCalculator(model=spec.weights or spec.model_name, device=spec.device)
 
@@ -81,8 +80,8 @@ class SevennTrainer(TrainerBase):
     absent (``sevenn.parse_input``). Unset, a ``device: cpu`` step on a CUDA node would
     train on hardware the scheduler never booked — the silent wrong-hardware class the
     driver-run trainers close over their argv; for a CLI trainer the template gate is
-    that closure. No run-dir or run-name knob, unlike MACE and FAIRChem:
-    ``checkpoint_best.pth`` is a fixed name wherever the run happened. ``$VALID_SET`` is
+    that closure. No run-dir or run-name knob: ``checkpoint_best.pth`` is a fixed name
+    wherever the run happened. ``$VALID_SET`` is
     supplied too, and the start has a placeholder of its own (:attr:`start_placeholders`).
     No ``$SEED`` requirement — SevenNet's config declares a ``random_seed`` key its trainer
     does not read, so there is no seed fact to lose."""
@@ -108,8 +107,8 @@ class SevennTrainer(TrainerBase):
     def command(self, plan: TrainingPlan, config: Path) -> str:
         """``sevenn train`` against the rendered config, from the backend env's own bin.
 
-        The console script rather than ``-m``, like FAIRChem's — and by basename against
-        the rendered config, for the array-sentinel reason MACE's command spells out.
+        The console script rather than ``-m``, by basename against the rendered config, for
+        the reason :meth:`~chemrefine.engines.mlip.train.base.TrainerBase.command` states.
         ``-s`` streams the log to stdout, where the runlog captures it. Multi-GPU is
         SevenNet's own documented DDP shape: ``torchrun … --no_python sevenn`` with
         ``-d`` in place of ``-s`` (``batch_size`` in the config is then per GPU).

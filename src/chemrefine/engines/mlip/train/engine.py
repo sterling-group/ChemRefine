@@ -125,10 +125,9 @@ class MlipTrainEngine(MlipBackend):
     )
     template_starter: ClassVar[str] = (
         "# mlip-train starter — NOT runnable as written. A trainer template is the\n"
-        "# backend's own config where one exists (mace/fairchem: every part of a working\n"
-        "# one is load-bearing; sevenn: `sevenn preset fine_tune` writes one), and\n"
-        "# chemrefine's own small schema where none does (chgnet/orb). Start from the\n"
-        "# worked examples instead:\n"
+        "# chosen library's own training config where it has one (every part of a working\n"
+        "# one is load-bearing), and chemrefine's own small schema where it has none.\n"
+        "# Start from the worked examples instead:\n"
         "#   examples/tutorials/fairchem_finetune/templates/  (UMA fine-tune, commented)\n"
         "#   docs -> Engines -> MLIP training templates  (one per trainable backend)\n"
     )

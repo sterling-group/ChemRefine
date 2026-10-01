@@ -46,7 +46,8 @@ The ORCA-family `operation:` vocabulary (each engine's own list is in `get_schem
 generators `goat` (conformers), `docker` (poses), `solvator` (explicit solvent).
 
 **Conformer funnel** (the canonical ChemRefine job): step 1 generates/screens cheaply
-(`operation: goat` on an xtb-keyword ORCA template, or an MLIP step), sampling
+(`operation: goat` on an xtb-keyword ORCA template, or an MLIP step — `mlip`, the direct
+engine, runs the model from a Python template with no ORCA, the cheapest screen), sampling
 `{method: boltzmann, percent_cumulative: 99}`; step 2 refines the survivors at DFT
 (`operation: opt_sp`) with `{method: min, window_kcalmol: 3}`; a final `sp` or `freq`
 step does the high-level energies. Sample on `gibbs` instead of `electronic` when a

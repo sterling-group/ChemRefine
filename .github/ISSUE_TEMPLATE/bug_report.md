@@ -26,7 +26,7 @@ What you expected to happen.
 - ChemRefine version (`chemrefine --version`):
 - Python version:
 - OS / cluster:
-- Engine + backend (orca / mlip / pyscf, and which MLIP model):
+- Engine (and backend/model, if any):
 - Running under SLURM or locally (`dispatch:`)?
 
 **Logs / output**

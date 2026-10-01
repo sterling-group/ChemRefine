@@ -26,7 +26,8 @@ means (the ``device`` default is the model's ``cpu``: the floor that always runs
 Backend imports happen inside each builder so this module imports cleanly even when the
 optional MLIP deps aren't installed; :func:`build_calculator` converts a missing library into
 an error naming the ``chemrefine[mlip-<backend>]`` extra to install (every backend is a
-dedicated-env extra — their torch/e3nn trees conflict; ``[mlip]`` = FAIRChem/UMA).
+dedicated-env extra — their torch/e3nn trees conflict; the bare ``[mlip]`` extra is an
+alias the extras table resolves).
 
 Adding a backend is one dropped-in module under
 :mod:`chemrefine.engines.mlip.backends` — see :mod:`chemrefine.engines.mlip.registry` for the
@@ -88,8 +89,8 @@ def build_calculator(
 
     ``charge`` / ``multiplicity`` are optional and reach the spec untouched. The spec
     fields are the door for a library whose calculator takes a charge at *construction*
-    (AIMNet2's does); no shipped builder reads them, because both shipped charge-aware
-    libraries read charge and spin **per geometry**, off ``atoms.info["charge"]`` /
+    (AIMNet2's does); no shipped builder reads them, because every shipped charge-aware
+    library reads charge and spin **per geometry**, off ``atoms.info["charge"]`` /
     ``["spin"]`` — FAIRChem's ``a2g_args`` names exactly those keys, and MACE's
     calculator maps them to its ``total_charge``/``total_spin`` model inputs. A bare
     calculator from here therefore carries no charge of its own; :class:`MlipCalculator`
@@ -185,7 +186,7 @@ class _VacuumBoxed(Calculator):
 def stamp_species(atoms: Atoms, *, charge: int | None, multiplicity: int | None) -> None:
     """Put a species' charge and multiplicity where the charge-aware libraries read them.
 
-    Both shipped charge-aware backends take the values **per geometry**, off
+    Every shipped charge-aware backend takes the values **per geometry**, off
     ``atoms.info`` — FAIRChem's calculator asks its atoms-to-graph converter for the
     ``charge`` and ``spin`` keys, and MACE's maps the same two names onto its
     ``total_charge``/``total_spin`` model inputs, silently assuming a neutral singlet when

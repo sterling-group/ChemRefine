@@ -43,8 +43,8 @@ class MlipEngine(MlipBackend, ScriptEngine[MlipOptions]):
         '    model_name="$MODEL_NAME",\n'
         '    task_name="$TASK_NAME",\n'
         '    device="$DEVICE",\n'
-        "    # Charge-aware backends (FAIRChem omol, mace_omol) silently assume a neutral\n"
-        "    # singlet without these; the wrapper passes them where those libraries read.\n"
+        "    # Charge-aware backends silently assume a neutral singlet without these;\n"
+        "    # the wrapper passes them where those libraries read.\n"
         "    charge=$CHARGE,\n"
         "    multiplicity=$MULTIPLICITY,\n"
         ")\n"

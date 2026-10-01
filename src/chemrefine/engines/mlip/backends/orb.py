@@ -8,7 +8,8 @@ returns ``(model, atoms_adapter)`` and takes ``weights_path``, ``device`` and ``
 Requires ``pip install orb-models``.
 
 One module for one library, so the environment is declared once (:data:`ORB`) and both
-capabilities hang off it. Training takes the CHGNet route — orb-models publishes its
+capabilities hang off it. Training takes the shared driver route
+(:class:`~chemrefine.engines.mlip.train.base.ApiTrainerBase`) — orb-models publishes its
 fine-tune entry point as an unpackaged repo-root script — so the trainer's
 :meth:`OrbTrainer.run_training` hook rebuilds that script's slim loop from the packaged
 utilities, driven by the shared :mod:`chemrefine.engines.mlip.train.driver`.
@@ -170,9 +171,9 @@ class OrbTrainer(ApiTrainerBase):
         ``AseSqliteDataset`` is constructed on a database path ("you must convert your
         data into this format" — the script's own words), and the labels ride on each
         row's calculator exactly as :func:`~chemrefine.engines.mlip.train.base.
-        labelled_atoms` attaches them — the FAIRChem trainer's sqlite precedent, one
-        library over. The valid/test splits are written when present so the data a user
-        held out stays visible on disk, but orb's loop reads only the training set.
+        labelled_atoms` attaches them. The valid/test splits are written when present so the
+        data a user held out stays visible on disk, but orb's loop reads only the training
+        set.
         """
         from ase.db import connect
 

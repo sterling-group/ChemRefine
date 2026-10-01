@@ -122,7 +122,7 @@ class ChgnetTrainer(ApiTrainerBase):
     positionally — there is no train-only mode; ``RUN_NAME`` because :meth:`artifact` is
     derived from it: the driver's fixed-name final save is ``{run_name}.pth.tar``, and a
     template that never tells the driver the name trains perfectly and is then reported
-    as having produced nothing — MACE's reasoning, one library over."""
+    as having produced nothing."""
 
     output_globs: ClassVar[tuple[str, ...]] = ("*.pth.tar",)
     """The driver runs in ``$WORK_DIR`` and its fixed-name final save lands there; this is
@@ -136,7 +136,8 @@ class ChgnetTrainer(ApiTrainerBase):
     different directories again."""
 
     def write_split(self, plan: TrainingPlan, name: str, structures: tuple[Structure, ...]) -> Path:
-        """The shared calculator-labelled extxyz — the same file SevenNet's trainer writes.
+        """The shared calculator-labelled extxyz (:func:`~chemrefine.engines.mlip.train.base.
+        write_labelled_extxyz`).
 
         The driver converts to pymatgen ``Structure`` + per-atom energies on the other
         side, where chgnet and pymatgen are importable.

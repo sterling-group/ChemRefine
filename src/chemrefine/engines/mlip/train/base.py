@@ -14,16 +14,15 @@ labels off ``atoms.calc``.
 Library-specific, and so a :class:`TrainerBase` hook:
 
 ===================  ==========================================================
-``write_split``      MACE wants extxyz with ``REF_*`` keys; FAIRChem wants an
-                     ASE db whose labels ride on a ``SinglePointCalculator``;
-                     SevenNet and the CHGNet driver read the shared
-                     calculator-labelled extxyz. There is no common file.
-``command``          ``mace_run_train`` vs ``fairchem -c`` vs ``sevenn train``,
-                     and each library's own multi-GPU idiom.
+``write_split``      the dataset in the library's own format; a library that
+                     reads labels off ``atoms.calc`` reuses
+                     :func:`write_labelled_extxyz`. There is no common file.
+``command``          the library's own training entry point, and its own
+                     multi-GPU idiom.
 ``artifact``         where the trained model lands.
 ===================  ==========================================================
 
-A library whose training is a pure Python API — CHGNet has no CLI and no config format —
+A library whose training is a pure Python API — no CLI and no config format —
 subclasses :class:`ApiTrainerBase` instead: ``command`` and ``artifact`` derive from its
 declarations, and the one hook it adds, ``train_with_library(config)``, is what the shared
 :mod:`~chemrefine.engines.mlip.train.driver` reaches through the registry in the *backend*
@@ -370,6 +369,16 @@ class TrainerBase(ABC):
         One command, no ``trap`` and no teardown: the job script owns the single exit
         handler that copies results back, and an engine that emits its own would replace
         it.
+
+        The config is named by its basename, because the job script copies it into
+        ``$WORK_DIR`` and runs there — and **the basename is interpolated bare, not
+        quoted**. Under ``slurm_array: true`` the run block is rendered *once* against
+        sentinel paths whose names are bash variables, and the array script assigns them
+        per task; ``shlex.quote`` turns ``$INP_NAME`` into ``'$INP_NAME'``, which single
+        quotes protect from expansion, so every task would train against a file of that
+        literal name. It is safe to: the value is either that sentinel or
+        :data:`~chemrefine.ids.TRAINING_ID`, both minted in :mod:`chemrefine.ids`. A
+        launcher is a real filesystem path and stays quoted.
         """
 
     @abstractmethod
@@ -481,8 +490,8 @@ class TrainerBase(ABC):
 class ApiTrainerBase(TrainerBase):
     """A trainer driven through the shared train driver — for libraries with no CLI.
 
-    CHGNet and ORB train through a pure Python API: no console script, no native config
-    format. Their route is the shared :mod:`~chemrefine.engines.mlip.train.driver`,
+    A library that trains through a pure Python API — no console script, no native config
+    format — takes the route of the shared :mod:`~chemrefine.engines.mlip.train.driver`,
     running under the backend environment's interpreter (a managed env is a
     ``pip install "chemrefine[<extra>]"``, so chemrefine is importable there), which
     re-resolves the same class through the registry and calls :meth:`run_training`.
@@ -527,8 +536,8 @@ class ApiTrainerBase(TrainerBase):
 
         ``-m chemrefine.engines.mlip.train.driver <task> <config> --device … --seed …`` —
         the driver is chemrefine's, present in the managed env because the env is a
-        ``chemrefine[<extra>]`` install. The config rides by basename for the
-        array-sentinel reason MACE's command spells out. Single-process on any device:
+        ``chemrefine[<extra>]`` install. The config rides by basename, bare, for the
+        reason :meth:`TrainerBase.command` states. Single-process on any device:
         DDP is not a mode these libraries' APIs document.
 
         **The plan facts ride this argv, not the template.** chemrefine owns both ends of
@@ -715,9 +724,8 @@ def labelled_atoms(struct: Structure) -> Atoms:
 
     The *plain* labelled-extxyz form — ase's writer emits the standard ``energy=`` /
     ``free_energy=`` comment fields plus a ``forces`` column, and its reader reconstructs
-    the calculator — shared by the trainers whose libraries read labels off ``atoms.calc``
-    (SevenNet's loader, and the CHGNet driver's own conversion). MACE deliberately does
-    not use it: its dataset speaks ``REF_*`` info keys, written in its own module.
+    the calculator — shared by the trainers whose libraries read labels off ``atoms.calc``;
+    a library whose dataset speaks keys of its own writes them in its own module.
     ``free_energy`` is set alongside ``energy`` because SevenNet asks
     ``get_potential_energy(force_consistent=True)`` first.
 

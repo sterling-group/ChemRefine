@@ -4,11 +4,11 @@
 training counterpart of :mod:`chemrefine.engines._backend_server.server`, and shaped by
 the same rule: the *process shell* is shared infrastructure, and everything
 library-specific lives on a class the registry resolves. A library whose training is a
-pure Python API (CHGNet has no CLI and no config format) implements one extra method on
+pure Python API (no CLI and no config format) implements one extra method on
 the same trainer class its module already registers — ``run_training(config)``, where the
 heavy imports live — so adding such a library is still **one dropped-in module**, the
-registry docstring's promise. A library with a real CLI (MACE, SevenNet) never comes
-here; its ``command`` names its own binary.
+registry docstring's promise. A library with a real CLI never comes here; its
+``command`` names its own binary.
 
 This runs under the *backend environment's* interpreter, where the library is importable
 — and so is chemrefine, because a managed env is a ``pip install "chemrefine[<extra>]"``:

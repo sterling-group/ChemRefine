@@ -6,9 +6,9 @@ same env whether it runs a model or trains one — which it must, since both com
 same ``chemrefine[mlip-mace]`` install.
 
 MACE gets an environment of its own because it pins ``e3nn==0.4.4``, which cannot share a
-prefix with FAIRChem's ``e3nn>=0.5``. That is also why the trainer's command is built from the
-provisioner's launcher rather than a bare ``mace_run_train``, which is on nobody's ``PATH``
-once the library lives somewhere the orchestrator does not.
+prefix with a library needing ``e3nn>=0.5``. That is also why the trainer's command is built
+from the provisioner's launcher rather than a bare ``mace_run_train``, which is on nobody's
+``PATH`` once the library lives somewhere the orchestrator does not.
 
 The trainer writes MACE's **own** default label keys, so a template needs no ``energy_key`` /
 ``forces_key`` line to be correct, and carries the step's charge and multiplicity into the
@@ -191,17 +191,9 @@ class MaceTrainer(TrainerBase):
         MACE console script is on ``PATH``. ``run_train`` carries a ``__main__`` guard, so
         this is its documented entry point rather than a trick.
 
-        The config is named by basename because the job script copies it into ``$WORK_DIR``
-        and runs there — the same reason the script engines do it.
-
-        **The basename is interpolated bare, not quoted.** Under ``slurm_array: true`` the run
-        block is rendered *once* against sentinel paths whose names are bash variables, and the
-        array script assigns them per task; ``shlex.quote`` turns ``$INP_NAME`` into
-        ``'$INP_NAME'``, which single quotes protect from expansion, so every task would train
-        against a file of that literal name. Every other engine leaves ``.name`` bare for the
-        same reason. It is safe to: the value is either that sentinel or
-        :data:`~chemrefine.ids.TRAINING_ID`, both minted in :mod:`chemrefine.ids`. The launcher
-        is a real filesystem path and stays quoted.
+        The config is named by its basename, bare, for the reason
+        :meth:`~chemrefine.engines.mlip.train.base.TrainerBase.command` states; the launcher is
+        a real filesystem path and stays quoted.
         """
         if plan.gpus > 1:
             return self.torchrun(

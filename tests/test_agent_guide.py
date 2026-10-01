@@ -32,6 +32,12 @@ scan in the same edit."""
 _TOOL_SHAPED = re.compile(r"\b(?:" + "|".join(_TOOL_VERBS) + r")_[a-z_]+\b")
 
 
+def test_every_shipped_engine_is_taught(shipped_engines: dict[str, type]):
+    """An engine the guide never names is one an agent never picks for a step."""
+    untaught = [name for name in sorted(shipped_engines) if f"`{name}`" not in GUIDE]
+    assert untaught == []
+
+
 def test_every_operation_is_taught():
     """A model that never hears of `solvator` will never use it.
 

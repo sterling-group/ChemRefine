@@ -35,21 +35,18 @@ class MlipOptions(EngineOptions):
         "",
         validation_alias=AliasChoices("model_name", "model", "size"),
     )
-    """The model *weights* for the chosen backend, in that library's own spelling.
-
-    A MACE family's release (the ones :data:`~chemrefine.engines.mlip.backends.mace.MACE`
-    declares), a FAIRChem checkpoint (``uma-s-1p2``/``uma-s-1p1``/``esen-…``), a SevenNet id
-    (``7net-0``), an ORB loader (``orb_v3_…``). YAML aliases: ``model``, ``size``.
+    """The model *weights* for the chosen backend: a release of the chosen library, in its
+    own spelling (:attr:`~chemrefine.engines.mlip.registry.MlipLibrary.releases`; the backend
+    table in the docs lists each library's). YAML aliases: ``model``, ``size``.
 
     Under a ``task_name`` whose library declares its releases
     (:attr:`~chemrefine.engines.mlip.registry.MlipLibrary.releases`), any other name is
     refused before the run starts, whatever the step's template does with it: a template's
     own knobs belong in ``extra``, and a checkpoint in ``model_path``.
 
-    Unset means **the chosen library's own default** — FAIRChem's builder fills in
-    ``uma-s-1p2``, MACE's and SevenNet's loaders theirs — because a default spelled
-    *here* would have to be right for every library at once, and no release name is. For
-    a training step, unset means where the library's own training starts when told
+    Unset means **the chosen library's own default** — its builder's — because a default
+    spelled *here* would have to be right for every library at once, and no release name
+    is. For a training step, unset means where the library's own training starts when told
     nothing: the trainer's declared release
     (:attr:`~chemrefine.engines.mlip.train.base.TrainerBase.default_foundation`), named
     as ``started_from`` in the runlog and in the sidecar, or from scratch (``scratch`` in
@@ -62,9 +59,9 @@ class MlipOptions(EngineOptions):
     )
     """The method / head / family — **the only key that selects a builder**.
 
-    A FAIRChem head (``omol``/``omat``/``odac``/``oc20``/``oc22``/``oc25``/``omc``),
-    ``mace_off``/``mace_mp``/``mace_omol``, ``chgnet``, ``sevenn``, or ``orb``. YAML alias:
-    ``task``.
+    A task name a registered library answers to
+    (:func:`~chemrefine.engines.mlip.registry.registered_backends`; the backend table in the
+    docs lists them). YAML alias: ``task``.
     """
 
     model_path: str | None = None

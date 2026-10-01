@@ -70,8 +70,8 @@ def _write_ase_db(
     """Write one split as an ASE database plus its ``metadata.npz``; return the database.
 
     Labels go on a :class:`~ase.calculators.singlepoint.SinglePointCalculator` because that is
-    where ``AseDBDataset`` reads them from — unlike MACE's extxyz, there are no named info or
-    array keys to match. Energies convert Hartree → eV; forces are already eV/Å.
+    where ``AseDBDataset`` reads them from — there are no named info or array keys to match.
+    Energies convert Hartree → eV; forces are already eV/Å.
 
     ``charge`` and ``spin`` (the multiplicity) ride in each row's ``data=`` mapping, which is
     the one channel ``AseDBDataset`` copies back into ``atoms.info`` — a plain ``db.write``
@@ -221,10 +221,11 @@ class FairchemTrainer(TrainerBase):
     required placeholder — so FAIRChem writes its checkpoints straight into the run directory
     as it goes, and a long training's logs are readable while it runs.
 
-    The copy-back cannot serve as a fallback for this the way MACE's ``output_dirs`` does. Its
-    file half is non-recursive and FAIRChem's product is three directories down; its directory
-    half copies ``$WORK_DIR/<name>``, and the name would have to be FAIRChem's ``timestamp_id``
-    — a value chosen per run, which a ``ClassVar`` read without a context cannot know. So a
+    The copy-back cannot serve as a fallback for this the way a fixed-name ``output_dirs``
+    entry can. Its file half is non-recursive and FAIRChem's product is three directories
+    down; its directory half copies ``$WORK_DIR/<name>``, and the name would have to be
+    FAIRChem's ``timestamp_id`` — a value chosen per run, which a ``ClassVar`` read without a
+    context cannot know. So a
     template that leaves ``run_dir`` at its default trains into the scratch and loses the
     model, and the honest thing is to say so rather than to declare a net that does not catch
     it."""
@@ -302,9 +303,7 @@ class FairchemTrainer(TrainerBase):
         Hydra version — a dependency the generated command has no reason to take on.
 
         The basename is bare rather than quoted, for the reason
-        :meth:`~chemrefine.engines.mlip.backends.mace.MaceTrainer.command` spells out: under
-        ``slurm_array: true`` it is a ``$INP_NAME`` sentinel the array script expands, and
-        single quotes would stop it expanding.
+        :meth:`~chemrefine.engines.mlip.train.base.TrainerBase.command` states.
         """
         return f"{self.console_script(plan, 'fairchem')} -c {config.name}"
 
