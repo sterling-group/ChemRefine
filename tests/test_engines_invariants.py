@@ -545,6 +545,10 @@ _ALLOWED_RAW_READS = {
     # file's directory. The read is variable-keyed over that declared list, which is
     # exactly the shape the matcher's dynamic-key marker exists to put on this record.
     "config.py",
+    # The v1 layer translates v1.3.1's raw YAML into the mapping the config then validates,
+    # so its reads of `task_name` / `model_name` decide what v1.3.1 ran before any engine
+    # model exists to read through -- the loader's position, one stage earlier.
+    "config_legacy.py",
 }
 
 _DYNAMIC_KEY = "<dynamic key>"

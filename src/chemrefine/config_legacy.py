@@ -74,6 +74,11 @@ _V1_SERVER_KEYS = frozenset({"model_name", "task_name", "bind", "device"})
 #: Option sub-keys that are auto-managed now and dropped from a moved block.
 _OBSOLETE_OPTION_KEYS = frozenset({"bind"})
 
+#: The ``task_name`` prefixes v1.3.1 dispatched on before it looked at ``model_name``: MACE,
+#: then FAIRChem, then CHGNet. Only a task matching none of them let a ``model_name`` starting
+#: ``sevenn`` choose SevenNet — whose release v1.3.1 then read from ``task_name``.
+_V1_TASK_PREFIXES = ("mace", "omol", "omat", "odac", "uma", "fairchem", "chgnet")
+
 #: The MACE families whose v1.3.1 loader took ``model_name`` — the only tasks under which
 #: v1.3.1's ``medium`` default ran as written.
 _V1_MACE_LOADERS = frozenset({"mace_off", "mace_mp"})
@@ -289,10 +294,28 @@ def _write_out_v1_server(
       checkpoint (:func:`_names_a_file`) is what their loader read as a file, so it moves to
       ``model_path``, with a leading ``~`` expanded as the job's shell expanded it;
     * ``device: cuda`` when the step names none.
+
+    First, v1.3.1's SevenNet spelling: a ``model_name`` starting ``sevenn`` beside a
+    ``task_name`` none of v1.3.1's earlier dispatch prefixes matched (:data:`_V1_TASK_PREFIXES`)
+    ran SevenNet with the ``task_name`` as its release, which is ``task_name: sevenn`` with the
+    release as ``model_name`` now.
     """
     options = _mapping(
         s.get("options"), what=f"steps[{loc[1]}].options", of="option names to values"
     )
+    task, name = options.get("task_name"), options.get("model_name")
+    if (
+        isinstance(task, str)
+        and isinstance(name, str)
+        and name.startswith("sevenn")
+        and not task.startswith(_V1_TASK_PREFIXES)
+    ):
+        options["task_name"], options["model_name"] = "sevenn", task
+        sink(
+            (*loc, "options", "task_name"),
+            f"v1.3.1 chose SevenNet by `model_name: {name}` and read its release from "
+            f"`task_name`; written as `task_name: sevenn`, `model_name: {task}`",
+        )
     if "task_name" not in options:
         options["task_name"] = "mace_off"
         sink(

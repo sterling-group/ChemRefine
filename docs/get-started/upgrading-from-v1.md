@@ -91,6 +91,11 @@ is then read from the config file's directory, where v1.3.1 read it from the job
 scratch directory: the MLIPTraining tutorial's `../step3/checkpoints_dir/…` is written
 relative to the config file instead (`./outputs/step3/…`).
 
+v1.3.1 chose SevenNet by a `model_name` starting `sevenn` and read the release from
+`task_name` (`{model_name: sevennet, task_name: 7net-0}`), when no earlier library's
+task matched; that pair is translated to `task_name: sevenn` with the release as
+`model_name`.
+
 Each written-out default and each dropped key is reported with a deprecation warning of
 its own. Any other key in the block configured nothing in v1.3.1 and is dropped, reported;
 so is a block on a step v1.3.1 never used it on — an `mlff:` block beside `engine: DFT`

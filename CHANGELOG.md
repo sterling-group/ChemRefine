@@ -472,7 +472,8 @@ for those and the full map.
   `model_name` names weights *within* the selected library and is optional — unset
   means the library's own default (FAIRChem's builder keeps `uma-s-1p2`; SevenNet loads
   its own default release). In v1 the `model_name` prefix (`sevenn…`, `orb…`) doubled
-  as the backend selector; it no longer selects anything.
+  as the backend selector; it no longer selects anything, and the v1 layer translates
+  v1.3.1's SevenNet spelling to `task_name: sevenn` with the release as `model_name`.
 
 - **Each recovery command covers the steps around its target.** v1.3.1's flags each acted
   on one step and exited: `--rerun_errors` left the step's cache to `--rebuild_cache`, and

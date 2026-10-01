@@ -1018,6 +1018,40 @@ def test_a_v1_checkpoint_under_home_is_expanded_as_the_jobs_shell_did(
     assert out["options"]["model_path"] == "/home/someone/models/fine.model"
 
 
+@pytest.mark.parametrize(
+    ("block", "options"),
+    [
+        (
+            {"model_name": "sevennet", "task_name": "7net-0"},
+            {"task_name": "sevenn", "model_name": "7net-0", "device": "cuda"},
+        ),
+        (
+            {"model_name": "sevennet"},
+            {"model_name": "sevennet", "task_name": "mace_off", "device": "cuda"},
+        ),
+        (
+            {"model_name": "sevenn", "task_name": "chgnet"},
+            {"model_name": "sevenn", "task_name": "chgnet", "device": "cuda"},
+        ),
+    ],
+    ids=["sevenn-release", "no-task", "an-earlier-prefix-wins"],
+)
+def test_v1s_sevennet_spelling_translates_where_v1_chose_sevennet(
+    block: dict[str, str], options: dict[str, str]
+):
+    """v1.3.1 reached SevenNet only past its task prefixes, with the release in ``task_name``.
+
+    With no ``task_name`` v1.3.1 ran ``mace_off`` with that name (and failed), and a task
+    an earlier prefix matches — ``chgnet`` here — ran that library: neither is rewritten.
+    """
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    out = _normalize_legacy(
+        {"steps": [{"step": 1, "engine": "MLFF", "mlff": block}]}, report=_silent
+    )["steps"][0]
+    assert out["options"] == options
+
+
 def test_a_v1_block_moves_only_the_keys_v1_read():
     """A key v1.3.1 never read from the block is dropped, so it cannot collide with one
     it did — ``task`` beside a written-out ``task_name`` would be two spellings of one
