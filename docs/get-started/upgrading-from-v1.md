@@ -237,7 +237,7 @@ failing — the cache was written; it is the failure ledger reporting structures
 re-parse classified as failed, exactly as a fresh run would (check
 `_cache/failed_jobs.json`, and note v2's default `on_failure` is `stop` where v1 skipped).
 And the v1 metadata (`step1_manifest.json`, `_cache/step1.json`, `step1.pkl`) can stay put:
-v2 ignores it, and sweeps the `.pkl` on the next `run`/`rerun`.
+v2 never reads it.
 
 This recipe is validated for single-structure operations (`opt_sp` / `sp` / `freq`) and
 the ensemble ones (`goat` / `docker` / `solvator`). A v1 NMS step's displaced-child layout

@@ -528,16 +528,12 @@ def _policy_conflict(stored: str, current: StepConfig) -> bool:
     shape. Which policies persist the backfilled failures is
     :func:`chemrefine.config.policy_stores_backfills`'s answer, held exhaustive there; a
     change across that line would hand the user the previous policy's survivor set —
-    silently, since the fingerprint still matches. ``""`` is a cache written before the
-    policy was recorded and is treated as serving any policy, so older caches are not
-    stranded; a stored policy this version does not know has a shape it cannot judge, so it
-    conflicts with every current policy.
+    silently, since the fingerprint still matches. A stored policy this version does not
+    know has a shape it cannot judge, so it conflicts with every current policy.
 
     Only :func:`_cached_outcome` asks, and only when the failure ledger is non-empty: with
     no failures, every policy produces identical results and any edit is a free hit.
     """
-    if not stored:
-        return False
     if not is_failure_policy(stored):
         return True
     return policy_stores_backfills(stored) != current.stores_backfills

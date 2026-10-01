@@ -556,26 +556,6 @@ def test_policy_change_under_cache_only_raises_instead_of_serving_it(tmp_path: P
         _run_policy_change(tmp_path, "stop", "best", mode=StepMode.CACHE_ONLY)
 
 
-def test_policy_change_over_a_legacy_cache_stays_a_hit(tmp_path: Path):
-    """A document written before `on_failure` was recorded serves any policy."""
-    outcome, step_dir = _run_policy_change(tmp_path, "stop", "stop")
-    document = json.loads((step_dir / "_cache" / "step.json").read_text(encoding="utf-8"))
-    document.pop("on_failure")
-    (step_dir / "_cache" / "step.json").write_text(json.dumps(document), encoding="utf-8")
-    from chemrefine.engines.api import ENGINES
-
-    eng = _register_fail_engine()
-    try:
-        eng.fail = {"1": "missing"}
-        cfg = _config(tmp_path, engine="fake-fail", on_failure="best")
-        outcome = run_step(cfg, cfg.steps[0], _seed_state(["0", "1", "2"]), mode=StepMode.RESUME)
-        assert outcome.cache_hit is True
-        assert {s.id for s in outcome.state.structures} == {"0", "2"}
-    finally:
-        eng.fail = {}
-        ENGINES.pop("fake-fail", None)
-
-
 def test_policy_change_over_a_cache_of_unknown_policy_reattempts(tmp_path: Path):
     """A document naming a policy this version does not know is not served.
 

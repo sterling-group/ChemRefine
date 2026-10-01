@@ -99,9 +99,10 @@ RESULT_FORMAT_VERSION = "v1.0"
 
 The record body is :func:`structure_record` — the same schema the cache
 document's ``structures`` entries use — wrapped in a ``result_format``
-envelope. Bump when a key is renamed/removed or its semantics change;
-purely additive keys need no bump (:func:`structure_from_record` reads
-the optional ones with ``.get``)."""
+envelope. Bump when a key is added, renamed or removed, or its meaning
+changes. The cache document stores the same records and its reader
+requires every key, so such a change moves :data:`CACHE_FORMAT_VERSION`
+too."""
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +124,7 @@ class StepCache:
     operation: str | None
     parent_ids: tuple[str, ...]
     results: StepResults
-    on_failure: str = ""
+    on_failure: str
     """The ``on_failure`` policy the stored results were finalized under.
 
     The policy shapes what :func:`save` persists — ``stop`` and ``skip`` store the
@@ -132,9 +133,7 @@ class StepCache:
     :func:`chemrefine.step._policy_conflict` compares this against the current config; a
     step whose policy moved across that line re-attempts its ledgered failures and
     re-finalizes rather than serving the previous policy's survivor set as if it were its
-    own. ``""`` is a document written before this key existed and is treated as serving
-    any policy — an additive key read with ``.get``, so older caches and the recorded e2e
-    archives are not stranded (which is also why there is no format bump)."""
+    own."""
 
 
 # ---------------------------------------------------------------------------
@@ -536,11 +535,6 @@ def structure_record(s: Structure) -> dict[str, Any]:
     - ``frequencies`` — the whole mode table, same shape, same index space
     - ``resolved_from`` — the NMS child this structure's artifacts came from
 
-    ``resolved_from`` and ``frequencies`` are additive: :func:`structure_from_record` reads
-    them with ``.get``, so a record written before they existed loads as ``None`` and needs
-    no :data:`RESULT_FORMAT_VERSION` bump. A tree cached before ``frequencies`` existed
-    gains it by re-parsing its outputs — that is what ``rebuild-cache`` is for.
-
     Only symbols + positions of the ``Atoms`` are stored — that is all the
     pipeline ever reads back (and all that :func:`structure_digest` hashes).
     ``normal_modes`` is deliberately excluded: a transient displacement
@@ -599,13 +593,12 @@ def structure_from_record(d: dict[str, Any]) -> Structure:
         forces_ev_per_a=None if forces is None else np.asarray(forces, dtype=np.float64),
         converged=d["converged"],
         terminated_normally=d["terminated_normally"],
-        # Thermochemistry + the mode tables are additive — older caches lack these keys.
-        gibbs_hartree=d.get("gibbs_hartree"),
-        enthalpy_hartree=d.get("enthalpy_hartree"),
-        energy_zpe_hartree=d.get("energy_zpe_hartree"),
-        imaginary_freqs=_freq_from_record(d.get("imaginary_freqs")),
-        frequencies=_freq_from_record(d.get("frequencies")),
-        resolved_from=d.get("resolved_from"),
+        gibbs_hartree=d["gibbs_hartree"],
+        enthalpy_hartree=d["enthalpy_hartree"],
+        energy_zpe_hartree=d["energy_zpe_hartree"],
+        imaginary_freqs=_freq_from_record(d["imaginary_freqs"]),
+        frequencies=_freq_from_record(d["frequencies"]),
+        resolved_from=d["resolved_from"],
     )
 
 
@@ -979,8 +972,7 @@ def load(step_dir: Path) -> StepCache | None:
 
     Raises :class:`CacheError` when the document exists but is malformed —
     bad JSON, missing fields, or a ``cache_format`` this version doesn't
-    read. A summary-only ``step.json`` sitting beside a ``step.pkl`` lands here too
-    (it has no ``structures``), forcing a clean rebuild rather than a wrong read.
+    read — forcing a clean rebuild rather than a wrong read.
     """
     path = _cache_path(step_dir)
     data = read_json(path, None, label="step cache")
@@ -993,9 +985,8 @@ def load(step_dir: Path) -> StepCache | None:
                 f"expected {CACHE_FORMAT_VERSION}"
             )
         records = data["structures"]
-        # Arrays come from the sidecar or not at all. A document written before the split
-        # still carries them inline, and quietly reading those would be the one way to load
-        # a cache half in each format — so the absent sidecar is an error, not a fallback.
+        # Arrays come from the sidecar or not at all: the document holds none, so an absent
+        # sidecar is an error, not a fallback.
         arrays = _read_arrays(_arrays_path(step_dir))
         _require_paired(arrays, data, path)
         _join_arrays(records, arrays)
@@ -1009,7 +1000,7 @@ def load(step_dir: Path) -> StepCache | None:
             operation=data["operation"],
             parent_ids=tuple(data["parent_ids"]),
             results=StepResults(structures=tuple(structure_from_record(d) for d in records)),
-            on_failure=data.get("on_failure", ""),
+            on_failure=data["on_failure"],
         )
     except (KeyError, TypeError, ValueError) as e:
         raise CacheError(f"stale or corrupt cache at {path}: {e!r}") from e
@@ -1055,11 +1046,12 @@ def invalidate(step_dir: Path) -> None:
     outputs on disk after the results document is gone. Callers that mean "redo this step
     from scratch" want :func:`discard_step` instead.
 
-    Also removes any ``step.pkl`` in the cache directory, so re-running over an old output
-    tree leaves no stale binary around.
+    The results are the pair :func:`save` writes, the document and its arrays sidecar. The
+    document goes first: a crash between the two leaves a sidecar with no document, which
+    :func:`load` reads as nothing cached.
     """
     _cache_path(step_dir).unlink(missing_ok=True)
-    (step_dir / "_cache" / "step.pkl").unlink(missing_ok=True)
+    _arrays_path(step_dir).unlink(missing_ok=True)
 
 
 def discard_step(step_dir: Path) -> None:

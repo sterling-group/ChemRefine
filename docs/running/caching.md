@@ -154,8 +154,8 @@ runs additionally leave ORCA's own `basename.property.json` (requested via
 ## Cache format version
 
 `step.json` records a `cache_format` version. A document written by an older,
-incompatible layout — or a summary-only sidecar carrying no `structures` — is rejected on
-load, forcing a clean rebuild rather than a silent wrong read. The document also names the
+incompatible layout, or one missing any field this version reads, is rejected on load,
+forcing a clean rebuild rather than a silent wrong read. The document also names the
 digest of the `arrays.npz` it was written with, so a sidecar left by a *different* save is
 rejected the same way rather than pairing one structure's energy with another's geometry.
 

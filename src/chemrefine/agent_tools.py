@@ -674,8 +674,7 @@ def get_frequencies(
 
     ``frequencies`` is every mode, of which ``imaginary_freqs`` is the subset worth
     alarming about; it is what lets a caller name a mode by its frequency rather than by an
-    index alone. It is ``null`` on a tree cached before it was persisted — ``rebuild-cache``
-    re-parses the outputs and fills it in.
+    index alone. Like ``imaginary_count``, it is ``null`` when there is no table at all.
     """
     config = load_config(_config_path(config_path))
     step_cfg = resolve_target(config, step)
@@ -790,18 +789,17 @@ def list_structures(config_path: str, step: int | str | None = None) -> dict[str
     """What a step actually holds: every structure id, and the modes each one has.
 
     The enumeration :func:`get_structure` lacks. Without it a caller has to *guess* an id
-    and a mode index and read the refusal to find out it guessed wrong — which is how a
-    mode number that belongs to no structure became a request that could only fail.
+    and a mode index and read the refusal to find out it guessed wrong, so a mode number
+    that belongs to no structure is a request that can only fail.
 
     ``step`` of ``None`` means the **input seeds**, as everywhere else here. Seeds have no
-    modes, and a step that computed no frequencies (a GOAT search, an MLIP screen) reports
-    ``modes: {}`` — an empty offering is the honest answer to "which mode?" and stops the
-    question being asked at all.
+    modes and report ``modes: {}`` — an empty offering is the honest answer to "which
+    mode?" and stops the question being asked at all. A structure whose step computed no
+    frequencies (a GOAT search, an MLIP screen) reports ``modes: null``: no table, as
+    :func:`get_frequencies` says it, rather than an empty one.
 
     Reads the step cache only, never an output file, so it works on a tree copied off a
-    cluster: the ids and the mode table are both persisted. ``modes`` is ``null`` rather
-    than ``{}`` where the frequency table predates being cached — unknown, not empty; see
-    :func:`get_frequencies`.
+    cluster: the ids and the mode table are both persisted.
     """
     config = load_config(_config_path(config_path))
     if step is None:

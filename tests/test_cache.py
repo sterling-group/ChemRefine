@@ -10,7 +10,7 @@ import struct
 import sys
 import zipfile
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import fields, replace
 from pathlib import Path
 
 import numpy as np
@@ -576,7 +576,6 @@ def test_save_creates_single_json_document(tmp_path: Path):
         chemrefine_version="2.0.0",
     )
     assert (step_dir / "_cache" / "step.json").is_file()
-    assert not (step_dir / "_cache" / "step.pkl").exists()
 
 
 def test_the_step_document_is_compact_but_the_records_beside_it_are_not(tmp_path: Path):
@@ -692,32 +691,6 @@ def test_round_trip_preserves_thermochemistry(tmp_path: Path):
     assert loaded.gibbs_hartree == -76.41
     assert loaded.enthalpy_hartree == -76.38
     assert loaded.energy_zpe_hartree == -76.38
-
-
-def test_load_tolerates_cache_without_thermochemistry(tmp_path: Path):
-    """A cache written before thermochemistry existed loads with None fields."""
-    import json
-
-    from chemrefine.cache import _cache_path
-
-    save(
-        step_cfg=_cfg(),
-        key=_key("0", step_cfg=_cfg()),
-        results=_results(),
-        step_dir=tmp_path / "step1",
-        chemrefine_version="2.0.0",
-    )
-    path = _cache_path(tmp_path / "step1")
-    doc = json.loads(path.read_text(encoding="utf-8"))
-    for entry in doc["structures"]:  # simulate an older document
-        entry.pop("gibbs_hartree", None)
-        entry.pop("enthalpy_hartree", None)
-        entry.pop("energy_zpe_hartree", None)
-    path.write_text(json.dumps(doc))
-    loaded = load(tmp_path / "step1").results.structures[0]
-    assert loaded.gibbs_hartree is None
-    assert loaded.enthalpy_hartree is None
-    assert loaded.energy_zpe_hartree is None
 
 
 def test_round_trip_keeps_the_structure_digest_stable(tmp_path: Path):
@@ -917,12 +890,8 @@ def _saved(tmp_path: Path) -> Path:
     return step_dir
 
 
-def test_resolved_from_round_trips_and_is_optional(tmp_path: Path):
-    """The NMS provenance survives save → load, and a record without it loads as ``None``.
-
-    Additive by design: dropping the key is what a record written before the field existed
-    looks like, so it must read back as "no promotion happened" rather than raising.
-    """
+def test_resolved_from_round_trips(tmp_path: Path):
+    """The NMS provenance survives save → load."""
     resolved = replace(_results().structures[0], resolved_from="0_m5_pos")
     step_dir = tmp_path / "step1"
     save(
@@ -936,9 +905,79 @@ def test_resolved_from_round_trips_and_is_optional(tmp_path: Path):
     assert loaded is not None
     assert loaded.results.structures[0].resolved_from == "0_m5_pos"
 
-    record = structure_record(resolved)
-    del record["resolved_from"]
-    assert structure_from_record(record).resolved_from is None
+
+def test_every_structure_field_is_persisted_or_transient(tmp_path: Path):
+    """A field added to Structure is placed here or it fails: none is dropped unseen.
+
+    The goldens are written through :func:`structure_record` itself, so a field it leaves
+    out would vanish from them too, and nothing else would notice the cache returning it
+    as its default.
+    """
+    persisted = {
+        "id": "0",
+        "atoms": Atoms("H2", positions=[[0.0, 0.0, 0.0], [0.0, 0.0, 0.74]]),
+        "parent_id": "seed",
+        "energy_hartree": -1.17,
+        "forces_ev_per_a": np.array([[0.0, 0.0, 0.1], [0.0, 0.0, -0.1]]),
+        "converged": True,
+        "terminated_normally": True,
+        "gibbs_hartree": -1.16,
+        "enthalpy_hartree": -1.15,
+        "energy_zpe_hartree": -1.14,
+        "imaginary_freqs": {0: -512.4},
+        "frequencies": {0: -512.4, 6: 284.9},
+        "resolved_from": "0_m5_pos",
+    }
+    transient = {"normal_modes"}
+    assert set(persisted) | transient == {f.name for f in fields(Structure)}
+
+    step_dir = tmp_path / "step1"
+    save(
+        step_cfg=_cfg(),
+        key=_key("0", step_cfg=_cfg()),
+        results=StepResults(structures=(Structure(**persisted),)),
+        step_dir=step_dir,
+        chemrefine_version="2.0.0",
+    )
+    loaded = load(step_dir)
+    assert loaded is not None
+    back = loaded.results.structures[0]
+    for name, value in persisted.items():
+        if name == "atoms":
+            assert back.atoms.get_chemical_symbols() == value.get_chemical_symbols()
+            assert np.array_equal(back.atoms.get_positions(), value.get_positions())
+        elif name == "forces_ev_per_a":
+            assert np.array_equal(back.forces_ev_per_a, value)
+        else:
+            assert getattr(back, name) == value, name
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "on_failure",
+        "gibbs_hartree",
+        "enthalpy_hartree",
+        "energy_zpe_hartree",
+        "imaginary_freqs",
+        "frequencies",
+        "resolved_from",
+    ],
+)
+def test_a_document_missing_a_field_is_a_corrupt_cache(tmp_path: Path, key: str):
+    """Every field the writer writes is read as written; a document without one is refused.
+
+    No release wrote a document without them, so a missing one is a damaged file, and the
+    refusal sends the step to recompute rather than reading the gap as a default.
+    """
+    step_dir = _saved(tmp_path)
+    path = step_dir / "_cache" / "step.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    for holder in [document] if key == "on_failure" else document["structures"]:
+        del holder[key]
+    path.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(CacheError, match="stale or corrupt cache"):
+        load(step_dir)
 
 
 def test_a_document_without_its_sidecar_is_an_error_not_a_fallback(tmp_path: Path):
@@ -1227,7 +1266,8 @@ def test_load_if_valid_returns_none_on_mismatch(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_invalidate_removes_cache_and_legacy_pickle(tmp_path: Path):
+def test_invalidate_removes_the_pair_save_writes(tmp_path: Path):
+    """The document and its arrays sidecar: a sidecar left behind is a file nothing reads."""
     step_dir = tmp_path / "step1"
     save(
         step_cfg=_cfg(),
@@ -1236,11 +1276,10 @@ def test_invalidate_removes_cache_and_legacy_pickle(tmp_path: Path):
         step_dir=step_dir,
         chemrefine_version="2.0.0",
     )
-    # A step.pkl beside the document is a stale binary; invalidate sweeps it too.
-    (step_dir / "_cache" / "step.pkl").write_bytes(b"legacy")
+    assert (step_dir / "_cache" / "arrays.npz").is_file()
     invalidate(step_dir)
     assert not (step_dir / "_cache" / "step.json").exists()
-    assert not (step_dir / "_cache" / "step.pkl").exists()
+    assert not (step_dir / "_cache" / "arrays.npz").exists()
 
 
 def test_invalidate_missing_is_noop(tmp_path: Path):
@@ -1373,14 +1412,12 @@ def test_result_record_round_trips_through_structure_from_record(tmp_path: Path)
     assert rebuilt.atoms.get_chemical_symbols() == ["H", "H"]
 
 
-def test_both_mode_tables_round_trip_and_neither_is_required(tmp_path: Path):
+def test_both_mode_tables_round_trip(tmp_path: Path):
     """The whole table is persisted so a finished tree can be read without its outputs.
 
-    Additive, like ``resolved_from``: a record written before the key existed loads as
-    ``None`` and needs no :data:`RESULT_FORMAT_VERSION` bump. ``None`` must survive as
-    ``None`` rather than flattening to ``{}`` — "no frequency table" and "a table with no
-    imaginary modes" are the difference between "unknown" and "a verified minimum", which
-    is what NMS's ``_is_resolved`` branches on.
+    ``None`` must survive as ``None`` rather than flattening to ``{}`` — "no frequency
+    table" and "a table with no imaginary modes" are the difference between "unknown" and
+    "a verified minimum", which is what NMS's ``_is_resolved`` branches on.
     """
     structure = Structure(
         id="0",
@@ -1394,9 +1431,6 @@ def test_both_mode_tables_round_trip_and_neither_is_required(tmp_path: Path):
     rebuilt = structure_from_record(record)
     assert rebuilt.frequencies == structure.frequencies
     assert rebuilt.imaginary_freqs == structure.imaginary_freqs
-
-    older = {k: v for k, v in record.items() if k != "frequencies"}
-    assert structure_from_record(older).frequencies is None
 
     empty = structure_record(Structure(id="1", atoms=Atoms("H"), imaginary_freqs={}))
     assert (empty["imaginary_freqs"], empty["frequencies"]) == ({}, None)
