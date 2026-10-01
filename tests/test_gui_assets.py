@@ -640,6 +640,28 @@ def test_the_panel_offers_each_provider_only_the_fields_it_can_use():
     assert out == "ollama:false:false vllm:false:false openai:false:true custom:true:true"
 
 
+def test_an_engines_operation_dropdown_offers_its_own_vocabulary():
+    """The engine's declared operations, plus the step's current value — nothing else.
+
+    Run against the schema the server serves. An engine that declares no vocabulary
+    treats the field as a label, and an engine the schema does not know is offered
+    nothing either, never every other engine's operations.
+    """
+    from chemrefine.introspect import schema_document
+
+    schema = schema_document()
+    out = _run_component_in_node(f"""
+      const b = builder();
+      b.schema = {json.dumps(schema)};
+      console.log(JSON.stringify([
+        b.operationsFor({{ engine: "nope" }}),
+        b.operationsFor({{ engine: "orca", operation: "x" }}),
+        b.operationsFor({{ engine: "mlip" }}),
+      ]));
+    """)
+    assert json.loads(out) == [[], ["x", *schema["engines"]["orca"]["operations"]], []]
+
+
 def test_the_api_key_never_reaches_localstorage_but_does_reach_the_request():
     """The panel's security claim, gated instead of asserted.
 

@@ -469,17 +469,10 @@ function builder() {
       return Object.keys(this.schema.engines).sort();
     },
     operationsFor(step) {
-      // Each engine's own vocabulary (the ORCA family today, ExtOpt engines included —
-      // they are ORCA-driven and parse the same outputs). An engine that declares none
-      // treats the field as a free label.
-      const descriptor = this.schema.engines[step.engine] || {};
-      // A server predating per-engine vocabularies has no `operations` key at all;
-      // fall back to the document-level list rather than claiming "not used".
-      const ops = descriptor.operations
-        ? [...descriptor.operations]
-        : "operations" in descriptor
-          ? []
-          : [...(this.schema.operations || [])];
+      // The engine's own declared vocabulary; an engine that declares none treats the
+      // field as a label. The step's current value is offered too, so a select never
+      // shows a value it cannot hold.
+      const ops = [...(this.schema.engines[step.engine]?.operations ?? [])];
       if (step.operation && !ops.includes(step.operation)) ops.unshift(step.operation);
       return ops;
     },
@@ -1696,9 +1689,6 @@ function builder() {
       this.chat.apiKey = "";
       this.armCheck(); // the verdict belonged to settings that no longer exist
       for (const key of Object.values(CHAT_KEYS)) localStorage.removeItem(key);
-      // Never written by this build, removed anyway: an earlier one might have, and a
-      // credential left in a browser profile is not something to leave to good intentions.
-      localStorage.removeItem("cr-apikey");
       this.flash = "agent chat reset — conversation cleared, provider settings back to defaults";
       try {
         await this.api("POST", "/api/agent/chat", { reset: true });
