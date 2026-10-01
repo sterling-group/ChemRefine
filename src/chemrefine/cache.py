@@ -122,6 +122,7 @@ class StepCache:
     name: str | None
     engine: str
     operation: str | None
+    """The operation the results were read as (:attr:`StepKey.operation`)."""
     parent_ids: tuple[str, ...]
     results: StepResults
     on_failure: str
@@ -805,7 +806,7 @@ def save(
         "step": step_cfg.step,
         "name": step_cfg.name,
         "engine": step_cfg.engine,
-        "operation": step_cfg.operation,
+        "operation": key.operation,
         # The policy these results were finalized under — see StepCache.on_failure.
         "on_failure": step_cfg.on_failure,
         "parent_ids": list(key.parent_ids),
@@ -871,6 +872,10 @@ class StepKey:
     criterion_key: str = ""
     search_key: str = ""
     fingerprint: str = ""
+    operation: str | None = None
+    """The operation every row was keyed by — the one the step's outputs are read as. The
+    manifest and the cache document record it beside the key, so each says what the step
+    ran as, inferred or declared."""
 
     def manifest_rows(self) -> dict[str, tuple[str, str]]:
         """``id -> (row_key, parent_digest)`` — the per-row provenance a manifest stores."""
@@ -932,10 +937,11 @@ class StepKey:
         aux_digs = aux_file_digests(aux_files or {})
         parent_ids = tuple(s.id for s in parents)
         parent_digs = tuple(structure_digest(s) for s in parents)
+        keyed = operation if operation is not None else step_cfg.operation
         rows = tuple(
             row_key(
                 engine=step_cfg.engine,
-                operation=operation if operation is not None else step_cfg.operation,
+                operation=keyed,
                 template_digest=template_dig,
                 charge=charge,
                 multiplicity=multiplicity,
@@ -962,6 +968,7 @@ class StepKey:
             criterion_key=crit_key,
             search_key=search_key,
             fingerprint=step_fingerprint,
+            operation=keyed,
         )
 
 

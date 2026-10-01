@@ -662,7 +662,7 @@ def _prepare_stamped(
     cache.save_manifest(
         inputs,
         ctx.step_dir,
-        operation=step_cfg.operation,
+        operation=key.operation,
         engine=step_cfg.engine,
         stamp=stamp if stamp is not None else key.manifest_stamp(),
     )
@@ -682,7 +682,7 @@ def _restamp(
     cache.save_manifest(
         inputs,
         ctx.step_dir,
-        operation=step_cfg.operation,
+        operation=key.operation,
         engine=step_cfg.engine,
         stamp=key.manifest_stamp(),
     )

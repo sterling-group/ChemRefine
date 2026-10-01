@@ -237,6 +237,23 @@ def test_submit_script_contains_orca_executable_invocation(_submit, _finished_jo
     assert "*.hess" in script_text
 
 
+@patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
+@patch.object(slurm, "submit", return_value="9001")
+def test_the_runlog_says_what_the_step_ran_as(_submit, _finished_jobs, tmp_path: Path):
+    """An omitted ``operation:`` is recorded as the one the template infers, not as blank."""
+    engine = get_engine("orca")
+    ctx = _ctx(
+        tmp_path,
+        structures=(_seed_structure(),),
+        step_cfg=StepConfig(step=1, engine="orca"),
+        template="! GOAT XTB\n%pal\n  nprocs 2\nend\n",
+    )
+    inputs = engine.prepare(ctx)
+    engine.submit(inputs, ctx)
+    script_text = inputs.files[0][0].with_suffix(".slurm").read_text(encoding="utf-8")
+    assert "\n  operation=goat\n" in script_text
+
+
 def test_the_restart_and_readable_property_files_are_copied_back():
     """``.opt`` and ``.property.txt`` must survive the scratch dir.
 

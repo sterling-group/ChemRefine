@@ -1360,6 +1360,15 @@ def test_manifest_save_records_operation_and_engine(tmp_path: Path):
     assert data["engine"] == "orca"
 
 
+def test_the_key_carries_the_operation_its_rows_hash():
+    """The resolved operation when one is given, else the step's own field, as the rows."""
+    omitted = StepConfig(step=1, engine="orca")
+    assert StepKey.of(omitted, [], None, operation="goat").operation == "goat"
+    declared = StepConfig(step=1, engine="fake", operation="opt_sp")
+    assert StepKey.of(declared, [], None).operation == "opt_sp"
+    assert StepKey.of(omitted, [], None).operation is None
+
+
 def test_manifest_load_corrupt_json_raises_cache_error(tmp_path: Path):
     path = manifest_path(tmp_path / "step1")
     path.parent.mkdir(parents=True)

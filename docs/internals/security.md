@@ -155,7 +155,7 @@ reaches bash by a new route inherits it automatically:
 | --- | --- |
 | `template_dir`, `output_dir`, `scratch_dir` | interpolated into `export WORK_DIR=…` |
 | `executables` | embedded raw in the runlog heredoc, which must stay unquoted so `$(hostname)` and `${SLURM_JOB_ID:-$$}` still expand |
-| `operation` | the same heredoc |
+| `operation` | the same heredoc — asked of the declared value when the config loads, and of the one the step resolves, declared or inferred from its template, where the header is written |
 | `options.tensor_folder` (pyscf) | reaches `cp -r "…"` — and bash substitutes *inside* double quotes, so the quoting there is not protection |
 
 Other values in those same lines are safe by construction and need no check:

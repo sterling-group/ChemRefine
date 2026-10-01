@@ -911,6 +911,41 @@ def test_run_step_nms_branch_routes_through_coordinator(tmp_path: Path, monkeypa
         ENGINES.pop("fake-nms", None)
 
 
+def test_a_step_records_the_operation_its_outputs_were_read_as(tmp_path: Path):
+    """The manifest and the cache document say what the step ran as: the operation its
+    template infers when the step names none, not the absent field."""
+    from typing import ClassVar
+
+    from chemrefine.engines.api import ENGINES, register
+    from chemrefine.ids import StepTemplate
+
+    @register("fake-inferring")
+    class _Inferring(FakeEngine):
+        name: ClassVar[str] = "fake-inferring"
+        label: ClassVar[str] = "Fake"
+        template_suffix: ClassVar[str] = "txt"
+        template_starter: ClassVar[str] = "opt_sp\n"
+
+        def infer_operation(self, template: StepTemplate) -> str:
+            return template.text.strip()
+
+        def reads_alike(self, first: str, second: str) -> bool:
+            return first == second
+
+    try:
+        _templates(tmp_path)
+        (tmp_path / "templates" / "step1.txt").write_text("goat\n", encoding="utf-8")
+        cfg = _config(tmp_path, engine="fake-inferring", operation=None)
+        run_step(cfg, cfg.steps[0], _seed_state(["0"]), engine=ENGINES["fake-inferring"]())
+        step_dir = cfg.output_dir.resolve() / "step1"
+        cached = cache.load(step_dir)
+        assert cached is not None and cached.operation == "goat"
+        manifest = json.loads(cache.manifest_path(step_dir).read_text(encoding="utf-8"))
+        assert manifest["operation"] == "goat"
+    finally:
+        ENGINES.pop("fake-inferring", None)
+
+
 def test_on_failure_best_drops_failure_with_no_fallback(tmp_path: Path):
     """best: a failure with no best geometry and no prior-state entry has
     nothing to backfill — it is dropped while the others are kept."""

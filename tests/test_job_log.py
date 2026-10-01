@@ -111,6 +111,22 @@ def test_a_field_value_that_would_run_as_bash_is_refused_naming_the_field():
         )
 
 
+def test_an_operation_that_would_run_as_bash_is_refused_where_it_is_written():
+    """The operation lands in the same heredoc as the rows. A declared one is refused when
+    the config loads; an inferred one comes from an engine's inspector, and this is the
+    ask it meets."""
+    with pytest.raises(ConfigError, match="runlog field 'operation'"):
+        job_log.bash_header(
+            engine="orca",
+            operation="opt_sp$(touch pwned)",
+            step=1,
+            structure_id="0",
+            step_label="step1",
+            step_dir=Path("/abs/outputs/step1"),
+            cores=4,
+        )
+
+
 def test_field_values_every_engine_actually_emits_still_pass():
     """The emission check must not refuse what the engines legitimately record.
 

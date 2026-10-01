@@ -92,22 +92,27 @@ def bash_header(
     ``(key, value)`` rows via ``extra_fields`` — they render after the
     fixed runlog skeleton.
 
-    **Every ``extra_fields`` value is held to** :func:`~chemrefine.config.
-    reject_shell_unsafe` **here, at emission.** The header is an unquoted heredoc, so a
-    value is interpolated as bash — a ``$(...)`` in one executes when the job runs, and a
-    bare ``$NAME`` is a nounset abort under the script's ``set -u`` when nothing has
-    exported it yet (the header runs *before* the engine's run block). Checked at the
-    point the value becomes bash rather than per engine, so a row added by any engine is
-    covered by existing — the same property-keyed placement as the rule itself. The
-    *fixed* skeleton values above are exempt on purpose: ``$(hostname)`` and
-    ``${SLURM_JOB_ID:-$$}`` are this module's own deliberate expansions.
+    ``operation`` is the one the step's outputs are read as
+    (:attr:`~chemrefine.state.StepContext.operation`) — declared, or inferred from the
+    template — so the runlog says what the step ran as, not only what the config spelled.
+
+    **The operation and every ``extra_fields`` value are held to**
+    :func:`~chemrefine.config.reject_shell_unsafe` **here, at emission.** The header is an
+    unquoted heredoc, so a value is interpolated as bash — a ``$(...)`` in one executes when
+    the job runs, and a bare ``$NAME`` is a nounset abort under the script's ``set -u`` when
+    nothing has exported it yet (the header runs *before* the engine's run block). Checked at
+    the point the value becomes bash rather than per engine, so a row added by any engine,
+    and an operation any engine infers, is covered by existing — the same property-keyed
+    placement as the rule itself. The rest of the skeleton is exempt on purpose:
+    ``$(hostname)`` and ``${SLURM_JOB_ID:-$$}`` are this module's own deliberate
+    expansions, and the other values are safe by construction.
 
     A refused value is a :class:`~chemrefine.errors.ConfigError` naming the field: the
     text originates in the user's YAML (an engine's option, an ``executables`` entry),
     and a bare ``ValueError`` from inside script assembly would leave the exit-code
     contract as a traceback.
     """
-    for key, value in extra_fields:
+    for key, value in (("operation", operation), *extra_fields):
         try:
             reject_shell_unsafe(
                 str(value), what=f"runlog field {key!r}", fix="remove the character"

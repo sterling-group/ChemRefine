@@ -718,7 +718,7 @@ VALIDATED = "reject_shell_unsafe"
 
 _BASH_PARAM_SAFETY: dict[str, str] = {
     # --- user-supplied text, validated at config load (the paths again at render) --------
-    "operation": VALIDATED,
+    "operation": VALIDATED,  # declared: at load; resolved (or inferred): at emission
     "output_dir": VALIDATED,  # config.output_dir — and the resolved path, at render
     "work_dir_expr": VALIDATED,  # built from output_dir + scratch_dir, both validated
     "output_dirs": VALIDATED,  # engine-declared; pyscf's tensor_folder goes through the rule

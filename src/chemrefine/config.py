@@ -567,7 +567,9 @@ def reject_shell_unsafe(text: str, *, what: str, fix: str) -> None:
                                 engine-documented root paths (qchem's ``qc``/``qcaux``)
                                 are additionally shell-quoted where their run block
                                 exports them
-    ``operation``               this rule — same heredoc
+    ``operation``               this rule — same heredoc; the declared value at load, and
+                                the one the step resolves (declared or inferred) where
+                                :func:`chemrefine.job_log.bash_header` writes it
     ``tensor_folder``           this rule (via :class:`~chemrefine.engines.pyscf.options.\
 PyscfExtOptOptions`, the subclass that declares the field) — reaches ``cp -r "…"``, and \
 bash substitutes *inside* double quotes
