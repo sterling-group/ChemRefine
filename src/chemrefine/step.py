@@ -946,14 +946,13 @@ def rebuild_cache_step(
     asked for.
 
     A manifest carrying **no** row provenance is not evidence of a mismatch, and this
-    proceeds: it is a tree from before the current rules (or a hand-written v1
-    adoption manifest), *unprovable* rather than wrong, and the caller has named the
-    step. The distinction is between proving the outputs wrong and merely being unable
-    to prove them right. It is drawn differently in :func:`_incremental_step_outcome`,
-    which treats an unproven match as a reason to re-run — it can afford to, being an
-    optimisation over doing the work anyway. A successful rebuild then writes the
-    manifest back **with** row provenance, so the adoption is recorded and every later
-    question is answered per row.
+    proceeds: it is a hand-written v1 adoption manifest, *unprovable* rather than wrong,
+    and the caller has named the step. The distinction is between proving the outputs
+    wrong and merely being unable to prove them right. It is drawn differently in
+    :func:`_incremental_step_outcome`, which treats an unproven match as a reason to
+    re-run — it can afford to, being an optimisation over doing the work anyway. A
+    successful rebuild then writes the manifest back **with** row provenance, so the
+    adoption is recorded and every later question is answered per row.
     """
     engine = get_engine(step_cfg.engine)
     ctx = build_context(config, step_cfg, prev_state, engine)

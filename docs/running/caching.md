@@ -108,11 +108,10 @@ support recovery:
   criterion and search halves, and each row's own key — written *before* any job is submitted. That is
   what lets a later `resume` prove, structure by structure, that an output on disk is
   the one this configuration would compute: matching rows are **adopted** (re-parsed,
-  never resubmitted) and only the rest run. A manifest *without* row provenance — an
-  output tree from before these rules, or one hand-written for a v1 adoption — is
-  never silently trusted or silently discarded: `resume` stops and names the fix,
-  `chemrefine rebuild-cache N`, which re-parses the outputs under the current rules,
-  submits nothing, and records the provenance.
+  never resubmitted) and only the rest run. A manifest *without* row provenance — one
+  hand-written for a v1 adoption — is never silently trusted or silently discarded:
+  `resume` stops and names the fix, `chemrefine rebuild-cache N`, which re-parses the
+  outputs under the current rules, submits nothing, and records the provenance.
 - **`failed_jobs.json`** — the ledger of failed structures (`structure_id`,
   `reason`); always written for visibility, but only `stop` failures are *pending*.
 

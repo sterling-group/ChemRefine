@@ -1047,34 +1047,23 @@ def _mode_displacements(frame: ParsedResult, mode_index: int) -> NDArray[np.floa
 
 
 def _locate_output(step_dir: Path, structure_id: str, recorded: Path) -> Path | None:
-    """Where a structure's output actually is now, or ``None`` if it is really gone.
+    """Where a structure's output is, or ``None`` if it is gone.
 
-    A manifest spells its files relative to the step directory
-    (:func:`chemrefine.cache.save_manifest`), so on a copied or moved tree the recorded
-    path is the right one. The probes below are for what the recorded path cannot cover:
-    a manifest written before that spelling, which still names the machine it ran on, and
-    an output a retry or NMS left in an ``attemptN/`` sub-directory after the manifest
-    was written. Without them the answer was "rerun the step to regenerate it" about a
-    file sitting right there.
+    The manifest's own path first: :func:`chemrefine.cache.load_manifest` anchors a
+    step-relative entry to ``step_dir``, so the recorded path follows a copied or moved
+    tree. Then the structure's ``attemptK/`` directories, **newest attempt first**
+    (:func:`chemrefine.ids.attempt_dirs_newest_first`), for an output a retry or NMS moved
+    there after the manifest was written — a retried structure has the same basename in
+    several of them, and the latest attempt is the one the manifest would be rewritten to
+    name.
 
-    Three probes, cheapest first: the recorded path; the same basename directly under this
-    tree's ``step_dir/structure_id``; and finally the structure's ``attemptK/`` directories,
-    **newest attempt first** (:func:`chemrefine.ids.attempt_dirs_newest_first`) — a retried
-    structure has the same basename in several of them, and the latest attempt is the one
-    the manifest would have been rewritten to name.
-
-    By attempt number, never by modification time. Sorted by mtime, the pick was copy
-    order on a tree copied without timestamps — the "copied or moved" case above — and
-    the mode viewer then animated the superseded attempt's Hessian while
-    :func:`chemrefine.ids.latest_attempt_dir`, one function over, named the right one.
+    By attempt number, never by modification time: a tree copied without timestamps
+    carries copy-order mtimes, and a pick by clock would animate a superseded attempt's
+    Hessian while :func:`chemrefine.ids.latest_attempt_dir` names the right one.
     """
     if recorded.is_file():
         return recorded
-    home = step_dir / structure_id
-    direct = home / recorded.name
-    if direct.is_file():
-        return direct
-    for attempt in ids.attempt_dirs_newest_first(home):
+    for attempt in ids.attempt_dirs_newest_first(step_dir / structure_id):
         found = attempt / recorded.name
         if found.is_file():
             return found
@@ -1097,10 +1086,10 @@ def _mode_frame(config: Config, step_cfg: StepConfig, structure_id: str) -> Pars
     output = _locate_output(step_dir, structure_id, recorded)
     if output is None:
         raise ConfigError(
-            f"cannot find {recorded.name} for structure {structure_id!r} under "
-            f"{step_dir / structure_id} — the manifest records {recorded}, which is where "
-            "it was written. If this tree was copied or moved, the outputs did not come "
-            "with it; otherwise rerun the step to regenerate them."
+            f"cannot find {recorded.name} for structure {structure_id!r}: not at {recorded}, "
+            f"nor in an attemptK/ under {step_dir / structure_id}. If this tree was copied or "
+            "moved, the outputs did not come with it; otherwise rerun the step to regenerate "
+            "them."
         )
     frame = next(
         (f for f in _parse_output_frames(step_cfg.engine, output) if f.normal_modes is not None),

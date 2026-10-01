@@ -109,11 +109,10 @@ def step_relative(path: Path, step_dir: Path) -> str:
     Everything about a tree is addressed relatively — ``Config.step_dir`` derives from
     ``output_dir``, which resolves against the config file's own directory, and no key holds
     a path — so a tree copied off a cluster or moved to another directory keeps working
-    everywhere. A file spelled absolute names the machine the step ran on: a manifest that did
-    sent ``rebuild-cache`` and a ledgered ``rerun`` on the copy to paths that were not there,
-    and a failure reason that did pointed its reader at them. Every shipped engine writes its
-    jobs under the step directory, so this is the normal spelling (``0/step1_0.out``); a file
-    elsewhere stays absolute.
+    everywhere. A file spelled absolute would name the machine the step ran on, and
+    ``rebuild-cache``, a ledgered ``rerun`` or a failure reason on a copy would point at paths
+    that are not there. Every shipped engine writes its jobs under the step directory, so this
+    is the normal spelling (``0/step1_0.out``); a file elsewhere stays absolute.
     """
     return str(path.relative_to(step_dir)) if path.is_relative_to(step_dir) else str(path)
 

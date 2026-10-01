@@ -896,41 +896,6 @@ def test_analyze_mode_refuses_the_missing_pieces(tmp_path: Path):
         agent_tools.analyze_mode(str(tree), 1, "0", mode_index=0)
 
 
-def test_a_relocated_tree_with_a_legacy_manifest_still_finds_its_outputs(tmp_path: Path):
-    """A tree copied off the cluster keeps working even when its manifest names the cluster.
-
-    A manifest now spells its files relative to the step directory and follows the tree;
-    one written before that spelling records the absolute path each output was *written*
-    to, and a copy of such a tree looked for its outputs on the machine that is no longer
-    there — "rerun the step to regenerate it" about a file sitting in the copy. The probes
-    below the recorded path are what keep those trees readable.
-    """
-    import json
-
-    cluster = tmp_path / "cluster"
-    cluster.mkdir()
-    original = _freq_tree(cluster)
-    moved = tmp_path / "laptop"
-    shutil.copytree(cluster, moved)
-    shutil.rmtree(cluster)  # the machine it ran on is gone
-    relocated = moved / original.name
-
-    step_dir = load_config(relocated).step_dir(load_config(relocated).steps[0])
-    manifest = cache.manifest_path(step_dir)
-    data = json.loads(manifest.read_text(encoding="utf-8"))
-    for rec in data["files"]:  # the legacy spelling: absolute, on the old machine
-        rec["output"] = str(cluster / original.name / "outputs" / "step1" / "0" / rec["output"])
-    manifest.write_text(json.dumps(data), encoding="utf-8")
-    stale = cache.load_manifest(step_dir)
-    assert not stale.files[0][1].is_file()  # the manifest names the old machine
-
-    assert agent_tools.analyze_mode(str(relocated), 1, "0", mode_index=6)["frequency_cm1"] == (
-        pytest.approx(-820.38)
-    )
-    drawn = agent_tools.get_structure(str(relocated), 1, structure_id="0", mode_index=6)
-    assert len(drawn["text"].splitlines()[2].split()) == 7  # displacement columns and all
-
-
 def test_an_output_a_retry_moved_into_an_attempt_dir_is_found(tmp_path: Path):
     """Retries and NMS write into ``attemptN/``, so the search has to go below the id dir.
 

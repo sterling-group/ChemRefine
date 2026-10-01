@@ -1135,9 +1135,9 @@ class ManifestProvenance:
     """The provable half of a manifest: the step stamp and each row's job identity.
 
     ``rows`` is ``id -> (row_key, parent_digest)`` for exactly the rows that carry
-    provenance; empty means the manifest predates the current rules (a pre-release tree,
-    or a hand-written v1 adoption manifest) and is *unprovable* — never proven wrong,
-    never proven right. Absence of proof routes to the explicit ``rebuild-cache``.
+    provenance; empty means none does — a hand-written v1 adoption manifest — and the
+    manifest is *unprovable*: never proven wrong, never proven right. Absence of proof
+    routes to the explicit ``rebuild-cache``.
     """
 
     fingerprint: str
@@ -1149,8 +1149,8 @@ class ManifestProvenance:
     """The search half — what decides whether the ``attemptK/`` children themselves may
     be re-read at all: a search retune changes the displaced geometries under unchanged
     child ids, so an attempt from another search key answers a different question.
-    ``""`` for a manifest written before this key existed — unprovable, adoptable only
-    by the explicit ``rebuild-cache``, the row doctrine."""
+    ``""`` when the step resolves nothing, and in a hand-written v1 adoption manifest —
+    unprovable, adoptable only by the explicit ``rebuild-cache``, the row doctrine."""
     rows: dict[str, tuple[str, str]]
 
 
@@ -1158,9 +1158,8 @@ class ManifestProvenance:
 class _ManifestRecord:
     """One ``files`` record of a manifest, shape-checked: the job triple and its provenance.
 
-    ``row_key`` is ``None`` for a record written without provenance — a pre-provenance
-    tree, or a hand-written v1 adoption manifest — which is a legal record, not a broken
-    one.
+    ``row_key`` is ``None`` for a record written without provenance — a hand-written v1
+    adoption manifest's — which is a legal record, not a broken one.
     """
 
     input: Path
@@ -1185,19 +1184,17 @@ def _read_manifest(step_dir: Path) -> _Manifest | None:
 
     **The one reader of the record shape.** :func:`load_manifest` projects the job
     triples out of this reading and :func:`load_manifest_provenance` the stamp and the
-    provenanced rows, so the two cannot disagree about what a broken manifest is. Each
-    walked ``files`` on its own, each behind its own net, and the nets drifted: a record
-    without an ``id`` was the cache's error to one and a bare ``KeyError`` to the other,
-    and a document that was no object at all was corrupt to one and *unprovenanced* to
-    the other — advice that routed to ``rebuild-cache``, which reads the same file
-    through the first reader and refuses it.
+    provenanced rows, so the two cannot disagree about what a broken manifest is: a record
+    without an ``id``, or a document that is no object at all, is the same
+    :class:`CacheError` to both, and neither routes to a ``rebuild-cache`` that would
+    refuse the same file.
 
     A document of the wrong shape is the :class:`CacheError` every ``_cache/`` reader
     raises — exit 7 with the cache's own advice, never a traceback. A relative entry is
     anchored to ``step_dir`` (the spelling :func:`save_manifest` writes, which is what
-    lets a moved tree find its own outputs); an absolute one is taken verbatim, so every
-    manifest written before that spelling, and every hand-written v1 adoption manifest,
-    reads exactly as it did. ``Path.is_absolute`` tells the two apart without ambiguity.
+    lets a moved tree find its own outputs); an absolute one — a hand-written v1 adoption
+    manifest may give one — is taken verbatim. ``Path.is_absolute`` tells the two apart
+    without ambiguity.
     """
     path = manifest_path(step_dir)
     data = read_json(path, None, label="manifest")
@@ -1230,8 +1227,8 @@ def load_manifest_provenance(step_dir: Path) -> ManifestProvenance:
     """The provenance recorded alongside a step's manifest; all-empty when there is none.
 
     Read separately from :func:`load_manifest` so callers that want only the file layout
-    are untouched. All-empty covers a missing manifest and one written before these keys
-    existed alike — neither can equal a real stamp, so every reader falls back to the
+    are untouched. All-empty covers a missing manifest and a hand-written v1 adoption
+    manifest alike — neither can equal a real stamp, so every reader falls back to the
     route that recomputes. A manifest of the wrong shape is :func:`_read_manifest`'s
     :class:`CacheError` — the same one :func:`load_manifest` raises over the same file.
     """
