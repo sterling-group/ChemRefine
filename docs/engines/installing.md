@@ -46,6 +46,10 @@ name.
 
 <!-- chemrefine:backends -->
 
+The `model_name` releases column lists, per `task_name`, the names its library takes for
+`model_name`; any other name under such a task is refused before the run starts. A library
+that declares none takes its own vocabulary.
+
 The backends don't pin a CUDA build of `torch`, so for GPU install the matching `torch`
 first (or let the extra resolve the default build). FAIRChem's default checkpoint is
 `uma-s-1p2`. PySCF is the exception to one-environment-per-name: `pyscf` and `pyscf-gpu`

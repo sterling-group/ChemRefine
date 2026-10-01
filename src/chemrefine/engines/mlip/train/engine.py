@@ -180,10 +180,21 @@ class MlipTrainEngine(MlipBackend):
 
         The step's ``model_name``, or, unset, its trainer's
         :attr:`~chemrefine.engines.mlip.train.base.TrainerBase.default_foundation`. Resolved
-        here once, so the plan the job runs, the sidecar the model is cited by and the t=0
-        check cannot name three different starts.
+        here once, so the plan the job runs and the sidecar the model is cited by cannot name
+        different starts.
         """
         return opts.model_name or trainer_for(opts.task_name).default_foundation
+
+    @staticmethod
+    def _start(opts: MlipTrainOptions) -> str | None:
+        """The release the step starts from, as its library's training entry point reads it.
+
+        :meth:`_foundation`, spelled through the library's declared releases
+        (:meth:`~chemrefine.engines.mlip.registry.MlipLibrary.release`); ``None`` from scratch.
+        """
+        if not (named := MlipTrainEngine._foundation(opts)):
+            return None
+        return backend_spec(opts.task_name).library.release(opts.task_name, named)
 
     def run_dir(self, ctx: StepContext) -> Path:
         """Where the run's files live: the training job's own directory under the step.
@@ -234,7 +245,6 @@ class MlipTrainEngine(MlipBackend):
         # plan's `cores` feeds the thread exports and `$CORES` — a raw pal() here let a
         # `cores:` above the budget thread past what the scheduler grants and charges.
         ntasks, cpus_per_task = self.slurm_layout(ctx)
-        trainer = self._trainer(ctx)
         return TrainingPlan(
             run_dir=self.run_dir(ctx),
             run_name=ids.TRAINING_ID,
@@ -248,11 +258,7 @@ class MlipTrainEngine(MlipBackend):
             # facts, and the API-trainer hooks dispatch on which one was named — the
             # CalculatorSpec shape, on the training side.
             weights=Path(opts.model_path) if opts.model_path else None,
-            foundation=(
-                trainer.foundation_name(opts.task_name, foundation)
-                if (foundation := self._foundation(opts))
-                else None
-            ),
+            foundation=self._start(opts),
             launcher=Path(_provision.launcher_for(self, ctx.step_cfg.options)),
         )
 
@@ -261,13 +267,15 @@ class MlipTrainEngine(MlipBackend):
     def check_step(self, step_cfg: StepConfig, *, charge: int, multiplicity: int) -> None:
         """Refuse a step that cannot train, before any upstream step is paid for.
 
-        The refusals :meth:`prepare` has always made, hoisted onto the
+        The refusals :meth:`prepare` makes, on the
         :class:`~chemrefine.engines.api.PreflightChecking` capability so the run's
         preflight walk (and ``chemrefine validate``) makes them at t=0 — a training
         step usually sits *after* the steps that compute its labels, so a refusal at
-        its own ``prepare`` lands only once those have run for days. The strict
-        options read is part of the check: ``from_raw`` refuses a typoed knob, which
-        the lenient read every pre-run pass used until now silently dropped.
+        its own ``prepare`` would land only once those have run for days. The strict
+        options read is part of the check: ``from_raw`` refuses a typoed knob, which a
+        lenient read would drop without a word. The start a step names is its library's
+        to judge, and the backend requirement asks it first
+        (:func:`~chemrefine.engines.mlip.registry.requirement_from_options`).
 
         ``charge`` / ``multiplicity`` are unread — a training step trains whatever
         species its labels carry — but the hook's signature is the capability's.
@@ -292,11 +300,6 @@ class MlipTrainEngine(MlipBackend):
                 f"{step_cfg.on_failure}`, which has nothing to act on — a training step "
                 f"has no per-structure failures to skip or backfill. Remove it."
             )
-        if foundation := self._foundation(opts):
-            # The trainer's own reading of the release, made now rather than when the job
-            # is rendered: a name its library would take for another family's model is
-            # refused before the steps that compute the labels have run.
-            trainer_for(opts.task_name)().foundation_name(opts.task_name, foundation)
 
     def prepare(self, ctx: StepContext) -> StepInputs:
         """Write the dataset and render the trainer config; return the one job.

@@ -107,6 +107,27 @@ def test_mlip_engines_are_provisionable():
         assert (req.extra, req.import_name) == ("mlip-mace", "mace")
 
 
+@pytest.mark.parametrize("name", ["mlip", "mlip-extopt", "mlip-train"])
+def test_every_mlip_engine_holds_model_name_to_its_librarys_releases(name: str):
+    """The release check is the library's, so every engine that runs or trains it asks it.
+
+    An inference step naming ``medium`` under ``mace_omol`` passed every pre-run check and
+    died inside the job; the backend requirement, which the run's preflight asks of every
+    MLIP step, refuses it first. Unset is the library's own default and is not asked. The
+    aliases are read through the options model.
+    """
+    engine = get_engine(name)
+    wrong = {"task_name": "mace_omol", "model_name": "medium", "device": "cpu"}
+    refusal = "mace_omol has no release 'medium' (its releases: extra_large)"
+    with pytest.raises(ConfigError, match=re.escape(refusal)):
+        engine.backend_requirement(wrong)
+    for model_name in ("extra_large", ""):
+        options = {**wrong, "model_name": model_name}
+        assert engine.backend_requirement(options).extra == "mlip-mace"
+    with pytest.raises(ConfigError, match=re.escape("mace_off has no release 'tiny'")):
+        engine.backend_requirement({"task": "mace_off", "size": "tiny", "device": "cpu"})
+
+
 def test_orca_and_fake_are_not_provisionable():
     """Engines without a Python backend don't satisfy the Protocol."""
     from chemrefine.engines.api import ProvisionableEngine

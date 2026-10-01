@@ -82,6 +82,21 @@ def _engines_table() -> str:
     return _table(("Engine", "Step template", "`operation:`", "NMS", "Backend env"), rows)
 
 
+def _releases(tasks: list[str]) -> str:
+    """The ``model_name`` releases a backend's tasks declare, or that it declares none."""
+    from chemrefine.engines.mlip.registry import backend_spec
+
+    if not tasks:
+        return "—"
+    library = backend_spec(tasks[0]).library
+    cells = [
+        f"`{task}`: " + _code_list(library.releases[task], "none")
+        for task in tasks
+        if task in library.releases
+    ]
+    return "; ".join(cells) or "not declared"
+
+
 def _backends_table() -> str:
     """The names ``chemrefine backends install`` accepts, and what each unlocks."""
     from chemrefine.engines import known_backend_extras
@@ -121,11 +136,19 @@ def _backends_table() -> str:
                 f"`{extra}`",
                 _code_list(users, "—"),
                 _code_list(tasks, "—"),
+                _releases(tasks),
                 ", ".join(f"`{_cell(s)}`" if s else "scratch" for s in starts) or "—",
                 _code_list(_third_party(extra), "—"),
             )
         )
-    header = ("Backend", "Engines", "`task_name`(s)", "Trains from, unset", "Installs")
+    header = (
+        "Backend",
+        "Engines",
+        "`task_name`(s)",
+        "`model_name` releases",
+        "Trains from, unset",
+        "Installs",
+    )
     return _table(header, rows)
 
 

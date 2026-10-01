@@ -35,7 +35,9 @@ Three knobs, one dispatch
     model_name  a named release of it                         small, uma-s-1p2, 7net-0
     model_path  weights from this file instead                ./outputs/step4/train/train.model
 
-Only the first selects anything. ``model_path`` is passed to the chosen library's builder,
+Only the first selects anything. A library may declare the models it releases by name
+(:attr:`MlipLibrary.releases`); under such a ``task_name`` a ``model_name`` outside them is
+refused before the run starts. ``model_path`` is passed to the chosen library's builder,
 which loads it *with that library* — MACE's own ``mace_off``/``mace_mp``/``mace_omol`` take a
 checkpoint path directly, and FAIRChem's builder swaps ``get_predict_unit`` for
 ``load_predict_unit``. So there is no ``custom_<library>`` key for anyone, and adding a library
@@ -74,7 +76,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -162,6 +164,12 @@ class MlipLibrary:
     import_name: str
     periodic_only: bool = False
     periodic_reason: str = ""
+    releases: Mapping[str, Mapping[str, str]] = field(default_factory=dict, hash=False)
+    """By ``task_name``, the models its loaders take by name: each maps the name as a step's
+    ``model_name`` writes it (the loader's spelling) to the name the library's training
+    entry point reads it by. A task absent here takes ``model_name`` as the library's open
+    vocabulary; a task mapped to an empty table releases nothing, and takes a checkpoint as
+    ``model_path``."""
 
     def __post_init__(self) -> None:
         """Refuse a periodic-only library that does not say why — the warning quotes it."""
@@ -170,6 +178,25 @@ class MlipLibrary:
                 f"{self.extra}: a periodic_only library must declare its periodic_reason — "
                 f"the warning a boxed structure logs quotes it"
             )
+
+    def release(self, task_name: str, model_name: str) -> str:
+        """``model_name`` under ``task_name``, as this library's training entry point reads it.
+
+        Passed through for a task that declares no releases. Asked of every MLIP step's
+        ``model_name`` before the run starts (:func:`requirement_from_options`), and of a
+        training step's start when its plan is made.
+        """
+        table = self.releases.get(task_name)
+        if table is None:
+            return model_name
+        if model_name not in table:
+            raise ConfigError(
+                f"{task_name} has no release {model_name!r} (its releases: "
+                f"{', '.join(table) or 'none'}); {self.package} reads any other name as "
+                f"something else, a file or the model of another family. Name one of them, "
+                f"or give a checkpoint as `model_path`."
+            )
+        return table[model_name]
 
     def boxed(self, atoms: Atoms) -> Atoms:
         """``atoms`` as this library can compute it: in a vacuum box when it needs a cell.
@@ -450,9 +477,16 @@ def requirement_from_options(
     an untrainable ``task_name`` **before any step submits**, rather than at the training step
     itself — which, in a pipeline that spends days computing labels first, is the difference
     between a typo caught in seconds and one caught on Thursday.
+
+    A ``model_name`` the selected library does not release (:meth:`MlipLibrary.release`) is
+    refused here too, for every MLIP engine: before any step submits, and again when its run
+    block is built, which asks for the same launcher; ``chemrefine validate`` reports it as
+    the step's backend row. An unset one is each library's own default and is not asked.
     """
     opts = (options_cls or MlipOptions).from_raw_lenient(dict(options or {}))
     spec = backend_spec(opts.task_name)
     if require_trainer:
         trainer_for(opts.task_name)
+    if opts.model_name:
+        spec.library.release(opts.task_name, opts.model_name)
     return BackendRequirement(extra=spec.extra, import_name=spec.import_name)

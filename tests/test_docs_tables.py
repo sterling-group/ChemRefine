@@ -142,21 +142,35 @@ def test_the_training_engine_is_advertised_exactly_where_a_trainer_exists():
     assert checked == len(mlip_extras), "some registered backend never appeared in the table"
 
 
-def test_the_backend_table_says_what_an_unset_model_name_trains_from():
-    """Each training backend's row names its trainer's declared start, or says scratch."""
-    from chemrefine.engines.mlip.registry import backend_spec, registered_trainers, trainer_for
-
+def _backend_cells(column: str) -> dict[str, str]:
+    """One column of the rendered backend table, keyed by each row's backend cell."""
     header, _separator, *rows = [
         [cell.strip() for cell in re.split(r"(?<!\\)\|", line)[1:-1]]
         for line in _render("backends").splitlines()
         if line.startswith("|")
     ]
-    column = header.index("Trains from, unset")
-    cells = {row[0]: row[column] for row in rows}
+    index = header.index(column)
+    return {row[0]: row[index] for row in rows}
+
+
+def test_the_backend_table_says_what_an_unset_model_name_trains_from():
+    """Each training backend's row names its trainer's declared start, or says scratch."""
+    from chemrefine.engines.mlip.registry import backend_spec, registered_trainers, trainer_for
+
+    cells = _backend_cells("Trains from, unset")
     for task in registered_trainers():
         start = trainer_for(task).default_foundation
         cell = cells[f"`{backend_spec(task).extra}`"]
         assert (f"`{start}`" if start else "scratch") in cell, f"{task}: {cell}"
+
+
+def test_the_backend_table_lists_each_librarys_declared_releases():
+    """Rendered from the declaration, so the docs list what the t=0 check holds a step to."""
+    cells = _backend_cells("`model_name` releases")
+    assert "`mace_off`: `small`, `medium`, `large`" in cells["`mlip-mace`"]
+    assert "`mace_omol`: `extra_large`" in cells["`mlip-mace`"]
+    assert cells["`mlip-orb`"] == "not declared"
+    assert cells["`pyscf`"] == "—"
 
 
 def test_an_unknown_directive_is_a_build_failure_not_a_silent_comment():

@@ -302,6 +302,21 @@ def test_the_registry_reports_its_own_membership():
     assert registered_extras() >= {"mlip-mace"}
 
 
+def test_every_declared_release_belongs_to_a_task_of_its_own_library():
+    """A release table keyed by a task another library owns could never be asked."""
+    for task in registered_backends():
+        library = backend_spec(task).library
+        for declared in library.releases:
+            assert backend_spec(declared).library is library, (task, declared)
+
+
+@pytest.mark.parametrize("task", sorted(registered_trainers()))
+def test_every_trainers_default_start_is_a_release_its_library_takes(task: str):
+    """An unset ``model_name`` starts from the declared default, which is never asked at t=0."""
+    if start := trainer_for(task).default_foundation:
+        backend_spec(task).library.release(task, start)
+
+
 def test_the_backend_requirement_follows_the_selection():
     requirement = requirement_from_options(
         {"task_name": "mace_off", "device": "cpu"}, require_trainer=True

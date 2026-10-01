@@ -36,6 +36,7 @@ from chemrefine.engines.mlip.backends.mace import (
     CHARGE_KEY,
     ENERGY_KEY,
     FORCES_KEY,
+    MACE,
     SPIN_KEY,
     MaceTrainer,
     _to_atoms,
@@ -169,10 +170,10 @@ def test_the_dataset_uses_maces_own_label_keys(tmp_path: Path):
     ("task", "model_name", "spelled"),
     [
         ("mace_off", "small", "small_off"),
+        ("mace_off", "medium", "medium_off"),
         ("mace_off", "large", "large_off"),
         ("mace_omol", "extra_large", "mace_omol"),
         ("mace_mp", "small", "small"),
-        ("mace_off", "/models/previous.model", "/models/previous.model"),
     ],
 )
 def test_a_mace_release_reaches_run_train_in_its_own_family(
@@ -181,10 +182,10 @@ def test_a_mace_release_reaches_run_train_in_its_own_family(
     """``run_train`` reads a bare size as Materials Project; each family is spelled its way.
 
     A ``mace_off`` step naming ``small`` fine-tuned MACE-MP-0 small, while its runlog said
-    it started from ``small``. A Materials Project size, and a checkpoint's path, are read
-    the same by the loader and by ``run_train``.
+    it started from ``small``. ``mace_mp`` declares no releases: its names pass as written,
+    which is how ``run_train`` reads them.
     """
-    assert MaceTrainer().foundation_name(task, model_name) == spelled
+    assert MACE.release(task, model_name) == spelled
 
 
 @pytest.mark.parametrize(
@@ -193,19 +194,38 @@ def test_a_mace_release_reaches_run_train_in_its_own_family(
         ("mace_omol", "medium"),
         ("mace_off", "medium-mpa-0"),
         ("mace_off", "extra_large"),
+        ("mace_off", "small_off"),
         ("custom_mace", "small"),
+        ("mace_off", "/models/previous.model"),
     ],
 )
-def test_a_bare_name_that_is_no_release_of_the_family_is_refused(task: str, model_name: str):
-    """``run_train`` reads any other bare name as a Materials Project model.
+def test_a_name_that_is_no_release_of_the_family_is_refused(task: str, model_name: str):
+    """``run_train`` reads a Materials Project name as MACE-MP and loads any other as a file.
 
     A ``mace_omol`` step naming ``medium`` fine-tuned MACE-MP-0 medium while its runlog said
-    it started from ``medium``: MACE-OMOL's one release is ``extra_large``, and its loader
-    refuses ``medium`` when the same options run a model. The legacy alias names no family,
-    so a bare name under it is a release of none.
+    it started from ``medium``. A checkpoint is ``model_path``'s to name, which is digested,
+    resolved and keyed by its basename; the legacy alias names no family, so it releases
+    nothing.
     """
-    with pytest.raises(ConfigError, match=re.escape(repr(model_name))):
-        MaceTrainer().foundation_name(task, model_name)
+    with pytest.raises(ConfigError, match=re.escape(f"{task} has no release {model_name!r}")) as e:
+        MACE.release(task, model_name)
+    assert "model_path" in str(e.value)
+
+
+@pytest.mark.integration
+def test_mace_off_releases_are_the_ones_its_loader_takes():
+    """Pinned against the library: a release MACE adds or drops shows up here.
+
+    ``mace_omol``'s one name lives in a local of its loader and cannot be read from outside.
+    """
+    python = _require_backend_python("mace_off")
+    declared = _in_backend(
+        python,
+        "import json\n"
+        "from mace.calculators.foundations_models import mace_off_urls\n"
+        'print(json.dumps({"mace_off": sorted(mace_off_urls)}))\n',
+    )
+    assert declared == {"mace_off": sorted(MACE.releases["mace_off"])}
 
 
 @pytest.mark.integration

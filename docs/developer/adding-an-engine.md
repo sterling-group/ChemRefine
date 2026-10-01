@@ -419,6 +419,12 @@ def _build_my_mlip(spec: CalculatorSpec):
 class MyTrainer(TrainerBase): ...  # or ApiTrainerBase, for API-driven libraries
 ```
 
+A library whose loaders take a fixed set of named models declares them as
+`MlipLibrary(..., releases={"my_task": {"small": "small"}})`, by `task_name`: each maps the
+name a step writes as `model_name` to the one the library's trainer reads it by. Every MLIP
+step's `model_name` is then held to that set before the run starts, and the backend table
+lists it. A task left out takes `model_name` as the library's open vocabulary.
+
 Two obligations live outside the module, both enforced by the suite:
 
 - **The pyproject extra.** Declare `mlip-my_mlip` under `[project.optional-dependencies]` —

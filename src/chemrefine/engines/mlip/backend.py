@@ -38,7 +38,8 @@ class MlipBackend:
 
         Through :func:`~chemrefine.engines.mlip.registry.requirement_from_options`, which
         reads the selection through the options model — so the env the preflight demands is
-        always the one the step would actually load.
+        always the one the step would actually load — and refuses a ``model_name`` its
+        library does not release.
         """
         return requirement_from_options(options)
 

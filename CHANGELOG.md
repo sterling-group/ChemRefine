@@ -490,15 +490,16 @@ for the full map.
   $STARTING_CHECKPOINT`, which renders the name lookup for a release and the checkpoint
   itself for `model_path`. `$FOUNDATION_MODEL` inside the lookup still carries a release
   start, and a `model_path` start through it is refused before the job is submitted.
-- **A MACE fine-tune starts from the family its step names, or is refused before the run.**
-  MACE's `run_train` reads any bare name it does not know as a Materials Project model, so
-  a `mace_omol` step naming `medium` — MACE-OMOL's one release is `extra_large` —
-  fine-tuned MACE-MP-0 medium while its runlog and `trained_model.json` said it started
-  from `medium`; `mace_off` with a Materials Project name did the same. A `mace_off` or
-  `mace_omol` training step now names one of its family's releases or a checkpoint path,
-  and anything else is refused when the run starts (and by `chemrefine validate`), naming
-  the releases. Under the legacy `custom_mace` alias a bare name is refused the same way:
-  it names no family.
+- **A MACE model is a release of the family its step names, or is refused before the run.**
+  MACE's `run_train` reads a Materials Project name as MACE-MP and loads any other unknown
+  name as a file, so a `mace_omol` training step naming `medium` — MACE-OMOL's one release
+  is `extra_large` — fine-tuned MACE-MP-0 medium while its runlog and `trained_model.json`
+  said it started from `medium`, and an `mlip` or `mlip-extopt` step naming it failed
+  inside the job, after its upstream steps had run. Under `mace_off` and `mace_omol` a
+  `model_name` is now one of the family's releases, and anything else (a checkpoint
+  belongs in `model_path`) is refused when the run starts and by `chemrefine validate`,
+  naming the releases, for inference and training alike; the backend table lists them.
+  The legacy `custom_mace` alias names no family, so it releases nothing.
 - **An ORB template may name its step's loader in any of orb's spellings.** orb-models
   registers one loader under its key, the key with underscores, and the function's own
   name, and a step resolves all three, but the training job compared a template's

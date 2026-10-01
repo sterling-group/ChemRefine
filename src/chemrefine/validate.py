@@ -361,8 +361,9 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
         if options_ok and isinstance(engine, ProvisionableEngine):
             # The registry half of the run's `preflight_backends`, and only that half:
             # `backend_requirement` resolves the selection by name with no backend
-            # import, so a `task_name` typo becomes a row here instead of `ok: true`
-            # followed by the run refusing one second in. The installed-env probes stay
+            # import, so a `task_name` typo, or a `model_name` its library does not
+            # release, becomes a row here instead of `ok: true` followed by the run
+            # refusing one second in. The installed-env probes stay
             # out on purpose — a config authored on a laptop for a cluster must not fail
             # validation over an environment only the cluster has. Skipped when the
             # lenient read already failed: the lookup reads the same model, and would

@@ -240,6 +240,39 @@ def test_a_known_task_name_passes_the_backend_check(tmp_path: Path):
     assert report.ok
 
 
+@pytest.mark.parametrize("engine", ["mlip", "mlip-extopt", "mlip-train"])
+def test_a_model_name_its_library_does_not_release_is_one_backend_row(tmp_path: Path, engine: str):
+    """The run refuses it at t=0, so validate does — on the backend row, once."""
+    report = _validate(
+        tmp_path,
+        steps=[
+            {
+                "step": 1,
+                "engine": engine,
+                "options": {"task_name": "mace_omol", "model_name": "medium", "device": "cpu"},
+            }
+        ],
+    )
+    assert _kinds(report) == ["backend"]
+    assert "its releases: extra_large" in report.issues[0].message
+
+
+def test_a_label_of_the_templates_own_belongs_in_extra_not_model_name(tmp_path: Path):
+    """``model_name`` names the library's weights; a knob of the step's own goes in ``extra``."""
+    labelled = {"task_name": "mace_off", "model_name": "my-label"}
+    report = _validate(tmp_path, steps=[{"step": 1, "engine": "mlip", "options": labelled}])
+    assert _kinds(report) == ["backend"]
+    in_extra = {"task_name": "mace_off", "extra": {"label": "my-label"}}
+    assert _validate(tmp_path, steps=[{"step": 1, "engine": "mlip", "options": in_extra}]).ok
+
+
+def test_an_unknown_training_task_is_one_row(tmp_path: Path):
+    """The trainer is the library's, so an unknown ``task_name`` is the backend row alone."""
+    options = {"task_name": "mace_of", "device": "cpu"}
+    report = _validate(tmp_path, steps=[{"step": 1, "engine": "mlip-train", "options": options}])
+    assert _kinds(report) == ["backend"]
+
+
 def test_a_lenient_options_failure_skips_the_backend_check(tmp_path: Path):
     """A bad declared value already failed the options read; the lookup must not pile on.
 

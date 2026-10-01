@@ -38,17 +38,20 @@ class MlipOptions(EngineOptions):
     )
     """The model *weights* for the chosen backend, in that library's own spelling.
 
-    A MACE family's release (``small``/``medium``/``large``; ``extra_large`` for
-    ``mace_omol``), a FAIRChem checkpoint (``uma-s-1p2``/``uma-s-1p1``/``esen-…``), a
-    SevenNet id (``7net-0``), an ORB loader (``orb_v3_…``). YAML aliases: ``model``,
-    ``size``.
+    A MACE family's release (the ones :data:`~chemrefine.engines.mlip.backends.mace.MACE`
+    declares), a FAIRChem checkpoint (``uma-s-1p2``/``uma-s-1p1``/``esen-…``), a SevenNet id
+    (``7net-0``), an ORB loader (``orb_v3_…``). YAML aliases: ``model``, ``size``.
+
+    Under a ``task_name`` whose library declares its releases
+    (:attr:`~chemrefine.engines.mlip.registry.MlipLibrary.releases`), any other name is
+    refused before the run starts, whatever the step's template does with it: a template's
+    own knobs belong in ``extra``, and a checkpoint in ``model_path``.
 
     Unset means **the chosen library's own default** — FAIRChem's builder fills in
     ``uma-s-1p2``, MACE's and SevenNet's loaders theirs — because a default spelled
-    *here* would have to be right for every library at once, and the old ``uma-s-1p2``
-    was not: it reached every non-FAIRChem step's template too, surviving only because a
-    buggy builder happened to drop it. For a training step, unset means where the
-    library's own training starts when told nothing: the trainer's declared release
+    *here* would have to be right for every library at once, and no release name is. For
+    a training step, unset means where the library's own training starts when told
+    nothing: the trainer's declared release
     (:attr:`~chemrefine.engines.mlip.train.base.TrainerBase.default_foundation`), named
     as ``started_from`` in the runlog and in the sidecar, or from scratch (``scratch`` in
     the runlog, ``null`` in the sidecar).
