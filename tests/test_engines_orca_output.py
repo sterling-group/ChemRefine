@@ -1054,6 +1054,12 @@ def test_parse_output_unknown_operation_raises():
         parse_output(FIXTURE, "weather_forecast")
 
 
+def test_parse_output_reads_no_dft_spelling():
+    """``dft`` was an engine name in v1, never an ORCA operation; the parser reads none."""
+    with pytest.raises(OutputParseError, match=re.escape("unknown ORCA operation: 'dft'")):
+        parse_output(FIXTURE, "dft")
+
+
 # ---------------------------------------------------------------------------
 # parse_pes — synthetic PES scan segments
 # ---------------------------------------------------------------------------

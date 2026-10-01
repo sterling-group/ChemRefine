@@ -124,12 +124,12 @@ def test_example_step_templates_resolve(yml: Path) -> None:
         )
 
 
-_DFT_TEXT_OPERATIONS = frozenset({"opt_sp", "sp", "freq", "dft"})
+_DFT_TEXT_OPERATIONS = frozenset({"opt_sp", "sp", "freq"})
 """The operations the ORCA family parses from the ``.out`` text via one shared assembler.
 
-Mirrors ``coordinator._DFT_OPERATIONS`` plus the legacy ``dft`` spelling: within this
-set a declared/inferred mismatch still reads the same output the same way, so only a
-mismatch that crosses out of it selects the wrong parser."""
+Mirrors ``coordinator._DFT_OPERATIONS``: within this set a declared/inferred mismatch still
+reads the same output the same way, so only a mismatch that crosses out of it selects the
+wrong parser."""
 
 
 def _parse_route(operation: str) -> str:

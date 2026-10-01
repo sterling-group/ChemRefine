@@ -401,9 +401,6 @@ def test_an_inferred_operation_without_a_reader_still_runs_and_reads_the_final_s
 
     caplog.clear()
     monkeypatch.setattr(coordinator, "_DFT_OPERATIONS", coordinator._DFT_OPERATIONS | {"irc"})
-    monkeypatch.setattr(
-        coordinator, "TEXT_BASED_OPERATIONS", coordinator.TEXT_BASED_OPERATIONS | {"irc"}
-    )
     with caplog.at_level(logging.WARNING, logger="chemrefine.engines.orca.engine"):
         assert len(engine.parse_one(out, "0", ctx)) == 1
     assert "final structure" not in caplog.text

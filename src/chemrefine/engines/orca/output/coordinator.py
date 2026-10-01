@@ -35,8 +35,9 @@ from chemrefine.errors import OutputParseError, OutputTerminationError
 
 # Operations whose structure comes from the ``.out`` itself (not a sidecar). ``freq`` is an
 # opt+freq run — its geometry/energy parse exactly like opt_sp.
-_DFT_OPERATIONS = frozenset({"opt_sp", "dft", "sp", "freq"})
-TEXT_BASED_OPERATIONS = _DFT_OPERATIONS | {"pes"}
+_DFT_OPERATIONS = frozenset({"opt_sp", "sp", "freq"})
+# A relaxed scan: also read from the ``.out``, but as every point of the path.
+_PES_OPERATION = "pes"
 
 
 def parse_dft(path: str | Path, *, src: str | None = None) -> list[ParsedResult]:
@@ -150,14 +151,13 @@ applies the same termination rule to all of them rather than three that could di
 
 
 def known_operations() -> frozenset[str]:
-    """The canonical ``operation:`` vocabulary — what a config may name, legacy excluded.
+    """The ``operation:`` vocabulary: the dispatch's own sets, read when asked.
 
-    Derived from the two dispatch sets above rather than restated, so a new operation is
-    in the answer the moment its parser exists. ``dft`` stays out: the parser accepts it
-    as a legacy spelling of ``opt_sp``, but nothing should *offer* it — this is what the
-    GUI's operation dropdown and the schema document serve.
+    Derived rather than restated, so a new operation is in the answer the moment its
+    parser exists — this is what the GUI's operation dropdown, the schema document and the
+    run's t=0 check serve.
     """
-    return (frozenset(TEXT_BASED_OPERATIONS) | frozenset(_ENSEMBLE_OPERATIONS)) - {"dft"}
+    return _DFT_OPERATIONS | {_PES_OPERATION} | frozenset(_ENSEMBLE_OPERATIONS)
 
 
 _ERROR_TERMINATION_RE = re.compile(r"^ORCA finished by error termination in .*$", re.MULTILINE)
@@ -315,7 +315,7 @@ def parse_output(path: str | Path, operation: str, *, src: str | None = None) ->
     """
     if operation in _DFT_OPERATIONS:
         return parse_dft(path, src=src)
-    if operation not in _ENSEMBLE_OPERATIONS and operation != "pes":
+    if operation not in _ENSEMBLE_OPERATIONS and operation != _PES_OPERATION:
         # A name no engine offers is a config mistake, not a job that died — it must not
         # be reported as one, so it is raised before the termination check below.
         raise OutputParseError(f"unknown ORCA operation: {operation!r}")
@@ -323,7 +323,7 @@ def parse_output(path: str | Path, operation: str, *, src: str | None = None) ->
     label = Path(src) if src else out_path
     text = out_path.read_text(encoding="utf-8", errors="replace")
     try:
-        if operation == "pes":
+        if operation == _PES_OPERATION:
             return ensembles.parse_pes_from_text(text, src=str(label))
         suffixes = _ENSEMBLE_OPERATIONS[operation]
         sidecar = ensembles.ensemble_sidecar(out_path, *suffixes.names)
