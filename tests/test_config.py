@@ -974,6 +974,50 @@ def test_a_bare_mlip_engine_is_the_direct_engine(step: dict[str, object], droppe
     assert [loc for loc, _ in seen] == ([("steps", 0, dropped)] if dropped else [])
 
 
+@pytest.mark.parametrize(
+    ("task_name", "model_name", "moved"),
+    [
+        ("mace_off", "../step3/checkpoints_dir/goat_model_run-123_stagetwo.model", True),
+        ("mace_mp", "/models/fine.model", True),
+        ("mace_off", "medium", False),
+        ("mace_off", "https://example.org/fine.model", False),
+        ("omol", "esen/conserving", False),
+    ],
+    ids=["relative", "absolute", "release", "url", "not-a-mace-loader"],
+)
+def test_a_v1_checkpoint_named_as_model_name_moves_to_model_path(
+    task_name: str, model_name: str, moved: bool
+):
+    """Under the families whose loader read a file, a ``/`` that is not a URL is a
+    checkpoint, and it is ``model_path``'s to name now; anywhere else the text stays."""
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    seen, sink = _collect()
+    block = {"task_name": task_name, "model_name": model_name, "device": "cpu"}
+    out = _normalize_legacy({"steps": [{"step": 1, "engine": "MLFF", "mlff": block}]}, report=sink)[
+        "steps"
+    ][0]
+    key = "model_path" if moved else "model_name"
+    assert out["options"] == {"task_name": task_name, key: model_name, "device": "cpu"}
+    if moved:
+        row = dict(seen)[("steps", 0, "options", "model_path")]
+        assert "config file's directory" in row and "scratch directory" in row
+
+
+def test_a_v1_checkpoint_under_home_is_expanded_as_the_jobs_shell_did(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """v1.3.1 put the name on its server's command line unquoted, so bash expanded ``~``."""
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    monkeypatch.setenv("HOME", "/home/someone")
+    block = {"task_name": "mace_off", "model_name": "~/models/fine.model"}
+    out = _normalize_legacy(
+        {"steps": [{"step": 1, "engine": "MLFF", "mlff": block}]}, report=_silent
+    )["steps"][0]
+    assert out["options"]["model_path"] == "/home/someone/models/fine.model"
+
+
 def test_a_v1_block_moves_only_the_keys_v1_read():
     """A key v1.3.1 never read from the block is dropped, so it cannot collide with one
     it did — ``task`` beside a written-out ``task_name`` would be two spellings of one

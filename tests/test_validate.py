@@ -234,6 +234,21 @@ def test_an_operation_in_any_spelling_validates_clean(tmp_path: Path):
     assert report.config is not None and report.config.steps[0].operation == "opt_sp"
 
 
+def test_v1s_one_checkpoint_step_validates_with_its_path_moved(tmp_path: Path):
+    """Step 4 of v1.3.1's MLIPTraining tutorial named its checkpoint as ``model_name``; it
+    is judged as the ``model_path`` it becomes — a file an upstream step has not produced
+    yet — and not as a release the family does not have."""
+    checkpoint = "../step3/checkpoints_dir/goat_model_run-123_stagetwo.model"
+    block = {"model_name": checkpoint, "task_name": "mace_off", "device": "cuda"}
+    step = {"step": 1, "operation": "OPT+SP", "engine": "MLFF", "mlff": block}
+    report = _validate(tmp_path, steps=[step])
+    assert report.ok, report.issues
+    assert any(
+        w.loc == ("steps", 0, "options", "model_path") and "does not exist yet" in w.message
+        for w in report.warnings
+    )
+
+
 def test_an_engine_name_in_any_case_validates_clean(tmp_path: Path):
     """``ORCA`` is ``orca``: no issue, no deprecation row — the config's rule, not v1's."""
     report = _validate(tmp_path, steps=[{"step": 1, "engine": "ORCA", "operation": "opt_sp"}])

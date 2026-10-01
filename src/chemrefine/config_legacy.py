@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from chemrefine.errors import ConfigError
@@ -255,6 +256,20 @@ def _move_blocks(s: dict[str, Any], loc: tuple[str | int, ...], sink: Deprecatio
         s["options"] = options
 
 
+def _names_a_file(value: object) -> bool:
+    """Whether a v1.3.1 ``model_name`` names a checkpoint file rather than a release.
+
+    v1.3.1 had no rule of its own: MACE's loader decided, loading anything that is not a
+    release name or an ``https:`` URL as a file. Over everything v1.3.1 could load, a ``/``
+    draws that line — its server ran in a fresh scratch directory, so every checkpoint it
+    could open was absolute or climbed out of that directory, and no release of any library
+    names a path — while a bare name is a release, or a typo the release check names when
+    the run starts. Decided from the text alone: the file may not exist when the config
+    loads, since an upstream step can be what trains it.
+    """
+    return isinstance(value, str) and "/" in value and not value.startswith("https:")
+
+
 def _write_out_v1_server(
     s: dict[str, Any], loc: tuple[str | int, ...], sink: DeprecationSink
 ) -> None:
@@ -270,7 +285,9 @@ def _write_out_v1_server(
       (:data:`_V1_MACE_LOADERS`), when the step names neither it nor a ``model_path``. Under
       any other task v1.3.1 ignored the default or failed on it, so the library's own default
       runs now — and under ``mace_omol``, whose loader ignored ``model_name`` altogether, a
-      value the step names is dropped;
+      value the step names is dropped. Under those two families a ``model_name`` naming a
+      checkpoint (:func:`_names_a_file`) is what their loader read as a file, so it moves to
+      ``model_path``, with a leading ``~`` expanded as the job's shell expanded it;
     * ``device: cuda`` when the step names none.
     """
     options = _mapping(
@@ -284,13 +301,22 @@ def _write_out_v1_server(
             "`task_name: mace_off`",
         )
     task = options["task_name"]
-    if isinstance(task, str) and task in _V1_MACE_LOADERS:
-        if "model_name" not in options and "model_path" not in options:
+    if isinstance(task, str) and task in _V1_MACE_LOADERS and "model_path" not in options:
+        if "model_name" not in options:
             options["model_name"] = "medium"
             sink(
                 (*loc, "options", "model_name"),
                 f"v1.3.1 ran `{task}` with no `model_name` as `medium`; written out as "
                 f"`model_name: medium`",
+            )
+        elif _names_a_file(name := options["model_name"]):
+            del options["model_name"]
+            options["model_path"] = str(Path(name).expanduser())
+            sink(
+                (*loc, "options", "model_path"),
+                f"`model_name: {name}` names a checkpoint file, which is `model_path` now; a "
+                f"relative path is read from the config file's directory, where v1.3.1 read "
+                f"it from the job's scratch directory",
             )
     elif task == "mace_omol" and "model_name" in options:
         ignored = options.pop("model_name")

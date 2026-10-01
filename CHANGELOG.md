@@ -458,8 +458,9 @@ for those and the full map.
   checkpoint ran only as a MACE `model_name`: one that named no `mace_off` release loaded
   as a file, and `mace_omol` ignored the name.
 
-  **Migration:** a step that names a `model_path` and no `task_name` used to resolve MACE,
-  and now resolves the `task_name` default (`omol`, FAIRChem). Add the library that produced
+  **Migration:** v1.3.1 named a checkpoint as `model_name` under `mace_off` or `mace_mp`,
+  and the v1 layer moves such a value to `model_path`. A `model_path` with no `task_name`
+  resolves the `task_name` default (`omol`, FAIRChem), so name the library that produced
   the checkpoint — the same word the `mlip-train` step trained with:
 
   ```yaml
@@ -642,11 +643,11 @@ for those and the full map.
   `total_spin` and silently defaults them to a neutral singlet, so a v1 fine-tune on an
   ion or an open-shell system was fitted against the wrong species with nothing said in
   any log.
-- A relative path in a step's `options` — `model_path` — resolves against the
-  **config file's** directory, like every other path a config names, instead of the
-  process working directory. A v1 config that named a model relative to the run or
-  step directory (as the shipped MLIPTraining tutorial did with
-  `../step3/checkpoints_dir/...`) must be rewritten relative to the config file.
+- **A relative `model_path` resolves against the config file's directory**, like every
+  other path a config names. The checkpoint v1.3.1 read from a `model_name` resolved
+  against the job's scratch directory instead, so the MLIPTraining tutorial's
+  `../step3/checkpoints_dir/…` is moved to `model_path` as written and must be rewritten
+  relative to the config file.
 - **A FAIRChem checkpoint runs from a path.** A FAIRChem model can be given as a
   checkpoint file path as well as a registry name — which is how a fine-tuned FAIRChem
   checkpoint is run. v1 resolved registry names only.

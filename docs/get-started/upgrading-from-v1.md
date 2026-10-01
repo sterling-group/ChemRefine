@@ -84,6 +84,13 @@ leaves unset is written out as v1.3.1 ran it:
 | `device` | `cuda` | `device: cuda` — on a host with no GPU, write `device: cpu` |
 | `bind` | `127.0.0.1:8888` | dropped: the server's address is managed for you |
 
+Under `mace_off` and `mace_mp` — the families whose loader read a file — a `model_name`
+that names a checkpoint (a value holding a `/` that is not an `https:` URL) becomes
+`model_path`, with a leading `~` expanded as the job's shell expanded it. A relative path
+is then read from the config file's directory, where v1.3.1 read it from the job's
+scratch directory: the MLIPTraining tutorial's `../step3/checkpoints_dir/…` is written
+relative to the config file instead (`./outputs/step3/…`).
+
 Each written-out default and each dropped key is reported with a deprecation warning of
 its own. Any other key in the block configured nothing in v1.3.1 and is dropped, reported;
 so is a block on a step v1.3.1 never used it on — an `mlff:` block beside `engine: DFT`
