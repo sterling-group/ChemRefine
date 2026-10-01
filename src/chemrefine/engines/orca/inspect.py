@@ -30,9 +30,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from pathlib import Path
-
-from chemrefine import io
 
 # A relaxed surface scan is a ``Scan`` sub-block inside ``%geom`` → the ``pes`` parser. The
 # block's body is what lies between the ``%geom`` opener and the next element of the input —
@@ -151,8 +148,8 @@ def _has_geom_scan(decommented: str) -> bool:
     return any(_SCAN_TOKEN_RE.search(m.group(1)) for m in _GEOM_BLOCK_RE.finditer(decommented))
 
 
-def inspect_template(template_path: str | Path) -> OrcaInputInfo:
-    """Infer run type + PAL from an ORCA template in a single read.
+def inspect_template(template_text: str) -> OrcaInputInfo:
+    """Infer run type + PAL from an ORCA template's text.
 
     Ensemble runs are simple keywords (``! GOAT`` / ``! DOCKER`` / ``! SOLVATOR``) or the
     ``%docker`` / ``%solvator`` block ORCA accepts in their place (a keyword wins over a block,
@@ -164,12 +161,11 @@ def inspect_template(template_path: str | Path) -> OrcaInputInfo:
     ``.out`` like ``sp``. A many-geometry kind wins over an optimisation keyword beside it,
     because the optimisation is then one stage of it: ``! OptTS Freq IRC`` refines a saddle
     and walks the path, and the path is the product. ``OptTS`` and any ``…Freq`` are flagged
-    regardless. Comments are ignored and matching is case-insensitive. The template is read
-    as every consumer of it reads it (:func:`chemrefine.io.read_utf8`), so one that is not
-    UTF-8 text is refused here too.
+    regardless. Comments are ignored and matching is case-insensitive. The text is the one
+    the engine read (:func:`chemrefine.ids.require_template`), which refused a template that
+    is not UTF-8 text before it reached here.
     """
-    text = io.read_utf8(Path(template_path), what="ORCA template")
-    decommented = _strip_orca_comments(text)
+    decommented = _strip_orca_comments(template_text)
     # The keyword surface is the set of ``!`` simple-input lines (comments removed),
     # split into whole tokens. Matching substrings against the joined line instead
     # would let any future ORCA keyword that merely *contains* "opt" or "freq" — or a

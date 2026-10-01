@@ -42,7 +42,7 @@ class _FakeJobEngine(JobEngine):
     # Not a ClassVar: the tests set it per instance to vary GPU demand.
     gpu_count: int = 0
 
-    def build_input(self, *, xyz_path, template_path, input_path, output_path, ctx) -> None:
+    def build_input(self, *, xyz_path, template, input_path, output_path, ctx) -> None:
         input_path.write_text("fake input\n", encoding="utf-8")
 
     def run_block(self, ctx, inp_path, out_path) -> RunBlock:

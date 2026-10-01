@@ -187,13 +187,14 @@ def test_a_template_that_never_names_the_dataset_is_refused_before_submitting(tm
     template = tmp_path / "step1.yaml"
     template.write_text("max_num_epochs: 20\n", encoding="utf-8")
 
-    with pytest.raises(ConfigError, match=r"never references \$RUN_NAME, \$TRAIN_SET"):
+    with pytest.raises(ConfigError, match=r"never references \$RUN_NAME, \$TRAIN_SET") as refused:
         render_config(
             template,
             {},
             required=frozenset({"TRAIN_SET", "RUN_NAME"}),
             dest=tmp_path / "rendered.yaml",
         )
+    assert str(refused.value).startswith(f"MLIP training template {template} never references")
 
 
 def test_a_missing_template_reports_itself_as_a_config_error(tmp_path: Path):

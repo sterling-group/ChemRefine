@@ -43,7 +43,7 @@ from chemrefine.engines.qchem import input as qchem_input
 from chemrefine.engines.qchem import inspect, output
 from chemrefine.engines.qchem.options import QchemOptions
 from chemrefine.errors import ConfigError
-from chemrefine.ids import require_template, step_relative
+from chemrefine.ids import StepTemplate, require_template, step_relative
 from chemrefine.state import StepContext
 
 logger = logging.getLogger(__name__)
@@ -106,7 +106,7 @@ class QchemEngine(JobEngine):
         self,
         *,
         xyz_path: Path,
-        template_path: Path,
+        template: StepTemplate,
         input_path: Path,
         output_path: Path,
         ctx: StepContext,
@@ -114,7 +114,7 @@ class QchemEngine(JobEngine):
         """Write one Q-Chem ``.in`` — the geometry into job 1's ``$molecule`` block."""
         qchem_input.build_input(
             xyz_path=xyz_path,
-            template_path=template_path,
+            template=template,
             output_path=input_path,
             charge=ctx.charge,
             multiplicity=ctx.multiplicity,
@@ -188,7 +188,7 @@ class QchemEngine(JobEngine):
         the template declares nothing — the header's memory policy stands.
         """
         return inspect.inspect_template(
-            require_template(ctx.template, label=self.label)
+            require_template(ctx.template, label=self.label).text
         ).mem_total_mb
 
     def _executable(self, ctx: StepContext) -> str:
@@ -299,7 +299,9 @@ class QchemEngine(JobEngine):
         """
         if ctx.step_cfg.operation is not None:
             return ctx.step_cfg.operation
-        return inspect.inspect_template(require_template(ctx.template, label=self.label)).operation
+        return inspect.inspect_template(
+            require_template(ctx.template, label=self.label).text
+        ).operation
 
     def parse_one(
         self, output_path: Path, structure_id: str, ctx: StepContext
@@ -324,7 +326,7 @@ class QchemEngine(JobEngine):
         inferred = ctx.step_cfg.operation is None
         if inferred and operation not in output.known_operations():
             template = require_template(ctx.template, label=self.label)
-            jobtypes = ", ".join(sorted(inspect.inspect_template(template).jobtypes))
+            jobtypes = ", ".join(sorted(inspect.inspect_template(template.text).jobtypes))
             logger.warning(
                 "%s: JOBTYPE %s infers operation %r, which has no reader of its own yet — "
                 "reading the final structure only",
@@ -339,7 +341,7 @@ class QchemEngine(JobEngine):
 
     def nms_input_info(self, ctx: StepContext) -> NmsInputInfo:
         """Whether the template runs a TS search and computes frequencies (``JOBTYPE`` scan)."""
-        info = inspect.inspect_template(require_template(ctx.template, label=self.label))
+        info = inspect.inspect_template(require_template(ctx.template, label=self.label).text)
         return NmsInputInfo(is_transition_state=info.is_ts, computes_frequencies=info.has_freq)
 
     def parse_frequency_output(self, output_path: Path) -> list[ParsedResult]:

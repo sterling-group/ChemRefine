@@ -9,12 +9,14 @@ import pytest
 from chemrefine.engines.orca.input import build_input, clamp_pal
 from chemrefine.engines.orca.inspect import inspect_template
 from chemrefine.errors import ConfigError
+from chemrefine.ids import StepTemplate, require_template
 
 
-def _template(tmp_path: Path, body: str) -> Path:
+def _template(tmp_path: Path, body: str) -> StepTemplate:
+    """A template written and read as a step reads it (:func:`require_template`)."""
     path = tmp_path / "template.inp"
     path.write_text(body, encoding="utf-8")
-    return path
+    return require_template(path, label="ORCA")
 
 
 def test_build_input_appends_xyzfile_directive(tmp_path: Path):
@@ -23,7 +25,7 @@ def test_build_input_appends_xyzfile_directive(tmp_path: Path):
     xyz = tmp_path / "step1_structure_0.xyz"
     build_input(
         xyz_path=xyz,
-        template_path=template,
+        template=template,
         output_path=out,
         charge=0,
         multiplicity=1,
@@ -44,7 +46,7 @@ def test_build_input_strips_existing_xyzfile_line(tmp_path: Path):
     xyz = tmp_path / "step1.xyz"
     build_input(
         xyz_path=xyz,
-        template_path=template,
+        template=template,
         output_path=out,
         charge=-1,
         multiplicity=2,
@@ -61,7 +63,7 @@ def test_build_input_inserts_extra_blocks_before_xyzfile(tmp_path: Path):
     extra = '%method\n  ProgExt "/path/to/wrapper.sh"\nend'
     build_input(
         xyz_path=xyz,
-        template_path=template,
+        template=template,
         output_path=out,
         charge=0,
         multiplicity=1,
@@ -80,7 +82,7 @@ def test_build_input_omits_base_directive(tmp_path: Path):
     xyz = tmp_path / "step3_0-1_inp.xyz"
     build_input(
         xyz_path=xyz,
-        template_path=template,
+        template=template,
         output_path=out,
         charge=0,
         multiplicity=1,
@@ -104,7 +106,7 @@ def test_the_xyzfile_path_is_emitted_bare_which_is_why_whitespace_is_refused(tmp
     template = _template(tmp_path, "! B3LYP\n")
     out = tmp_path / "step1_0.inp"
     xyz = tmp_path / "step1_0_inp.xyz"
-    build_input(xyz_path=xyz, template_path=template, output_path=out, charge=0, multiplicity=1)
+    build_input(xyz_path=xyz, template=template, output_path=out, charge=0, multiplicity=1)
     directive = next(
         line
         for line in out.read_text(encoding="utf-8").splitlines()
@@ -129,26 +131,7 @@ def test_build_input_refuses_a_geometry_path_with_whitespace(tmp_path: Path):
     with pytest.raises(ConfigError, match="whitespace"):
         build_input(
             xyz_path=spaced / "step1_0_inp.xyz",
-            template_path=_template(tmp_path, "! B3LYP\n"),
-            output_path=tmp_path / "step1_0.inp",
-            charge=0,
-            multiplicity=1,
-        )
-
-
-def test_build_input_refuses_a_template_that_is_not_utf8(tmp_path: Path):
-    """A latin-1 template is refused by name where it is rendered, not as a traceback.
-
-    The inspector reads templates with ``errors="replace"``, so ``pal()`` and the run-type
-    detection sail through — the writer was the one reader that raised, mid-step, with a
-    ``UnicodeDecodeError`` no handler on the way to the CLI names.
-    """
-    template = tmp_path / "template.inp"
-    template.write_bytes("! B3LYP  # Ångström\n".encode("latin-1"))
-    with pytest.raises(ConfigError, match="not UTF-8"):
-        build_input(
-            xyz_path=tmp_path / "step1_0_inp.xyz",
-            template_path=template,
+            template=_template(tmp_path, "! B3LYP\n"),
             output_path=tmp_path / "step1_0.inp",
             charge=0,
             multiplicity=1,
@@ -162,7 +145,7 @@ def test_build_input_names_the_reason_and_the_unaffected_engines(tmp_path: Path)
     with pytest.raises(ConfigError) as excinfo:
         build_input(
             xyz_path=spaced / "s.xyz",
-            template_path=_template(tmp_path, "! B3LYP\n"),
+            template=_template(tmp_path, "! B3LYP\n"),
             output_path=tmp_path / "o.inp",
             charge=0,
             multiplicity=1,
@@ -188,19 +171,8 @@ def test_the_refusal_covers_whitespace_not_just_the_space_character(
     with pytest.raises(ConfigError, match="whitespace"):
         build_input(
             xyz_path=spaced / "s.xyz",
-            template_path=_template(tmp_path, "! B3LYP\n"),
+            template=_template(tmp_path, "! B3LYP\n"),
             output_path=tmp_path / "o.inp",
-            charge=0,
-            multiplicity=1,
-        )
-
-
-def test_build_input_missing_template_raises(tmp_path: Path):
-    with pytest.raises(ConfigError):
-        build_input(
-            xyz_path=tmp_path / "x.xyz",
-            template_path=tmp_path / "missing.inp",
-            output_path=tmp_path / "step1.inp",
             charge=0,
             multiplicity=1,
         )
@@ -211,22 +183,16 @@ def test_build_input_missing_template_raises(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_inspect_template_reads_nprocs(tmp_path: Path):
-    inp = tmp_path / "step1.inp"
-    inp.write_text("! B3LYP def2-SVP\n%pal\n  nprocs 8\nend\n", encoding="utf-8")
-    assert inspect_template(inp).pal == 8
+def test_inspect_template_reads_nprocs():
+    assert inspect_template("! B3LYP def2-SVP\n%pal\n  nprocs 8\nend\n").pal == 8
 
 
-def test_inspect_template_reads_inline_pal_directive(tmp_path: Path):
-    inp = tmp_path / "step1.inp"
-    inp.write_text("! B3LYP PAL4\n", encoding="utf-8")
-    assert inspect_template(inp).pal == 4
+def test_inspect_template_reads_inline_pal_directive():
+    assert inspect_template("! B3LYP PAL4\n").pal == 4
 
 
-def test_inspect_template_pal_defaults_to_one(tmp_path: Path):
-    inp = tmp_path / "step1.inp"
-    inp.write_text("! B3LYP def2-SVP\n", encoding="utf-8")
-    assert inspect_template(inp).pal == 1
+def test_inspect_template_pal_defaults_to_one():
+    assert inspect_template("! B3LYP def2-SVP\n").pal == 1
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +229,7 @@ def test_build_input_clamps_template_pal_to_max_pal(tmp_path: Path):
     out = tmp_path / "step1_structure_0.inp"
     build_input(
         xyz_path=tmp_path / "step1_structure_0.xyz",
-        template_path=template,
+        template=template,
         output_path=out,
         charge=0,
         multiplicity=1,
@@ -272,7 +238,7 @@ def test_build_input_clamps_template_pal_to_max_pal(tmp_path: Path):
     text = out.read_text(encoding="utf-8")
     assert "nprocs 8" in text
     assert "nprocs 16" not in text
-    assert inspect_template(out).pal == 8
+    assert inspect_template(text).pal == 8
 
 
 def test_build_input_absolutizes_relative_template_paths(tmp_path: Path):
@@ -293,7 +259,7 @@ def test_build_input_absolutizes_relative_template_paths(tmp_path: Path):
     out = tmp_path / "step1_0.inp"
     build_input(
         xyz_path=tmp_path / "step1_0.xyz",
-        template_path=template,
+        template=require_template(template, label="ORCA"),
         output_path=out,
         charge=0,
         multiplicity=1,
@@ -312,7 +278,7 @@ def test_build_input_leaves_absolute_and_unresolvable_paths_alone(tmp_path: Path
     out = tmp_path / "step1_0.inp"
     build_input(
         xyz_path=tmp_path / "step1_0.xyz",
-        template_path=template,
+        template=template,
         output_path=out,
         charge=0,
         multiplicity=1,
@@ -369,7 +335,7 @@ def test_referenced_aux_files_of_an_unreadable_template_is_empty(tmp_path: Path)
 def test_referenced_aux_files_of_a_template_that_is_not_utf8_is_empty(tmp_path: Path):
     """A latin-1 template contributes no aux files, for the reason a missing one doesn't.
 
-    The renderer refuses it by name (``build_input``'s "not UTF-8"); an enumeration that
+    The template's read refuses it by name (``require_template``'s "not UTF-8"); an enumeration that
     raised first would front-run that message from the wrong module with a bare codec
     error. The file it references is really there, so a decoder that replaced the byte
     and carried on would have found it — ``{}`` is the decode arm, not a missing file.
@@ -388,7 +354,7 @@ def test_build_input_requests_orca_property_json(tmp_path: Path):
     out = tmp_path / "step1_0.inp"
     build_input(
         xyz_path=tmp_path / "step1_0.xyz",
-        template_path=template,
+        template=template,
         output_path=out,
         charge=0,
         multiplicity=1,
@@ -402,7 +368,7 @@ def test_build_input_respects_template_jsonpropfile_override(tmp_path: Path):
     out = tmp_path / "step1_0.inp"
     build_input(
         xyz_path=tmp_path / "step1_0.xyz",
-        template_path=template,
+        template=template,
         output_path=out,
         charge=0,
         multiplicity=1,

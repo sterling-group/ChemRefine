@@ -39,7 +39,6 @@ from collections.abc import Sequence
 from pathlib import Path
 from string import Template
 
-from chemrefine import io
 from chemrefine.engines._options import EngineOptions
 from chemrefine.engines._script.contract import SCRIPT_OUTPUT, OutputField
 
@@ -133,7 +132,7 @@ def _build_output_footer(output_basename: str, fields: Sequence[OutputField]) ->
 def build_input(
     *,
     xyz_path: Path,
-    template_path: Path,
+    template_text: str,
     output_path: Path,
     output_json_path: Path,
     charge: int,
@@ -141,7 +140,7 @@ def build_input(
     extra_vars: dict[str, object] | None = None,
     fields: Sequence[OutputField] = SCRIPT_OUTPUT,
 ) -> Path:
-    """Render ``template_path`` into ``output_path`` and return the rendered path.
+    """Render ``template_text`` into ``output_path`` and return the rendered path.
 
     ``$XYZ_PATH`` / ``$CHARGE`` / ``$MULTIPLICITY`` (plus the engine's ``extra_vars`` —
     every declared knob as ``$UPPERCASE`` and ``$OPTIONS_JSON``, see
@@ -156,14 +155,13 @@ def build_input(
     template report more (see
     :attr:`~chemrefine.engines._script.engine.ScriptEngine.output_fields`).
     """
-    text = io.read_utf8(template_path, what="script template")
     substitutions: dict[str, object] = {
         "XYZ_PATH": str(xyz_path),
         "CHARGE": charge,
         "MULTIPLICITY": multiplicity,
     }
     substitutions.update({k: str(v) for k, v in (extra_vars or {}).items()})
-    rendered = Template(text).safe_substitute(substitutions)
+    rendered = Template(template_text).safe_substitute(substitutions)
     rendered = rendered.rstrip() + _build_output_footer(output_json_path.name, fields)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(rendered, encoding="utf-8")

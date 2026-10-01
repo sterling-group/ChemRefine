@@ -23,10 +23,13 @@ The functions here own three concerns:
    filenames — note that NMS child IDs like ``0_m5_pos`` contain letters,
    so a filename is not a reliable place to recover an ID from.)
 3. Resolve a step's input *template* path (:func:`step_template_path`,
-   :func:`default_template_name`) and refuse a step that has none
-   (:func:`require_template`) — the ``step{N}.{ext}`` template-naming
+   :func:`default_template_name`) and read it, or refuse a step that has none or cannot
+   be read (:func:`require_template`) — the ``step{N}.{ext}`` template-naming
    convention, kept here beside the artifact-path convention so every
-   canonical ChemRefine filename lives in one module.
+   canonical ChemRefine filename lives in one module. Whatever consumes the text asks
+   :func:`require_template` (the t=0 walk, validate, the engine rendering or inspecting
+   it); the cache never does, because it digests bytes and must answer for an absent
+   template.
 4. Name the output tree's bookkeeping: a step's ``_cache/`` (:func:`cache_dir`), the
    cumulative report every step appends to (:func:`steps_report_path`), and where a run
    started for an agent or the GUI logs (:func:`agent_runs_dir`) — each spelled once, so
@@ -37,6 +40,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from chemrefine import io
@@ -266,24 +270,37 @@ def step_template_path(
     template and they belong to different callers, so they are two functions. *Where is it*
     is this one, and :func:`chemrefine.step.build_context` asks it once per step so the
     answer travels on the :class:`~chemrefine.state.StepContext` instead of being re-derived.
-    *May I run without it* is :func:`require_template`, and only an engine about to render
-    the template asks that — the cache, which merely digests it, must not, or a step whose
-    template is absent could never be re-fingerprinted at all.
+    *Read it, or refuse* is :func:`require_template`, and only a consumer of the text asks
+    that — the cache, which merely digests it, must not, or a step whose template is absent
+    could never be re-fingerprinted at all.
     """
     return template_dir / (template or default_template_name(step, suffix))
 
 
-def require_template(template: Path | None, *, label: str) -> Path:
-    """Return ``template``, or raise :class:`~chemrefine.errors.ConfigError` if it is unusable.
+@dataclass(frozen=True)
+class StepTemplate:
+    """A step's input template as :func:`require_template` read it: where it is, and its text.
+
+    Read once and handed on, so a consumer renders or inspects the text the read accepted;
+    the path stays beside it for what is relative to the template and for a refusal to name
+    the file.
+    """
+
+    path: Path
+    text: str
+
+
+def require_template(template: Path | None, *, label: str) -> StepTemplate:
+    """Read ``template``, or raise :class:`~chemrefine.errors.ConfigError` if it is unusable.
 
     The one home for "this engine cannot run without its input". ``None`` means the engine
     declared no template at all (it is not
     :class:`~chemrefine.engines.api.TemplateDriven`). Otherwise the template is read by the
-    reader every consumer of a template uses (:func:`chemrefine.io.read_utf8`), which
-    refuses one that is missing — the likeliest error of a first run — unreadable, or not
-    UTF-8 text, so the run's t=0 walk refuses the template its ``prepare`` would.
+    reader every user file goes through (:func:`chemrefine.io.read_utf8`), which refuses one
+    that is missing — the likeliest error of a first run — unreadable, or not UTF-8 text, so
+    the run's t=0 walk refuses the template its ``prepare`` would. Returns what it read, so a
+    consumer hands the text on instead of reading the file again.
     """
     if template is None:
         raise ConfigError(f"{label} needs an input template, but this engine declares none")
-    io.read_utf8(template, what=f"{label} template")
-    return template
+    return StepTemplate(template, io.read_utf8(template, what=f"{label} template"))

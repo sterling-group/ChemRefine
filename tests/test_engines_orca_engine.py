@@ -165,8 +165,19 @@ def test_prepare_missing_template_raises(tmp_path: Path):
     ctx = _ctx(tmp_path, structures=(_seed_structure(),))
     # Delete the template after _ctx wrote it.
     (ctx.template_dir / "step1.inp").unlink()
-    with pytest.raises(ConfigError):
+    with pytest.raises(ConfigError, match="ORCA template not found"):
         engine.prepare(ctx)
+
+
+def test_a_template_that_is_not_utf8_is_refused_by_every_reader(tmp_path: Path):
+    """The inputs and the PAL count read the template through one reader, on one rule."""
+    engine = get_engine("orca")
+    ctx = _ctx(tmp_path, structures=(_seed_structure(),))
+    (ctx.template_dir / "step1.inp").write_bytes("! B3LYP\n# Grüße\n".encode("latin-1"))
+    with pytest.raises(ConfigError, match=r"ORCA template .* is not UTF-8 text"):
+        engine.prepare(ctx)
+    with pytest.raises(ConfigError, match=r"ORCA template .* is not UTF-8 text"):
+        engine.pal(ctx)
 
 
 def test_prepare_uses_step_specific_template_when_given(tmp_path: Path):

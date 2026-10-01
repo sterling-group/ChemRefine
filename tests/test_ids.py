@@ -8,7 +8,12 @@ import pytest
 
 from chemrefine import ids
 from chemrefine.errors import ConfigError
-from chemrefine.ids import allocate_child_ids, require_template, step_template_path
+from chemrefine.ids import (
+    StepTemplate,
+    allocate_child_ids,
+    require_template,
+    step_template_path,
+)
 
 # ---------------------------------------------------------------------------
 # allocate_child_ids
@@ -75,10 +80,11 @@ def test_require_template_refuses_a_named_template_that_is_absent(tmp_path):
         require_template(missing, label="ORCA")
 
 
-def test_require_template_returns_the_path_when_it_is_there(tmp_path):
+def test_require_template_returns_the_template_as_it_read_it(tmp_path):
+    """Where the template is and its text, together: a consumer reads neither again."""
     present = tmp_path / "step1.inp"
     present.write_text("! Opt\n", encoding="utf-8")
-    assert require_template(present, label="ORCA") == present
+    assert require_template(present, label="ORCA") == StepTemplate(present, "! Opt\n")
 
 
 def test_attempt_dirs_are_ordered_by_number_not_by_name_or_clock(tmp_path):

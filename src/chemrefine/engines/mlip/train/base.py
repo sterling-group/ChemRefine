@@ -63,7 +63,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
 import numpy as np
 
-from chemrefine import ids, io
+from chemrefine import ids
 from chemrefine.errors import ConfigError
 from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import Structure
@@ -671,20 +671,19 @@ def render_config(
     the library (:meth:`TrainerBase.check_template`).
     """
     source = ids.require_template(template, label="MLIP training")
-    text = io.read_utf8(source, what="MLIP training template")
-    identifiers = frozenset(Template(text).get_identifiers())
+    identifiers = frozenset(Template(source.text).get_identifiers())
     missing = required - identifiers
     if missing:
         wanted = ", ".join(f"${name}" for name in sorted(missing))
         raise ConfigError(
-            f"MLIP training template {source} never references {wanted}, so the rendered "
+            f"MLIP training template {source.path} never references {wanted}, so the rendered "
             f"config would not point at the dataset chemrefine writes for it. Add it where "
             f"your trainer expects the dataset — e.g. `train_file: $TRAIN_SET`."
         )
     if check is not None:
         check(identifiers)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(Template(text).safe_substitute(placeholders), encoding="utf-8")
+    dest.write_text(Template(source.text).safe_substitute(placeholders), encoding="utf-8")
     return dest
 
 

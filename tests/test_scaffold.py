@@ -228,6 +228,7 @@ def test_the_template_driven_starters_render_the_real_geometry(tmp_path: Path):
     from chemrefine.engines.orca.extopt.engine import ExtOptOrcaEngine
     from chemrefine.engines.qchem import input as qchem_input
     from chemrefine.engines.qchem.engine import QchemEngine
+    from chemrefine.ids import require_template
     from chemrefine.io import write_single_xyz
 
     xyz = write_single_xyz(
@@ -238,7 +239,7 @@ def test_the_template_driven_starters_render_the_real_geometry(tmp_path: Path):
     qchem_tpl.write_text(QchemEngine.template_starter, encoding="utf-8")
     rendered = qchem_input.build_input(
         xyz_path=xyz,
-        template_path=qchem_tpl,
+        template=require_template(qchem_tpl, label="Q-Chem"),
         output_path=tmp_path / "q" / "step1_0.in",
         charge=0,
         multiplicity=1,
@@ -251,7 +252,7 @@ def test_the_template_driven_starters_render_the_real_geometry(tmp_path: Path):
     orca_tpl.write_text(OrcaEngine.template_starter, encoding="utf-8")
     rendered = orca_input.build_input(
         xyz_path=xyz,
-        template_path=orca_tpl,
+        template=require_template(orca_tpl, label="ORCA"),
         output_path=tmp_path / "o" / "step1_0.inp",
         charge=0,
         multiplicity=1,
@@ -262,7 +263,7 @@ def test_the_template_driven_starters_render_the_real_geometry(tmp_path: Path):
     extopt_tpl.write_text(ExtOptOrcaEngine.template_starter, encoding="utf-8")
     rendered = orca_input.build_input(
         xyz_path=xyz,
-        template_path=extopt_tpl,
+        template=require_template(extopt_tpl, label="ORCA"),
         output_path=tmp_path / "e" / "step1_0.inp",
         charge=0,
         multiplicity=1,
@@ -270,7 +271,7 @@ def test_the_template_driven_starters_render_the_real_geometry(tmp_path: Path):
     ).read_text(encoding="utf-8")
     assert "! ExtOpt Opt" in rendered
     assert f"* xyzfile 0 1 {xyz}" in rendered
-    assert inspect.inspect_template(extopt_tpl) == inspect.OrcaInputInfo(
+    assert inspect.inspect_template(ExtOptOrcaEngine.template_starter) == inspect.OrcaInputInfo(
         operation="opt_sp", is_ts=False, has_freq=False, pal=4, maxcore=None
     )
 

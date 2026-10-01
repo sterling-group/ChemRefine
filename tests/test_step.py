@@ -2329,7 +2329,7 @@ def test_a_change_in_what_the_template_infers_moves_the_key(
     monkeypatch.setattr(
         inspect,
         "inspect_template",
-        lambda path: dataclasses.replace(read_as(path), operation="goat"),
+        lambda text: dataclasses.replace(read_as(text), operation="goat"),
     )
     after = _key_over(tmp_path / "after", "orca", "! Opt XTB2\n")
     assert before.row_keys != after.row_keys

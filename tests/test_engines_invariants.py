@@ -26,6 +26,7 @@ from ase import Atoms
 
 from chemrefine import slurm
 from chemrefine.config import StepConfig, reject_shell_unsafe
+from chemrefine.engines._job import JobEngine
 from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.api import (
     ENGINES,
@@ -94,6 +95,11 @@ def _ctx(tmp_path: Path, engine_name: str, options: dict[str, object]) -> StepCo
 def _job_executables() -> list[str]:
     """Every engine that generates a SLURM run block (so every engine that emits bash)."""
     return [name for name in sorted(ENGINES) if isinstance(get_engine(name), JobExecutable)]
+
+
+def _job_engines() -> list[str]:
+    """Every engine whose ``prepare`` is :class:`JobEngine`'s loop over the step's structures."""
+    return [name for name in sorted(ENGINES) if isinstance(get_engine(name), JobEngine)]
 
 
 def _gpu_capable() -> list[str]:
@@ -875,6 +881,26 @@ def test_artifact_paths_resolves_to_the_input_that_was_written(tmp_path: Path):
         checked.append(name)
 
     assert checked, "no engine declares the capability — has StructureArtifacts been dropped?"
+
+
+@pytest.mark.parametrize("engine_name", _job_engines())
+def test_prepare_reads_the_template_once_whatever_the_structure_count(
+    engine_name: str, tmp_path: Path, text_reads: list[Path]
+):
+    """A step's inputs are rendered from one read of its template, handed to every structure.
+
+    Read per structure, one step's inputs would come from as many reads as it has
+    structures: an edit landing mid-``prepare`` builds the step from two templates, and each
+    read decodes again what the step already holds.
+    """
+    ctx = replace(
+        _ctx(tmp_path, engine_name, {}),
+        prev_state=PipelineState(
+            structures=tuple(Structure(id=str(i), atoms=Atoms("H")) for i in range(3))
+        ),
+    )
+    assert len(get_engine(engine_name).prepare(ctx).files) == 3
+    assert text_reads.count(ctx.template) == 1
 
 
 # ---------------------------------------------------------------------------

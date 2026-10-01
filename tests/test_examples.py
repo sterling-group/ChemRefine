@@ -160,7 +160,7 @@ def test_example_operations_match_their_templates(yml: Path) -> None:
             continue
         template = _resolved_template(cfg, step)
         assert template is not None
-        inferred = inspect_template(template).operation
+        inferred = inspect_template(template.read_text(encoding="utf-8")).operation
         declared = step.operation  # already folded by the config: one spelling
         assert _parse_route(declared) == _parse_route(inferred), (
             f"step {step.step}: operation {step.operation!r} selects the "
@@ -193,7 +193,7 @@ def test_example_nms_steps_compute_frequencies(yml: Path) -> None:
             continue
         template = _resolved_template(cfg, step)
         assert template is not None
-        info = inspect_template(template)
+        info = inspect_template(template.read_text(encoding="utf-8"))
         assert info.has_freq, (
             f"step {step.step}: nms: true but template {template.name} computes no frequencies"
         )

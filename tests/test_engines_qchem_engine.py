@@ -254,6 +254,15 @@ def test_a_single_structure_jobtype_prepares(tmp_path: Path, jobtype: str):
     assert len(inputs.files) == 1
 
 
+def test_prepare_without_its_template_names_the_file_to_create(tmp_path: Path):
+    ctx = _ctx(tmp_path)
+    missing = ctx.template_dir / "step1.in"
+    missing.unlink()
+    with pytest.raises(ConfigError, match="Q-Chem template not found") as refused:
+        get_engine("qchem").prepare(ctx)
+    assert str(missing) in str(refused.value)
+
+
 # ---------------------------------------------------------------------------
 # The submission proof: the whole pipeline, a stub binary, no licence
 # ---------------------------------------------------------------------------

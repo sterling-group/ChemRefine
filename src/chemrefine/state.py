@@ -183,9 +183,10 @@ class StepContext:
     Part of the step's *specification* — change the template and the step must re-run — so it
     belongs on the bundle that carries the specification, resolved once by
     :func:`chemrefine.step.build_context`. An ORCA step alone has five readers (``prepare``,
-    ``pal``, run-type detection, the NMS probe, the cache), and
-    :func:`~chemrefine.engines.orca.inspect.inspect_template` caches nothing, so each would
-    otherwise re-resolve and re-read the file.
+    ``pal``, run-type detection, the NMS probe, the cache), and the field saves each
+    re-resolving the path; each reads the file once, through
+    :func:`chemrefine.ids.require_template`, and ``prepare`` renders every structure from one
+    read.
 
     ``None`` and "a path that is not there" are different states and stay distinguishable:
     ``None`` means the engine is not :class:`~chemrefine.engines.api.TemplateDriven`, while a

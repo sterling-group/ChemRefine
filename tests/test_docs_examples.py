@@ -141,3 +141,29 @@ def test_the_engine_guides_primitives_return_what_the_base_declares(method: str,
     assert f"-> {returns}:" in guide, (
         f"the guide's {method} does not return {returns}, which JobEngine declares"
     )
+
+
+@pytest.mark.parametrize("method", ["build_input", "run_block", "parse_one"])
+def test_the_engine_guides_primitives_take_what_the_base_passes(method: str):
+    """Each primitive the guide defines takes the base's parameters, by name and in order.
+
+    ``prepare`` hands ``build_input`` every argument by keyword, so a copied primitive that
+    still spells a parameter the base renamed fails with ``TypeError: unexpected keyword
+    argument`` at the step's first structure, after every earlier step has run.
+    """
+    import ast
+    import inspect
+
+    from chemrefine.engines._job import JobEngine
+
+    base = list(inspect.signature(getattr(JobEngine, method)).parameters)
+    defined = [
+        node
+        for fence in _engine_guide_python()
+        for node in ast.walk(ast.parse(fence))
+        if isinstance(node, ast.FunctionDef) and node.name == method
+    ]
+    assert defined, f"the guide's worked engine no longer defines {method}"
+    for node in defined:
+        spelled = [a.arg for a in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)]
+        assert spelled == base, f"the guide's {method} takes {spelled}; JobEngine's takes {base}"

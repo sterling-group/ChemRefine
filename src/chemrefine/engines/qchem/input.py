@@ -29,7 +29,8 @@ import re
 from pathlib import Path
 
 from chemrefine.errors import ConfigError
-from chemrefine.io import read_utf8, read_xyz_frames
+from chemrefine.ids import StepTemplate
+from chemrefine.io import read_xyz_frames
 
 # Both markers are anchored to their own lines, which is where Q-Chem reads them. Matched
 # anywhere, the literal text ``$molecule`` inside a ``$comment`` block starts the match and
@@ -72,7 +73,7 @@ def _molecule_block(xyz_path: Path, charge: int, multiplicity: int) -> str:
 def build_input(
     *,
     xyz_path: Path,
-    template_path: Path,
+    template: StepTemplate,
     output_path: Path,
     charge: int,
     multiplicity: int,
@@ -85,8 +86,8 @@ def build_input(
     ``$molecule read $end`` included, passes through byte-for-byte. A job-1 block split
     into fragments is refused by name.
     """
-    template = read_utf8(template_path, what="Q-Chem template")
-    if _INPUT_BOHR_RE.search(template):
+    text = template.text
+    if _INPUT_BOHR_RE.search(text):
         # The block below is written in Å (every geometry this package writes is), so a
         # template declaring Bohr input would have Q-Chem compute on a molecule scaled by
         # 1/0.529 — and the output parser holds the other half of the same rule: its
@@ -94,21 +95,19 @@ def build_input(
         # than to wrong coordinates. Refused at the point of use, like ORCA's
         # whitespace-path rule, because this is the moment the two units would meet.
         raise ConfigError(
-            f"Q-Chem template {template_path} sets `input_bohr`, but ChemRefine writes the "
+            f"Q-Chem template {template.path} sets `input_bohr`, but ChemRefine writes the "
             f"$molecule geometry in Ångström — the job would run on a molecule scaled by "
             f"1/0.529. Remove the rem; coordinates are supplied in Å."
         )
     block = _molecule_block(xyz_path, charge, multiplicity)
-    separator = _JOB_SEPARATOR_RE.search(template)
+    separator = _JOB_SEPARATOR_RE.search(text)
     job1, later_jobs = (
-        (template[: separator.start()], template[separator.start() :])
-        if separator
-        else (template, "")
+        (text[: separator.start()], text[separator.start() :]) if separator else (text, "")
     )
     existing = _MOLECULE_BLOCK_RE.search(job1)
     if existing and _FRAGMENT_SEPARATOR_RE.search(existing.group(0)):
         raise ConfigError(
-            f"Q-Chem template {template_path} partitions its $molecule block into fragments "
+            f"Q-Chem template {template.path} partitions its $molecule block into fragments "
             f"(`--`), which ChemRefine cannot preserve: the block is regenerated per structure "
             f"from one whole-molecule geometry, and nothing can say which of its atoms belong "
             f"to which fragment. Drop the fragment lines (and the fragment rems) for this step."

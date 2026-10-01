@@ -25,7 +25,7 @@ from chemrefine.engines._job import JobEngine
 from chemrefine.engines.api import NmsInputInfo, ParsedResult, RunBlock, register
 from chemrefine.engines.orca import input as orca_input
 from chemrefine.engines.orca import inspect, output
-from chemrefine.ids import require_template, step_relative
+from chemrefine.ids import StepTemplate, require_template, step_relative
 from chemrefine.state import StepContext
 
 logger = logging.getLogger(__name__)
@@ -97,7 +97,7 @@ class OrcaEngine(JobEngine):
         self,
         *,
         xyz_path: Path,
-        template_path: Path,
+        template: StepTemplate,
         input_path: Path,
         output_path: Path,
         ctx: StepContext,
@@ -105,7 +105,7 @@ class OrcaEngine(JobEngine):
         """Write one ORCA ``.inp`` (the ``.out`` is a stdout redirect, not declared here)."""
         orca_input.build_input(
             xyz_path=xyz_path,
-            template_path=template_path,
+            template=template,
             output_path=input_path,
             charge=ctx.charge,
             multiplicity=ctx.multiplicity,
@@ -123,7 +123,7 @@ class OrcaEngine(JobEngine):
 
     def pal(self, ctx: StepContext) -> int:
         """PAL is a property of the template (one ``%pal`` for the step), read once."""
-        return inspect.inspect_template(require_template(ctx.template, label=self.label)).pal
+        return inspect.inspect_template(require_template(ctx.template, label=self.label).text).pal
 
     def memory_mb(self, ctx: StepContext) -> int | None:
         """The SLURM total ``%maxcore`` implies: ``ceil(maxcore * pal / 0.75)``.
@@ -140,7 +140,7 @@ class OrcaEngine(JobEngine):
         it always has. The builder also keeps a header whose own grant already covers this
         — see :func:`chemrefine.slurm.script._apply_memory`.
         """
-        info = inspect.inspect_template(require_template(ctx.template, label=self.label))
+        info = inspect.inspect_template(require_template(ctx.template, label=self.label).text)
         if info.maxcore is None:
             return None
         cores = min(info.pal, ctx.max_cores)
@@ -191,7 +191,9 @@ class OrcaEngine(JobEngine):
         """
         if ctx.step_cfg.operation is not None:
             return ctx.step_cfg.operation
-        return inspect.inspect_template(require_template(ctx.template, label=self.label)).operation
+        return inspect.inspect_template(
+            require_template(ctx.template, label=self.label).text
+        ).operation
 
     def parse_one(
         self, output_path: Path, structure_id: str, ctx: StepContext
@@ -234,7 +236,7 @@ class OrcaEngine(JobEngine):
 
     def nms_input_info(self, ctx: StepContext) -> NmsInputInfo:
         """Whether the template runs a TS search and computes frequencies (keyword scan)."""
-        run = inspect.inspect_template(require_template(ctx.template, label=self.label))
+        run = inspect.inspect_template(require_template(ctx.template, label=self.label).text)
         return NmsInputInfo(is_transition_state=run.is_ts, computes_frequencies=run.has_freq)
 
     def parse_frequency_output(self, output_path: Path) -> list[ParsedResult]:

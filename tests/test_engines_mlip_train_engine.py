@@ -275,6 +275,13 @@ def test_the_fairchem_dataset_does_not_land_inside_its_own_checkpoint_tree(tmp_p
     assert not (run_dir / "train" / "train.db").exists()
 
 
+def test_prepare_reads_its_template_once(tmp_path: Path, text_reads: list[Path]):
+    """The rules and the rendering are asked of one read, so they cannot see two texts."""
+    ctx = _ctx(tmp_path)
+    MlipTrainEngine().prepare(ctx)
+    assert text_reads.count(ctx.template) == 1
+
+
 def test_prepare_renders_the_template_against_the_dataset_it_wrote(tmp_path: Path):
     """The rendered config must point at *these* files, or the job trains on nothing."""
     ctx = _ctx(tmp_path)

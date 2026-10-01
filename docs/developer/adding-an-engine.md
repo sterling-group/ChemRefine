@@ -180,9 +180,10 @@ more than one total energy. The shipped reference for handling that is `orca/`, 
 is worth mirroring because it keeps the input→output coupling in one explicit chain instead of
 scattered through the parser:
 
-- **`inspect.py` reads the input, once, into a frozen `InputInfo`** — which keywords ran, is
-  it a TS search, does it compute frequencies. Nothing else re-derives facts from the
-  template.
+- **`inspect.py` parses the template's text, handed to it once, into a frozen `InputInfo`** —
+  which keywords ran, is it a TS search, does it compute frequencies. The engine reads the
+  file through `require_template` and hands the inspector its text; nothing else re-derives
+  facts from the template.
 - **An explicit `operation:` wins; otherwise the inspection decides** (ORCA:
   `OrcaEngine.resolve_operation`). Declare it as `OperationInferring` and the cache keys the
   operation the outputs are read as, not its spelling. If the vocabulary is real, declare
@@ -317,6 +318,7 @@ from typing import ClassVar
 from chemrefine.engines._job import JobEngine
 from chemrefine.engines.api import ParsedResult, RunBlock, register
 from chemrefine.engines.demoqm.options import DemoqmOptions
+from chemrefine.ids import StepTemplate
 from chemrefine.state import StepContext
 
 
@@ -338,16 +340,15 @@ class DemoqmEngine(JobEngine):
         self,
         *,
         xyz_path: Path,
-        template_path: Path,
+        template: StepTemplate,
         input_path: Path,
         output_path: Path,
         ctx: StepContext,
     ) -> None:
         """Render this structure's ``.inp`` from the step template + its geometry."""
         opts = DemoqmOptions.from_raw(ctx.step_cfg.options)
-        body = template_path.read_text(encoding="utf-8")
         input_path.write_text(
-            body.replace("$BASIS", opts.basis).replace("$XYZ", xyz_path.name),
+            template.text.replace("$BASIS", opts.basis).replace("$XYZ", xyz_path.name),
             encoding="utf-8",
         )
 

@@ -11,13 +11,6 @@ from pathlib import Path
 import pytest
 
 from chemrefine.engines.orca.inspect import inspect_template
-from chemrefine.errors import ConfigError
-
-
-def _write(tmp_path: Path, body: str) -> Path:
-    template = tmp_path / "step1.inp"
-    template.write_text(body, encoding="utf-8")
-    return template
 
 
 @pytest.mark.parametrize(
@@ -40,24 +33,24 @@ def _write(tmp_path: Path, body: str) -> Path:
         ("! B3LYP def2-SVP Opt\n%md timestep 0.5_fs end\n", "md"),
     ],
 )
-def test_inspect_picks_parser_from_keywords(tmp_path: Path, body: str, operation: str):
-    assert inspect_template(_write(tmp_path, body)).operation == operation
+def test_inspect_picks_parser_from_keywords(body: str, operation: str):
+    assert inspect_template(body).operation == operation
 
 
-def test_a_keyword_that_merely_contains_a_run_kind_does_not_name_it(tmp_path: Path):
+def test_a_keyword_that_merely_contains_a_run_kind_does_not_name_it():
     """Whole tokens only, as for ``opt`` and ``freq``: ``NEBULA`` is not a band, ``MDCI`` no MD."""
-    assert inspect_template(_write(tmp_path, "! NEBULA def2-SVP\n")).operation == "sp"
-    assert inspect_template(_write(tmp_path, "! MDCI def2-SVP\n")).operation == "sp"
-    assert inspect_template(_write(tmp_path, "# ! IRC later\n! HF def2-SVP\n")).operation == "sp"
+    assert inspect_template("! NEBULA def2-SVP\n").operation == "sp"
+    assert inspect_template("! MDCI def2-SVP\n").operation == "sp"
+    assert inspect_template("# ! IRC later\n! HF def2-SVP\n").operation == "sp"
 
 
-def test_inspect_is_case_insensitive(tmp_path: Path):
-    assert inspect_template(_write(tmp_path, "! goat xtb\n")).operation == "goat"
-    assert inspect_template(_write(tmp_path, "! GoAt XtB\n")).operation == "goat"
+def test_inspect_is_case_insensitive():
+    assert inspect_template("! goat xtb\n").operation == "goat"
+    assert inspect_template("! GoAt XtB\n").operation == "goat"
 
 
-def test_inspect_empty_template_is_single_point(tmp_path: Path):
-    assert inspect_template(_write(tmp_path, "* xyzfile 0 1 geom.xyz\n")).operation == "sp"
+def test_inspect_empty_template_is_single_point():
+    assert inspect_template("* xyzfile 0 1 geom.xyz\n").operation == "sp"
 
 
 @pytest.mark.parametrize(
@@ -74,33 +67,31 @@ def test_inspect_empty_template_is_single_point(tmp_path: Path):
         "VeryTightOpt",
     ],
 )
-def test_every_optimisation_keyword_orca_accepts_reads_as_an_optimisation(
-    tmp_path: Path, keyword: str
-):
+def test_every_optimisation_keyword_orca_accepts_reads_as_an_optimisation(keyword: str):
     """The list is what ORCA 6.1.1 actually takes, checked against the binary.
 
     Guessing here fails silently in both directions: an accepted keyword this does not
     recognise picks the wrong parser and, through the NMS frequency gate, admits or refuses
     a step for a reason that is not true.
     """
-    assert inspect_template(_write(tmp_path, f"! HF STO-3G {keyword}\n")).operation == "opt_sp"
+    assert inspect_template(f"! HF STO-3G {keyword}\n").operation == "opt_sp"
 
 
 @pytest.mark.parametrize(
     "keyword", ["TightOptTS", "VeryTightOptTS", "LooseOptTS", "COptTS", "ExtOptTS"]
 )
-def test_a_ts_search_is_only_ever_the_bare_keyword(tmp_path: Path, keyword: str):
+def test_a_ts_search_is_only_ever_the_bare_keyword(keyword: str):
     """ORCA rejects every prefixed `…OptTS` spelling, so none can reach a real run.
 
     This is what lets `is_ts` test for the exact token: a tightness level for a saddle-point
     search is written as its own keyword (`! OptTS TightOpt`), read here as two tokens.
     """
-    assert inspect_template(_write(tmp_path, f"! HF STO-3G {keyword}\n")).is_ts is False
-    assert inspect_template(_write(tmp_path, f"! HF STO-3G OptTS {keyword}\n")).is_ts is True
+    assert inspect_template(f"! HF STO-3G {keyword}\n").is_ts is False
+    assert inspect_template(f"! HF STO-3G OptTS {keyword}\n").is_ts is True
 
 
-def test_inspect_flags_optts_as_ts(tmp_path: Path):
-    run = inspect_template(_write(tmp_path, "! B3LYP def2-SVP OptTS Freq\n"))
+def test_inspect_flags_optts_as_ts():
+    run = inspect_template("! B3LYP def2-SVP OptTS Freq\n")
     # OptTS still parses like a normal opt (single optimized structure)…
     assert run.operation == "opt_sp"
     # …but is flagged as a TS search and a frequency run.
@@ -108,33 +99,33 @@ def test_inspect_flags_optts_as_ts(tmp_path: Path):
     assert run.has_freq is True
 
 
-def test_inspect_plain_opt_is_not_ts_and_not_freq(tmp_path: Path):
-    run = inspect_template(_write(tmp_path, "! B3LYP def2-SVP Opt\n"))
+def test_inspect_plain_opt_is_not_ts_and_not_freq():
+    run = inspect_template("! B3LYP def2-SVP Opt\n")
     assert run.is_ts is False
     assert run.has_freq is False
 
 
-def test_inspect_detects_numfreq(tmp_path: Path):
-    assert inspect_template(_write(tmp_path, "! PBE def2-SVP NumFreq\n")).has_freq is True
+def test_inspect_detects_numfreq():
+    assert inspect_template("! PBE def2-SVP NumFreq\n").has_freq is True
 
 
-def test_inspect_ignores_keywords_in_non_bang_lines(tmp_path: Path):
+def test_inspect_ignores_keywords_in_non_bang_lines():
     # 'goat' only counts on a ``!`` keyword line, not in a coordinate comment.
     body = "! B3LYP def2-SVP Opt\n# a goat wandered through the docker yard\n"
-    assert inspect_template(_write(tmp_path, body)).operation == "opt_sp"
+    assert inspect_template(body).operation == "opt_sp"
 
 
-def test_inspect_ignores_inline_comment_keywords(tmp_path: Path):
+def test_inspect_ignores_inline_comment_keywords():
     """An inline ``#`` comment on a ``!`` line is stripped before keyword scanning."""
-    run = inspect_template(_write(tmp_path, "! B3LYP def2-SVP Opt  # goat solvator freq later\n"))
+    run = inspect_template("! B3LYP def2-SVP Opt  # goat solvator freq later\n")
     assert run.operation == "opt_sp"  # 'goat'/'solvator' in the comment are ignored
     assert run.has_freq is False  # so is the commented-out 'freq'
 
 
-def test_inspect_ignores_commented_out_scan_block(tmp_path: Path):
+def test_inspect_ignores_commented_out_scan_block():
     """A ``%geom Scan`` hidden behind comments is not treated as a PES scan."""
     body = "! B3LYP def2-SVP Opt\n# %geom Scan B 0 1 = 1.0, 2.0, 10 end end\n"
-    assert inspect_template(_write(tmp_path, body)).operation == "opt_sp"
+    assert inspect_template(body).operation == "opt_sp"
 
 
 @pytest.mark.parametrize(
@@ -152,19 +143,19 @@ def test_inspect_ignores_commented_out_scan_block(tmp_path: Path):
         ('! GOAT XTB\n%docker guest "cl.xyz" end\n', "goat"),
     ],
 )
-def test_a_docker_or_solvator_block_infers_its_run_kind(tmp_path: Path, body: str, operation: str):
+def test_a_docker_or_solvator_block_infers_its_run_kind(body: str, operation: str):
     """ORCA runs a docking or a solvation from its ``%`` block alone.
 
     Read from the ``!`` line only, such a run inferred a single point, and the step kept one
     structure of the ensemble ORCA wrote.
     """
-    assert inspect_template(_write(tmp_path, body)).operation == operation
+    assert inspect_template(body).operation == operation
 
 
-def test_a_commented_out_docker_block_is_not_a_docking(tmp_path: Path):
+def test_a_commented_out_docker_block_is_not_a_docking():
     """A ``%docker`` block hidden behind a comment is not a directive."""
     body = '! XTB Opt\n# %docker guest "cl.xyz" end\n'
-    assert inspect_template(_write(tmp_path, body)).operation == "opt_sp"
+    assert inspect_template(body).operation == "opt_sp"
 
 
 @pytest.mark.parametrize(
@@ -182,14 +173,14 @@ def test_a_commented_out_docker_block_is_not_a_docking(tmp_path: Path):
     ],
     ids=["later-block-path", "later-block-value", "coordinate-line", "keyword-line"],
 )
-def test_scan_outside_the_geom_block_body_is_not_a_scan(tmp_path: Path, body: str):
+def test_scan_outside_the_geom_block_body_is_not_a_scan(body: str):
     """``scan`` names a relaxed scan only inside the ``%geom`` block that declares it.
 
     An ``Opt Freq`` step read as ``pes`` is parsed by the scan reader, which reports no
     frequency table — so the run keeps its energies and silently loses its thermochemistry
     and every imaginary mode NMS would act on.
     """
-    run = inspect_template(_write(tmp_path, body))
+    run = inspect_template(body)
     assert run.operation == "opt_sp"
     assert run.has_freq is True
 
@@ -207,11 +198,11 @@ def test_scan_outside_the_geom_block_body_is_not_a_scan(tmp_path: Path, body: st
     ],
     ids=["multi-line", "with-constraints", "after-another-block"],
 )
-def test_a_scan_sub_block_anywhere_in_the_geom_body_is_a_scan(tmp_path: Path, body: str):
-    assert inspect_template(_write(tmp_path, body)).operation == "pes"
+def test_a_scan_sub_block_anywhere_in_the_geom_body_is_a_scan(body: str):
+    assert inspect_template(body).operation == "pes"
 
 
-def test_inspect_keeps_a_hash_inside_a_quoted_filename(tmp_path: Path):
+def test_inspect_keeps_a_hash_inside_a_quoted_filename():
     """A ``#`` in a quoted path is part of the filename, not the start of a comment.
 
     Cutting the line at the ``#`` truncates whatever follows, so a template naming
@@ -220,14 +211,14 @@ def test_inspect_keeps_a_hash_inside_a_quoted_filename(tmp_path: Path):
     refused NMS for a reason that is not true: a chemistry-shaped failure caused by a
     character in a filename.
     """
-    run = inspect_template(_write(tmp_path, '! B3LYP def2-SVP Opt "lig#3.xyz" Freq\n'))
+    run = inspect_template('! B3LYP def2-SVP Opt "lig#3.xyz" Freq\n')
     assert run.has_freq is True, "the keyword after the quoted '#' was swallowed"
     assert run.operation == "opt_sp"
 
 
-def test_inspect_still_strips_a_real_comment_after_a_quoted_string(tmp_path: Path):
+def test_inspect_still_strips_a_real_comment_after_a_quoted_string():
     """Quote tracking must not cost us actual comment stripping."""
-    run = inspect_template(_write(tmp_path, '! B3LYP def2-SVP Opt "lig#3.xyz"  # Freq later\n'))
+    run = inspect_template('! B3LYP def2-SVP Opt "lig#3.xyz"  # Freq later\n')
     assert run.has_freq is False
 
 
@@ -247,7 +238,7 @@ def test_extopt_is_an_optimisation():
     """
     template = REPO_ROOT / "examples/tutorials/redox/amines/templates/step2.inp"
     assert "!ExtOpt" in template.read_text(encoding="utf-8")
-    assert inspect_template(template).operation == "opt_sp"
+    assert inspect_template(template.read_text(encoding="utf-8")).operation == "opt_sp"
 
 
 def test_every_shipped_extopt_template_is_an_optimisation():
@@ -263,14 +254,14 @@ def test_every_shipped_extopt_template_is_an_optimisation():
         )
     )
     assert templates, "no ExtOpt templates found — has the layout moved?"
-    assert {inspect_template(p).operation for p in templates} == {"opt_sp"}
+    assert {inspect_template(p.read_text(encoding="utf-8")).operation for p in templates} == {
+        "opt_sp"
+    }
 
 
-def test_a_keyword_merely_containing_opt_is_not_an_optimisation(tmp_path: Path):
+def test_a_keyword_merely_containing_opt_is_not_an_optimisation():
     """The point of matching whole tokens: substrings must not decide the run type."""
-    template = tmp_path / "step1.inp"
-    template.write_text("! B3LYP def2-SVP Optimizer-Is-Not-A-Keyword\n", encoding="utf-8")
-    assert inspect_template(template).operation == "sp"
+    assert inspect_template("! B3LYP def2-SVP Optimizer-Is-Not-A-Keyword\n").operation == "sp"
 
 
 # ---------------------------------------------------------------------------
@@ -278,30 +269,18 @@ def test_a_keyword_merely_containing_opt_is_not_an_optimisation(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_inspect_reads_maxcore(tmp_path: Path):
+def test_inspect_reads_maxcore():
     """``%maxcore`` is per-core MB, read with qorca's grammar, case-insensitively."""
-    info = inspect_template(_write(tmp_path, "! B3LYP Opt\n%MaxCore 3000\n%pal nprocs 4 end\n"))
+    info = inspect_template("! B3LYP Opt\n%MaxCore 3000\n%pal nprocs 4 end\n")
     assert info.maxcore == 3000
     assert info.pal == 4
 
 
-def test_a_template_without_maxcore_declares_no_memory(tmp_path: Path):
+def test_a_template_without_maxcore_declares_no_memory():
     """Absence is ``None``, not a default: no declaration means the header's policy stands."""
-    assert inspect_template(_write(tmp_path, "! B3LYP Opt\n")).maxcore is None
+    assert inspect_template("! B3LYP Opt\n").maxcore is None
 
 
-def test_a_commented_maxcore_is_not_a_declaration(tmp_path: Path):
+def test_a_commented_maxcore_is_not_a_declaration():
     """The same comment-stripping the keywords get: ``# %maxcore 9000`` declares nothing."""
-    assert inspect_template(_write(tmp_path, "! B3LYP Opt\n# %maxcore 9000\n")).maxcore is None
-
-
-def test_a_template_that_is_not_utf8_is_refused_as_its_writer_refuses_it(tmp_path: Path):
-    """The inspector reads a template by the writer's rule, not by a guess at the bytes.
-
-    Decoded with replacement, a latin-1 ``Å`` in a comment inferred a run and a PAL here,
-    while the writer refused the same file at the step's ``prepare``.
-    """
-    path = tmp_path / "step1.inp"
-    path.write_bytes("# Ångström\n! B3LYP Opt\n%pal nprocs 4 end\n".encode("latin-1"))
-    with pytest.raises(ConfigError, match=r"ORCA template .* is not UTF-8 text"):
-        inspect_template(path)
+    assert inspect_template("! B3LYP Opt\n# %maxcore 9000\n").maxcore is None

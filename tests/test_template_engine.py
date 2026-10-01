@@ -28,6 +28,7 @@ from chemrefine.engines._script.contract import (
 from chemrefine.engines._script.engine import ScriptEngine
 from chemrefine.engines._script.output import _load_output_json, parse_output
 from chemrefine.errors import ChemRefineError, ConfigError, OutputParseError
+from chemrefine.ids import require_template
 from chemrefine.state import PipelineState, StepContext, Structure
 
 
@@ -75,15 +76,10 @@ def test_the_json_placeholder_survives_anything_a_value_can_hold(
 
     hostile = 'sto-"3g"\\path\nline $XYZ_PATH ${CHARGE} ü'
     opts = PyscfOptions(basis=hostile, xc="pbe")
-    template = tmp_path / "step1.py"
-    template.write_text(
-        'import json\noptions = json.loads("$OPTIONS_JSON")\nenergy_hartree = -1.0\n',
-        encoding="utf-8",
-    )
     rendered = tmp_path / "step1_0.py"
     _template_render.build_input(
         xyz_path=tmp_path / "frame.xyz",
-        template_path=template,
+        template_text='import json\noptions = json.loads("$OPTIONS_JSON")\nenergy_hartree = -1.0\n',
         output_path=rendered,
         output_json_path=tmp_path / "step1_0.json",
         charge=0,
@@ -159,15 +155,10 @@ def test_the_options_model_answers_the_gpu_question():
 
 
 def test_build_input_substitutes_geometry_placeholders(tmp_path: Path):
-    template = tmp_path / "step1.py"
-    template.write_text(
-        'mol = gto.M(atom="$XYZ_PATH", charge=$CHARGE, spin=$MULTIPLICITY - 1)\n',
-        encoding="utf-8",
-    )
     out = tmp_path / "rendered.py"
     _template_render.build_input(
         xyz_path=tmp_path / "frame.xyz",
-        template_path=template,
+        template_text='mol = gto.M(atom="$XYZ_PATH", charge=$CHARGE, spin=$MULTIPLICITY - 1)\n',
         output_path=out,
         output_json_path=tmp_path / "frame.json",
         charge=-1,
@@ -181,12 +172,10 @@ def test_build_input_substitutes_geometry_placeholders(tmp_path: Path):
 
 def test_build_input_appends_output_footer(tmp_path: Path):
     """The rendered file must end with the canonical JSON-writing footer."""
-    template = tmp_path / "step1.py"
-    template.write_text("energy_hartree = -1.0\n", encoding="utf-8")
     out = tmp_path / "rendered.py"
     _template_render.build_input(
         xyz_path=tmp_path / "frame.xyz",
-        template_path=template,
+        template_text="energy_hartree = -1.0\n",
         output_path=out,
         output_json_path=tmp_path / "step1_structure_0.json",
         charge=0,
@@ -203,15 +192,10 @@ def test_build_input_appends_output_footer(tmp_path: Path):
 
 def test_build_input_leaves_legacy_output_json_placeholder_alone(tmp_path: Path):
     """``$OUTPUT_JSON`` is not a known placeholder; ``safe_substitute`` leaves it intact."""
-    template = tmp_path / "step1.py"
-    template.write_text(
-        "energy_hartree = -1.0\n# legacy: $OUTPUT_JSON\n",
-        encoding="utf-8",
-    )
     out = tmp_path / "rendered.py"
     _template_render.build_input(
         xyz_path=tmp_path / "frame.xyz",
-        template_path=template,
+        template_text="energy_hartree = -1.0\n# legacy: $OUTPUT_JSON\n",
         output_path=out,
         output_json_path=tmp_path / "step1_structure_0.json",
         charge=0,
@@ -222,33 +206,17 @@ def test_build_input_leaves_legacy_output_json_placeholder_alone(tmp_path: Path)
     assert 'with open(\'step1_structure_0.json\', "w", encoding="utf-8")' in text
 
 
-def test_build_input_missing_template_raises_generic(tmp_path: Path):
-    """Direct call (no engine layer above it) surfaces the generic message."""
-    with pytest.raises(ConfigError, match="template not found"):
-        _template_render.build_input(
-            xyz_path=tmp_path / "x.xyz",
-            template_path=tmp_path / "missing.py",
-            output_path=tmp_path / "out.py",
-            output_json_path=tmp_path / "out.json",
-            charge=0,
-            multiplicity=1,
-        )
-
-
 def test_build_input_preserves_python_braces(tmp_path: Path):
     """A real script uses Python ``{ ... }`` everywhere; those must survive intact."""
-    template = tmp_path / "step1.py"
-    template.write_text(
-        'payload = {"key": float(mf.e_tot)}\n'
-        "gradient = [(i, x) for i, x in enumerate(grad)]\n"
-        'f = f"step{step}_done"\n'
-        "energy_hartree = -1.0\n",
-        encoding="utf-8",
-    )
     out = tmp_path / "rendered.py"
     _template_render.build_input(
         xyz_path=tmp_path / "x.xyz",
-        template_path=template,
+        template_text=(
+            'payload = {"key": float(mf.e_tot)}\n'
+            "gradient = [(i, x) for i, x in enumerate(grad)]\n"
+            'f = f"step{step}_done"\n'
+            "energy_hartree = -1.0\n"
+        ),
         output_path=out,
         output_json_path=tmp_path / "y.json",
         charge=0,
@@ -262,15 +230,10 @@ def test_build_input_preserves_python_braces(tmp_path: Path):
 
 def test_build_input_leaves_unknown_placeholders_intact(tmp_path: Path):
     """``safe_substitute`` should leave ``$UNKNOWN`` references alone."""
-    template = tmp_path / "step1.py"
-    template.write_text(
-        'pyenv = "$VIRTUAL_ENV"\nenergy_hartree = -1.0\n',
-        encoding="utf-8",
-    )
     out = tmp_path / "rendered.py"
     _template_render.build_input(
         xyz_path=tmp_path / "x.xyz",
-        template_path=template,
+        template_text='pyenv = "$VIRTUAL_ENV"\nenergy_hartree = -1.0\n',
         output_path=out,
         output_json_path=tmp_path / "y.json",
         charge=0,
@@ -638,7 +601,7 @@ def test_an_engine_can_extend_the_output_contract_without_touching_a_building_bl
     rendered = tmp_path / "step1_0.py"
     engine.build_input(
         xyz_path=tmp_path / "step1_0_inp.xyz",
-        template_path=template,
+        template=require_template(template, label="Extended"),
         input_path=rendered,
         output_path=tmp_path / "step1_0.json",
         ctx=_ctx(tmp_path),
@@ -763,7 +726,7 @@ def test_a_sidecar_field_is_harvested_but_lands_on_no_result_field(
     output = tmp_path / "step1_0.json"
     engine.build_input(
         xyz_path=tmp_path / "step1_0_inp.xyz",
-        template_path=template,
+        template=require_template(template, label="Sidecar"),
         input_path=rendered,
         output_path=output,
         ctx=_ctx(tmp_path),
@@ -819,7 +782,7 @@ def test_an_unconverged_script_is_a_convergence_failure_with_a_geometry_to_retry
     engine = _Probe()
     engine.build_input(
         xyz_path=tmp_path / "step1_0_inp.xyz",
-        template_path=template,
+        template=require_template(template, label="Probe"),
         input_path=rendered,
         output_path=output,
         ctx=_ctx(tmp_path),

@@ -8,6 +8,7 @@ import pytest
 
 from chemrefine.engines.qchem.input import build_input
 from chemrefine.errors import ConfigError
+from chemrefine.ids import require_template
 from chemrefine.io import write_single_xyz
 
 
@@ -24,7 +25,7 @@ def _render(tmp_path: Path, template_text: str, *, charge: int = 0, multiplicity
     template.write_text(template_text, encoding="utf-8")
     out = build_input(
         xyz_path=_seed_xyz(tmp_path),
-        template_path=template,
+        template=require_template(template, label="Q-Chem"),
         output_path=tmp_path / "0" / "step1_0.in",
         charge=charge,
         multiplicity=multiplicity,
@@ -105,18 +106,6 @@ def test_charge_and_multiplicity_render_into_the_block(tmp_path: Path):
     """The pipeline's charge/multiplicity land on the block's first line."""
     text = _render(tmp_path, "$rem\n  jobtype sp\n$end\n", charge=-1, multiplicity=3)
     assert "$molecule\n-1 3\n" in text
-
-
-def test_a_missing_template_is_a_config_error(tmp_path: Path):
-    """The defensive guard mirrors ORCA's: a named-but-absent template names itself."""
-    with pytest.raises(ConfigError, match="Q-Chem template not found"):
-        build_input(
-            xyz_path=_seed_xyz(tmp_path),
-            template_path=tmp_path / "missing.in",
-            output_path=tmp_path / "out.in",
-            charge=0,
-            multiplicity=1,
-        )
 
 
 @pytest.mark.parametrize("rem", ["input_bohr true", "INPUT_BOHR  TRUE", "input_bohr = 1"])

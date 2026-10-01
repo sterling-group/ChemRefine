@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from pathlib import Path
 
 # Line-anchored like the writer's ``$molecule`` regex, and for the same reason: ``$rem``
 # named in a ``$comment`` block's prose must not open a phantom block whose "jobtype ts"
@@ -101,9 +100,9 @@ def _strip_comments(text: str) -> str:
     return "\n".join(line.split("!", 1)[0] for line in text.splitlines())
 
 
-def inspect_template(template_path: str | Path) -> QchemInputInfo:
-    """Infer the ``JOBTYPE`` facts and the declared ``mem_total`` in a single read."""
-    text = _strip_comments(Path(template_path).read_text(encoding="utf-8", errors="replace"))
+def inspect_template(template_text: str) -> QchemInputInfo:
+    """Infer the ``JOBTYPE`` facts and the declared ``mem_total`` from a template's text."""
+    text = _strip_comments(template_text)
     jobtypes = {
         m.group(1).lower()
         for block in _REM_BLOCK_RE.findall(text)

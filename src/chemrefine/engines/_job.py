@@ -30,6 +30,7 @@ from chemrefine.engines import _execution
 from chemrefine.engines.api import CompletionSink, OptionsDeclaring, ParsedResult, RunBlock
 from chemrefine.errors import OutputParseError
 from chemrefine.ids import (
+    StepTemplate,
     allocate_child_ids,
     input_geometry_path,
     require_template,
@@ -183,7 +184,7 @@ class JobEngine(abc.ABC):
             input_path, output_path = self.artifact_paths(ctx, struct.id)
             self.build_input(
                 xyz_path=xyz_path,
-                template_path=template,
+                template=template,
                 input_path=input_path,
                 output_path=output_path,
                 ctx=ctx,
@@ -220,12 +221,16 @@ class JobEngine(abc.ABC):
         self,
         *,
         xyz_path: Path,
-        template_path: Path,
+        template: StepTemplate,
         input_path: Path,
         output_path: Path,
         ctx: StepContext,
     ) -> None:
-        """Write one structure's engine input file (e.g. the ``.inp`` / ``.py``)."""
+        """Write one structure's engine input file (e.g. the ``.inp`` / ``.py``).
+
+        ``template`` is the step's template as :meth:`prepare` read it: once, for every
+        structure of the step.
+        """
 
     @abc.abstractmethod
     def parse_one(

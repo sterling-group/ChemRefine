@@ -25,7 +25,7 @@ from chemrefine.engines._script import output as script_output
 from chemrefine.engines._script import render as script_render
 from chemrefine.engines._script.contract import SCRIPT_OUTPUT, OutputField
 from chemrefine.engines.api import ParsedResult, RunBlock
-from chemrefine.ids import step_relative
+from chemrefine.ids import StepTemplate, step_relative
 from chemrefine.state import StepContext
 
 OptsT = TypeVar("OptsT", bound=EngineOptions)
@@ -75,7 +75,7 @@ class ScriptEngine(JobEngine, Generic[OptsT]):
         self,
         *,
         xyz_path: Path,
-        template_path: Path,
+        template: StepTemplate,
         input_path: Path,
         output_path: Path,
         ctx: StepContext,
@@ -83,7 +83,7 @@ class ScriptEngine(JobEngine, Generic[OptsT]):
         """Render one ``step{N}.py`` script that writes its results to ``output_path``."""
         script_render.build_input(
             xyz_path=xyz_path,
-            template_path=template_path,
+            template_text=template.text,
             output_path=input_path,
             output_json_path=output_path,
             charge=ctx.charge,

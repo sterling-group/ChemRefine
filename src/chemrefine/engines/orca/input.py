@@ -24,9 +24,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from chemrefine import io
 from chemrefine.engines.orca.inspect import PAL_PATTERNS
 from chemrefine.errors import ConfigError
+from chemrefine.ids import StepTemplate
 
 _XYZFILE_DIRECTIVE_RE = re.compile(r"^\s*\*\s+xyzfile.*$", re.MULTILINE)
 
@@ -187,7 +187,7 @@ def clamp_pal(text: str, max_pal: int) -> str:
 def build_input(
     *,
     xyz_path: Path,
-    template_path: Path,
+    template: StepTemplate,
     output_path: Path,
     charge: int,
     multiplicity: int,
@@ -206,9 +206,8 @@ def build_input(
     """
     require_whitespace_free(xyz_path, what="the ORCA geometry path")
 
-    template = io.read_utf8(template_path, what="ORCA template")
-    cleaned = _XYZFILE_DIRECTIVE_RE.sub("", template).rstrip()
-    cleaned = _absolutize_template_paths(cleaned, template_path.parent)
+    cleaned = _XYZFILE_DIRECTIVE_RE.sub("", template.text).rstrip()
+    cleaned = _absolutize_template_paths(cleaned, template.path.parent)
     if max_pal is not None:
         cleaned = clamp_pal(cleaned, max_pal)
 

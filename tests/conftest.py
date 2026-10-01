@@ -296,6 +296,25 @@ def slow_config_writes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(io, "atomic_write", slowly)
 
 
+@pytest.fixture
+def text_reads(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+    """Every path decoded through :meth:`pathlib.Path.read_text` while the test runs, in order.
+
+    For a test that holds a read count: the one text reader
+    (:func:`chemrefine.io.read_utf8`) and a direct ``read_text`` both land here, so a second
+    decode cannot hide behind a route the test did not patch.
+    """
+    reads: list[Path] = []
+    read_text = Path.read_text
+
+    def recording(path: Path, *args: Any, **kwargs: Any) -> str:
+        reads.append(path)
+        return read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", recording)
+    return reads
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
     """Suite-wide flags: golden regeneration and fixture re-recording."""
     parser.addoption(
