@@ -145,6 +145,34 @@ def test_inspect_plain_opt_is_not_ts_and_not_freq():
     assert run.has_freq is False
 
 
+@pytest.mark.parametrize(
+    ("template", "has_freq"),
+    [
+        ("! B3LYP def2-SVP Opt\n%freq NumFreq true end\n", True),
+        ("! B3LYP def2-SVP Opt\n%FREQ AnFreq TRUE END\n", True),
+        ("! B3LYP def2-SVP Opt\n%freq Hybrid_Hess {0 1} end NumFreq true end\n", True),
+        ("! B3LYP def2-SVP Opt\n%freq CentralDiff false end\n", False),
+        ("! B3LYP def2-SVP Opt\n%freq Temp 290, 300 end\n", False),
+        ("! B3LYP def2-SVP Opt\n%freq NumFreq false end\n", False),
+        ("! B3LYP def2-SVP Opt\n# %freq NumFreq true end\n", False),
+    ],
+    ids=[
+        "numfreq-on",
+        "anfreq-on-any-case",
+        "a-sub-block-first",
+        "a-scheme-only",
+        "a-temperature-only",
+        "switched-off",
+        "commented-out",
+    ],
+)
+def test_a_freq_block_that_switches_a_hessian_on_requests_frequencies(
+    template: str, has_freq: bool
+):
+    """ORCA takes ``NumFreq true`` / ``AnFreq true`` in ``%freq`` as it takes the keyword."""
+    assert inspect_template(template).has_freq is has_freq
+
+
 def test_inspect_detects_numfreq():
     assert inspect_template("! PBE def2-SVP NumFreq\n").has_freq is True
 

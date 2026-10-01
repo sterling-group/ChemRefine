@@ -63,6 +63,15 @@ _OPT_TOKEN_RE = re.compile(
 )
 _FREQ_TOKEN_RE = re.compile(r"(?:num|an)?freq", re.IGNORECASE)
 
+# A frequency calculation is also requested from a ``%freq`` block, by switching its numerical
+# or analytical Hessian on (``NumFreq true`` / ``AnFreq true``; ORCA 6.1.1 manual §4.6.4).
+# The block's body is read the way ``%geom``'s is — up to the next ``%`` block, ``*``
+# coordinate section or ``!`` line — because a ``Hybrid_Hess { … } end`` sub-block may close
+# with an ``end`` of its own before the switch. Only ``true`` turns it on: a ``%freq`` that
+# sets just a temperature, a difference scheme or a restart requests nothing.
+_FREQ_BLOCK_RE = re.compile(r"%freq\b([^%*!]*)", re.IGNORECASE)
+_FREQ_SWITCH_RE = re.compile(r"\b(?:num|an)freq\s+true\b", re.IGNORECASE)
+
 # GOAT and its variants (ORCA 6.1.1 manual, Table 4.9), each a whole token: every one of them
 # writes the same ``<base>.finalensemble.xyz``, so all six are one run kind to the reader.
 _GOAT_TOKEN_RE = re.compile(r"goat(?:-explore|-react|-entropy|-diversity|-coarse)?", re.IGNORECASE)
@@ -111,10 +120,11 @@ class OrcaInputInfo:
 
     ``operation`` is the parser key (see :mod:`chemrefine.engines.orca.output`); ``is_ts``
     marks a run that optimises a transition state — ``OptTS``, ``ScanTS``, ``NEB-TS`` —
-    (drives the NMS ``ts`` target); ``has_freq`` marks a frequency calc
-    (gates NMS); ``pal`` is the declared core count (``1`` if none); ``maxcore`` is the
-    declared per-core memory in MB (``None`` if the template names none — absence means
-    "the header's memory policy stands", so it is not defaulted).
+    (drives the NMS ``ts`` target); ``has_freq`` marks a frequency calc, requested by a
+    ``…Freq`` keyword or by a ``%freq`` block that switches a Hessian on (gates NMS);
+    ``pal`` is the declared core count (``1`` if none); ``maxcore`` is the declared
+    per-core memory in MB (``None`` if the template names none — absence means "the
+    header's memory policy stands", so it is not defaulted).
     """
 
     operation: str
@@ -160,6 +170,11 @@ def _read_pal(text: str) -> int:
 def _has_geom_scan(decommented: str) -> bool:
     """Whether any ``%geom`` block's body declares a ``Scan`` — see :data:`_GEOM_BLOCK_RE`."""
     return any(_SCAN_TOKEN_RE.search(m.group(1)) for m in _GEOM_BLOCK_RE.finditer(decommented))
+
+
+def _has_freq_block(decommented: str) -> bool:
+    """Whether a ``%freq`` block switches a Hessian on — see :data:`_FREQ_BLOCK_RE`."""
+    return any(_FREQ_SWITCH_RE.search(m.group(1)) for m in _FREQ_BLOCK_RE.finditer(decommented))
 
 
 def inspect_template(template_text: str) -> OrcaInputInfo:
@@ -222,7 +237,8 @@ def inspect_template(template_text: str) -> OrcaInputInfo:
     return OrcaInputInfo(
         operation=operation,
         is_ts="optts" in keywords or ts_run,
-        has_freq=any(_FREQ_TOKEN_RE.fullmatch(token) for token in keywords),
+        has_freq=any(_FREQ_TOKEN_RE.fullmatch(token) for token in keywords)
+        or _has_freq_block(decommented),
         pal=_read_pal(decommented),
         maxcore=int(maxcore.group(1)) if maxcore else None,
     )

@@ -68,6 +68,12 @@ def test_nms_input_info_optts_is_transition_state(tmp_path: Path):
     assert info.computes_frequencies is True
 
 
+def test_nms_input_info_reads_a_freq_block(tmp_path: Path):
+    template = "! B3LYP def2-SVP Opt\n%freq NumFreq true end\n"
+    info = get_engine("orca").nms_input_info(_ctx(tmp_path, template))
+    assert info.computes_frequencies is True
+
+
 def test_nms_input_info_no_freq_keyword(tmp_path: Path):
     info = get_engine("orca").nms_input_info(_ctx(tmp_path, "! B3LYP def2-SVP Opt\n"))
     assert info.computes_frequencies is False

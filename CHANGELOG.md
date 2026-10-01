@@ -235,7 +235,9 @@ for those and the full map.
   and Hessian are promoted to the structure's canonical path, so the files
   there all agree. The structure's cache record names the child it was resolved
   from (`resolved_from`), and its `attemptK/` keeps a `resolution.json` saying
-  the same; v1.3.1 named the winner only in its log.
+  the same; v1.3.1 named the winner only in its log. An ORCA template requests the
+  frequencies sampling needs with a `Freq`, `NumFreq` or `AnFreq` keyword, or with
+  `NumFreq true` / `AnFreq true` in a `%freq` block.
 - Shared ExtOpt HTTP server: ORCA optimises on gradients served by an MLIP or
   PySCF backend in the same SLURM job (kernel-assigned ports, where v1.3.1
   bound every server to the step's `bind` address, `127.0.0.1:8888` by

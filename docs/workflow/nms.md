@@ -12,7 +12,9 @@ Because NMS acts on imaginary modes, the step's input **must** compute frequenci
 an NMS step whose input computes none is rejected before any job is submitted with a
 `ConfigError`. There is no override — `operation` never changes the generated input
 (it only picks the parser), so an explicit value cannot rescue a frequency-less
-template. Request the frequencies in the template (e.g. ORCA `! Opt Freq`) instead.
+template. Request the frequencies in the template instead — for ORCA, a `Freq`,
+`NumFreq` or `AnFreq` keyword (`! Opt Freq`), or `NumFreq true` / `AnFreq true` in a
+`%freq` block.
 
 ## A generic capability, not an engine feature
 
