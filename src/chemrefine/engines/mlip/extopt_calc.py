@@ -9,7 +9,7 @@ gradients without duplicating any HTTP / file-I/O glue.
 from __future__ import annotations
 
 import argparse
-from typing import Any
+from typing import Any, Literal, get_args, get_origin
 
 import numpy as np
 from ase import Atoms
@@ -68,21 +68,21 @@ class MlipExtOptCalculator(ComputeBackend):
     def add_cli_args(cls, parser: argparse.ArgumentParser) -> None:
         """Register MLIP flags on a shared server / client parser — one loop, no table.
 
-        The flags come from the knob list, the defaults from the model's own fields, so
-        this parser cannot come to disagree with :class:`MlipOptions` about either — the
-        old hand-written quadruple restated both, including a ``--model-path`` default
-        the model already declared.
+        The flags come from the knob list, the defaults and the choices (a ``Literal``'s
+        values) from the model's own fields, so this parser cannot come to disagree with
+        :class:`MlipOptions` about any of them.
         """
         for name, flag in _KEY_VALUE_FLAGS:
+            field = MlipOptions.model_fields[name]
             kwargs: dict[str, Any] = {
-                "default": MlipOptions.model_fields[name].default,
+                "default": field.default,
                 # `.get`, so the claim above holds: a knob added to CALCULATOR_KNOBS grows a
                 # flag here with no edit. Subscripting would make a knob without a help entry a
                 # KeyError at server startup instead.
                 "help": _FLAG_HELP.get(name, f"MLIP {name.replace('_', ' ')}"),
             }
-            if name == "device":
-                kwargs["choices"] = ["cuda", "cpu"]
+            if get_origin(field.annotation) is Literal:
+                kwargs["choices"] = get_args(field.annotation)
             parser.add_argument(flag, **kwargs)
 
     @classmethod

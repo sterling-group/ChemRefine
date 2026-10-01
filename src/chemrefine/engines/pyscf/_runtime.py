@@ -115,10 +115,10 @@ def _build_scf(
 def run_dft(
     mol: Any,
     *,
-    method: str = "dft",
+    method: str,
     xc: str | None,
     use_df: bool,
-    want_gpu: bool = False,
+    want_gpu: bool,
     nthreads: int = 1,
     dograd: bool = True,
 ) -> tuple[float, list[list[float]], dict[str, Any], Any]:
@@ -128,18 +128,12 @@ def run_dft(
     GPU path uses :mod:`gpu4pyscf.dft` when ``want_gpu`` is true and the
     import succeeds; otherwise the calculation runs on CPU.
 
-    ``use_df`` and ``xc`` have **no default here on purpose** — the caller must say.
-    What "unspecified" means belongs to
-    :class:`~chemrefine.engines.pyscf.options.PyscfOptions` alone: ``use_df``'s old
-    ``False`` was a fourth spelling of that decision, sitting on the off state after
-    the model flipped on — exactly the drift that shipped twice (the
-    model-vs-calculator split the comment in ``extopt_calc`` recounts), latent only
-    because the one caller passes explicitly. ``xc``'s old ``"pbe"`` was the same
-    shape one release later: once the model stopped defaulting the level of theory,
-    a literal here would have been the last silent spelling of it. A ``dft`` call
+    The SCF knobs — ``method``, ``xc``, ``use_df``, ``want_gpu`` — have **no default
+    here**: what an unspecified knob means belongs to
+    :class:`~chemrefine.engines.pyscf.options.PyscfOptions` alone, and a default here
+    would be a second spelling of it, free to drift from the model's. A ``dft`` call
     with ``xc=None`` is refused by name — the API-boundary half of
-    ``PyscfOptions.require_level_of_theory``'s rule. Knobs with no default cannot
-    drift.
+    ``PyscfOptions.require_level_of_theory``'s rule.
 
     ``gradient`` is returned as a list of ``[gx, gy, gz]`` rows when
     ``dograd`` is true, otherwise as an empty list. ``mf`` is returned

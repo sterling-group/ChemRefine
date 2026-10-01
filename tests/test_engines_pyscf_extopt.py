@@ -320,12 +320,12 @@ def test_pyscf_extopt_calculator_from_args_round_trips():
             "--gpu",
         ]
     )
-    calc = PyscfExtOptCalculator.from_args(args)
-    assert calc.method == "hf"
-    assert calc.xc == "b3lyp"
-    assert calc.basis == "cc-pvdz"
-    assert calc.df is True
-    assert calc.gpu is True
+    options = PyscfExtOptCalculator.from_args(args).options
+    assert options.method == "hf"
+    assert options.xc == "b3lyp"
+    assert options.basis == "cc-pvdz"
+    assert options.df is True
+    assert options.gpu is True
 
 
 # Direct engine body coverage lives in ``tests/test_engines_pyscf.py``.

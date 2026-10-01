@@ -97,18 +97,16 @@ class PyscfOptions(EngineOptions):
     def require_level_of_theory(cls, raw: Mapping[str, Any] | None) -> str:
         """Refuse options that name no explicit level of theory; return the named basis.
 
-        Returning the value the check proved is what lets a caller that computes with
-        it (the ExtOpt calculator's ``calc``) take it already narrowed to ``str`` —
-        the alternative was an ``assert`` re-stating what this just established.
+        Returning the value the check proved lets a caller that computes with it (the
+        ExtOpt calculator, at construction) take it already narrowed to ``str``.
 
         ``basis`` must be named, and ``xc`` when ``method`` is ``dft`` — every other
         engine makes the user say the level of theory (ORCA's lives in the template's
         ``!`` line, Q-Chem's in ``$rem``), so a silent ``def2-svp``/``pbe`` would make
         pyscf the one exception, and the wrong kind of exception: a level of theory the
         user never chose. The fields default to ``None`` — a bare instance is
-        constructible (the server's CLI parser and the lockstep-held calculator build
-        one) but nothing runs without the values named: this rule, the strict read,
-        and the calculator's own ``calc`` all refuse.
+        constructible — but nothing runs without the values named: this rule, the strict
+        read, and the ExtOpt calculator's construction all refuse.
 
         One home, two callers, because each engine reaches the requirement through
         different reads: :meth:`from_raw` (the ExtOpt server's strict read) enforces it
