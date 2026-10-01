@@ -27,18 +27,13 @@ import re
 import tomllib
 from pathlib import Path
 
-import pytest
-
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
 
-#: Every file whose prose states the supported Python range, and must therefore track it.
-#:
-#: One entry, because there is now one copy: the two docs pages that used to repeat the
-#: range pull ``README.md``'s ``requirements`` section in with ``pymdownx.snippets``, so
-#: their *source* no longer contains it. That makes the guard stronger, not weaker — it
-#: watches the only text a human can get wrong.
-_PROSE = ("README.md",)
+#: The one file whose prose states the supported Python range. The docs pages that show it
+#: pull ``README.md``'s ``requirements`` section in with ``pymdownx.snippets``, so this is
+#: the only text a human can get wrong.
+_README = _REPO_ROOT / "README.md"
 
 _CLASSIFIER_RE = re.compile(r"^Programming Language :: Python :: (3\.\d+)$")
 
@@ -57,7 +52,7 @@ def _supported() -> list[tuple[int, int]]:
     found = [
         m.group(1) for line in data["project"]["classifiers"] if (m := _CLASSIFIER_RE.match(line))
     ]
-    return sorted(tuple(int(part) for part in v.split(".")) for v in found)  # type: ignore[misc]
+    return sorted((int(major), int(minor)) for major, minor in (v.split(".") for v in found))
 
 
 def _documented_range() -> str:
@@ -98,19 +93,17 @@ def test_requires_python_floor_matches_the_lowest_classifier():
     )
 
 
-@pytest.mark.parametrize("relative", _PROSE)
-def test_the_documented_python_range_matches_the_package(relative: str):
-    """Every doc that states the range must state the one the classifiers declare.
+def test_the_documented_python_range_matches_the_package():
+    """The README states the range the classifiers declare.
 
-    Written as a substring check rather than a rewrite of the sentence: each of these
-    says it differently — a sentence in the README, a bolded bullet in the install guide
-    — and what has to hold is the numbers, not the phrasing around them.
+    Written as a substring check rather than a rewrite of the sentence: what has to hold
+    is the numbers, not the phrasing around them.
     """
-    text = (_REPO_ROOT / relative).read_text(encoding="utf-8")
+    text = _README.read_text(encoding="utf-8")
     wanted = _documented_range()
     stated = _RANGE_RE.findall(text)
-    assert stated, f"{relative} states no Python range; it used to, and the guard needs one"
+    assert stated, "README.md states no Python range; the guard needs one"
     assert all(found == wanted for found in stated), (
-        f"{relative} says Python {set(stated)} but the classifiers declare {wanted}; "
+        f"README.md says Python {set(stated)} but the classifiers declare {wanted}; "
         f"the matrix moved and the prose did not"
     )

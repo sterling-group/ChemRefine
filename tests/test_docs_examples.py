@@ -34,16 +34,9 @@ _YAML_FENCE_RE = re.compile(r"```yaml\n(.*?)```", re.DOTALL)
 
 
 def _config_blocks() -> list[object]:
-    """Every ``steps:``-carrying YAML block, id'd by file and block number.
-
-    ``docs/`` ships in the repository but not in the sdist, so a distro packager's run
-    validates the README's block alone rather than failing on a directory that was never
-    promised to be there.
-    """
+    """Every ``steps:``-carrying YAML block, id'd by file and block number."""
     blocks: list[object] = []
     for path in [_REPO_ROOT / "README.md", *sorted((_REPO_ROOT / "docs").rglob("*.md"))]:
-        if not path.is_file():
-            continue
         text = path.read_text(encoding="utf-8")
         for n, match in enumerate(_YAML_FENCE_RE.finditer(text), 1):
             if "steps:" in match.group(1):
@@ -53,9 +46,15 @@ def _config_blocks() -> list[object]:
     return blocks
 
 
-def test_the_scanner_still_finds_the_readme_quickstart():
-    """Guards the fence regex itself: a scanner that finds nothing passes everything."""
-    assert any("README.md" in str(getattr(p, "id", "")) for p in _config_blocks())
+def test_the_scanner_finds_the_readme_and_the_docs_configs():
+    """Guards the fence regex and both roots: a scanner that finds nothing passes everything.
+
+    ``docs/`` ships wherever this suite runs, so a docs page contributing no block means
+    the scan broke, not that the pages went missing — the README alone would be validated.
+    """
+    files = {str(getattr(p, "id", "")).rsplit(":", 1)[0] for p in _config_blocks()}
+    assert "README.md" in files
+    assert any(name.startswith("docs/") for name in files)
 
 
 @pytest.mark.parametrize("block", _config_blocks())

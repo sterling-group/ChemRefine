@@ -256,11 +256,9 @@ packages = ["src/chemrefine"]
 # the example sweep and one ORCA-inspect fixture read them, so without them the suite
 # the sdist promises fails.
 #
-# `docs` + `mkdocs.yml` ship so the tarball can rebuild its own site — 92 KB, and it
-# turns ~24 documentation guards from "skipped here" into "checked against the artifact
-# we publish", which is the drift class that let `examples/` fall out unnoticed. They
-# used to stay out on size, back when two tutorial GIFs were 13.6 of the directory's
-# 15 MB; the figures are 3 KB of frequency data now and the reason expired with them.
+# `docs` + `mkdocs.yml` ship so the tarball can rebuild its own site (92 KB) and the
+# documentation guards check the artifact we publish: a page that falls out of the
+# include list fails them rather than passing unseen.
 # CONTRIBUTING.md and SECURITY.md are not courtesies in that list: `pymdownx.snippets`
 # runs with `check_paths: true` and two pages `--8<--` them, so a docs build without
 # them fails rather than degrades. CITATION.cff ships because a tarball of a cited tool

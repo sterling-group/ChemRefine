@@ -481,7 +481,8 @@ section_sdist() {
     build_package
     # The sdist ships tests and examples precisely so the suite can be run from it, and nothing
     # else executes that suite — which is how docs/ and examples/ silently fell out of it. The
-    # few remaining repo-only guards (.github/) skip themselves there with named reasons.
+    # few remaining repo-only guards (.github/ and scripts/) skip themselves there with named
+    # reasons.
     ( cd "$work"/chemrefine-*/ \
       && "$PY" -m venv "$work/sdist-venv" \
       && "$work/sdist-venv/bin/pip" install --disable-pip-version-check --quiet ".[test]" \
