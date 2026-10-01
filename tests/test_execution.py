@@ -212,7 +212,7 @@ def test_header_name_picks_cuda_for_a_gpu_step(tmp_path: Path):
     ctx = _ctx(tmp_path)
     assert _execution._header_name(engine, ctx) == "cpu.slurm.header"
     engine.gpu_count = 1
-    assert _execution._header_name(engine, ctx) == slurm.header_name_for_device("cuda")
+    assert _execution._header_name(engine, ctx) == "cuda.slurm.header"
     override = ctx.step_cfg.model_copy(update={"slurm_template": "special.header"})
     assert _execution._header_name(engine, replace(ctx, step_cfg=override)) == "special.header"
 

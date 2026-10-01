@@ -2197,24 +2197,12 @@ def _fake_browser(opened: list[str], *, result: bool = True, windowed: bool = Tr
 
 def test_personal_port_is_stable_and_in_range(monkeypatch: pytest.MonkeyPatch):
     """Same user, same port, every session — what makes a one-time forwarding stanza work."""
-    monkeypatch.setattr(serve_mod.getpass, "getuser", lambda: "ada")
+    monkeypatch.setattr(serve_mod, "current_user", lambda: "ada")
     first = serve_mod._personal_port()
     assert first == serve_mod._personal_port()
     assert serve_mod._PORT_BASE <= first < serve_mod._PORT_BASE + serve_mod._PORT_SPAN
-    monkeypatch.setattr(serve_mod.getpass, "getuser", lambda: "grace")
+    monkeypatch.setattr(serve_mod, "current_user", lambda: "grace")
     assert serve_mod._personal_port() != first
-
-
-def test_personal_port_survives_a_passwdless_environment(monkeypatch: pytest.MonkeyPatch):
-    """``getpass.getuser`` raises under an arbitrary UID; the numeric UID stands in."""
-
-    def no_passwd_entry() -> str:
-        raise OSError("no passwd entry")
-
-    monkeypatch.setattr(serve_mod.getpass, "getuser", no_passwd_entry)
-    monkeypatch.setattr(serve_mod.os, "getuid", lambda: 4242)
-    port = serve_mod._personal_port()
-    assert serve_mod._PORT_BASE <= port < serve_mod._PORT_BASE + serve_mod._PORT_SPAN
 
 
 def test_launch_binds_loopback_with_a_fresh_token(monkeypatch: pytest.MonkeyPatch, caplog):
@@ -2231,7 +2219,7 @@ def test_launch_binds_loopback_with_a_fresh_token(monkeypatch: pytest.MonkeyPatc
     # after the fact leaves `launch` holding the real one — which binds a real socket and
     # runs a real server, and the suite then hangs on waitress's handler threads.
     monkeypatch.setattr(serve_mod, "create_server", fake_create_server)
-    monkeypatch.setattr(serve_mod.getpass, "getuser", lambda: "ada")
+    monkeypatch.setattr(serve_mod, "current_user", lambda: "ada")
     personal = serve_mod._personal_port()
     monkeypatch.setattr(serve_mod, "socket", _fake_socket_module(binds, effective=personal))
     monkeypatch.setattr(serve_mod, "webbrowser", _fake_browser(opened))
@@ -2259,7 +2247,7 @@ def test_a_quick_restart_keeps_the_personal_port(monkeypatch: pytest.MonkeyPatch
     created: dict[str, Any] = {}
     binds: list[tuple[str, int]] = []
     monkeypatch.setattr(serve_mod, "create_server", lambda app, *, sockets: _FakeServer(created))
-    monkeypatch.setattr(serve_mod.getpass, "getuser", lambda: "ada")
+    monkeypatch.setattr(serve_mod, "current_user", lambda: "ada")
     personal = serve_mod._personal_port()
     monkeypatch.setattr(
         serve_mod,
@@ -2279,7 +2267,7 @@ def test_a_taken_personal_port_falls_back_to_a_kernel_one(monkeypatch: pytest.Mo
     created: dict[str, Any] = {}
     binds: list[tuple[str, int]] = []
     monkeypatch.setattr(serve_mod, "create_server", lambda app, *, sockets: _FakeServer(created))
-    monkeypatch.setattr(serve_mod.getpass, "getuser", lambda: "ada")
+    monkeypatch.setattr(serve_mod, "current_user", lambda: "ada")
     personal = serve_mod._personal_port()
     monkeypatch.setattr(
         serve_mod,

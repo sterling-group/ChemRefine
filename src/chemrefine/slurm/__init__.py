@@ -24,13 +24,13 @@ from __future__ import annotations
 
 from chemrefine.slurm.dispatch import (
     ACTIVE_JOBS_NAME,
+    CUDA_HEADER,
     JobLease,
     QueueState,
+    current_user,
     dispatch_locally,
     finished_jobs,
-    header_name_for_device,
     header_name_for_step,
-    is_finished,
     lease_path,
     load_leases,
     poll_jobs,
@@ -53,15 +53,15 @@ from chemrefine.slurm.script import (
 
 __all__ = [
     "ACTIVE_JOBS_NAME",
+    "CUDA_HEADER",
     "JobLease",
     "QueueState",
     "build_array_script",
     "build_script",
+    "current_user",
     "dispatch_locally",
     "finished_jobs",
-    "header_name_for_device",
     "header_name_for_step",
-    "is_finished",
     "lease_path",
     "load_leases",
     "poll_jobs",

@@ -24,7 +24,7 @@ from chemrefine.throttle import GpuBudget
 def _drain_local(job_id: str, *, timeout: float = 5.0) -> None:
     """Block until a background ``local-N`` job is reaped (or the timeout)."""
     deadline = time.monotonic() + timeout
-    while not slurm.is_finished(job_id) and time.monotonic() < deadline:
+    while job_id not in slurm.finished_jobs([job_id]) and time.monotonic() < deadline:
         time.sleep(0.01)
 
 
@@ -554,7 +554,7 @@ def test_submit_falls_back_to_local_when_sbatch_missing(tmp_path: Path):
         job_id = slurm.submit(script)
     assert job_id.startswith("local-")
     _drain_local(job_id)
-    assert slurm.is_finished(job_id) is True
+    assert job_id in slurm.finished_jobs([job_id])
 
 
 def test_submit_local_writes_runlog_and_err_alongside_script(tmp_path: Path):
@@ -582,12 +582,12 @@ def test_two_local_jobs_run_in_background_concurrently(tmp_path: Path):
         j1 = slurm.submit(s1)
         j2 = slurm.submit(s2)
     # Right after submit, both are still running → they run in parallel.
-    assert slurm.is_finished(j1) is False
-    assert slurm.is_finished(j2) is False
+    assert j1 not in slurm.finished_jobs([j1])
+    assert j2 not in slurm.finished_jobs([j2])
     _drain_local(j1)
     _drain_local(j2)
-    assert slurm.is_finished(j1) is True
-    assert slurm.is_finished(j2) is True
+    assert j1 in slurm.finished_jobs([j1])
+    assert j2 in slurm.finished_jobs([j2])
 
 
 def test_submit_local_failure_is_not_raised_but_recorded_on_disk(tmp_path: Path):
@@ -600,7 +600,7 @@ def test_submit_local_failure_is_not_raised_but_recorded_on_disk(tmp_path: Path)
     with patch("chemrefine.slurm.dispatch.shutil.which", return_value=None):
         job_id = slurm.submit(script)  # does not raise
     _drain_local(job_id)
-    assert slurm.is_finished(job_id) is True
+    assert job_id in slurm.finished_jobs([job_id])
     assert script.with_suffix(".runlog").read_text(encoding="utf-8") == "partial stdout\n"
     assert script.with_suffix(".err").read_text(encoding="utf-8") == "boom\n"
 
@@ -661,24 +661,24 @@ def test_submit_local_closes_the_first_log_when_the_second_cannot_be_opened(tmp_
 
 
 # ---------------------------------------------------------------------------
-# is_finished
+# finished_jobs: one job's answer
 # ---------------------------------------------------------------------------
 
 
-def test_is_finished_passes_noheader_to_squeue():
+def test_finished_jobs_passes_noheader_to_squeue():
     """``--noheader`` must be requested, not assumed.
 
     The output is consumed line-for-line with no header slice, so the flag is
     what keeps ``JOBID`` out of the job-id list. See
-    :func:`test_is_finished_false_for_the_only_queued_job`.
+    :func:`test_finished_jobs_false_for_the_only_queued_job`.
     """
     fake = MagicMock(returncode=0, stdout="", stderr="")
     with patch.object(subprocess, "run", return_value=fake) as run:
-        slurm.is_finished("12345")
+        slurm.finished_jobs(["12345"])
     assert "--noheader" in run.call_args.args[0]
 
 
-def test_is_finished_false_for_the_only_queued_job():
+def test_finished_jobs_false_for_the_only_queued_job():
     """The sole queued job must not be mistaken for a header row.
 
     The previous implementation dropped ``lines[0]`` as a header. On a site whose
@@ -688,62 +688,62 @@ def test_is_finished_false_for_the_only_queued_job():
     """
     fake = MagicMock(returncode=0, stdout="12345\n", stderr="")
     with patch.object(subprocess, "run", return_value=fake):
-        assert slurm.is_finished("12345") is False
+        assert "12345" not in slurm.finished_jobs(["12345"])
 
 
-def test_is_finished_true_when_queue_is_empty():
+def test_finished_jobs_true_when_queue_is_empty():
     """An empty queue (no header, no rows) means every job is finished."""
     for stdout in ("", "\n"):
         fake = MagicMock(returncode=0, stdout=stdout, stderr="")
         with patch.object(subprocess, "run", return_value=fake):
-            assert slurm.is_finished("12345") is True
+            assert "12345" in slurm.finished_jobs(["12345"])
 
 
-def test_is_finished_true_when_job_absent():
+def test_finished_jobs_true_when_job_absent():
     fake = MagicMock(returncode=0, stdout="9999\n", stderr="")
     with patch.object(subprocess, "run", return_value=fake):
-        assert slurm.is_finished("12345") is True
+        assert "12345" in slurm.finished_jobs(["12345"])
 
 
-def test_is_finished_false_when_job_still_running():
+def test_finished_jobs_false_when_job_still_running():
     fake = MagicMock(returncode=0, stdout="9999\n12345\n", stderr="")
     with patch.object(subprocess, "run", return_value=fake):
-        assert slurm.is_finished("12345") is False
+        assert "12345" not in slurm.finished_jobs(["12345"])
 
 
-def test_is_finished_false_while_array_tasks_run():
+def test_finished_jobs_false_while_array_tasks_run():
     """An array's parent id never appears bare in squeue — running tasks print
     as ``12345_0`` and pending ones as ``12345_[5-99%4]``; both must count."""
     fake = MagicMock(returncode=0, stdout="12345_3\n", stderr="")
     with patch.object(subprocess, "run", return_value=fake):
-        assert slurm.is_finished("12345") is False
+        assert "12345" not in slurm.finished_jobs(["12345"])
     fake = MagicMock(returncode=0, stdout="12345_[4-99%4]\n", stderr="")
     with patch.object(subprocess, "run", return_value=fake):
-        assert slurm.is_finished("12345") is False
+        assert "12345" not in slurm.finished_jobs(["12345"])
 
 
-def test_is_finished_array_prefix_does_not_match_other_jobs():
+def test_finished_jobs_array_prefix_does_not_match_other_jobs():
     """``123`` must not be held back by an unrelated ``1234`` or ``1234_0``."""
     fake = MagicMock(returncode=0, stdout="1234\n1234_0\n", stderr="")
     with patch.object(subprocess, "run", return_value=fake):
-        assert slurm.is_finished("123") is True
+        assert "123" in slurm.finished_jobs(["123"])
 
 
-def test_is_finished_treats_squeue_failure_as_not_finished():
+def test_finished_jobs_treats_squeue_failure_as_not_finished():
     err = subprocess.CalledProcessError(1, ["squeue"])
     with patch.object(subprocess, "run", side_effect=err):
-        assert slurm.is_finished("12345") is False
+        assert "12345" not in slurm.finished_jobs(["12345"])
 
 
-def test_is_finished_true_for_local_job_id():
+def test_finished_jobs_true_for_local_job_id():
     """Unknown / already-reaped local IDs are reported finished without touching squeue."""
     with patch.object(subprocess, "run") as run:
-        assert slurm.is_finished("local-9999") is True
+        assert "local-9999" in slurm.finished_jobs(["local-9999"])
     run.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# _current_user
+# current_user
 # ---------------------------------------------------------------------------
 
 
@@ -754,34 +754,28 @@ def test_current_user_falls_back_to_uid_when_no_passwd_entry():
     import getpass
     import os
 
-    dispatch._current_user.cache_clear()
+    slurm.current_user.cache_clear()
     try:
         with patch.object(getpass, "getuser", side_effect=KeyError("getpwuid(): uid not found")):
-            assert dispatch._current_user() == str(os.getuid())
+            assert slurm.current_user() == str(os.getuid())
     finally:
-        dispatch._current_user.cache_clear()
+        slurm.current_user.cache_clear()
 
 
 def test_current_user_returns_login_name():
     import getpass
 
-    dispatch._current_user.cache_clear()
+    slurm.current_user.cache_clear()
     try:
         with patch.object(getpass, "getuser", return_value="alice"):
-            assert dispatch._current_user() == "alice"
+            assert slurm.current_user() == "alice"
     finally:
-        dispatch._current_user.cache_clear()
+        slurm.current_user.cache_clear()
 
 
 # ---------------------------------------------------------------------------
 # GPU budget + device-aware headers
 # ---------------------------------------------------------------------------
-
-
-def test_header_name_for_device():
-    assert slurm.header_name_for_device("cuda") == "cuda.slurm.header"
-    assert slurm.header_name_for_device("CUDA") == "cuda.slurm.header"
-    assert slurm.header_name_for_device("cpu") == "cpu.slurm.header"
 
 
 def test_resolve_gpu_budget_explicit_value_wins():
@@ -878,7 +872,7 @@ def test_dispatch_local_forces_local_runner_despite_sbatch(tmp_path: Path):
         job_id = slurm.submit(script, dispatch="local")
     assert job_id.startswith("local-")
     _drain_local(job_id)
-    assert slurm.is_finished(job_id) is True
+    assert job_id in slurm.finished_jobs([job_id])
 
 
 def test_dispatch_slurm_requires_sbatch():

@@ -40,8 +40,8 @@ logger = logging.getLogger(__name__)
 
 
 @functools.lru_cache(maxsize=1)
-def _current_user() -> str:
-    """The username for ``squeue -u``, resolved once (cached for the polling loop).
+def current_user() -> str:
+    """This account's name, resolved once: for ``squeue -u``, and the GUI's personal port.
 
     Resolved lazily, not at import: ``getpass.getuser()`` raises in
     passwd-less environments (containers running under an arbitrary UID),
@@ -85,7 +85,7 @@ def _parse_job_id(stdout: str) -> str:
 _LOCAL_JOB_PREFIX = "local-"
 """Synthetic job-ID prefix used by :func:`_submit_local`.
 
-:func:`is_finished` polls the matching background process for any ID
+:func:`poll_jobs` polls the matching background process for any ID
 starting with this prefix.
 """
 _LOCAL_JOB_COUNTER = itertools.count(1)
@@ -98,7 +98,7 @@ _LOCAL_PROCS: dict[str, tuple[subprocess.Popen[bytes], TextIO, TextIO]] = {}
 """Background local jobs, keyed by ``local-N`` id → ``(proc, out_fh, err_fh)``.
 
 :func:`_submit_local` launches each script with :class:`subprocess.Popen` and
-records it here; :func:`is_finished` polls the process, closes its log handles,
+records it here; :func:`poll_jobs` polls the process, closes its log handles,
 and drops the entry on completion. Running local jobs in the background (rather
 than blocking) is what lets a laptop run the same throttled parallelism a SLURM
 run gets — many scripts run at once under the PAL budget instead of one-at-a-time.
@@ -151,31 +151,26 @@ _UNLIMITED_GPUS = 1_000_000
 chemrefine — places GPUs (one ``--gres=gpu`` allocation per job)."""
 
 
-def header_name_for_device(device: str) -> str:
-    """Map a compute device to its SLURM header basename.
-
-    ``"cuda"`` → ``cuda.slurm.header`` (requests a GPU node via ``--gres=gpu``),
-    anything else → ``cpu.slurm.header``. The trainer and the batch engine both
-    call this so the cuda/cpu choice lives in one place.
-    """
-    return "cuda.slurm.header" if str(device).lower() == "cuda" else "cpu.slurm.header"
+CUDA_HEADER = "cuda.slurm.header"
+"""The SLURM header a step that asks for a GPU takes unless it names its own: the one that
+requests a GPU node (``--gres=gpu``)."""
 
 
 def header_name_for_step(override: str | None, *, gpus: int, default: str) -> str:
     """The SLURM header one step's job uses — the one rule, for the run and the validator.
 
-    A per-step ``slurm_template`` wins; otherwise a step that asks for a GPU takes the
-    cuda header (:func:`header_name_for_device`) so the job lands on a GPU node, and
-    everything else takes the workflow's ``default``. Values rather than a context: the
-    scheduler holds a :class:`~chemrefine.state.StepContext` and asks the engine for
-    ``gpus``, the validator holds a config and reads the demand leniently, and each used
-    to keep an implementation of this rule that agreed with the other's only by prose —
-    the scaffold planned a header with one while the run dispatched with the other.
+    A per-step ``slurm_template`` wins; otherwise a step that asks for a GPU takes
+    :data:`CUDA_HEADER` so the job lands on a GPU node, and everything else takes the
+    workflow's ``default``. Values rather than a context: the scheduler holds a
+    :class:`~chemrefine.state.StepContext` and asks the engine for ``gpus``, the validator
+    holds a config and reads the demand leniently, and the scaffold plans a header from
+    the same answer — one rule for the three, so none can dispatch to a header another
+    did not plan.
     """
     if override:
         return override
     if gpus > 0:
-        return header_name_for_device("cuda")
+        return CUDA_HEADER
     return default
 
 
@@ -218,7 +213,7 @@ def _detected_devices() -> tuple[str, ...]:
     genuine improvement and is deliberately out of scope here, since handing out indices is
     what this already did.
 
-    Cached for the life of the process, like :func:`_current_user` above: the device set
+    Cached for the life of the process, like :func:`current_user` above: the device set
     is a property of the host, and this is asked once per batch — per step *and* per retry
     batch — so an uncached probe forks ``nvidia-smi`` throughout a run to re-learn a
     constant. Tests that vary it call ``_detected_devices.cache_clear()``.
@@ -296,7 +291,7 @@ def _submit_local(script_path: str | Path, *, env: dict[str, str] | None = None)
     the same on-disk artifacts in local mode as they do under SLURM.
 
     Unlike a foreground run this returns immediately — the throttler
-    polls :func:`is_finished` to reap it — so several local jobs run
+    polls :func:`finished_jobs` to reap it — so several local jobs run
     concurrently under the PAL budget. A non-zero exit is **not** raised
     here; it surfaces through the engine's output parsing (the same path
     SLURM failures take), so it lands in the ``on_failure`` ledger.
@@ -554,7 +549,7 @@ def submit(
     ``auto`` with no ``sbatch_cmd`` on ``PATH``), so a user can run
     ChemRefine on a laptop without SLURM the same way it runs on an
     HPC node. The local fallback launches the script in the background
-    and returns a synthetic ``"local-N"`` job ID; :func:`is_finished`
+    and returns a synthetic ``"local-N"`` job ID; :func:`poll_jobs`
     polls (and reaps) the process.
 
     Raises :class:`~chemrefine.errors.JobSubmissionError` if ``sbatch``
@@ -667,7 +662,7 @@ def poll_jobs(job_ids: Collection[str], *, squeue_cmd: str = "squeue") -> QueueS
         # No shell. Every element is either a literal or resolved here: `squeue_cmd` is the
         # scheduler binary the caller named, and the user comes from `getpass.getuser()`.
         result = subprocess.run(  # noqa: S603
-            [squeue_cmd, "--noheader", "-u", _current_user(), "-o", "%i"],
+            [squeue_cmd, "--noheader", "-u", current_user(), "-o", "%i"],
             capture_output=True,
             text=True,
             check=True,
@@ -694,16 +689,6 @@ def finished_jobs(job_ids: Collection[str], *, squeue_cmd: str = "squeue") -> se
     return set(poll_jobs(job_ids, squeue_cmd=squeue_cmd).finished)
 
 
-def is_finished(job_id: str, *, squeue_cmd: str = "squeue") -> bool:
-    """Return True if ``job_id`` is no longer running.
-
-    The single-job form of :func:`finished_jobs`, kept for callers that genuinely have
-    one job to wait on (the MLIP trainer submits exactly one). Batch callers must use
-    :func:`finished_jobs` — calling this in a loop is the pathology it exists to avoid.
-    """
-    return job_id in finished_jobs([job_id], squeue_cmd=squeue_cmd)
-
-
 def wait_for_jobs(
     job_ids: Collection[str],
     *,
@@ -714,11 +699,10 @@ def wait_for_jobs(
     """Block until every id in ``job_ids`` reports finished, polling at ``poll_interval``.
 
     The single canonical "wait for these SLURM jobs to drain" loop — used by the job-array
-    path in :mod:`chemrefine.engines._execution` and by the MLIP trainer, which submits one
-    job (the per-structure path uses the budget-aware
-    :class:`chemrefine.throttle.Throttler` instead, which reaps as it waits). ``poll`` is
-    injected (the caller passes :func:`poll_jobs`) so it stays mockable, mirroring the
-    throttler.
+    path in :mod:`chemrefine.engines._execution` (the per-structure path uses the
+    budget-aware :class:`chemrefine.throttle.Throttler` instead, which reaps as it waits).
+    ``poll`` is injected (the caller passes :func:`poll_jobs`) so it stays mockable,
+    mirroring the throttler.
 
     ``max_wait_seconds`` mirrors :meth:`chemrefine.throttle.Throttler.wait_for_completion` so
     ``Config.job_timeout_seconds`` means the same thing on every path — otherwise setting it
@@ -730,8 +714,8 @@ def wait_for_jobs(
     measured in tasks* — the reason this takes a :class:`QueueState` rather than a set of
     finished ids. A ≤1000-structure step is a single array, so ``pending`` holds exactly one
     parent id that does not disappear until the last task exits: re-anchoring on ids alone
-    turned ``job_timeout_seconds`` into a total-runtime bound there, and a healthy long array
-    tripped a timeout meant to catch a stuck one. The rows underneath the parent move
+    would turn ``job_timeout_seconds`` into a total-runtime bound there, and a healthy long
+    array would trip a timeout meant to catch a stuck one. The rows underneath the parent move
     whenever a task does, and that is what restarts the clock.
     """
     pending = set(job_ids)

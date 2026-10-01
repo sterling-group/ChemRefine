@@ -35,6 +35,7 @@ from chemrefine.engines.api import JobExecutable, StarterProviding, TemplateDriv
 from chemrefine.errors import ConfigError, EngineNotFoundError
 from chemrefine.ids import step_template_path
 from chemrefine.io import atomic_write
+from chemrefine.slurm import CUDA_HEADER
 from chemrefine.validate import effective_header, shared_template_clash
 
 _SCRIPT_FALLBACK = (
@@ -46,7 +47,7 @@ _SCRIPT_FALLBACK = (
 _GENERIC_STARTER = "# ChemRefine step template — this engine documents its own format.\n"
 
 _HEADER_STARTERS: dict[str, str] = {
-    "cuda.slurm.header": (
+    CUDA_HEADER: (
         "#!/bin/bash\n#SBATCH --partition=EDIT_ME\n#SBATCH --time=24:00:00\n#SBATCH --gres=gpu:1\n"
     ),
 }

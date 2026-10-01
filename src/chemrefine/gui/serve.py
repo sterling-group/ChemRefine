@@ -27,7 +27,6 @@ the extra to install.
 
 from __future__ import annotations
 
-import getpass
 import hashlib
 import logging
 import os
@@ -40,6 +39,7 @@ from pathlib import Path
 from waitress.server import create_server
 
 from chemrefine.gui.app import create_app
+from chemrefine.slurm import current_user
 
 logger = logging.getLogger(__name__)
 
@@ -57,14 +57,7 @@ def _personal_port() -> int:
     Hashed rather than configured: every user on a shared login node gets their own
     default without coordination, and the same user gets the same port everywhere.
     """
-    # getpass.getuser() raises in passwd-less environments (containers under an
-    # arbitrary UID); same guard and rationale as slurm.dispatch._current_user — not
-    # imported from there, the GUI must not pull in the scheduler stack.
-    try:
-        user = getpass.getuser()
-    except (KeyError, OSError):
-        user = str(os.getuid())
-    digest = hashlib.sha1(user.encode(), usedforsecurity=False).hexdigest()
+    digest = hashlib.sha1(current_user().encode(), usedforsecurity=False).hexdigest()
     return _PORT_BASE + int(digest[:8], 16) % _PORT_SPAN
 
 
