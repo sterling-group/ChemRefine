@@ -11,7 +11,7 @@ from ase import Atoms
 
 from chemrefine import pipeline
 from chemrefine.config import Config, StepConfig
-from chemrefine.engines.api import NmsCapableEngine, get_engine
+from chemrefine.engines.api import NmsCapableEngine, get_engine, preflight_steps
 from chemrefine.errors import ConfigError
 from chemrefine.io import write_single_xyz
 from chemrefine.state import PipelineState, StepContext, Structure
@@ -397,10 +397,13 @@ def test_an_unknown_operation_is_refused_up_front():
     ``operation`` only picks the parser, so left to run it costs the whole step and
     ledgers every output UNPARSEABLE.
     """
-    engine = get_engine("qchem")
     bad = StepConfig(step=1, engine="qchem", operation="goat")
-    with pytest.raises(ConfigError, match="unknown Q-Chem operation"):
-        engine.check_step(bad, charge=0, multiplicity=1)
+    with pytest.raises(ConfigError) as excinfo:
+        preflight_steps([bad], charge=0, multiplicity=1)
+    assert str(excinfo.value) == (
+        "step 1: unknown operation 'goat' for engine 'qchem', which reads freq, opt_sp, sp. "
+        "Correct it, or omit `operation:`."
+    )
 
 
 @pytest.mark.parametrize(
@@ -434,12 +437,10 @@ def test_the_knobs_the_engine_does_read_pass_preflight():
 
 
 def test_known_and_absent_operations_pass_preflight():
-    """Every declared spelling — either case, ``+`` or ``_`` — and ``None`` pass."""
-    engine = get_engine("qchem")
+    """Every declared operation, in any spelling the config folds, and ``None`` pass."""
     for operation in (None, "sp", "opt_sp", "OPT+SP", "freq"):
-        engine.check_step(
-            StepConfig(step=1, engine="qchem", operation=operation), charge=0, multiplicity=1
-        )
+        step_cfg = StepConfig(step=1, engine="qchem", operation=operation)
+        preflight_steps([step_cfg], charge=0, multiplicity=1)
 
 
 def test_an_explicit_operation_beats_the_template(tmp_path: Path):

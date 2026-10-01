@@ -39,16 +39,6 @@ _DFT_OPERATIONS = frozenset({"opt_sp", "dft", "sp", "freq"})
 TEXT_BASED_OPERATIONS = _DFT_OPERATIONS | {"pes"}
 
 
-def canonical_operation(operation: str) -> str:
-    """How the dispatch reads an ``operation:`` spelling: in any case, ``+`` for ``_``.
-
-    ``OPT+SP`` and ``GOAT`` are the v1 spellings and stay legal. The legacy YAML rewriter
-    lowercases on the way in, but a :class:`~chemrefine.config.StepConfig` built directly
-    does not, so every reader of the field in this engine reads it through this rule.
-    """
-    return operation.lower().replace("+", "_")
-
-
 def parse_dft(path: str | Path, *, src: str | None = None) -> list[ParsedResult]:
     """Parse a single-structure DFT ``.out`` (``opt_sp`` / ``sp`` / ``freq``).
 
@@ -323,10 +313,9 @@ def parse_output(path: str | Path, operation: str, *, src: str | None = None) ->
     ``src`` is what error messages call the output, as for :func:`parse_dft`; a sidecar is
     called by its own name beside it.
     """
-    op = canonical_operation(operation)
-    if op in _DFT_OPERATIONS:
+    if operation in _DFT_OPERATIONS:
         return parse_dft(path, src=src)
-    if op not in _ENSEMBLE_OPERATIONS and op != "pes":
+    if operation not in _ENSEMBLE_OPERATIONS and operation != "pes":
         # A name no engine offers is a config mistake, not a job that died — it must not
         # be reported as one, so it is raised before the termination check below.
         raise OutputParseError(f"unknown ORCA operation: {operation!r}")
@@ -334,9 +323,9 @@ def parse_output(path: str | Path, operation: str, *, src: str | None = None) ->
     label = Path(src) if src else out_path
     text = out_path.read_text(encoding="utf-8", errors="replace")
     try:
-        if op == "pes":
+        if operation == "pes":
             return ensembles.parse_pes_from_text(text, src=str(label))
-        suffixes = _ENSEMBLE_OPERATIONS[op]
+        suffixes = _ENSEMBLE_OPERATIONS[operation]
         sidecar = ensembles.ensemble_sidecar(out_path, *suffixes.names)
         frames = suffixes.parse(sidecar, src=str(label.with_name(sidecar.name)))
     except OutputParseError as e:

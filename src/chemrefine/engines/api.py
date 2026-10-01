@@ -64,7 +64,7 @@ from numpy.typing import NDArray
 
 from chemrefine.config import StepConfig
 from chemrefine.engines._options import EngineOptions
-from chemrefine.errors import EngineNotFoundError
+from chemrefine.errors import ConfigError, EngineNotFoundError
 from chemrefine.state import JobBatch, StepContext, StepInputs, StepResults
 
 # Part of the contract this module publishes, not an implementation detail of it: an engine
@@ -326,23 +326,25 @@ class OperationsDeclaring(Protocol):
 
     Declarations only, like :class:`TemplateDriven`. The config schema keeps
     ``operation`` a free string because engines interpret it themselves; this ClassVar
-    is how an engine *publishes* its vocabulary so introspection (and the GUI's
-    dropdown) can offer exactly the values that engine will act on — the ORCA family
-    declares its parser dispatch's own set, a script engine that treats the field as a
-    label declares nothing, and a future engine with operations of its own declares
-    them here without touching any consumer.
+    is how an engine *publishes* its vocabulary, and the declaration is the whole rule:
+    introspection (and the GUI's dropdown) offers exactly these values, and
+    :func:`check_operation` refuses any other explicit one before the run starts, with no
+    hook of the engine's own. A parser family declares its dispatch's own set, a script
+    engine that treats the field as a label declares nothing, and a future engine with
+    operations of its own declares them here without touching any consumer.
     """
 
     operations: ClassVar[tuple[str, ...]]
-    """The ``operation:`` spellings this engine interprets, canonical only."""
+    """The ``operation:`` names this engine interprets, lower case with ``_``: the spelling
+    the config folds every value to (:meth:`~chemrefine.config.StepConfig._fold_operation`)."""
 
 
 @runtime_checkable
 class OperationInferring(Protocol):
     """An engine that names the operation it reads a step's outputs as, before any job runs.
 
-    The declared ``operation:`` when the step sets one, normalised the way the engine's
-    reader normalises it, else the one the engine's own input infers. This is the value
+    The declared ``operation:`` when the step sets one, else the one the engine's own
+    input infers. This is the value
     that selects the reader, so it is what the cache keys
     (:func:`chemrefine.step.derive_step_key`) rather than the field's spelling: writing out
     the operation the input already implies moves no key, and a change in what the input
@@ -800,6 +802,28 @@ def get_engine(name: str) -> CalculationEngine:
     return engine_cls()
 
 
+def check_operation(engine: CalculationEngine, step_cfg: StepConfig) -> None:
+    """Refuse an explicit ``operation:`` outside the vocabulary ``engine`` declares.
+
+    ``operation`` picks the reader of a step's outputs and changes nothing a job runs, so a
+    value no reader has fails only once the outputs are read: after every job of the step
+    has run at full cost, each output ledgered ``UNPARSEABLE``, with the paid outputs
+    unadoptable after the fix because the operation is part of every row key. The
+    vocabulary is the engine's own declaration (:class:`OperationsDeclaring`), so the rule
+    is this one check, made by the run's t=0 walk (:func:`preflight_steps`) and by
+    ``chemrefine validate``. An engine that declares none reads the field as a label, and
+    an omitted ``operation`` is the engine's to infer; neither is refused.
+    """
+    if step_cfg.operation is None or not isinstance(engine, OperationsDeclaring):
+        return
+    if step_cfg.operation not in engine.operations:
+        raise ConfigError(
+            f"step {step_cfg.step}: unknown operation {step_cfg.operation!r} for engine "
+            f"{step_cfg.engine!r}, which reads {', '.join(sorted(engine.operations))}. "
+            f"Correct it, or omit `operation:`."
+        )
+
+
 def preflight_steps(steps: Sequence[StepConfig], *, charge: int, multiplicity: int) -> None:
     """Ask every step's engine to vet its configuration before anything runs.
 
@@ -807,8 +831,10 @@ def preflight_steps(steps: Sequence[StepConfig], *, charge: int, multiplicity: i
     same submittable steps and for the same reason: a refusal decidable from the config
     alone must not wait for the failing step's own turn — in a pipeline that spends
     days computing labels before a training step, that is the difference between a
-    typo caught in seconds and one caught on Thursday. Engines without the capability
-    have nothing to check and are not asked.
+    typo caught in seconds and one caught on Thursday. Each explicit ``operation`` is held
+    to its engine's declared vocabulary first (:func:`check_operation`); then an engine
+    with the :class:`PreflightChecking` hook is asked for its own refusals, and one without
+    has nothing to check.
 
     ``charge`` / ``multiplicity`` are the config-wide defaults; each step's own
     override is applied here (:meth:`~chemrefine.config.StepConfig.effective_charge`),
@@ -817,6 +843,7 @@ def preflight_steps(steps: Sequence[StepConfig], *, charge: int, multiplicity: i
     """
     for step_cfg in steps:
         engine = get_engine(step_cfg.engine)
+        check_operation(engine, step_cfg)
         if isinstance(engine, PreflightChecking):
             engine.check_step(
                 step_cfg,

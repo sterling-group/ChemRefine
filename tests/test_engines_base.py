@@ -17,7 +17,7 @@ from chemrefine.engines.api import (
     get_engine,
     register,
 )
-from chemrefine.errors import EngineNotFoundError
+from chemrefine.errors import ConfigError, EngineNotFoundError
 from chemrefine.state import RunBlock
 
 
@@ -115,6 +115,50 @@ def test_preflight_steps_asks_only_the_engines_that_declare_the_capability():
         ENGINES.pop("preflight-probe", None)
 
     assert calls == [(2, 0, 1), (3, -1, 2)]
+
+
+def test_a_declared_vocabulary_is_held_at_the_preflight_walk_with_no_hook():
+    """Declaring ``operations`` is the whole rule: the walk refuses anything outside it.
+
+    No ``check_step`` of the engine's own, so no hook to forget and no second copy of the
+    refusal; an omitted operation is the engine's to infer, and an engine that declares no
+    vocabulary reads the field as a label.
+    """
+    from chemrefine.engines.api import preflight_steps
+
+    class _Declaring:
+        name = "vocabulary-probe"
+        operations = ("scan", "relax")
+
+        def prepare(self, ctx: object) -> None: ...
+
+        def submit(self, inputs: object, ctx: object) -> None: ...
+
+        def parse(self, inputs: object, ctx: object) -> None: ...
+
+    try:
+        register("vocabulary-probe")(_Declaring)
+        preflight_steps(
+            [
+                StepConfig(step=1, engine="vocabulary-probe", operation="scan"),
+                StepConfig(step=2, engine="vocabulary-probe"),
+                StepConfig(step=3, engine="fake", operation="Relax"),
+            ],
+            charge=0,
+            multiplicity=1,
+        )
+        with pytest.raises(ConfigError) as excinfo:
+            preflight_steps(
+                [StepConfig(step=4, engine="vocabulary-probe", operation="md")],
+                charge=0,
+                multiplicity=1,
+            )
+    finally:
+        ENGINES.pop("vocabulary-probe", None)
+    assert str(excinfo.value) == (
+        "step 4: unknown operation 'md' for engine 'vocabulary-probe', which reads relax, "
+        "scan. Correct it, or omit `operation:`."
+    )
 
 
 def _conforming(engine_name: str) -> type:

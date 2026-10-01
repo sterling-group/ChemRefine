@@ -38,7 +38,7 @@ must be replaced by hand with `engine:` + `operation:`.
 | `engine: "MLFF"` + an `mlff:` block            | `engine: mlip-extopt` (ORCA-driven, as before)|
 | `engine: "MLFF"` / `mlff` (no block)           | `engine: mlip` (the **new** direct, in-process path) |
 | `mlff:` / `pyscf:` / `trainer:` block          | `options: { … }` (the engine block → options) |
-| `operation: "OPT+SP"` / `"GOAT"`               | `operation: opt_sp` / `goat`                  |
+| `operation: "OPT+SP"` / `"GOAT"`               | unchanged — read in any case, `+` for `_`     |
 | `operation: "MLFF_TRAIN"`                      | `engine: mlip-train`                          |
 | `normal_mode_sampling: true`                   | `nms: true`                                   |
 | `normal_mode_sampling_parameters: { … }`       | folded into `options:` (see NMS table below)  |

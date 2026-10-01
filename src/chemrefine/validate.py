@@ -10,6 +10,9 @@ become issues or warnings up front:
 
 * an ``engine:`` name not in this environment's registry (the run would exit with
   :class:`~chemrefine.errors.EngineNotFoundError`),
+* an explicit ``operation:`` outside the vocabulary its engine declares, on its own
+  field — the check the run's t=0 walk makes
+  (:func:`~chemrefine.engines.api.check_operation`),
 * a bad value for a knob the engine's declared options model reads — through
   ``from_raw_lenient``, the engine's own read, so validation and the run cannot
   disagree,
@@ -66,6 +69,7 @@ from chemrefine.engines.api import (
     ProvisionableEngine,
     TemplateDriven,
     WhitespacePathIntolerant,
+    check_operation,
     get_engine,
 )
 from chemrefine.errors import ChemRefineError, ConfigError
@@ -331,6 +335,14 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
             )
             continue
         engine = get_engine(step.engine)
+        try:
+            # The run's t=0 walk makes the same check (`preflight_steps`); it reads no
+            # option, so it is asked whatever the options read below finds.
+            check_operation(engine, step)
+        except ConfigError as e:
+            issues.append(
+                ValidationIssue(loc=("steps", index, "operation"), kind="preflight", message=str(e))
+            )
         options_ok = True
         declared = None  # the engine's own reading of the step's options, when it has one
         if isinstance(engine, OptionsDeclaring):

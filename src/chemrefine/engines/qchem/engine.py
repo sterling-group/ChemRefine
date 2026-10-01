@@ -82,17 +82,15 @@ class QchemEngine(JobEngine):
     """What ``chemrefine scaffold`` writes for a missing ``stepN.in`` — see
     :class:`~chemrefine.engines.api.StarterProviding`."""
     preflight_refuses: ClassVar[str] = (
-        "an `operation:` the Q-Chem parser dispatch does not know, and a `device: cuda` or "
-        "`backend_python` the shared options accept but nothing here reads — each refused "
-        "before a job runs rather than after every output is ledgered UNPARSEABLE or a GPU "
-        "has been charged for a job that launches the same command either way"
+        "a `device: cuda` or `backend_python` the shared options accept but nothing here "
+        "reads, refused before a GPU is charged or an interpreter named for a job that "
+        "launches the same command either way"
     )
     operations: ClassVar[tuple[str, ...]] = tuple(sorted(output.known_operations()))
     """The ``operation:`` vocabulary this engine interprets — the parser dispatch's own
     set (see :class:`~chemrefine.engines.api.OperationsDeclaring`), derived rather than
-    restated so the dropdown, the schema document and the preflight refusal cannot
-    disagree with what :func:`~chemrefine.engines.qchem.output.parse_output`
-    accepts."""
+    restated so the dropdown, the schema document and the t=0 check cannot disagree with
+    what :func:`~chemrefine.engines.qchem.output.parse_output` accepts."""
     output_globs: ClassVar[tuple[str, ...]] = ("*.out", "*.fchk")
     """Result files copied back out of ``$WORK_DIR``.
 
@@ -127,17 +125,13 @@ class QchemEngine(JobEngine):
     def check_step(self, step_cfg: StepConfig, *, charge: int, multiplicity: int) -> None:
         """Refuse what is decidable from the config alone, before any job runs.
 
-        Two things. An ``operation`` outside the parser dispatch's vocabulary: it never
-        changes the generated input — it only picks the parser — so left to run it fails
-        after every job has run at full cost, each output ledgered ``UNPARSEABLE``.
-        And the two knobs the shared options model accepts that nothing here reads:
+        The two knobs the shared options model accepts that nothing here reads:
         ``device: cuda`` would charge a GPU against ``max_gpus`` and pick the cuda header
         (:func:`chemrefine.engines._execution._header_name`) for a job that launches the
         same command whatever the device — Q-Chem's own GPU path, the wrapper's ``-gpu``
         flag, is not wired — and ``backend_python`` names an interpreter for a program that
         is not a Python backend. Both fire at the run's t=0 walk and in ``chemrefine
-        validate``. ``None`` for ``operation`` is untouched: the template inspection
-        decides. ``charge`` / ``multiplicity`` are unread — the signature is the
+        validate``. ``charge`` / ``multiplicity`` are unread — the signature is the
         capability's.
         """
         opts = self.options_cls.from_raw(step_cfg.engine_options())
@@ -152,15 +146,6 @@ class QchemEngine(JobEngine):
             raise ConfigError(
                 f"step {step_cfg.step}: `backend_python` on a Q-Chem step — Q-Chem is a program "
                 f"named in `executables`, not a Python backend, so nothing reads it. Remove it."
-            )
-        if step_cfg.operation is None:
-            return
-        normalized = output.canonical_operation(step_cfg.operation)
-        if normalized not in output.known_operations():
-            raise ConfigError(
-                f"step {step_cfg.step}: unknown Q-Chem operation {step_cfg.operation!r} — "
-                f"this engine parses {sorted(output.known_operations())}. Correct it, or "
-                f"omit `operation:` to infer the run type from the template's JOBTYPE."
             )
 
     # -- run ---------------------------------------------------------------
@@ -306,14 +291,14 @@ class QchemEngine(JobEngine):
     def resolve_operation(self, ctx: StepContext) -> str:
         """The operation the step's outputs are read as: the declared one, else the template's.
 
-        An explicit ``operation`` wins, in the dispatch's own spelling
-        (:func:`~chemrefine.engines.qchem.output.canonical_operation`); omitted, the
+        An explicit ``operation`` wins, as the step reads it (the config folds its
+        spelling, and the run's t=0 walk holds it to :attr:`operations`); omitted, the
         template's ``JOBTYPE`` facts pick it, through the one reader
         :mod:`~chemrefine.engines.qchem.inspect` already is. The cache keys this value
         (:class:`~chemrefine.engines.api.OperationInferring`).
         """
         if ctx.step_cfg.operation is not None:
-            return output.canonical_operation(ctx.step_cfg.operation)
+            return ctx.step_cfg.operation
         return inspect.inspect_template(require_template(ctx.template, label=self.label)).operation
 
     def parse_one(
@@ -325,8 +310,10 @@ class QchemEngine(JobEngine):
         ``pes``, a reaction path's ``irc``, a trajectory's ``md`` — is read as its final
         structure, and the log says so: a job type runs and yields something usable the
         day it appears in a template, and fans out into its geometries the day its reader
-        joins the dispatch, with no edit here. An explicit ``operation:`` is held to the
-        vocabulary by :meth:`check_step`, so only an inferred one takes this path.
+        joins the dispatch, with no edit here. An explicit ``operation:`` is held to
+        :attr:`operations` at the run's t=0 walk
+        (:func:`~chemrefine.engines.api.check_operation`), so only an inferred one takes
+        this path.
 
         A reason for an output it cannot use names that output relative to the step
         (:func:`~chemrefine.ids.step_relative`), so it still points at the file once the

@@ -17,7 +17,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from chemrefine.validate import ValidationReport, validate_config_file, validate_config_text
+from chemrefine.validate import (
+    ValidationIssue,
+    ValidationReport,
+    validate_config_file,
+    validate_config_text,
+)
 
 
 def _config_dict(**overrides: object) -> dict[str, object]:
@@ -201,16 +206,39 @@ def test_a_lenient_options_failure_is_not_double_reported(tmp_path: Path):
     assert [issue.kind for issue in report.issues] == ["options"]
 
 
-def test_an_unknown_orca_operation_is_an_issue(tmp_path: Path):
+def test_an_unknown_operation_is_an_issue_on_its_own_field(tmp_path: Path):
     """A typo'd ``operation:`` must fail here, not after the step's jobs have run.
 
-    Without the ORCA-family ``check_step`` this passed validation and the run's preflight,
-    submitted and paid for every job, and was then refused per output by the parser — with
-    the paid outputs unadoptable afterwards, since the operation is part of every row key.
+    Unchecked, it passed validation and the run's preflight, submitted and paid for every
+    job, and was then refused per output by the parser — with the paid outputs unadoptable
+    afterwards, since the operation is part of every row key.
     """
     report = _validate(tmp_path, steps=[{"step": 1, "engine": "orca", "operation": "opt-sp"}])
-    assert not report.ok
-    assert any(issue.kind == "preflight" and "opt-sp" in issue.message for issue in report.issues)
+    assert report.issues == (
+        ValidationIssue(
+            loc=("steps", 0, "operation"),
+            kind="preflight",
+            message=(
+                "step 1: unknown operation 'opt-sp' for engine 'orca', which reads docker, "
+                "freq, goat, opt_sp, pes, solvator, sp. Correct it, or omit `operation:`."
+            ),
+        ),
+    )
+
+
+def test_an_operation_in_any_spelling_validates_clean(tmp_path: Path):
+    """``OPT+SP`` is ``opt_sp``, permanently: no issue, no deprecation row."""
+    report = _validate(tmp_path, steps=[{"step": 1, "engine": "orca", "operation": "OPT+SP"}])
+    assert report.ok
+    assert not [w for w in report.warnings if w.kind == "deprecated"]
+    assert report.config is not None and report.config.steps[0].operation == "opt_sp"
+
+
+def test_the_operation_check_does_not_wait_on_the_options_read(tmp_path: Path):
+    """It reads no option, so a bad options read beside it hides nothing."""
+    step = {"step": 1, "engine": "qchem", "operation": "goat", "options": {"nprocs": "x"}}
+    report = _validate(tmp_path, steps=[step])
+    assert _kinds(report) == ["preflight", "options"]
 
 
 def test_an_unknown_mlip_task_name_is_an_issue(tmp_path: Path):

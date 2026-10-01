@@ -272,9 +272,11 @@ class StepConfig(BaseModel):
 
     operation: str | None = None
     """Engine-defined operation (``opt_sp``, ``goat``, ``pes``, ``docker``,
-    ``solvator``...). **Optional**: when omitted, an engine that can inspect its
-    input (ORCA reads the template's keywords) auto-detects the run type; an
-    explicit value here always wins. Provide it when inspection can't decide."""
+    ``solvator``...), read in any case with ``+`` for ``_`` (``OPT+SP`` is ``opt_sp``).
+    **Optional**: when omitted, an engine that can inspect its input (ORCA reads the
+    template's keywords) auto-detects the run type; an explicit value always wins, and an
+    engine that declares its vocabulary refuses any other before the run starts. Provide
+    it when inspection can't decide."""
 
     template: str | None = None
     """Engine input template (basename relative to ``template_dir`` if not absolute)."""
@@ -375,6 +377,18 @@ class StepConfig(BaseModel):
                 ) from e
         return v
 
+    @field_validator("operation", mode="before")
+    @classmethod
+    def _fold_operation(cls, v: object) -> object:
+        """One spelling per operation: any case, and ``+`` for ``_`` (``OPT+SP`` is ``opt_sp``).
+
+        Folded once, as the step is read, so every reader of the field (the row key, the
+        manifest, the step record, the output parser, the vocabulary check) sees the
+        spelling the engines declare, and none folds again. A label, on an engine that
+        declares no vocabulary, is folded the same way.
+        """
+        return v.lower().replace("+", "_") if isinstance(v, str) else v
+
     @field_validator("operation")
     @classmethod
     def _reject_unsafe_operation(cls, v: str | None) -> str | None:
@@ -392,8 +406,9 @@ class StepConfig(BaseModel):
         fields: a value protected some other way is easy to mistake for one that needs no
         protection at all.
 
-        Only the metacharacters are refused, not the vocabulary: ``OPT+SP`` (normalised to
-        ``opt_sp`` before this runs) and any engine's own operation name stay legal.
+        Only the metacharacters are refused, not the vocabulary: ``OPT+SP`` (folded to
+        ``opt_sp`` by :meth:`_fold_operation` before this runs) and any engine's own
+        operation name stay legal.
         """
         if v is not None:
             reject_shell_unsafe(v, what="operation", fix="rename the operation")

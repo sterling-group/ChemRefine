@@ -680,16 +680,18 @@ def test_operation_with_shell_metacharacters_rejected(tmp_path: Path, bad: str):
     [
         ("opt_sp", "opt_sp"),
         ("OPT+SP", "opt_sp"),
+        ("Opt_SP", "opt_sp"),
         ("sp", "sp"),
         ("mlip_train", "mlip_train"),
         ("goat", "goat"),
+        ("GOAT", "goat"),
     ],
 )
 def test_operation_accepts_every_real_spelling(tmp_path: Path, ok: str, expected: str):
     """The rule blocks shell metacharacters only — not the vocabulary engines actually use.
 
-    `OPT+SP` matters: it is the legacy spelling, normalised to `opt_sp` before this
-    validator sees it, and a stricter allowlist would have rejected it for no security gain.
+    `OPT+SP` matters: it is a spelling the config folds to `opt_sp` before this validator
+    sees it, and a stricter allowlist would have rejected it for no security gain.
     The value is asserted, not just its presence: ``is not None`` was true of a normaliser
     that handed the raw ``OPT+SP`` through.
     """
@@ -1090,16 +1092,33 @@ def test_every_legacy_rewrite_announces_itself():
     assert "dropped" in by_loc[("steps", 2, "mlff", "bind")]
 
 
-def test_the_current_trainer_spelling_passes_without_a_warning():
-    """``engine: mlip-train`` + ``operation: mlip_train`` is v2's own vocabulary."""
+def test_the_current_operation_spellings_pass_without_a_warning():
+    """``mlip-train`` + ``mlip_train`` is v2's own vocabulary, and an operation in any case
+    is the config's own spelling rule, not a v1 one: none of them is a rewrite to report."""
     from chemrefine.config_legacy import normalize as _normalize_legacy
 
     rows: list[str] = []
     _normalize_legacy(
-        {"steps": [{"step": 1, "engine": "mlip-train", "operation": "mlip_train"}]},
+        {
+            "steps": [
+                {"step": 1, "engine": "mlip-train", "operation": "mlip_train"},
+                {"step": 2, "engine": "mlip-train", "operation": "MLIP_TRAIN"},
+                {"step": 3, "engine": "orca", "operation": "OPT+SP"},
+                {"step": 4, "engine": "orca", "operation": "goat"},
+            ]
+        },
         report=lambda loc, message: rows.append(message),
     )
     assert rows == []
+
+
+def test_an_operation_is_one_operation_in_any_spelling():
+    """Folded once, as the step is read: any case, and ``+`` for ``_``; ``-`` is not folded."""
+    for spelling in ("OPT+SP", "opt+sp", "Opt_SP", "opt_sp"):
+        assert StepConfig(step=1, engine="orca", operation=spelling).operation == "opt_sp"
+    assert StepConfig(step=1, engine="orca", operation="opt-sp").operation == "opt-sp"
+    assert StepConfig(step=1, engine="mlip", operation="Relax").operation == "relax"
+    assert StepConfig(step=1, engine="orca").operation is None
 
 
 def test_a_step_name_with_a_leading_hyphen_is_refused():

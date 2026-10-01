@@ -21,12 +21,10 @@ import shlex
 from pathlib import Path
 from typing import ClassVar
 
-from chemrefine.config import StepConfig
 from chemrefine.engines._job import JobEngine
 from chemrefine.engines.api import NmsInputInfo, ParsedResult, RunBlock, register
 from chemrefine.engines.orca import input as orca_input
 from chemrefine.engines.orca import inspect, output
-from chemrefine.errors import ConfigError
 from chemrefine.ids import require_template, step_relative
 from chemrefine.state import StepContext
 
@@ -50,10 +48,6 @@ class OrcaEngine(JobEngine):
     """What ``chemrefine scaffold`` writes for a missing ``stepN.inp`` — see
     :class:`~chemrefine.engines.api.StarterProviding`. The ExtOpt engines inherit it: they
     are ORCA-driven and read the same input."""
-    preflight_refuses: ClassVar[str] = (
-        "an `operation:` outside the parser dispatch's vocabulary, which would otherwise fail "
-        "only after every job had run and each output was ledgered UNPARSEABLE"
-    )
     operations: ClassVar[tuple[str, ...]] = tuple(sorted(output.known_operations()))
     """The ``operation:`` vocabulary this family interprets — the parser dispatch's own
     set (see :class:`~chemrefine.engines.api.OperationsDeclaring`), inherited by the
@@ -126,39 +120,6 @@ class OrcaEngine(JobEngine):
         """Extra ORCA blocks; MLIP/PySCF ExtOpt override to inject ``%method ProgExt …``."""
         return ""
 
-    # -- preflight ---------------------------------------------------------
-
-    def check_step(self, step_cfg: StepConfig, *, charge: int, multiplicity: int) -> None:
-        """Refuse an ``operation`` the parser dispatch does not know, before any job runs.
-
-        ``operation`` never changes the generated input — it only picks the parser — so a
-        value outside the dispatch's vocabulary cannot fail until the outputs are read:
-        every job runs at full cost first, each output is then ledgered ``UNPARSEABLE``,
-        and because the operation is part of every row key, correcting the typo re-keys
-        the rows and no recovery command adopts the paid outputs. Decidable from the
-        config alone, so it belongs on :class:`~chemrefine.engines.api.PreflightChecking`,
-        where the run's t=0 walk and ``chemrefine validate`` both make it.
-
-        The accepted set is the parser's own:
-        :func:`~chemrefine.engines.orca.output.known_operations` plus the legacy ``dft``
-        spelling the dispatch still reads (deliberately absent from what introspection
-        *offers*). Normalised the way the dispatch normalises, so ``GOAT`` and ``OPT+SP``
-        stay legal however the config was built — the legacy YAML rewriter lowercases on
-        the way in, but a :class:`~chemrefine.config.StepConfig` built directly does not.
-        ``None`` is untouched: the template inspection decides, and a template problem
-        has refusals of its own. ``charge`` / ``multiplicity`` are unread — the
-        signature is the capability's.
-        """
-        if step_cfg.operation is None:
-            return
-        normalized = output.canonical_operation(step_cfg.operation)
-        if normalized not in output.known_operations() | {"dft"}:
-            raise ConfigError(
-                f"step {step_cfg.step}: unknown ORCA operation {step_cfg.operation!r} — "
-                f"this engine parses {sorted(output.known_operations())}. Correct it, or "
-                f"omit `operation:` to infer the run type from the template's keywords."
-            )
-
     # -- run ---------------------------------------------------------------
 
     def pal(self, ctx: StepContext) -> int:
@@ -224,13 +185,13 @@ class OrcaEngine(JobEngine):
     def resolve_operation(self, ctx: StepContext) -> str:
         """The operation the step's outputs are read as: the declared one, else the template's.
 
-        An explicit ``operation`` wins, in the dispatch's own spelling
-        (:func:`~chemrefine.engines.orca.output.canonical_operation`); omitted, the
+        An explicit ``operation`` wins, as the step reads it (the config folds its
+        spelling, and the run's t=0 walk holds it to :attr:`operations`); omitted, the
         template's ORCA keywords (:mod:`engines.orca.inspect`) pick it. The cache keys this
         value (:class:`~chemrefine.engines.api.OperationInferring`).
         """
         if ctx.step_cfg.operation is not None:
-            return output.canonical_operation(ctx.step_cfg.operation)
+            return ctx.step_cfg.operation
         return inspect.inspect_template(require_template(ctx.template, label=self.label)).operation
 
     def parse_one(
@@ -246,12 +207,12 @@ class OrcaEngine(JobEngine):
         ``irc``, a band's ``neb``, a trajectory's ``md`` — is read as its final structure, and
         the log says so: a run kind runs and yields something usable the day it appears in a
         template, and fans out into its geometries the day its reader joins the dispatch,
-        with no edit here. An explicit ``operation:`` is held to the vocabulary by
-        :meth:`check_step`, so only an inferred one takes this path. The final-structure
-        read finds what a single-structure ``.out`` carries; a run that writes its
-        geometries elsewhere (a trajectory) leaves it nothing, and the structure is
-        ledgered unparseable — exactly what the ``sp`` these templates used to infer did,
-        now under the run kind's own name and with the warning.
+        with no edit here. An explicit ``operation:`` is held to :attr:`operations` at the
+        run's t=0 walk (:func:`~chemrefine.engines.api.check_operation`), so only an
+        inferred one takes this path. The final-structure read finds what a
+        single-structure ``.out`` carries; a run that writes its geometries elsewhere (a
+        trajectory) leaves it nothing, and the structure is ledgered unparseable under the
+        run kind's own name, with the warning.
 
         A reason for an output it cannot use names that output relative to the step
         (:func:`~chemrefine.ids.step_relative`), so it still points at the file once the

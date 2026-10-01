@@ -998,9 +998,10 @@ def test_parse_output_dispatches_dft():
     assert len(parsed) == 1
 
 
-def test_parse_output_accepts_opt_plus_sp_alias():
-    parsed = parse_output(FIXTURE, "OPT+SP")
-    assert len(parsed) == 1
+def test_parse_output_reads_the_folded_spelling_only():
+    """The config folds every spelling once (``OPT+SP`` is ``opt_sp``); the parser folds none."""
+    with pytest.raises(OutputParseError, match=re.escape("unknown ORCA operation: 'OPT+SP'")):
+        parse_output(FIXTURE, "OPT+SP")
 
 
 def _with_sidecar(tmp_path: Path, suffix: str, fixture: Path) -> Path:

@@ -224,21 +224,21 @@ def _normalize_step(step: Any, index: int, sink: DeprecationSink) -> Any:
             sink((*loc, "engine"), f"engine `{eng}` is deprecated; use `{renamed}`")
         s["engine"] = renamed
 
-    # Operation: ``OPT+SP`` → ``opt_sp``, ``GOAT`` → ``goat`` (engines lower/replace too).
-    if isinstance(s.get("operation"), str):
-        s["operation"] = s["operation"].lower().replace("+", "_")
-        # ``MLFF_TRAIN`` was a training *operation* that implied the trainer engine.
-        if s["operation"] in ("mlff_train", "mlip_train"):
-            if s["operation"] == "mlff_train" or s.get("engine") != "mlip-train":
-                # Warn only when something is actually rewritten: `engine: mlip-train`
-                # + `operation: mlip_train` is the current spelling passing through.
-                sink(
-                    (*loc, "operation"),
-                    f"operation `{s['operation']}` implying the trainer engine is "
-                    f"deprecated; write `engine: mlip-train` + `operation: mlip_train`",
-                )
-            s["engine"] = "mlip-train"
-            s["operation"] = "mlip_train"
+    # Operation: ``MLFF_TRAIN`` — and ``MLIP_TRAIN`` on another engine — was a training
+    # *operation* that implied the trainer engine; v1 read the name in any case. Any other
+    # spelling is the config's own rule (``StepConfig._fold_operation``), not a v1 one.
+    op = s.get("operation")
+    if isinstance(op, str) and (
+        op.lower() == "mlff_train"
+        or (op.lower() == "mlip_train" and s.get("engine") != "mlip-train")
+    ):
+        sink(
+            (*loc, "operation"),
+            f"operation `{op.lower()}` implying the trainer engine is deprecated; write "
+            f"`engine: mlip-train` + `operation: mlip_train`",
+        )
+        s["engine"] = "mlip-train"
+        s["operation"] = "mlip_train"
 
     _normalize_nms_keys(s, loc, sink)
 

@@ -300,6 +300,13 @@ for the full map.
 
 ### Changed
 
+- **An explicit `operation:` is held to its engine's vocabulary by one check.** A value
+  outside the vocabulary an engine declares is refused when the run starts and reported by
+  `chemrefine validate` on the step's `operation` field, where it was filed under
+  `options`; `operation: dft` on an ORCA-family step, which no ORCA vocabulary lists, is
+  refused like any unknown operation. An operation is read in any case with `+` for `_`
+  (`OPT+SP` is `opt_sp`): a rule of the config itself rather than of the v1 compatibility
+  layer, so it stays past 3.0.
 - **A batch reads its SLURM header once.** Every job script of a step's batch is built from
   the header as the batch read it when it started, where the queue path re-read the file
   for each job; an edit reaches the step's next batch or the next run.

@@ -30,7 +30,6 @@ from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.api import ENGINES, OptionsDeclaring, get_engine
 from chemrefine.engines.orca.engine import OrcaEngine
 from chemrefine.engines.orca.inspect import inspect_template
-from chemrefine.engines.orca.output import canonical_operation
 from chemrefine.io import read_xyz_frames
 from chemrefine.nms import NmsOptions
 
@@ -39,9 +38,8 @@ EXAMPLES = sorted(REPO.glob("examples/**/input.yaml"))
 IDS = [str(p.parent.relative_to(REPO / "examples")) or "canonical" for p in EXAMPLES]
 
 # Derived, not spelled: every engine driven by the ORCA parser is in the family, so a
-# fourth member joins these gates by existing. The authoritative behavior pin lives in
-# test_engines_invariants.test_every_orca_family_engine_refuses_an_unknown_operation_up_front
-# — that file pins the set, this one derives it.
+# fourth member joins these gates by existing. The vocabulary every declaring engine is
+# held to at t=0 is pinned in test_engines_invariants; this one derives the family.
 _ORCA_FAMILY = frozenset(n for n in ENGINES if isinstance(get_engine(n), OrcaEngine))
 assert _ORCA_FAMILY, "the ORCA family derives empty — the example gates would all skip"
 
@@ -163,7 +161,7 @@ def test_example_operations_match_their_templates(yml: Path) -> None:
         template = _resolved_template(cfg, step)
         assert template is not None
         inferred = inspect_template(template).operation
-        declared = canonical_operation(step.operation)
+        declared = step.operation  # already folded by the config: one spelling
         assert _parse_route(declared) == _parse_route(inferred), (
             f"step {step.step}: operation {step.operation!r} selects the "
             f"{_parse_route(declared)!r} parser, but template {template.name} runs "
