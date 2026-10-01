@@ -958,9 +958,18 @@ def rebuild_cache_step(
     re-run — it can afford to, being an optimisation over doing the work anyway. A
     successful rebuild then writes the manifest back **with** row provenance, so the
     adoption is recorded and every later question is answered per row.
+
+    A template-driven step whose template is not there is refused first, by name, as
+    the run's t=0 walk refuses it. Its key would derive over an empty template digest,
+    and a rebuild would stamp every adopted row with that key — the next ``resume``,
+    the template restored, would then condemn every one of them. Refused ahead of the
+    provenance check, which would blame the configuration instead, and of the artifact
+    branch, which would re-cache a product under the same key.
     """
     engine = get_engine(step_cfg.engine)
     ctx = build_context(config, step_cfg, prev_state, engine)
+    if isinstance(engine, TemplateDriven):
+        ids.require_template(ctx.template, label=engine.label)
     key = derive_step_key(ctx, step_cfg, engine)
     manifest = cache.load_manifest(ctx.step_dir)
     if manifest is None:

@@ -18,7 +18,7 @@ from fake_engine import FakeEngine
 from chemrefine import cache, io
 from chemrefine.config import Config, StepConfig
 from chemrefine.engines.api import get_engine
-from chemrefine.errors import CacheError, ChemRefineError
+from chemrefine.errors import CacheError, ChemRefineError, ConfigError
 from chemrefine.state import (
     FailureKind,
     FailureRecord,
@@ -1287,6 +1287,7 @@ def test_rebuild_cache_step_nms_branch(tmp_path: Path):
 
     template_dir = tmp_path / "templates"
     template_dir.mkdir(parents=True, exist_ok=True)
+    (template_dir / "step1.inp").write_text("! Opt Freq\n", encoding="utf-8")
     cfg = Config(
         output_dir=tmp_path / "outputs",
         template_dir=template_dir,
@@ -1325,6 +1326,64 @@ def test_rebuild_cache_step_nms_branch(tmp_path: Path):
     outcome = step.rebuild_cache_step(cfg, step_cfg, PipelineState(structures=(seed,)))
     assert outcome.cache_hit is False
     assert {s.id for s in outcome.state.structures} == {"0"}  # resolved, id kept
+
+
+@pytest.mark.parametrize("stamped", [False, True], ids=["unprovenanced", "provenanced"])
+def test_rebuild_cache_step_refuses_a_step_whose_template_is_missing(tmp_path: Path, stamped: bool):
+    """Refused by the template's name, before any key is derived over its empty digest.
+
+    Over a missing template the rebuild would stamp every adopted row with a key the
+    restored template no longer matches, and the next ``resume`` would condemn them all.
+    A manifest whose rows disagree is refused for the template too, not blamed on the
+    configuration, which the provenance check reached first would have done."""
+    from chemrefine import step
+    from chemrefine.ids import structure_artifact_path
+
+    cfg = Config(
+        output_dir=tmp_path / "outputs",
+        template_dir=tmp_path / "templates",
+        steps=[StepConfig(step=1, engine="orca", operation="sp")],
+    )
+    step_cfg = cfg.steps[0]
+    step_dir = (cfg.output_dir / step_cfg.dir_name()).resolve()
+    out = structure_artifact_path(step_dir, 1, "0", "out")
+    inp = structure_artifact_path(step_dir, 1, "0", "inp")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("never read\n", encoding="utf-8")
+    inp.write_text("! SP\n", encoding="utf-8")
+    rows = {"0": ("another-row-key", "another-digest")} if stamped else {}
+    cache.save_manifest(
+        StepInputs(files=((inp, out, "0"),)),
+        step_dir,
+        operation="sp",
+        engine="orca",
+        stamp=cache.ManifestStamp(fingerprint="", criterion_key="", search_key="", rows=rows),
+    )
+    seed = Structure(id="0", atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]))
+    with pytest.raises(ConfigError, match=r"ORCA template not found: .*step1\.inp"):
+        step.rebuild_cache_step(cfg, step_cfg, PipelineState(structures=(seed,)))
+
+
+def test_rebuild_cache_step_refuses_a_training_step_whose_template_is_missing(
+    tmp_path: Path,
+):
+    """The artifact branch would re-cache a product under the same empty-digest key."""
+    from chemrefine import step
+
+    cfg = Config(
+        output_dir=tmp_path / "outputs",
+        template_dir=tmp_path / "templates",
+        steps=[
+            StepConfig(
+                step=1,
+                engine="mlip-train",
+                operation="mlip_train",
+                options={"task_name": "mace_off", "device": "cpu"},
+            )
+        ],
+    )
+    with pytest.raises(ConfigError, match="MLIP training template not found"):
+        step.rebuild_cache_step(cfg, cfg.steps[0], PipelineState(structures=()))
 
 
 def _nms_rebuild_tree(tmp_path: Path, **options) -> tuple[Config, Path, cache.StepKey]:
