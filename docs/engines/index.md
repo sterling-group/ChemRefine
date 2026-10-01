@@ -311,7 +311,9 @@ Two of the engines end in `-extopt`, and the table shows why they look like ORCA
 step template is an ORCA `.inp`, they answer to ORCA's `operation:` vocabulary, and they
 can do NMS. They *are* ORCA runs — ORCA drives the optimiser, the geometry steps and the
 frequency analysis — with one substitution: where ORCA would call its own SCF for energies
-and gradients, it calls the backend instead.
+and gradients, it calls the backend instead. Their template's `!` line carries `ExtOpt`, the
+keyword that has ORCA take every energy and gradient from the backend; without it ORCA
+computes the step itself. `chemrefine scaffold` writes `! ExtOpt Opt`.
 
 ```
 ORCA (%method ProgExt)  →  extopt bridge  →  local HTTP server  →  MACE / UMA / PySCF

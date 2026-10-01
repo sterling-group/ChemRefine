@@ -226,8 +226,7 @@ class StarterProviding(Protocol):
     (:mod:`chemrefine.scaffold` fills it from the engine's own output contract). Declared on
     the engine rather than keyed by name in the scaffold module, so the starter travels with
     the engine and no central list is edited to add one; an engine that declares none gets
-    the scaffold's suffix-shaped fallback, and the ExtOpt engines get ORCA's by inheriting
-    ORCA.
+    the scaffold's suffix-shaped fallback.
     """
 
     template_starter: ClassVar[str]

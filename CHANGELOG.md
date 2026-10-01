@@ -481,6 +481,11 @@ for the full map.
 
 ### Fixed
 
+- **The ExtOpt engines scaffold an ExtOpt starter.** `mlip-extopt` and `pyscf-extopt` were
+  scaffolded ORCA's own starter, whose `! B3LYP D4 def2-SVP Opt` has ORCA compute the step
+  itself: ORCA takes its energies and gradients from an external program only under the
+  `ExtOpt` keyword, and the input writer never adds it, so a scaffolded step started its
+  gradient server and never called it. They now scaffold `! ExtOpt Opt`.
 - **A template or SLURM header that cannot be read is refused before the run starts.**
   `chemrefine validate` and the run's t=0 checks tested only that a step's template and
   its SLURM header existed, so a latin-1 `Å` in a comment, or a file another account

@@ -127,6 +127,8 @@ def test_each_bundled_engine_gets_its_own_starter(tmp_path: Path):
         {"step": 3, "engine": "mlip"},
         {"step": 4, "engine": "pyscf", "options": {"basis": "def2-svp", "xc": "pbe"}},
         {"step": 5, "engine": "mlip-train", "options": {"task_name": "mace_off", "device": "cpu"}},
+        {"step": 6, "engine": "mlip-extopt"},
+        {"step": 7, "engine": "pyscf-extopt"},
     )
     scaffold_templates(config)
 
@@ -140,6 +142,10 @@ def test_each_bundled_engine_gets_its_own_starter(tmp_path: Path):
     assert "pyscf" in read("step4.py")
     assert "converged = bool(mf.converged)" in read("step4.py")
     assert "NOT runnable" in read("step5.yaml")
+    for extopt in ("step6.inp", "step7.inp"):
+        # ORCA computes a step itself unless its `!` line names ExtOpt.
+        assert "! ExtOpt Opt" in read(extopt)
+        assert "B3LYP" not in read(extopt)
 
 
 # ---------------------------------------------------------------------------
@@ -171,9 +177,9 @@ def test_a_drop_in_engine_declares_its_own_starter():
 
     Keyed by name in ``scaffold.py``, a starter was one more central list an engine had to
     be added to — and a drop-in got the suffix fallback however good its own example was.
-    Declared on the class it travels with the engine (the ExtOpt engines inherit ORCA's by
-    inheriting ORCA); the fallback stays for an engine that declares none, and the contract
-    comment is still filled in here, so a script engine's starter names its own fields.
+    Declared on the class it travels with the engine; the fallback stays for an engine that
+    declares none, and the contract comment is still filled in here, so a script engine's
+    starter names its own fields.
     """
     from chemrefine.engines.api import ENGINES, register
 
@@ -224,7 +230,9 @@ def test_the_template_driven_starters_render_the_real_geometry(tmp_path: Path):
     writer pins the pair: the seed's coordinates must land, and the placeholder must go.
     """
     from chemrefine.engines.orca import input as orca_input
+    from chemrefine.engines.orca import inspect
     from chemrefine.engines.orca.engine import OrcaEngine
+    from chemrefine.engines.orca.extopt.engine import ExtOptOrcaEngine
     from chemrefine.engines.qchem import input as qchem_input
     from chemrefine.engines.qchem.engine import QchemEngine
     from chemrefine.io import write_single_xyz
@@ -256,6 +264,22 @@ def test_the_template_driven_starters_render_the_real_geometry(tmp_path: Path):
         multiplicity=1,
     ).read_text(encoding="utf-8")
     assert f"* xyzfile 0 1 {xyz}" in rendered
+
+    extopt_tpl = tmp_path / "extopt.inp"
+    extopt_tpl.write_text(ExtOptOrcaEngine.template_starter, encoding="utf-8")
+    rendered = orca_input.build_input(
+        xyz_path=xyz,
+        template_path=extopt_tpl,
+        output_path=tmp_path / "e" / "step1_0.inp",
+        charge=0,
+        multiplicity=1,
+        extra_blocks='%method\n  ProgExt "/w.sh"\nend',
+    ).read_text(encoding="utf-8")
+    assert "! ExtOpt Opt" in rendered
+    assert f"* xyzfile 0 1 {xyz}" in rendered
+    assert inspect.inspect_template(extopt_tpl) == inspect.OrcaInputInfo(
+        operation="opt_sp", is_ts=False, has_freq=False, pal=4, maxcore=None
+    )
 
 
 def test_an_unwritable_template_dir_is_a_config_error_not_a_traceback(tmp_path: Path):

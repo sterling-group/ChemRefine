@@ -53,6 +53,16 @@ class ExtOptOrcaEngine(OrcaEngine):
         "a typoed or missing server knob: these options configure a gradient server, so the "
         "strict read the run block makes is made up front, before earlier steps are paid for"
     )
+    template_starter: ClassVar[str] = (
+        "# ORCA ExtOpt starter: `! ExtOpt` has ORCA take every energy and gradient from the\n"
+        "# backend of this step; ChemRefine adds the %method ProgExt block and each geometry.\n"
+        "! ExtOpt Opt\n"
+        "%pal nprocs 4 end\n"
+    )
+    """What ``chemrefine scaffold`` writes for a missing ``stepN.inp``. ORCA computes a
+    step itself unless its ``!`` line names ``ExtOpt``, so ORCA's own starter would leave
+    the gradient server idle. Declared on the base, so every ExtOpt engine gets it. No
+    ``%maxcore``: the job's memory is the server's, so the header's memory policy stands."""
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         """Refuse a subclass whose ``calculator_cls`` cannot serve.
