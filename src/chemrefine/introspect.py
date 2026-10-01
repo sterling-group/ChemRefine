@@ -80,6 +80,11 @@ class EngineDescriptor:
     :class:`~chemrefine.engines.api.PreflightChecking` and
     :class:`~chemrefine.engines.api.TemplateChecking`); ``None`` for an engine with neither
     hook."""
+    frequency_request: str | None
+    """How the engine's input asks for the frequencies normal-mode sampling needs, as the
+    refusal of an ``nms: true`` step without them quotes it (see
+    :class:`~chemrefine.engines.api.NmsCapableEngine`); ``None`` for an engine that cannot
+    sample."""
 
 
 def _describe(name: str, engine: CalculationEngine) -> EngineDescriptor:
@@ -121,6 +126,9 @@ def _describe(name: str, engine: CalculationEngine) -> EngineDescriptor:
             engine.preflight_refuses
             if isinstance(engine, (PreflightChecking, TemplateChecking))
             else None
+        ),
+        frequency_request=(
+            engine.frequency_request if isinstance(engine, NmsCapableEngine) else None
         ),
     )
 

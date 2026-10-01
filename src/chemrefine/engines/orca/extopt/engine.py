@@ -63,6 +63,13 @@ class ExtOptOrcaEngine(OrcaEngine):
     step itself unless its ``!`` line names ``ExtOpt``, so ORCA's own starter would leave
     the gradient server idle. Declared on the base, so every ExtOpt engine gets it. No
     ``%maxcore``: the job's memory is the server's, so the header's memory policy stands."""
+    frequency_request: ClassVar[str] = (
+        "`NumFreq` among the keywords, or `NumFreq true` in a %freq block — the backend "
+        "serves gradients, which ORCA differentiates numerically"
+    )
+    """Satisfies :class:`~chemrefine.engines.api.NmsCapableEngine`: the numerical Hessian,
+    the one an ExtOpt job can compute, since its backend serves energies and gradients
+    only."""
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         """Refuse a subclass whose ``calculator_cls`` cannot serve.

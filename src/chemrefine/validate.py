@@ -79,7 +79,7 @@ from chemrefine.engines.api import (
 )
 from chemrefine.errors import ChemRefineError, ConfigError
 from chemrefine.ids import StepTemplate, require_template, step_template_path
-from chemrefine.nms import NmsOptions
+from chemrefine.nms import NmsOptions, require_frequencies
 from chemrefine.state import PipelineState, StepContext
 from chemrefine.step import build_context
 
@@ -470,6 +470,19 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
                             loc=("steps", index, "template"), kind="template", message=str(e)
                         )
                     )
+        if (
+            step.nms
+            and isinstance(engine, NmsCapableEngine)
+            and (read is not None or not isinstance(engine, TemplateDriven))
+        ):
+            # The walk's own refusal of a sampling step whose input computes no frequencies —
+            # asked of an input that can be read, whose absence is the template's row.
+            try:
+                require_frequencies(engine, ctx)
+            except ConfigError as e:
+                issues.append(
+                    ValidationIssue(loc=("steps", index, "nms"), kind="nms", message=str(e))
+                )
         # The same "does not exist yet" the input, the template and the header get, for the
         # option values the config declares to be paths — keyed to that declaration, so the
         # next path-valued knob is covered by being declared, and read off the engine's own

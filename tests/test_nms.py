@@ -457,6 +457,7 @@ class _FakeNms:
     """
 
     name = "fake-nms"
+    frequency_request = "a frequency job"
 
     def __init__(
         self,

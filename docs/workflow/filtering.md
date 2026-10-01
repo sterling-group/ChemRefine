@@ -34,7 +34,8 @@ rank on a thermochemical energy instead — these require a frequency calc to ha
 populated that energy (ORCA writes Gibbs / enthalpy / ZPE in its
 `THERMOCHEMISTRY` block; see [`Structure`](../api/state.md)). If **no** structure
 carries the chosen energy, filtering raises a `ConfigError` — no frequency calc
-ran at all, which is a config mistake. If only *some* lack it (an
+ran at all, which is a config mistake. The refusal comes after the step's results are
+cached, so switching the energy type re-filters them without recomputing. If only *some* lack it (an
 `on_failure: best` backfill carries no energy of any kind by construction), those
 are excluded from the ranking with a warning naming them, rather than aborting
 the one policy whose purpose is to keep going — they stay visible in the cache

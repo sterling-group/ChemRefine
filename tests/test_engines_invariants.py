@@ -854,6 +854,60 @@ def test_every_engine_with_the_nms_hook_satisfies_the_nms_protocol():
     )
 
 
+_FREQUENCY_SPELLINGS: dict[str, dict[str, str]] = {
+    "orca": {
+        "`Freq`": "! B3LYP def2-SVP Opt Freq\n",
+        "`NumFreq`": "! B3LYP def2-SVP Opt NumFreq\n",
+        "`AnFreq`": "! B3LYP def2-SVP Opt AnFreq\n",
+        "`NumFreq true`": "! B3LYP def2-SVP Opt\n%freq NumFreq true end\n",
+        "`AnFreq true`": "! B3LYP def2-SVP Opt\n%freq AnFreq true end\n",
+    },
+    "mlip-extopt": {
+        "`NumFreq`": "! ExtOpt Opt NumFreq\n",
+        "`NumFreq true`": "! ExtOpt Opt\n%freq NumFreq true end\n",
+    },
+    "pyscf-extopt": {
+        "`NumFreq`": "! ExtOpt Opt NumFreq\n",
+        "`NumFreq true`": "! ExtOpt Opt\n%freq NumFreq true end\n",
+    },
+    "qchem": {
+        "`jobtype freq`": "$rem\n  jobtype freq\n$end\n",
+        "`final_vibrational_analysis true`": (
+            "$rem\n  jobtype opt\n$end\n$geom_opt\n  final_vibrational_analysis true\n$end\n"
+        ),
+    },
+}
+"""Each spelling a shipped engine's ``frequency_request`` quotes, written into a template."""
+
+
+@pytest.mark.parametrize(
+    ("engine_name", "spelling"),
+    [(name, spelling) for name, rows in _FREQUENCY_SPELLINGS.items() for spelling in rows],
+)
+def test_every_spelling_a_frequency_request_quotes_requests_frequencies(
+    engine_name: str, spelling: str, tmp_path: Path
+):
+    """The refusal tells a user how to ask; each way it names has to be one that counts."""
+    engine = get_engine(engine_name)
+    assert isinstance(engine, NmsCapableEngine)
+    (tmp_path / f"step1.{engine.template_suffix}").write_text(
+        _FREQUENCY_SPELLINGS[engine_name][spelling], encoding="utf-8"
+    )
+    assert engine.nms_input_info(_ctx(tmp_path, engine_name, {})).computes_frequencies
+
+
+def test_every_frequency_request_is_held_to_its_spellings():
+    """A sentence quotes exactly the spellings above, so one it gains is one fed to the
+    inspector — and every sampling engine has its row."""
+    capable = sorted(n for n in ENGINES if isinstance(get_engine(n), NmsCapableEngine))
+    assert capable == sorted(_FREQUENCY_SPELLINGS)
+    for name in capable:
+        engine = get_engine(name)
+        assert isinstance(engine, NmsCapableEngine)
+        quoted = set(re.findall(r"`[^`]+`", engine.frequency_request))
+        assert quoted == set(_FREQUENCY_SPELLINGS[name]), name
+
+
 def test_every_nms_capable_engine_can_reparse_its_frequency_output():
     """NMS capability implies the viewer capability — the two must never come apart.
 

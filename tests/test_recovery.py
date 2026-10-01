@@ -426,6 +426,7 @@ def _register_fake_nms():
     @register("fake-nms2")
     class _FakeNms2:
         name = "fake-nms2"
+        frequency_request = "a frequency job"
         resolved: ClassVar[set[str]] = set()
         clean: ClassVar[set[str]] = set()
         fail_round1: ClassVar[set[str]] = set()

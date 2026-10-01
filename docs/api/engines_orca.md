@@ -6,8 +6,9 @@ parsing lives in the `output` subpackage — **one section per module** (`geomet
 `forces` / `frequencies` / `status`, plus `ensembles` for multi-structure results), with the
 package itself the read-once coordinator that assembles each `ParsedResult` in a single pass.
 NMS is engine-independent
-([Normal-Mode Sampling](nms.md)); this engine supplies only the `nms_input_info` hook and
-carries the frequency values on each parsed structure.
+([Normal-Mode Sampling](nms.md)); this engine supplies only the `nms_input_info` hook with
+its `frequency_request` sentence, and carries the frequency values on each parsed
+structure.
 
 ## Engine
 

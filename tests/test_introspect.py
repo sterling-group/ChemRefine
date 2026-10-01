@@ -95,6 +95,14 @@ def test_operations_belong_to_the_family_that_interprets_them():
     assert by_name["qchem"].operations == tuple(sorted(qchem_operations()))
 
 
+def test_the_descriptor_carries_how_an_engine_asks_for_frequencies():
+    """The sentence a sampling step's refusal quotes is a fact a consumer can show before
+    the refusal happens; ``None`` for an engine that cannot sample."""
+    by_name = _by_name()
+    assert "`NumFreq true`" in (by_name["orca"].frequency_request or "")
+    assert by_name["mlip"].frequency_request is None
+
+
 def test_the_descriptor_carries_the_preflight_claim():
     """What an engine refuses up front is a fact a consumer can show; ``None`` without the hook."""
     by_name = _by_name()

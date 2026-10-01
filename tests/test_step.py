@@ -17,7 +17,7 @@ from fake_engine import FakeEngine
 
 from chemrefine import cache, io
 from chemrefine.config import Config, StepConfig
-from chemrefine.engines.api import get_engine
+from chemrefine.engines.api import NmsInputInfo, get_engine
 from chemrefine.errors import CacheError, ChemRefineError, ConfigError
 from chemrefine.state import (
     FailureKind,
@@ -717,70 +717,71 @@ def test_resume_retries_unconverged_again_into_next_attempt(tmp_path: Path):
         ENGINES.pop("conv-retry", None)
 
 
-def test_check_nms_freq_gate_rejects_when_input_computes_no_frequencies(tmp_path: Path):
-    """B9 (generic): nms + an input that computes no frequencies is rejected up front."""
-    import pytest
+class _Sampling:
+    """An NMS hook whose input does or does not compute frequencies."""
 
-    from chemrefine.engines.api import NmsInputInfo
-    from chemrefine.errors import ConfigError
-    from chemrefine.step import _check_nms_freq_gate, build_context
+    frequency_request = "`Freq` among the keywords"
 
-    class _NoFreqEngine:
-        def nms_input_info(self, ctx):
-            return NmsInputInfo(is_transition_state=False, computes_frequencies=False)
+    def __init__(self, computes_frequencies: bool) -> None:
+        self.computes_frequencies = computes_frequencies
 
-        def artifact_paths(self, ctx, structure_id):
-            step = ctx.step_cfg.step
-            return (
-                ctx.step_dir / structure_id / f"step{step}_{structure_id}.inp",
-                ctx.step_dir / structure_id / f"step{step}_{structure_id}.out",
-            )
-
-    cfg = _config(tmp_path, engine="orca", nms=True, operation=None)
-    ctx = build_context(cfg, cfg.steps[0], _seed_state([]), get_engine(cfg.steps[0].engine))
-    with pytest.raises(ConfigError, match="frequency"):
-        _check_nms_freq_gate(_NoFreqEngine(), ctx, cfg.steps[0])
-
-    class _FreqEngine:
-        def nms_input_info(self, ctx):
-            return NmsInputInfo(is_transition_state=False, computes_frequencies=True)
-
-        def artifact_paths(self, ctx, structure_id):
-            step = ctx.step_cfg.step
-            return (
-                ctx.step_dir / structure_id / f"step{step}_{structure_id}.inp",
-                ctx.step_dir / structure_id / f"step{step}_{structure_id}.out",
-            )
-
-    # Returns None; calling it without raising is the assertion.
-    _check_nms_freq_gate(_FreqEngine(), ctx, cfg.steps[0])
+    def nms_input_info(self, ctx: StepContext) -> NmsInputInfo:
+        return NmsInputInfo(
+            is_transition_state=False, computes_frequencies=self.computes_frequencies
+        )
 
 
-def test_check_nms_freq_gate_not_bypassed_by_explicit_operation(tmp_path: Path):
-    """An explicit `operation` only picks the parser — it never adds frequencies to
-    the input, so it must not bypass the gate (a doomed NMS step would otherwise run
-    to completion and leave every structure unresolved)."""
-    import pytest
+@pytest.mark.parametrize("operation", [None, "opt_sp"], ids=["inferred", "declared"])
+def test_an_input_with_no_frequencies_is_refused_with_how_its_engine_asks_for_them(
+    tmp_path: Path, operation: str | None
+):
+    """Sampling resolves from a frequency table, so an input computing none is refused,
+    quoting the engine's own sentence for asking. An explicit ``operation`` only picks the
+    reader — it never adds frequencies to the input — so it does not bypass the rule."""
+    from chemrefine.nms import require_frequencies
 
-    from chemrefine.engines.api import NmsInputInfo
-    from chemrefine.errors import ConfigError
-    from chemrefine.step import _check_nms_freq_gate, build_context
+    cfg = _config(tmp_path, engine="orca", nms=True, operation=operation)
+    ctx = build_context(cfg, cfg.steps[0], _seed_state([]), get_engine("orca"))
+    with pytest.raises(ConfigError, match=r"Request one — `Freq` among the keywords — or drop"):
+        require_frequencies(_Sampling(computes_frequencies=False), ctx)
+    require_frequencies(_Sampling(computes_frequencies=True), ctx)
 
-    class _NoFreqEngine:
-        def nms_input_info(self, ctx):
-            return NmsInputInfo(is_transition_state=False, computes_frequencies=False)
 
-        def artifact_paths(self, ctx, structure_id):
-            step = ctx.step_cfg.step
-            return (
-                ctx.step_dir / structure_id / f"step{step}_{structure_id}.inp",
-                ctx.step_dir / structure_id / f"step{step}_{structure_id}.out",
-            )
+def _no_frequencies(tmp_path: Path) -> Config:
+    """An ORCA sampling step whose template optimises and computes no frequencies."""
+    _templates(tmp_path, "cpu.slurm.header")
+    (tmp_path / "templates" / "step1.inp").write_text("! B3LYP def2-SVP Opt\n", encoding="utf-8")
+    return _config(tmp_path, engine="orca", nms=True, operation=None)
 
-    cfg = _config(tmp_path, engine="orca", nms=True, operation="opt_sp")
-    ctx = build_context(cfg, cfg.steps[0], _seed_state([]), get_engine(cfg.steps[0].engine))
-    with pytest.raises(ConfigError, match="drop `nms: true`"):
-        _check_nms_freq_gate(_NoFreqEngine(), ctx, cfg.steps[0])
+
+def test_the_walk_refuses_a_sampling_step_whose_input_computes_no_frequencies(tmp_path: Path):
+    """Refused before anything runs, not at the step's turn after the steps before it."""
+    from chemrefine.step import preflight_batches
+
+    cfg = _no_frequencies(tmp_path)
+    with pytest.raises(ConfigError, match="needs a frequency calculation"):
+        preflight_batches(cfg, cfg.steps, local=True)
+
+
+@pytest.mark.parametrize("mode", [StepMode.EXECUTE, StepMode.RESUME])
+def test_the_step_asks_again_at_its_turn_before_any_route_submits(tmp_path: Path, mode: StepMode):
+    """The template is read again at the step's turn, so an edit made after the walk meets
+    the same rule — before the cache, the resume adoption or a submission is tried."""
+    cfg = _no_frequencies(tmp_path)
+    with pytest.raises(ConfigError, match="needs a frequency calculation"):
+        run_step(cfg, cfg.steps[0], _seed_state(["0"]), mode=mode)
+
+
+def test_rebuild_cache_refuses_a_sampling_step_whose_input_computes_no_frequencies(
+    tmp_path: Path,
+):
+    """Its outputs carry no table to resolve from: re-parsed, every structure would be
+    ledgered unresolved. Refused by name before the manifest is read."""
+    from chemrefine.step import rebuild_cache_step
+
+    cfg = _no_frequencies(tmp_path)
+    with pytest.raises(ConfigError, match="needs a frequency calculation"):
+        rebuild_cache_step(cfg, cfg.steps[0], _seed_state(["0"]))
 
 
 def test_invalid_nms_options_are_refused_when_the_key_is_derived(tmp_path: Path):
@@ -882,6 +883,7 @@ def test_run_step_nms_branch_routes_through_coordinator(tmp_path: Path, monkeypa
     @register("fake-nms")
     class _NmsEngine:
         name = "fake-nms"
+        frequency_request = "a frequency job"
 
         def prepare(self, ctx):
             ctx.step_dir.mkdir(parents=True, exist_ok=True)

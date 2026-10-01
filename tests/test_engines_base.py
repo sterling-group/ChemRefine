@@ -357,8 +357,11 @@ def test_register_refuses_a_template_engine_without_its_starter():
         ),
         (
             "infer_operation",
-            "declares ['infer_operation'] of OperationInferring but not "
-            "['label', 'reads_alike', 'template_starter', 'template_suffix']",
+            "declares ['infer_operation'] of OperationInferring but not ['reads_alike']",
+        ),
+        (
+            "nms_input_info",
+            "declares ['nms_input_info'] of NmsCapableEngine but not ['frequency_request']",
         ),
     ],
 )
@@ -371,28 +374,18 @@ def test_register_refuses_a_claim_without_its_capability(member: str, refusal: s
 
 
 def test_the_capabilities_register_holds_whole_have_these_members():
-    """Literal pins of what each capability is taken by: a member added to either is a
-    member every engine taking it must now declare, so it lands here as a decision."""
-    from chemrefine.engines.api import (
-        CalculationEngine,
-        OperationInferring,
-        PreflightChecking,
-        TemplateChecking,
-        TemplateDriven,
-        contract_members,
-    )
+    """Literal pins of what each capability is taken by: a member added to one is a member
+    every engine taking it must now declare, so it lands here as a decision. Each is the
+    capability's own — what it adds to the Protocols it extends."""
+    from chemrefine.engines.api import _CAPABILITIES
 
-    assert contract_members(TemplateDriven) - contract_members(CalculationEngine) == {
-        "label",
-        "template_starter",
-        "template_suffix",
+    assert {capability.__name__: members for capability, members in _CAPABILITIES} == {
+        "TemplateDriven": {"label", "template_starter", "template_suffix"},
+        "OperationInferring": {"infer_operation", "reads_alike"},
+        "PreflightChecking": {"check_step", "preflight_refuses"},
+        "TemplateChecking": {"check_template", "preflight_refuses"},
+        "NmsCapableEngine": {"frequency_request", "nms_input_info"},
     }
-    assert contract_members(OperationInferring) - contract_members(TemplateDriven) == {
-        "infer_operation",
-        "reads_alike",
-    }
-    assert contract_members(PreflightChecking) == {"check_step", "preflight_refuses"}
-    assert contract_members(TemplateChecking) == {"check_template", "preflight_refuses"}
 
 
 def test_register_refuses_an_inference_hook_that_cannot_say_what_reads_alike():
@@ -410,12 +403,42 @@ def test_register_refuses_an_inference_hook_that_cannot_say_what_reads_alike():
             **_RUNNABLE,
         },
     )
-    refusal = (
-        "declares ['infer_operation', 'label', 'template_starter', 'template_suffix'] of "
-        "OperationInferring but not ['reads_alike']"
-    )
+    refusal = "declares ['infer_operation'] of OperationInferring but not ['reads_alike']"
     with pytest.raises(TypeError, match=re.escape(refusal)):
         register("gate-probe")(partial)
+    assert "gate-probe" not in ENGINES
+
+
+@pytest.mark.parametrize(
+    ("members", "refusal"),
+    [
+        (
+            {
+                "infer_operation": lambda self, template: "sp",
+                "reads_alike": lambda self, first, second: first == second,
+            },
+            "declares OperationInferring (['infer_operation', 'reads_alike']) but not "
+            "['label', 'template_starter', 'template_suffix'], which it extends",
+        ),
+        (
+            {
+                "nms_input_info": lambda self, ctx: None,
+                "frequency_request": "a frequency job",
+            },
+            "declares NmsCapableEngine (['frequency_request', 'nms_input_info']) but not "
+            "['artifact_paths'], which it extends",
+        ),
+    ],
+    ids=["inference-without-a-template", "sampling-without-artifact-paths"],
+)
+def test_register_refuses_a_capability_without_what_it_extends(
+    members: dict[str, object], refusal: str
+):
+    """``isinstance`` asks a Protocol's inherited members too, so a capability whose own
+    members are all declared would still go undetected without them."""
+    hollow = type("Hollow", (), {"name": "gate-probe", **members, **_RUNNABLE})
+    with pytest.raises(TypeError, match=re.escape(refusal)):
+        register("gate-probe")(hollow)
     assert "gate-probe" not in ENGINES
 
 

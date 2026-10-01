@@ -5,16 +5,18 @@ imaginary frequencies to reach a true minimum, or keeps exactly one to confirm a
 first-order saddle (transition state). It is opt-in per step (`nms: true`) and
 only runs on NMS-capable engines — the `NMS` column of the [engine
 table](../engines/index.md) says which. For the ExtOpt engines it is
-ORCA that computes the Hessian, numerically over the backend's gradients, so a `Freq`
-template yields a real frequency table.
+ORCA that computes the Hessian, numerically over the backend's gradients, so their
+templates ask for `NumFreq`.
 
-Because NMS acts on imaginary modes, the step's input **must** compute frequencies:
-an NMS step whose input computes none is rejected before any job is submitted with a
-`ConfigError`. There is no override — `operation` never changes the generated input
-(it only picks the parser), so an explicit value cannot rescue a frequency-less
-template. Request the frequencies in the template instead — for ORCA, a `Freq`,
-`NumFreq` or `AnFreq` keyword (`! Opt Freq`), or `NumFreq true` / `AnFreq true` in a
-`%freq` block.
+Because NMS acts on imaginary modes, the step's input **must** compute frequencies. An
+NMS step whose input computes none is refused with a `ConfigError` when the run starts,
+and `chemrefine validate` reports it on the step's `nms` field; the template is read again
+at the step's turn, so an edit made after the run started meets the same rule. There is no
+override — `operation` never changes the generated input (it only picks the parser), so an
+explicit value cannot rescue a frequency-less template. Request the frequencies in the
+template instead; the refusal quotes how the step's engine asks for them — for ORCA, a
+`Freq`, `NumFreq` or `AnFreq` keyword (`! Opt Freq`), or `NumFreq true` / `AnFreq true`
+in a `%freq` block.
 
 ## A generic capability, not an engine feature
 
@@ -27,7 +29,8 @@ drives any NMS-capable engine through one input hook and imports no engine packa
   single pass as geometry/energy — so NMS reads them off the structures it already holds,
   never re-parsing an output.
 
-A new engine becomes NMS-capable by implementing `nms_input_info` and populating those three
+A new engine becomes NMS-capable by implementing `nms_input_info`, declaring the
+`frequency_request` sentence the refusal above quotes, and populating those three
 structure fields — capability is detected via `isinstance(engine, NmsCapableEngine)`, with
 no flag to keep in sync; everything else is shared. That same `isinstance` is what fills
 the engine table's `NMS` column, so the documentation cannot fall behind the registry.

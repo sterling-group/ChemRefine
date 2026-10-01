@@ -532,6 +532,11 @@ class NmsCapableEngine(CalculationEngine, StructureArtifacts, Protocol):
     and rotations.
     """
 
+    frequency_request: ClassVar[str]
+    """How this engine's input asks for the frequencies sampling resolves from, as a user
+    writes it. :func:`chemrefine.nms.require_frequencies` quotes it when a step's input asks
+    for none, so it names only spellings :meth:`nms_input_info` counts."""
+
     def nms_input_info(self, ctx: StepContext) -> NmsInputInfo:
         """Introspect this step's configured input (TS search? computes frequencies?)."""
         ...
@@ -753,11 +758,28 @@ def contract_members(protocol: type) -> frozenset[str]:
 
 _CONTRACT_MEMBERS = contract_members(CalculationEngine)
 
+
+def _own_members(capability: type) -> frozenset[str]:
+    """The members ``capability`` adds to the Protocols it extends — the ones that take it."""
+    extended = (base for base in capability.__mro__[1:] if getattr(base, "_is_protocol", False))
+    return contract_members(capability) - frozenset[str]().union(
+        *(contract_members(base) for base in extended)
+    )
+
+
 _CAPABILITIES: tuple[tuple[type, frozenset[str]], ...] = tuple(
-    (capability, contract_members(capability) - _CONTRACT_MEMBERS)
-    for capability in (TemplateDriven, OperationInferring, PreflightChecking, TemplateChecking)
+    (capability, _own_members(capability))
+    for capability in (
+        TemplateDriven,
+        OperationInferring,
+        PreflightChecking,
+        TemplateChecking,
+        NmsCapableEngine,
+    )
 )
-"""The capabilities an engine takes by declaring members, each with the members that take it.
+"""The capabilities an engine takes by declaring members, each with its own members — those
+it adds to the Protocols it extends, which are what take it; :func:`register` holds a
+capability taken to the members it extends too.
 
 Derived from the Protocols, like :data:`_CONTRACT_MEMBERS`, so the gate cannot come to
 disagree with the contracts it enforces."""
@@ -792,15 +814,19 @@ def register(name: str) -> Callable[[type[CalculationEngine]], type[CalculationE
       worse: the engine simply stops satisfying :class:`TemplateDriven`, and the user is told
       their template does not exist while it sits on disk.
     * **It takes a capability in part.** :class:`TemplateDriven`,
-      :class:`OperationInferring`, :class:`PreflightChecking` and :class:`TemplateChecking`
-      are taken by declaring their members, and ``isinstance`` answers no to a class that
-      declares only some — so a template engine without its starter would silently read no
-      template, an ``infer_operation`` without ``reads_alike`` would silently key and read
-      ``operation:`` as written, and a ``check_step`` or ``check_template`` without the
-      sentence that says what it refuses would silently drop out of the walk it meant to
-      join. Every member a class declares
-      must belong to a capability it declares whole (:data:`_CAPABILITIES`); the sentence two
-      capabilities share is held by either one declared whole.
+      :class:`OperationInferring`, :class:`PreflightChecking`, :class:`TemplateChecking` and
+      :class:`NmsCapableEngine` are taken by declaring their members, and ``isinstance``
+      answers no to a class that declares only some — so a template engine without its
+      starter would silently read no template, an ``infer_operation`` without
+      ``reads_alike`` would silently key and read ``operation:`` as written, a ``check_step``
+      or ``check_template`` without the sentence that says what it refuses would silently
+      drop out of the walk it meant to join, and an NMS hook without the sentence its
+      refusal quotes would silently run a plain step. Every member a class declares must
+      belong to a capability it declares whole (:data:`_CAPABILITIES`); the sentence two
+      capabilities share is held by either one declared whole. A capability declared whole
+      must also have what it extends, which ``isinstance`` asks too: an NMS hook without the
+      artifact paths sampling writes its children beside, or an inference hook without a
+      template to infer from, would go undetected the same way.
 
     A name is held as well as the class: one registered to another class is refused, and so
     is one :func:`~chemrefine.config.fold_engine_name` would change — ``engine:`` is folded
@@ -850,6 +876,16 @@ def register(name: str) -> Callable[[type[CalculationEngine]], type[CalculationE
                     f"of {capability.__name__} but not {sorted(members - declared)}: a "
                     f"capability declared in part is not detected, so the engine would "
                     f"silently go without it. See {capability.__name__}."
+                )
+            extended = contract_members(capability) - _CONTRACT_MEMBERS - members
+            if members <= declared and (
+                lacking := sorted(m for m in extended if not hasattr(cls, m))
+            ):
+                raise TypeError(
+                    f"engine {name!r}: {cls.__name__} declares {capability.__name__} "
+                    f"({sorted(members)}) but not {lacking}, which it extends: a capability "
+                    f"without what it extends is not detected, so the engine would silently "
+                    f"go without it. See {capability.__name__}."
                 )
         ENGINES[name] = cls
         return cls

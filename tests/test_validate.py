@@ -415,6 +415,18 @@ def test_nms_on_a_capable_engine_does_not_warn(tmp_path: Path):
     assert not any(w.kind == "nms" for w in report.warnings)
 
 
+def test_a_sampling_step_whose_input_computes_no_frequencies_is_an_issue_on_its_nms(
+    tmp_path: Path,
+):
+    """The run refuses it when it starts, so validate reports it — on the field that asked
+    for sampling, quoting how the engine asks for frequencies."""
+    (tmp_path / "templates").mkdir()
+    (tmp_path / "templates" / "step1.inp").write_text("! B3LYP def2-SVP Opt\n", encoding="utf-8")
+    report = _validate(tmp_path, steps=[{"step": 1, "engine": "orca", "nms": True}])
+    [issue] = [i for i in report.issues if i.kind == "nms"]
+    assert issue.loc == ("steps", 0, "nms") and "`NumFreq true`" in issue.message
+
+
 def test_missing_template_and_header_warn_with_the_scaffold_hint(tmp_path: Path):
     report = _validate(tmp_path, steps=[{"step": 1, "engine": "orca"}])
     assert report.ok

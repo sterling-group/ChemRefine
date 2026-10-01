@@ -88,6 +88,12 @@ class QchemEngine(JobEngine):
     set (see :class:`~chemrefine.engines.api.OperationsDeclaring`), derived rather than
     restated so the dropdown, the schema document and the t=0 check cannot disagree with
     what :func:`~chemrefine.engines.qchem.output.parse_output` accepts."""
+    frequency_request: ClassVar[str] = (
+        "`jobtype freq`, alone or chained after another job with @@@, or "
+        "`final_vibrational_analysis true` in the $geom_opt block"
+    )
+    """Satisfies :class:`~chemrefine.engines.api.NmsCapableEngine`: every spelling
+    :func:`~chemrefine.engines.qchem.inspect.inspect_template` counts as a frequency job."""
     output_globs: ClassVar[tuple[str, ...]] = ("*.out", "*.fchk")
     """Result files copied back out of ``$WORK_DIR``.
 

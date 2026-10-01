@@ -151,11 +151,14 @@ prepare → submit → parse
 
 Normal-mode sampling is **engine-independent**: the two-round algorithm lives in
 `chemrefine.nms`. NMS is a capability, not a flag — implement the
-[`NmsCapableEngine`](../api/engines_api.md) Protocol's one hook and populate three structure
-fields; capability is detected with `isinstance`:
+[`NmsCapableEngine`](../api/engines_api.md) Protocol's hook and sentence and populate three
+structure fields; capability is detected with `isinstance`:
 
 - `nms_input_info(ctx) -> NmsInputInfo` — introspect the step's input (is it a TS search? does it
   compute frequencies?), driving the default target and the freq gate.
+- `frequency_request` — how your input asks for frequencies, as a user writes it. The refusal
+  of an `nms: true` step whose input asks for none quotes it, so name only spellings
+  `nms_input_info` counts; a test feeds each one to it.
 - set `frequencies` (every vibrational mode → cm⁻¹, translations and rotations left out),
   `imaginary_freqs` (its imaginary subset) and `normal_modes` (the displacement tensor, indexed
   by the same mode indices) on each parsed `Structure`, in the *same* pass that reads

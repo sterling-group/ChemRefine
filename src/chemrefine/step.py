@@ -144,8 +144,9 @@ def preflight_batches(config: Config, steps: Iterable[StepConfig], *, local: boo
     (:func:`chemrefine.ids.require_template`) and held to the engine's own template rules
     (:class:`~chemrefine.engines.api.TemplateChecking`), with what the run should say about
     the operation the step's outputs are read as said once, here
-    (:func:`~chemrefine.engines.api.operation_notice`); then, for a step the scheduler runs,
-    its whole batch plan — SLURM header, job shape, GPU budget
+    (:func:`~chemrefine.engines.api.operation_notice`); an ``nms: true`` step's input held
+    to computing frequencies (:func:`chemrefine.nms.require_frequencies`); then, for a step
+    the scheduler runs, its whole batch plan — SLURM header, job shape, GPU budget
     (:meth:`chemrefine.engines.BatchPlan.of`) — under this run's ``max_cores``, dispatch and
     resolved GPU budget.
     """
@@ -159,6 +160,8 @@ def preflight_batches(config: Config, steps: Iterable[StepConfig], *, local: boo
                 engine.check_template(ctx, template)
             if (notice := operation_notice(engine, step_cfg, template)) is not None:
                 logger.warning("%s", notice)
+        if step_cfg.nms and isinstance(engine, NmsCapableEngine):
+            nms.require_frequencies(engine, ctx)
         if isinstance(engine, JobExecutable):
             BatchPlan.of(engine, ctx, local=local, gpu_budget=budget)
 
@@ -479,6 +482,11 @@ def run_step(
     # the engine, and which of those a step is allowed to do is the whole of what the mode
     # decides here. Derived once and passed down, so no route re-asks it in its own words.
     may_submit = mode.may_submit()
+    if may_submit and nms_engine is not None:
+        # Asked by the walk before the run started, and again here, before any route below
+        # can submit — the cached re-attempt included: the template is read again at the
+        # step's turn, so an edit made since meets the same rule.
+        nms.require_frequencies(nms_engine, ctx)
 
     if mode is not StepMode.EXECUTE:
         cached = _cached_outcome(
@@ -736,11 +744,6 @@ def _incremental_step_outcome(
     manifest = cache.load_manifest(ctx.step_dir)
     if manifest is None or not manifest.files:
         return None
-    if nms_engine is not None:
-        # Before any adoption: a template that computes no frequencies must fail with
-        # the actionable error, not an all-unresolved ledger read off perfectly good
-        # outputs.
-        _check_nms_freq_gate(nms_engine, ctx, step_cfg)
     provenance = cache.load_manifest_provenance(ctx.step_dir)
     if not provenance.rows:
         raise CacheError(
@@ -809,8 +812,6 @@ def _run_full_step(
     nms_engine: NmsCapableEngine | None,
 ) -> StepOutcome:
     """Run the engine's full lifecycle (prepare → submit → parse → retry → nms/policy → cache)."""
-    if nms_engine is not None:
-        _check_nms_freq_gate(nms_engine, ctx, step_cfg)
     logger.info("step %d (%s): preparing inputs", step_cfg.step, step_cfg.engine)
     # Anything already in these structure dirs is a previous run's work: every parent's
     # directory is archived, so a job that dies without producing output is seen as a
@@ -905,22 +906,6 @@ def _finish_artifact_step(
     return _step_outcome(ctx, step_cfg, results, cache_hit=False)
 
 
-def _check_nms_freq_gate(engine: NmsCapableEngine, ctx: StepContext, step_cfg: StepConfig) -> None:
-    """B9: reject an ``nms: true`` step whose input computes no frequencies.
-
-    NMS acts on imaginary modes, so a step that won't produce frequencies can only
-    ever leave every structure unresolved — caught here before any job is submitted.
-    ``operation`` never changes the generated input (it only picks the parser), so an
-    explicit one cannot rescue a frequency-less input and does not bypass this check.
-    """
-    if not engine.nms_input_info(ctx).computes_frequencies:
-        raise ConfigError(
-            f"step {step_cfg.step}: `nms: true` needs a frequency calculation, but the "
-            f"input computes none. Request frequencies (e.g. ORCA `! Opt Freq`), or drop "
-            f"`nms: true` if you don't want normal-mode sampling."
-        )
-
-
 def halt_if_pending(config: Config, step_cfg: StepConfig, mode: StepMode) -> None:
     """Halt the run when an ``on_failure: stop`` step still has failed jobs.
 
@@ -974,12 +959,17 @@ def rebuild_cache_step(
     and a rebuild would stamp every adopted row with that key — the next ``resume``,
     the template restored, would then condemn every one of them. Refused ahead of the
     provenance check, which would blame the configuration instead, and of the artifact
-    branch, which would re-cache a product under the same key.
+    branch, which would re-cache a product under the same key. An ``nms: true`` step whose
+    input computes no frequencies is refused there too, as the walk refuses it
+    (:func:`chemrefine.nms.require_frequencies`): its outputs carry no table to resolve
+    from, and re-parsing them would ledger every structure unresolved.
     """
     engine = get_engine(step_cfg.engine)
     ctx = build_context(config, step_cfg, prev_state, engine)
     if isinstance(engine, TemplateDriven):
         ids.require_template(ctx.template, label=engine.label)
+    if step_cfg.nms and isinstance(engine, NmsCapableEngine):
+        nms.require_frequencies(engine, ctx)
     key = derive_step_key(ctx, step_cfg, engine)
     manifest = cache.load_manifest(ctx.step_dir)
     if manifest is None:

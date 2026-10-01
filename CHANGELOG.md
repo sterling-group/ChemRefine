@@ -237,7 +237,10 @@ for those and the full map.
   from (`resolved_from`), and its `attemptK/` keeps a `resolution.json` saying
   the same; v1.3.1 named the winner only in its log. An ORCA template requests the
   frequencies sampling needs with a `Freq`, `NumFreq` or `AnFreq` keyword, or with
-  `NumFreq true` / `AnFreq true` in a `%freq` block.
+  `NumFreq true` / `AnFreq true` in a `%freq` block. A step whose input requests none is
+  refused when the run starts, and `chemrefine validate` reports it on the step's `nms`
+  field, where v1.3.1 ran the step and skipped each structure for want of a frequency
+  table.
 - Shared ExtOpt HTTP server: ORCA optimises on gradients served by an MLIP or
   PySCF backend in the same SLURM job (kernel-assigned ports, where v1.3.1
   bound every server to the step's `bind` address, `127.0.0.1:8888` by

@@ -241,6 +241,27 @@ class NmsResolution:
 # ---------------------------------------------------------------------------
 
 
+def require_frequencies(engine: NmsCapableEngine, ctx: StepContext) -> None:
+    """Refuse an ``nms: true`` step whose input computes no frequencies.
+
+    Sampling acts on the imaginary modes a frequency calculation reports, so such a step
+    could only leave every structure unresolved. Asked when the run starts
+    (:func:`chemrefine.step.preflight_batches`) and by ``chemrefine validate``, then again
+    at the step's turn (:func:`chemrefine.step.run_step`) and by ``rebuild-cache``: the
+    template is read again there, so an edit made after the run started meets the same
+    rule. ``operation`` never changes the generated input (it only picks the reader), so an
+    explicit one cannot rescue a frequency-less input. The refusal quotes how the engine's
+    input asks for frequencies (:attr:`~chemrefine.engines.api.NmsCapableEngine.
+    frequency_request`).
+    """
+    if not engine.nms_input_info(ctx).computes_frequencies:
+        raise ConfigError(
+            f"step {ctx.step_cfg.step}: `nms: true` needs a frequency calculation, but the "
+            f"input computes none. Request one — {engine.frequency_request} — or drop "
+            f"`nms: true` if you don't want normal-mode sampling."
+        )
+
+
 def resolved_options(engine: NmsCapableEngine, ctx: StepContext) -> NmsOptions:
     """NMS options with ``target`` resolved: explicit wins, else inferred.
 

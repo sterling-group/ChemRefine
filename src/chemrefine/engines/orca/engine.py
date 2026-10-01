@@ -48,6 +48,12 @@ class OrcaEngine(JobEngine):
     """The ``operation:`` vocabulary this family interprets — the parser dispatch's own
     set (see :class:`~chemrefine.engines.api.OperationsDeclaring`), inherited by the
     ExtOpt engines, which are ORCA-driven and parse the same outputs."""
+    frequency_request: ClassVar[str] = (
+        "`Freq`, `NumFreq` or `AnFreq` among the keywords, or `NumFreq true` / "
+        "`AnFreq true` in a %freq block"
+    )
+    """Satisfies :class:`~chemrefine.engines.api.NmsCapableEngine`: every spelling
+    :func:`~chemrefine.engines.orca.inspect.inspect_template` counts as a frequency job."""
     output_globs: ClassVar[tuple[str, ...]] = (
         "*.out",
         "*.xyz",
