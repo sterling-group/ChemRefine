@@ -764,7 +764,7 @@ def test_the_client_timeout_default_is_the_options_model_default():
     Compared against the model rather than against ``bridge.DEFAULT_TIMEOUT``, which is the
     value under test — a comparison with itself holds after either number moves.
     """
-    from chemrefine.engines._options import ExtOptOptions
+    from chemrefine.engines.orca.extopt.engine import ExtOptOptions
 
     field_default = ExtOptOptions.model_fields["gradient_timeout_seconds"].default
     assert field_default == bridge.DEFAULT_TIMEOUT
@@ -1254,8 +1254,7 @@ def test_an_extopt_subclass_is_refused_if_its_calculator_is_abstract():
     ``__abstractmethods__`` — Python's own ledger — at the engine's class statement.
     """
     from chemrefine.engines._backend_server.base import ComputeBackend
-    from chemrefine.engines._options import ExtOptOptions
-    from chemrefine.engines.orca.extopt.engine import ExtOptOrcaEngine
+    from chemrefine.engines.orca.extopt.engine import ExtOptOptions, ExtOptOrcaEngine
 
     class _Empty(ComputeBackend):
         name = "empty"
@@ -1278,8 +1277,7 @@ def test_an_extopt_subclass_is_refused_if_its_calculator_declares_no_name():
     ``required_declarations`` check refuses it at the same class statement.
     """
     from chemrefine.engines._backend_server.base import ComputeBackend
-    from chemrefine.engines._options import ExtOptOptions
-    from chemrefine.engines.orca.extopt.engine import ExtOptOrcaEngine
+    from chemrefine.engines.orca.extopt.engine import ExtOptOptions, ExtOptOrcaEngine
 
     class _Nameless(ComputeBackend):
         @classmethod

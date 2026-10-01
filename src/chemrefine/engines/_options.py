@@ -4,7 +4,7 @@
 engine-agnostic; each engine validates its own subset with a small Pydantic model.
 :class:`EngineOptions` carries the knobs every compute engine shares — the ``device``
 selector and the ``frozen`` / ``extra="forbid"`` config — so an engine's options model only
-adds its own fields. It also lets the ExtOpt base type its ``options_cls`` ClassVar.
+adds its own fields.
 """
 
 from __future__ import annotations
@@ -171,29 +171,3 @@ class EngineOptions(BaseModel):
             raise ConfigError(
                 f"invalid {cls.__name__.removesuffix('Options').lower()} options:\n{e}"
             ) from e
-
-
-class ExtOptOptions(EngineOptions):
-    """The knobs every ExtOpt engine's options model carries on top of its backend's.
-
-    An ExtOpt step is an ORCA run whose gradients come from a server the engine starts, and
-    the bridge ORCA invokes per geometry is that server's one client — so the knobs of that
-    call belong to the ExtOpt family, not to any backend. The backend models mix this in
-    (:class:`~chemrefine.engines.mlip.options.MlipExtOptOptions`,
-    :class:`~chemrefine.engines.pyscf.options.PyscfExtOptOptions`), which is what lets the
-    ExtOpt base type its ``options_cls`` to it and read the knob without a cast.
-    """
-
-    gradient_timeout_seconds: float = Field(600.0, gt=0, allow_inf_nan=False)
-    """How long the bridge waits on one gradient before it gives the geometry up.
-
-    A bound on a single ``/calculate`` call, not on the optimisation. The default is
-    generous for a potential and tight for a DFT gradient on a large system — raise it when
-    a healthy server takes longer than that per geometry. On expiry the step records a
-    timeout that names this knob, not an unreachable server.
-
-    Finite as well as positive. ``.inf`` — an ordinary spelling of "no timeout" — passes
-    ``gt=0``, and would ride into the wrapper as ``--timeout inf`` and reach the socket as
-    a timeout Python cannot represent (``OverflowError``, none of the failures the bridge
-    classifies), so every geometry step would die in the wrapper with a traceback naming
-    neither the knob nor the value. There is no unbounded setting: raise the number."""

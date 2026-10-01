@@ -24,7 +24,8 @@ from typing import Any, Literal, Self
 from pydantic import Field, field_validator, model_validator
 
 from chemrefine.config import reject_shell_unsafe
-from chemrefine.engines._options import EngineOptions, ExtOptOptions, refuse_template_knobs
+from chemrefine.engines._options import EngineOptions, refuse_template_knobs
+from chemrefine.engines.orca.extopt.engine import ExtOptOptions
 from chemrefine.errors import ConfigError
 
 

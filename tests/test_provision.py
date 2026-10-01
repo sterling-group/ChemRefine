@@ -1275,9 +1275,8 @@ def test_non_provisionable_script_engine_uses_own_interpreter(monkeypatch, tmp_p
 
 def test_non_provisionable_extopt_engine_uses_own_interpreter(monkeypatch, tmp_path: Path):
     """A third-party ExtOpt engine without ``backend_requirement`` serves from this interpreter."""
-    from chemrefine.engines._options import ExtOptOptions
     from chemrefine.engines.mlip.extopt_calc import MlipExtOptCalculator
-    from chemrefine.engines.orca.extopt.engine import ExtOptOrcaEngine
+    from chemrefine.engines.orca.extopt.engine import ExtOptOptions, ExtOptOrcaEngine
 
     class _PlainExtOpt(ExtOptOrcaEngine):
         name = "plain-extopt-test"

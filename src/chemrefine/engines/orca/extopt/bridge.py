@@ -30,8 +30,8 @@ from chemrefine.engines._backend_server.base import (
     CalculationData,
 )
 from chemrefine.engines._backend_server.registry import known_backends, load_calculator
-from chemrefine.engines._options import ExtOptOptions
 from chemrefine.engines.orca.extopt import protocol
+from chemrefine.engines.orca.extopt.engine import ExtOptOptions
 from chemrefine.errors import (
     ENDPOINT_UNREACHABLE,
     ChemRefineError,
