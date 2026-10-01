@@ -386,11 +386,11 @@ if selected live; then
     printf 'memory  ~%sG free (%s)\n' "$need_g" "$why"
 fi
 
-# The GUI's JavaScript is executed by exactly seven tests, and without a Node they *skip* —
-# so on a machine with none this gate would pass while checking the frontend not at all,
-# the same hole the ORCA precondition above closes for tier-3. `[test]` installs a Node, so
-# a skip here means the lookup broke, not that the machine is bare. Exported once:
-# the coverage run, the sdist run and the mutation gate all inherit it.
+# The GUI's JavaScript is executed by the Node tests in tests/test_gui_assets.py, and without
+# a Node they *skip* — so on a machine with none this gate would pass while checking the
+# frontend not at all, the same hole the ORCA precondition above closes for tier-3. `[test]`
+# installs a Node, so a skip here means the lookup broke, not that the machine is bare.
+# Exported once: the coverage run, the sdist run and the mutation gate all inherit it.
 export CHEMREFINE_REQUIRE_NODE=1
 
 # -- the sections ---------------------------------------------------------------------

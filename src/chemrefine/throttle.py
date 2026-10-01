@@ -65,8 +65,8 @@ FinishedFn = Callable[[Collection[str]], set[str]]
 """Poll the scheduler once for a whole set of job ids; return those that are done.
 
 Set-shaped rather than per-job on purpose: the throttler asks about every active job
-on every tick, and a per-job callable turned that into one scheduler subprocess per
-job per tick (see :func:`chemrefine.slurm.finished_jobs`)."""
+on every tick, and a per-job callable would turn that into one scheduler subprocess
+per job per tick (see :func:`chemrefine.slurm.finished_jobs`)."""
 
 
 class StallDeadline:

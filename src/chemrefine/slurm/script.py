@@ -50,8 +50,8 @@ def _refuse_shell_unsafe(*named: tuple[str, Path | None]) -> None:
     as written, and again after a relative one is anchored to the config file's directory.
     Both passes see the path with its symlinks intact, and the step directory that reaches
     ``export OUTPUT_DIR="…"`` here is the resolved one — so a symlink whose *target* carries
-    a refused character passed both and landed in the script, where bash substitutes inside
-    double quotes. The runlog rows are held to the rule at the moment they become bash
+    a refused character would pass both and land in the script, where bash substitutes
+    inside double quotes. The runlog rows are held to the rule at the moment they become bash
     (:func:`chemrefine.job_log.bash_header`); this is the same placement for the paths, and
     for the same reason: asked on the exact value interpolated, no route around the load-time
     passes reaches the script. Those passes stay for what they are — the earliest point a

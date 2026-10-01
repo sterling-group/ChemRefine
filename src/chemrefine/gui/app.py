@@ -371,9 +371,8 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         presented = request.headers.get("X-ChemRefine-Token", "")
         # Compared as bytes: Werkzeug decodes headers as latin-1, and `compare_digest`
         # raises TypeError on a str holding a non-ASCII character — so a header with any
-        # byte above 0x7F turned a plain 401 into a 500 and a logged traceback. Encoding
-        # both sides answers every input in constant time instead of the one class of
-        # wrong token we happened to think of.
+        # byte above 0x7F would turn a plain 401 into a 500 and a logged traceback.
+        # Encoding both sides answers every input in constant time, whatever its bytes.
         return secrets.compare_digest(presented.encode(), token.encode())
 
     @app.get("/")
@@ -395,7 +394,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         The exit-code taxonomy is the GUI's error contract exactly as it is the CLI's
         and the MCP server's — one vocabulary for one failure. Routine HTTP errors
         (a 404 for a URL nobody serves, e.g. a browser probing /favicon.ico) pass
-        through as themselves — re-raising them turned every stray request into a
+        through as themselves — re-raising them would turn every stray request into a
         logged traceback.
         """
         if isinstance(error, HTTPException):

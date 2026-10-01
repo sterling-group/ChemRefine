@@ -424,10 +424,11 @@ function builder() {
 
     withSteps(config) {
       // `steps:` written but empty parses as null, and a half-typed raw edit can leave
-      // a scalar there; either one made every later cfg.steps.map/length throw and
-      // blanked the builder for good. The *entries* get the same guard: a mid-edit
-      // `- ` parses as a null entry, whose card renders broken and whose renumber()
-      // (`null.step = i + 1`) then throws on every remove/move, desyncing the panes.
+      // a scalar there; either one would make every later cfg.steps.map/length throw
+      // and blank the builder for good. The *entries* get the same guard: a mid-edit
+      // `- ` parses as a null entry, whose card would render broken and whose
+      // renumber() (`null.step = i + 1`) would throw on every remove/move, desyncing
+      // the panes.
       const merged = { steps: [], ...config };
       if (!Array.isArray(merged.steps)) merged.steps = [];
       merged.steps = merged.steps.filter((s) => s && typeof s === "object" && !Array.isArray(s));
@@ -1489,9 +1490,10 @@ function builder() {
     },
 
     // Everything on the page that describes the workflow that *was* loaded rather than the
-    // form itself. Without this, Open… left the previous run's status table, failure count
-    // and results rows on screen under the new file's name — they only refresh when the Run
-    // panel is toggled — and pointed the viewer at a step number the new config may not have.
+    // form itself. Without this, Open… would leave the previous run's status table, failure
+    // count and results rows on screen under the new file's name — they only refresh when
+    // the Run panel is toggled — and point the viewer at a step number the new config may
+    // not have.
     forgetPreviousWorkflow() {
       this.runStatus = null;
       this.runFailures = null;
@@ -1542,7 +1544,7 @@ function builder() {
       if (!offer) return;
       // Cleared first so loadConfigFrom() cannot re-offer the same path to itself, but put
       // back if the load fails: the banner is the only thing that still names that file,
-      // and losing it on a failed accept lost the agent's write for good.
+      // and losing it on a failed accept would lose the agent's write for good.
       this.pendingReload = null;
       const loaded = await this.loadConfigFrom(offer.path, {
         force: true,
@@ -1749,8 +1751,9 @@ function builder() {
       // `name` is only read in save mode, where it is the filename box's new contents.
       // The whole path as the name, not its basename. joinPath() exists so that an absolute
       // or ~ name replaces the directory rather than hanging off it, and stripping to the
-      // basename here took that decision away from it: typing an absolute path in save mode
-      // wrote the file into whatever directory the listing happened to be showing.
+      // basename here would take that decision away from it: typing an absolute path in
+      // save mode would write the file into whatever directory the listing happens to be
+      // showing.
       await this.pickFile({ path: typed, name: typed });
     },
     pickHere() {

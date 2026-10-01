@@ -794,8 +794,8 @@ def resume_nms(
     whether the ``attemptK/resolution.json`` labels on disk were written under this
     configuration's *criterion* (the manifest's stored ``criterion_key`` against the
     current one). Trusted, a passthrough keeps its ``resolved_from`` exactly as a
-    rebuild would; untrusted — the nms flip, a criterion change, a pre-provenance
-    tree — the label is cleared and its sidecar removed, because wearing another
+    rebuild would; untrusted — the nms flip, a criterion change, a manifest with no
+    row provenance — the label is cleared and its sidecar removed, because wearing another
     criterion's provenance is the one lie a passthrough could tell, and a sidecar left
     behind would be re-read once the manifest carries the criterion this resume ran
     under. Either way a parent *not* at the target fans out

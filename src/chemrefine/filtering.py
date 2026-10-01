@@ -220,7 +220,7 @@ def _dispatch(
             # The same wildcard arm `StepMode`'s predicates carry: a variant added to the
             # union stops narrowing to `Never` here and strict mypy refuses the call, and a
             # value that is no variant at all is refused at runtime by name rather than by
-            # the `TypeError` that `tuple(None)` happened to raise three frames on.
+            # the `TypeError` a later `tuple(None)` would raise three frames on.
             assert_never(sample)
 
 

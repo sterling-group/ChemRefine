@@ -731,8 +731,8 @@ def _install_spec(extra: str, version: str, direct: dict[str, Any] | None) -> li
     spec = url
     if subdirectory:
         # PEP 610 records `subdirectory` beside the URL for *every* direct install, not
-        # only VCS ones — a `file://…#subdirectory=…` install rebuilt the managed env
-        # from the repository root when only the VCS branch re-appended it.
+        # only VCS ones; appended on the VCS branch alone, a `file://…#subdirectory=…`
+        # install would rebuild its managed env from the repository root.
         spec += f"#subdirectory={subdirectory}"
     return [f"chemrefine[{extra}] @ {spec}"]
 

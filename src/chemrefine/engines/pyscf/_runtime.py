@@ -27,12 +27,11 @@ def _host(array: Any) -> NDArray[Any]:
 
     The one seam through which an array leaves the SCF object. gpu4pyscf keeps its orbital
     coefficients and occupations as CuPy arrays, whose documented way home is ``.get()``;
-    numpy and pyscf refuse a CuPy operand, so every downstream ``@``, ``ao2mo`` and Boys
-    localisation fails after the SCF and gradient have already succeeded — with the CPU
-    fallback the only reason ``device: cuda`` and ``save_tensors`` ever worked together.
-    Applied to every array read off ``mf`` or its kernels rather than at the one site that
-    happened to fail, so the rule is "arrays leaving the SCF are host arrays" and a future
-    reader inherits it. A numpy array has no ``.get`` and passes straight through.
+    numpy and pyscf refuse a CuPy operand, so without this every downstream ``@``,
+    ``ao2mo`` and Boys localisation would fail after the SCF and gradient had already
+    succeeded. Applied to every array read off ``mf`` or its kernels rather than at
+    whichever site fails first, so the rule is "arrays leaving the SCF are host arrays"
+    and a future reader inherits it. A numpy array has no ``.get`` and passes straight through.
     """
     transfer = getattr(array, "get", None)
     if callable(transfer) and not isinstance(array, np.ndarray):
