@@ -34,7 +34,7 @@ must be replaced by hand with `engine:` + `operation:`.
 
 | v1.3.1                                         | v2                                            |
 |------------------------------------------------|-----------------------------------------------|
-| `engine: "DFT"`                                | `engine: orca`                                |
+| `engine: "DFT"`                                | `engine: orca` (an engine name is read in any case) |
 | `engine: "MLFF"` + an `mlff:` block            | `engine: mlip-extopt` (ORCA-driven, as before)|
 | `engine: "MLFF"` / `mlff` (no block)           | `engine: mlip` (the **new** direct, in-process path) |
 | `mlff:` / `trainer:` block                     | `options: { … }` (the engine block → options) |

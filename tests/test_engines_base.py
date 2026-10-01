@@ -187,6 +187,17 @@ def _conforming(engine_name: str) -> type:
     return _Engine
 
 
+def test_register_refuses_a_name_no_config_can_reach():
+    """``engine:`` is folded to lower case as a step is read, so a capitalised registry key
+    could never be looked up — refused at its decorator, naming the spelling to use."""
+    try:
+        with pytest.raises(ValueError, match="register it as 'gate-probe'"):
+            register("Gate-Probe")(_conforming("Gate-Probe"))
+        assert "Gate-Probe" not in ENGINES
+    finally:
+        ENGINES.pop("Gate-Probe", None)
+
+
 def test_register_rejects_duplicate_with_different_class():
     # try/finally like the temp-test-engine above: if the duplicate guard under test ever
     # regressed, a bare pop after the raises-block would leave a stray class in the global

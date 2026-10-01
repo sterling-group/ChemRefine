@@ -400,6 +400,12 @@ def test_every_engine_that_declares_operations_is_held_to_them_up_front():
             preflight_steps([step_cfg], charge=0, multiplicity=1)
 
 
+def test_every_registered_engine_answers_to_its_name_in_any_case():
+    """The registry gate and the config's fold agree over the real registry."""
+    for name in sorted(ENGINES):
+        assert StepConfig(step=1, engine=name.upper()).engine == name
+
+
 def test_every_declared_operation_is_the_spelling_the_config_folds_to():
     """A declared name the config's fold would change could never be matched."""
     for name in sorted(ENGINES):

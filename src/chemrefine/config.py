@@ -274,6 +274,18 @@ def is_failure_policy(value: str) -> TypeGuard[FailurePolicy]:
     return value in get_args(FailurePolicy)
 
 
+def fold_engine_name(name: str) -> str:
+    """The one spelling of an engine name: its lower case, so ``engine:`` is read in any case.
+
+    Public because the registry holds to it as well as the config: :class:`StepConfig`
+    folds its ``engine`` through it as a step is read, and
+    :func:`chemrefine.engines.api.register` refuses a name it would change, which no config
+    could look up. Case only: a separator belongs to the name (``-`` and ``_`` spell
+    different names).
+    """
+    return name.lower()
+
+
 class StepConfig(BaseModel):
     """One stage of the pipeline."""
 
@@ -286,7 +298,8 @@ class StepConfig(BaseModel):
     """Optional human label. Appears in logs/CSV and may target CLI subcommands."""
 
     engine: str
-    """Engine key looked up in :data:`chemrefine.engines.api.ENGINES`."""
+    """Engine key looked up in :data:`chemrefine.engines.api.ENGINES`, read in any case
+    (:func:`fold_engine_name`)."""
 
     operation: str | None = None
     """Engine-defined operation (``opt_sp``, ``goat``, ``pes``, ``docker``,
@@ -394,6 +407,18 @@ class StepConfig(BaseModel):
                     f"({e}); quote it in the YAML so it stays a plain string"
                 ) from e
         return v
+
+    @field_validator("engine", mode="before")
+    @classmethod
+    def _fold_engine(cls, v: object) -> object:
+        """One spelling per engine: any case, folded by :func:`fold_engine_name`.
+
+        Folded once, as the step is read, from a file or from code, so every reader of the
+        field (the registry lookup, the row key, the manifest, the step record, the runlog
+        header) sees the name the engine registered, and none folds again. A non-string is
+        left to the field's own type check.
+        """
+        return fold_engine_name(v) if isinstance(v, str) else v
 
     @field_validator("operation", mode="before")
     @classmethod

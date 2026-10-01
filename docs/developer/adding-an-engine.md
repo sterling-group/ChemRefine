@@ -47,7 +47,9 @@ The sections that follow are those steps in detail.
 
 ## Pick a kind and provide its pieces
 
-Decorate the class with `@register("<name>")` and choose the **kind** that matches the backend:
+Decorate the class with `@register("<name>")` — a lower-case name: `engine:` is read in any
+case and folded to lower case, so `register` refuses any other — and choose the **kind** that
+matches the backend:
 
 | Kind | Base | You provide |
 |------|------|-------------|

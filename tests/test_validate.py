@@ -234,6 +234,14 @@ def test_an_operation_in_any_spelling_validates_clean(tmp_path: Path):
     assert report.config is not None and report.config.steps[0].operation == "opt_sp"
 
 
+def test_an_engine_name_in_any_case_validates_clean(tmp_path: Path):
+    """``ORCA`` is ``orca``: no issue, no deprecation row — the config's rule, not v1's."""
+    report = _validate(tmp_path, steps=[{"step": 1, "engine": "ORCA", "operation": "opt_sp"}])
+    assert report.ok
+    assert not [w for w in report.warnings if w.kind == "deprecated"]
+    assert report.config is not None and report.config.steps[0].engine == "orca"
+
+
 def test_the_operation_check_does_not_wait_on_the_options_read(tmp_path: Path):
     """It reads no option, so a bad options read beside it hides nothing."""
     step = {"step": 1, "engine": "qchem", "operation": "goat", "options": {"nprocs": "x"}}

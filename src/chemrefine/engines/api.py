@@ -65,7 +65,7 @@ from typing import Any, ClassVar, Protocol, runtime_checkable
 import numpy as np
 from numpy.typing import NDArray
 
-from chemrefine.config import StepConfig
+from chemrefine.config import StepConfig, fold_engine_name
 from chemrefine.engines._options import EngineOptions
 from chemrefine.errors import ConfigError, EngineNotFoundError
 from chemrefine.ids import StepTemplate
@@ -715,10 +715,11 @@ class TemplateChecking(Protocol):
 ENGINES: dict[str, type[CalculationEngine]] = {}
 """Registry mapping the YAML ``engine:`` string to a concrete engine class.
 
-Only **canonical** names live here. v1.3.1's spellings are rewritten to canonical
-names by the config normalizer (:func:`chemrefine.config_legacy.normalize`) — the
-single place that knows the legacy vocabulary — before any lookup, so the registry
-stays alias-free.
+Only **canonical** names live here, each the spelling ``engine:`` is folded to
+(:func:`~chemrefine.config.fold_engine_name`; :func:`register` refuses any other).
+v1.3.1's spellings are rewritten to canonical names by the config normalizer
+(:func:`chemrefine.config_legacy.normalize`) — the single place that knows the legacy
+vocabulary — before any lookup, so the registry stays alias-free.
 """
 
 
@@ -784,11 +785,20 @@ def register(name: str) -> Callable[[type[CalculationEngine]], type[CalculationE
       must belong to a capability it declares whole (:data:`_CAPABILITIES`); the sentence two
       capabilities share is held by either one declared whole.
 
+    A name is held as well as the class: one registered to another class is refused, and so
+    is one :func:`~chemrefine.config.fold_engine_name` would change — ``engine:`` is folded
+    to that spelling as a step is read, so no config could look the engine up.
+
     The check runs on the class, never on an instance: constructing one to interrogate it would
     make an engine's ``__init__`` run at import of the package that defines it.
     """
 
     def decorator(cls: type[CalculationEngine]) -> type[CalculationEngine]:
+        if (folded := fold_engine_name(name)) != name:
+            raise ValueError(
+                f"engine {name!r}: `engine:` is read in any case and looked up as {folded!r}, "
+                f"so no config could reach {name!r}; register it as {folded!r}"
+            )
         if name in ENGINES and ENGINES[name] is not cls:
             raise ValueError(f"engine {name!r} is already registered to {ENGINES[name]!r}")
         if CalculationEngine in getattr(cls, "__mro__", ()):
@@ -834,8 +844,9 @@ def get_engine(name: str) -> CalculationEngine:
     """Look up an engine by its canonical name and return a fresh instance.
 
     Raises :class:`~chemrefine.errors.EngineNotFoundError` if ``name`` isn't
-    registered. (Legacy spellings are normalized at config-parse time, so the
-    name reaching here is already canonical.)
+    registered. A name read from a config arrives canonical — the v1 layer rewrites a
+    legacy spelling and :class:`~chemrefine.config.StepConfig` folds the case — so
+    nothing here folds again.
     """
     engine_cls = ENGINES.get(name)
     if engine_cls is None:

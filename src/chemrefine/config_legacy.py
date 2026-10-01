@@ -41,7 +41,7 @@ def _log_deprecation(loc: tuple[str | int, ...], message: str) -> None:
     logger.warning("%s", message)
 
 
-#: v1.3.1's engine names → canonical.
+#: v1.3.1's engine names → canonical, matched in any case.
 _ENGINE_RENAMES = {
     "mlff": "mlip",
     "dft": "orca",
@@ -89,6 +89,16 @@ def _mapping(value: Any, *, what: str, of: str) -> dict[str, Any]:
     if isinstance(value, dict):
         return dict(value)
     raise ValueError(f"{what} must be a mapping of {of}, got {type(value).__name__}: {value!r}")
+
+
+def _folded(value: Any) -> str | None:
+    """``value`` in lower case when it is text, else ``None``: how this module matches a name.
+
+    v1 read engine and operation names in any case, and so does the config
+    (``StepConfig._fold_engine``, ``StepConfig._fold_operation``), so a name is recognised
+    here in any case; what this module writes back is only ever a rename.
+    """
+    return value.lower() if isinstance(value, str) else None
 
 
 def normalize(raw: dict[str, Any], *, report: DeprecationSink | None = None) -> dict[str, Any]:
@@ -208,30 +218,28 @@ def _normalize_step(step: Any, index: int, sink: DeprecationSink) -> Any:
             "(see docs/get-started/upgrading-from-v1.md)"
         )
 
-    # Engine name: a moved engine-config block decides it, else the rename map.
+    # Engine name: a moved engine-config block decides it, else the rename map. A legacy
+    # name is matched in any case; a current one passes through as written, its case the
+    # config's own rule (``StepConfig._fold_engine``).
     block_engine = _move_engine_block(s, loc, sink)
+    engine = _folded(s.get("engine"))
     if block_engine is not None:
         s["engine"] = block_engine
-    elif isinstance(s.get("engine"), str):
-        eng = s["engine"].lower()
-        renamed = _ENGINE_RENAMES.get(eng, eng)
-        if renamed != eng:
-            # The most common legacy spelling of all — a config whose only legacy
-            # feature is `engine: mlff` must be named before 3.0 removes the map.
-            sink((*loc, "engine"), f"engine `{eng}` is deprecated; use `{renamed}`")
+    elif engine is not None and engine in _ENGINE_RENAMES:
+        renamed = _ENGINE_RENAMES[engine]
+        # The most common legacy spelling of all — a config whose only legacy
+        # feature is `engine: mlff` must be named before 3.0 removes the map.
+        sink((*loc, "engine"), f"engine `{engine}` is deprecated; use `{renamed}`")
         s["engine"] = renamed
 
     # Operation: ``MLFF_TRAIN`` — and ``MLIP_TRAIN`` on another engine — was a training
-    # *operation* that implied the trainer engine; v1 read the name in any case. Any other
-    # spelling is the config's own rule (``StepConfig._fold_operation``), not a v1 one.
-    op = s.get("operation")
-    if isinstance(op, str) and (
-        op.lower() == "mlff_train"
-        or (op.lower() == "mlip_train" and s.get("engine") != "mlip-train")
-    ):
+    # *operation* that implied the trainer engine. Any other spelling is the config's own
+    # rule (``StepConfig._fold_operation``), not a v1 one.
+    op = _folded(s.get("operation"))
+    if op == "mlff_train" or (op == "mlip_train" and _folded(s.get("engine")) != "mlip-train"):
         sink(
             (*loc, "operation"),
-            f"operation `{op.lower()}` implying the trainer engine is deprecated; write "
+            f"operation `{op}` implying the trainer engine is deprecated; write "
             f"`engine: mlip-train` + `operation: mlip_train`",
         )
         s["engine"] = "mlip-train"

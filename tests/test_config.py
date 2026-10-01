@@ -1082,34 +1082,52 @@ def test_every_legacy_rewrite_announces_itself():
                 {"step": 1, "engine": "mlff", "operation": "sp"},
                 {"step": 2, "operation": "MLFF_TRAIN"},
                 {"step": 3, "engine": "orca", "mlff": {"model_name": "m", "bind": "x:1"}},
+                {"step": 4, "engine": "DFT"},
             ]
         },
         report=lambda loc, message: rows.append((loc, message)),
     )
     by_loc = dict(rows)
     assert "use `mlip`" in by_loc[("steps", 0, "engine")]
+    assert "use `orca`" in by_loc[("steps", 3, "engine")]
     assert "mlip-train" in by_loc[("steps", 1, "operation")]
     assert "dropped" in by_loc[("steps", 2, "mlff", "bind")]
 
 
-def test_the_current_operation_spellings_pass_without_a_warning():
-    """``mlip-train`` + ``mlip_train`` is v2's own vocabulary, and an operation in any case
-    is the config's own spelling rule, not a v1 one: none of them is a rewrite to report."""
+def test_the_current_spellings_pass_without_a_warning():
+    """``mlip-train`` + ``mlip_train`` is v2's own vocabulary, and an engine or operation in
+    any case is the config's own spelling rule, not a v1 one: none of them is a rewrite to
+    report, and the v1 layer leaves a current name's case to the model."""
     from chemrefine.config_legacy import normalize as _normalize_legacy
 
     rows: list[str] = []
-    _normalize_legacy(
+    out = _normalize_legacy(
         {
             "steps": [
                 {"step": 1, "engine": "mlip-train", "operation": "mlip_train"},
                 {"step": 2, "engine": "mlip-train", "operation": "MLIP_TRAIN"},
                 {"step": 3, "engine": "orca", "operation": "OPT+SP"},
                 {"step": 4, "engine": "orca", "operation": "goat"},
+                {"step": 5, "engine": "ORCA", "operation": "goat"},
+                {"step": 6, "engine": "MLIP-TRAIN", "operation": "mlip_train"},
             ]
         },
         report=lambda loc, message: rows.append(message),
     )
     assert rows == []
+    assert [s["engine"] for s in out["steps"][4:]] == ["ORCA", "MLIP-TRAIN"]
+
+
+def test_an_engine_is_one_engine_in_any_case():
+    """Folded once, as the step is read: any case; a separator is part of the name."""
+    for spelling in ("ORCA", "Orca", "orca"):
+        assert StepConfig(step=1, engine=spelling).engine == "orca"
+    assert StepConfig(step=1, engine="MLIP-ExtOpt").engine == "mlip-extopt"
+    assert StepConfig(step=1, engine="mlip_extopt").engine == "mlip_extopt"
+    config = Config.model_validate({"steps": [{"step": 1, "engine": "PySCF"}]})
+    assert config.steps[0].engine == "pyscf"
+    with pytest.raises(ValidationError, match="valid string"):
+        StepConfig(step=1, engine=3)
 
 
 def test_an_operation_is_one_operation_in_any_spelling():
