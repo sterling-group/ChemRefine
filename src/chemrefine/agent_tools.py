@@ -280,7 +280,7 @@ def start_run(
             else "an unreadable lock file — delete it if that run is known dead"
         )
         raise RunLockError(f"a driver already holds {config.output_dir} ({holder})")
-    log_dir = config.output_dir / "agent_runs"
+    log_dir = ids.agent_runs_dir(config.output_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
     # Microseconds, not seconds: the lock check above is check-then-act — the *child*
     # claims the lock, so two calls close together can both pass it — and at one-second
@@ -323,7 +323,7 @@ def start_run(
 
 def _steps_csv_rows(output_dir: Path) -> list[dict[str, str]]:
     """Every row of the cumulative ``steps.csv`` (``[]`` before the first step reports)."""
-    path = output_dir / "steps.csv"
+    path = ids.steps_report_path(output_dir)
     if not path.is_file():
         return []
     try:
@@ -335,7 +335,7 @@ def _steps_csv_rows(output_dir: Path) -> list[dict[str, str]]:
 
 def _latest_log(output_dir: Path) -> Path | None:
     """The newest ``agent_runs`` log, or ``None`` when no agent ever started a run."""
-    log_dir = output_dir / "agent_runs"
+    log_dir = ids.agent_runs_dir(output_dir)
     logs = sorted(log_dir.glob("*.log")) if log_dir.is_dir() else []
     return logs[-1] if logs else None
 

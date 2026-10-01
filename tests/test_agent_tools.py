@@ -25,7 +25,7 @@ from typing import Any, ClassVar
 import pytest
 import yaml
 
-from chemrefine import agent_tools, cache, io, pipeline
+from chemrefine import agent_tools, cache, ids, io, pipeline
 from chemrefine.cache import save_failure_records
 from chemrefine.errors import ConfigError, JobSubmissionError, RunLockError
 from chemrefine.state import FailureKind, FailureRecord
@@ -634,10 +634,16 @@ def _reported_tree(tmp_path: Path) -> Path:
     )
     outputs = tmp_path / "outputs"
     io.save_step_csv(
-        energies_hartree=[-1.0, -0.9], structure_ids=["0", "1"], step_number=1, output_dir=outputs
+        energies_hartree=[-1.0, -0.9],
+        structure_ids=["0", "1"],
+        step_number=1,
+        path=ids.steps_report_path(outputs),
     )
     io.save_step_csv(
-        energies_hartree=[-1.1], structure_ids=["0"], step_number=2, output_dir=outputs
+        energies_hartree=[-1.1],
+        structure_ids=["0"],
+        step_number=2,
+        path=ids.steps_report_path(outputs),
     )
     step1 = outputs / "step1_screen"
     save_failure_records(

@@ -556,14 +556,14 @@ def test_steps_csv_is_summarised_at_the_steps_own_temperature(tmp_path: Path):
         energies_hartree=energies,
         structure_ids=ids,
         step_number=1,
-        output_dir=tmp_path / "at77",
+        path=tmp_path / "at77" / "steps.csv",
         temperature_k=77.0,
     )
     io.save_step_csv(
         energies_hartree=energies,
         structure_ids=ids,
         step_number=1,
-        output_dir=tmp_path / "at_room",
+        path=tmp_path / "at_room" / "steps.csv",
     )
     written = pd.read_csv(cfg.output_dir / "steps.csv")
     cold = pd.read_csv(tmp_path / "at77" / "steps.csv")

@@ -27,6 +27,10 @@ The functions here own three concerns:
    (:func:`require_template`) — the ``step{N}.{ext}`` template-naming
    convention, kept here beside the artifact-path convention so every
    canonical ChemRefine filename lives in one module.
+4. Name the output tree's bookkeeping: a step's ``_cache/`` (:func:`cache_dir`), the
+   cumulative report every step appends to (:func:`steps_report_path`), and where a run
+   started for an agent or the GUI logs (:func:`agent_runs_dir`) — each spelled once, so
+   a reader cannot look for a name its writer no longer uses.
 """
 
 from __future__ import annotations
@@ -149,6 +153,21 @@ def result_record_path(job_dir: Path, step: int, structure_id: str) -> Path:
     native ``step{N}_{id}.json`` output.
     """
     return job_dir / f"{structure_stem(step, structure_id)}.result.json"
+
+
+def cache_dir(step_dir: Path) -> Path:
+    """A step's ``_cache/``: its results, manifest, failure ledger and lease ledger."""
+    return step_dir / "_cache"
+
+
+def steps_report_path(output_dir: Path) -> Path:
+    """The cumulative per-step report every step appends to."""
+    return output_dir / "steps.csv"
+
+
+def agent_runs_dir(output_dir: Path) -> Path:
+    """Where a run started for an agent or the GUI writes its log."""
+    return output_dir / "agent_runs"
 
 
 def input_geometry_path(step_dir: Path, step: int, structure_id: str) -> Path:

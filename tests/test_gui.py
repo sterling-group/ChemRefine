@@ -359,7 +359,7 @@ def test_a_digit_that_is_not_a_number_is_still_a_400(client: Any, tmp_path: Path
 
 def _reported_tree(tmp_path: Path) -> Path:
     """A saved config whose output tree carries pipeline-written status artifacts."""
-    from chemrefine import io
+    from chemrefine import ids, io
     from chemrefine.cache import save_failure_records
     from chemrefine.state import FailureKind, FailureRecord
 
@@ -377,7 +377,10 @@ def _reported_tree(tmp_path: Path) -> Path:
     )
     outputs = tmp_path / "outputs"
     io.save_step_csv(
-        energies_hartree=[-1.0, -0.9], structure_ids=["0", "1"], step_number=1, output_dir=outputs
+        energies_hartree=[-1.0, -0.9],
+        structure_ids=["0", "1"],
+        step_number=1,
+        path=ids.steps_report_path(outputs),
     )
     save_failure_records(
         outputs / "step1_screen",

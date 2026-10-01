@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
+from chemrefine import ids
 from chemrefine.errors import CacheError, ConfigError, JobSubmissionError
 from chemrefine.io import atomic_write
 from chemrefine.throttle import GpuBudget, StallDeadline
@@ -457,7 +458,7 @@ class JobLease:
 
 def lease_path(step_dir: Path) -> Path:
     """Where ``step_dir``'s lease ledger lives."""
-    return step_dir / "_cache" / ACTIVE_JOBS_NAME
+    return ids.cache_dir(step_dir) / ACTIVE_JOBS_NAME
 
 
 def load_leases(step_dir: Path) -> list[JobLease]:

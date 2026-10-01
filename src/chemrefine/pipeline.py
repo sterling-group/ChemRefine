@@ -34,7 +34,7 @@ from typing import NoReturn
 import numpy as np
 from ase import Atoms
 
-from chemrefine import filtering, io, slurm
+from chemrefine import filtering, ids, io, slurm
 from chemrefine.config import Config, StepConfig
 from chemrefine.engines import preflight_backends, preflight_steps
 from chemrefine.errors import ConfigError, NoUsableCacheError, RunLockError
@@ -596,7 +596,7 @@ def _write_step_csv(config: Config, step_cfg: StepConfig, state: PipelineState) 
         energies_hartree=[getattr(s, ranking.attr) for s in state.structures],
         structure_ids=[s.id for s in state.structures],
         step_number=step_cfg.step,
-        output_dir=config.output_dir,
+        path=ids.steps_report_path(config.output_dir),
         temperature_k=temperature_k,
         energy_type=ranking.energy_type,
     )

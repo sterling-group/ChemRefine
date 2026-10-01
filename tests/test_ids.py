@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+from chemrefine import ids
 from chemrefine.errors import ConfigError
 from chemrefine.ids import allocate_child_ids, require_template, step_template_path
 
@@ -105,3 +108,10 @@ def test_attempt_dirs_are_ordered_by_number_not_by_name_or_clock(tmp_path):
     ]
     assert latest_attempt_dir(tmp_path) == tmp_path / "attempt10"
     assert attempt_dirs_newest_first(tmp_path / "nothing-here") == []
+
+
+def test_the_output_trees_bookkeeping_names():
+    """Spelled once, here: a reader cannot look for a name its writer no longer uses."""
+    assert ids.cache_dir(Path("s")) == Path("s/_cache")
+    assert ids.steps_report_path(Path("o")) == Path("o/steps.csv")
+    assert ids.agent_runs_dir(Path("o")) == Path("o/agent_runs")

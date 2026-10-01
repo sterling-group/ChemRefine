@@ -387,12 +387,12 @@ def resolution_keys(resolution: ResolutionSpec | None) -> tuple[str, str, str]:
 
 def _cache_path(step_dir: Path) -> Path:
     """Return the ``step.json`` cache document path inside ``step_dir/_cache/``."""
-    return step_dir / "_cache" / "step.json"
+    return ids.cache_dir(step_dir) / "step.json"
 
 
 def _arrays_path(step_dir: Path) -> Path:
     """Return the ``arrays.npz`` coordinate sidecar path inside ``step_dir/_cache/``."""
-    return step_dir / "_cache" / "arrays.npz"
+    return ids.cache_dir(step_dir) / "arrays.npz"
 
 
 #: Record keys held in the ``arrays.npz`` sidecar rather than inline in ``step.json``.
@@ -1075,7 +1075,7 @@ def discard_step(step_dir: Path) -> None:
 
 def manifest_path(step_dir: Path) -> Path:
     """Return the manifest file path for ``step_dir``."""
-    return step_dir / "_cache" / "manifest.json"
+    return ids.cache_dir(step_dir) / "manifest.json"
 
 
 def save_manifest(
@@ -1274,7 +1274,7 @@ def _anchor(text: str, step_dir: Path) -> Path:
 
 def failed_jobs_path(step_dir: Path) -> Path:
     """Return the failed-jobs ledger path for ``step_dir``."""
-    return step_dir / "_cache" / "failed_jobs.json"
+    return ids.cache_dir(step_dir) / "failed_jobs.json"
 
 
 def save_failure_records(step_dir: Path, failed: Sequence[FailureRecord]) -> None:

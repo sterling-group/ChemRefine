@@ -296,22 +296,24 @@ def test_gather_output_files_missing_dir_returns_empty(tmp_path: Path):
 
 
 def test_save_step_csv_writes_header_on_step_one(tmp_path: Path):
-    path = save_step_csv([-1.0, -1.001], ["0", "1"], step_number=1, output_dir=tmp_path)
+    path = save_step_csv([-1.0, -1.001], ["0", "1"], step_number=1, path=tmp_path / "steps.csv")
     text = path.read_text(encoding="utf-8")
     assert "Step,Conformer,Energy (Hartree)" in text.splitlines()[0]
     assert "% Cumulative" in text.splitlines()[0]
 
 
 def test_save_step_csv_appends_without_header_on_later_steps(tmp_path: Path):
-    save_step_csv([-1.0], ["0"], step_number=1, output_dir=tmp_path)
-    save_step_csv([-2.0], ["1"], step_number=2, output_dir=tmp_path)
+    save_step_csv([-1.0], ["0"], step_number=1, path=tmp_path / "steps.csv")
+    save_step_csv([-2.0], ["1"], step_number=2, path=tmp_path / "steps.csv")
     text = (tmp_path / "steps.csv").read_text(encoding="utf-8")
     # header appears exactly once
     assert text.count("Step,Conformer,Energy (Hartree)") == 1
 
 
 def test_save_step_csv_sorts_by_energy(tmp_path: Path):
-    path = save_step_csv([-1.0, -2.0, -0.5], ["a", "b", "c"], step_number=1, output_dir=tmp_path)
+    path = save_step_csv(
+        [-1.0, -2.0, -0.5], ["a", "b", "c"], step_number=1, path=tmp_path / "steps.csv"
+    )
     rows = path.read_text(encoding="utf-8").strip().splitlines()[1:]  # drop header
     conformers = [row.split(",")[1] for row in rows]
     assert conformers == ["b", "a", "c"]  # ascending by absolute energy
@@ -329,7 +331,10 @@ def test_save_step_csv_derived_columns_carry_the_right_numbers(tmp_path: Path):
     ``* 100.0`` percentage scale, or the default temperature cannot reproduce.
     """
     path = save_step_csv(
-        [-1.0, -1.0 + 1.0 / 627.5094740629], ["low", "high"], step_number=1, output_dir=tmp_path
+        [-1.0, -1.0 + 1.0 / 627.5094740629],
+        ["low", "high"],
+        step_number=1,
+        path=tmp_path / "steps.csv",
     )
     with path.open(encoding="utf-8", newline="") as handle:
         low, high = list(csv.DictReader(handle))
@@ -349,7 +354,7 @@ def test_save_step_csv_derived_columns_carry_the_right_numbers(tmp_path: Path):
 def test_save_step_csv_all_nan_energies_skips_write(tmp_path: Path):
     """No finite energies → skip the summary instead of crashing on an empty frame."""
     path = save_step_csv(
-        [float("nan"), float("nan")], ["0", "1"], step_number=1, output_dir=tmp_path
+        [float("nan"), float("nan")], ["0", "1"], step_number=1, path=tmp_path / "steps.csv"
     )
     assert not path.exists()
 
@@ -360,9 +365,9 @@ def test_save_step_csv_step_one_truncates_stale_file(tmp_path: Path):
     Otherwise step 2 would append onto the stale step-1 rows from the
     previous run instead of starting a fresh report.
     """
-    stale = save_step_csv([-1.0], ["0"], step_number=1, output_dir=tmp_path)
+    stale = save_step_csv([-1.0], ["0"], step_number=1, path=tmp_path / "steps.csv")
     assert stale.exists()
-    path = save_step_csv([float("nan")], ["0"], step_number=1, output_dir=tmp_path)
+    path = save_step_csv([float("nan")], ["0"], step_number=1, path=tmp_path / "steps.csv")
     assert not path.exists()
 
 
@@ -377,9 +382,11 @@ def test_save_step_csv_writes_a_header_when_step_one_wrote_nothing(tmp_path: Pat
     Reachable without contrivance: `on_failure: best` on step 1 with no `sample:` keeps the
     backfilled seeds, and those carry no energy yet.
     """
-    assert not save_step_csv([None, None], ["0", "1"], step_number=1, output_dir=tmp_path).exists()
+    assert not save_step_csv(
+        [None, None], ["0", "1"], step_number=1, path=tmp_path / "steps.csv"
+    ).exists()
 
-    path = save_step_csv([-1.0, -1.5], ["0", "1"], step_number=2, output_dir=tmp_path)
+    path = save_step_csv([-1.0, -1.5], ["0", "1"], step_number=2, path=tmp_path / "steps.csv")
 
     assert path.read_text(encoding="utf-8").splitlines()[0].startswith("Step,Conformer,")
     frame = pd.read_csv(path)

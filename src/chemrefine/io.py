@@ -477,13 +477,12 @@ def save_step_csv(
     energies_hartree: Iterable[float | None],
     structure_ids: Iterable[str],
     step_number: int,
-    output_dir: str | Path,
+    path: Path,
     *,
-    filename: str = "steps.csv",
     temperature_k: float = DEFAULT_TEMPERATURE_K,
     energy_type: str = "electronic",
 ) -> Path:
-    """Append a per-structure summary row for ``step_number`` to a cumulative CSV.
+    """Append a per-structure summary row for ``step_number`` to the cumulative CSV at ``path``.
 
     Columns are :data:`STEPS_CSV_COLUMNS`, in that order — selected by it just before the
     write, so this function cannot quietly emit a shape the constant does not describe.
@@ -502,9 +501,7 @@ def save_step_csv(
     """
     import pandas as pd
 
-    out = Path(output_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    path = out / filename
+    path.parent.mkdir(parents=True, exist_ok=True)
     if step_number == 1:
         # Step 1 starts a fresh report each run; later steps append to it.
         # Truncate up front so a step 1 with no finite energies (the early
