@@ -830,6 +830,22 @@ def test_load_if_valid_false_when_cache_is_corrupt(tmp_path: Path):
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
+def test_a_template_this_account_cannot_read_keys_as_one_that_is_not_there(tmp_path: Path):
+    """No bytes, no digest: the step misses its cache, and the refusal that names the file
+    comes from the reader that renders it, not as a bare ``PermissionError`` from the key —
+    which a step that may not submit, and so meets no walk, would otherwise raise."""
+    template = tmp_path / "step1.inp"
+    template.write_text("! Opt\n", encoding="utf-8")
+    template.chmod(0)
+    try:
+        assert (
+            cache.template_digest(template) == cache.template_digest(tmp_path / "absent.inp") == ""
+        )
+    finally:
+        template.chmod(0o644)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
 def test_an_unreadable_document_is_the_cache_error_a_corrupt_one_gets(tmp_path: Path):
     """Present-but-unreadable is the other half of what ``read_json`` promises to refuse.
 

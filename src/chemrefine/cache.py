@@ -191,17 +191,22 @@ def template_digest(path: Path | None) -> str:
     engines: two of them hashing the same file to different keys is not a crash, it is a step
     that silently re-runs or silently does not.
 
-    **The one home for what an absent template means to a key**, and both absences mean the
+    **The one home for what an absent template means to a key**, and every absence means the
     same thing here. ``None`` is an engine that reads no template at all; a path that is not a
-    file is a template that was named and is missing. Neither can contribute bytes, so neither
-    contributes a digest — and for the second the ``""`` is load-bearing: it *changes* the
-    fingerprint, so the step misses its cache and re-runs, and the actionable error arrives
-    from :func:`chemrefine.ids.require_template` at the moment of rendering rather than from
-    the cache.
+    file, or one this account cannot read, is a template that was named and cannot be used.
+    None of them can contribute bytes, so none contributes a digest — and for the named ones
+    the ``""`` is load-bearing: it *changes* the fingerprint, so the step misses its cache and
+    re-runs, and the actionable error arrives from :func:`chemrefine.ids.require_template` at
+    the moment of rendering rather than from the cache, as it does for the operation the
+    template would infer (:func:`chemrefine.engines.api.resolve_operation`).
     """
     if path is None or not path.is_file():
         return ""
-    return hashlib.sha1(path.read_bytes(), usedforsecurity=False).hexdigest()[:16]
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return ""
+    return hashlib.sha1(data, usedforsecurity=False).hexdigest()[:16]
 
 
 def option_file_digests(options: Mapping[str, Any] | None) -> dict[str, str]:
