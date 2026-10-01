@@ -16,15 +16,29 @@ covers. Scanning only ``src/`` let ``chemrefine.cache.parents_digest`` rot in a 
 that deleted it, because the one test that called it is deselected by default and nothing
 read its prose.
 
-Absolute references only (targets starting ``chemrefine.``): a bare local name has no
-single right module to resolve against, and the absolute form is what the codebase uses
-for anything a reader would navigate to.
+An absolute target (``chemrefine.…``) must import and resolve. A bare one has no single
+right module to resolve against, so it is held to where a reader would look for it: a name
+the package defines, a name its own file defines or imports, or a builtin. A bare
+``:mod:`` names a module of the package (relative to the file's package, or from its root)
+or one the package depends on: the standard library or a declared dependency, by name, so
+the answer is the same in every environment. A dotted bare target is walked from the
+module that defines its first name at module level; one rooted outside the package
+(``ase.Atoms``, ``sys.exit``) is left to the library that owns it.
 """
 
 from __future__ import annotations
 
+import ast
+import builtins
+import functools
 import importlib
+import importlib.util
+import itertools
 import re
+import sys
+import tomllib
+from collections import defaultdict
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 import chemrefine
@@ -71,13 +85,17 @@ def _iter_refs() -> list[tuple[str, str]]:
     for path in _scanned_paths():
         text = path.read_text(encoding="utf-8")
         for m in _ROLE_RE.finditer(text):
-            line = text.count("\n", 0, m.start()) + 1
-            try:
-                where = path.relative_to(_REPO_ROOT)
-            except ValueError:  # an installed package, outside any checkout
-                where = path.relative_to(_PACKAGE_ROOT.parent)
-            refs.append((f"{where}:{line}", m.group(1)))
+            refs.append((_where(path, text, m.start()), m.group(1)))
     return refs
+
+
+def _where(path: Path, text: str, offset: int) -> str:
+    """``file:line`` for a match, the file named relative to the checkout when there is one."""
+    try:
+        name = path.relative_to(_REPO_ROOT)
+    except ValueError:  # an installed package, outside any checkout
+        name = path.relative_to(_PACKAGE_ROOT.parent)
+    return f"{name}:{text.count(chr(10), 0, offset) + 1}"
 
 
 def _resolves(target: str) -> bool:
@@ -120,6 +138,150 @@ def test_every_absolute_docstring_reference_resolves():
     assert dangling == [], (
         "these docstring cross-references point at nothing; rename the target in the "
         "prose or restore the object:\n" + "\n".join(dangling)
+    )
+
+
+_BARE_ROLE_RE = re.compile(r":(func|class|meth|mod|attr|data|exc):`~?(\.?[A-Za-z_][\w.]*)`")
+
+
+def _bound(target: ast.expr) -> Iterator[str]:
+    """The names an assignment target binds: a name, ``self.x`` or ``cls.x``, or an unpacking."""
+    if isinstance(target, ast.Name):
+        yield target.id
+    elif isinstance(target, ast.Attribute):
+        if isinstance(target.value, ast.Name) and target.value.id in ("self", "cls"):
+            yield target.attr
+    elif isinstance(target, (ast.Tuple, ast.List)):
+        for element in target.elts:
+            yield from _bound(element)
+    elif isinstance(target, ast.Starred):
+        yield from _bound(target.value)
+
+
+def _definitions(nodes: Iterable[ast.AST]) -> Iterator[str]:
+    """The names ``nodes`` bind by definition: defs, classes, assignment targets."""
+    for node in nodes:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            yield node.name
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                yield from _bound(target)
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+            yield from _bound(node.target)
+
+
+def _defined(tree: ast.AST) -> Iterator[str]:
+    """Every name a module defines, nested ones included.
+
+    A method is a ``def`` inside a class, and a pydantic or dataclass field an annotated
+    assignment in one; a role names either by its bare name.
+    """
+    return _definitions(ast.walk(tree))
+
+
+def _imported(tree: ast.AST) -> Iterator[str]:
+    """Every name a module binds by import."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                yield alias.asname or alias.name.split(".")[0]
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                yield alias.asname or alias.name
+
+
+def _module_of(path: Path) -> str:
+    """The dotted module name of a file under the package."""
+    parts = path.relative_to(_PACKAGE_ROOT.parent).with_suffix("").parts
+    return ".".join(parts[:-1] if parts[-1] == "__init__" else parts)
+
+
+@functools.cache
+def _package_names() -> tuple[frozenset[str], dict[str, frozenset[str]]]:
+    """Every name the package defines, and its module-level names with their modules."""
+    every: set[str] = set()
+    module_level: defaultdict[str, set[str]] = defaultdict(set)
+    for path in _PACKAGE_ROOT.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        every.update(_defined(tree))
+        for name in _definitions(tree.body):
+            module_level[name].add(_module_of(path))
+    return frozenset(every), {name: frozenset(mods) for name, mods in module_level.items()}
+
+
+@functools.cache
+def _dependencies() -> frozenset[str]:
+    """The distributions ``pyproject.toml`` declares, extras included, by normalised name."""
+    project = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    extras = project["optional-dependencies"].values()
+    return frozenset(
+        re.split(r"[^\w.-]", spec, maxsplit=1)[0].lower().replace("_", "-")
+        for spec in itertools.chain(project["dependencies"], *extras)
+    )
+
+
+def _is_module(name: str) -> bool:
+    try:
+        return importlib.util.find_spec(name) is not None
+    except ModuleNotFoundError:  # a dotted name whose parent is no package
+        return False
+
+
+def _names_a_module(target: str, path: Path) -> bool:
+    """A module beside ``path`` or of the package from its root, or a stdlib or declared one."""
+    if path.is_relative_to(_PACKAGE_ROOT):
+        package = _module_of(path.parent / "__init__.py")
+        if target.startswith("."):
+            return _is_module(importlib.util.resolve_name(target, package))
+        if _is_module(f"{package}.{target}"):
+            return True
+    else:  # tests/ or scripts/, whose modules import each other by their bare names
+        beside = path.parent.joinpath(*target.split("."))
+        if beside.with_suffix(".py").is_file() or (beside / "__init__.py").is_file():
+            return True
+    if _is_module(f"chemrefine.{target}"):
+        return True
+    top = target.split(".")[0]
+    dist = top.lower().replace("_", "-")
+    return top in sys.stdlib_module_names or any(
+        name == dist or name.startswith(f"{dist}-") for name in _dependencies()
+    )
+
+
+def _bare_resolves(path: Path, role: str, target: str, own: frozenset[str]) -> bool:
+    """Whether a bare ``target`` in ``path`` names what the module docstring says it may."""
+    if role == "mod":
+        return _names_a_module(target, path)
+    every, module_level = _package_names()
+    first = target.split(".")[0]
+    if "." not in target:
+        return first in every or first in own or hasattr(builtins, first)
+    modules = module_level.get(first)
+    return modules is None or any(_resolves(f"{module}.{target}") for module in modules)
+
+
+def test_every_bare_docstring_reference_names_something_that_exists():
+    """A bare role rots exactly as an absolute one does: a rename leaves it dangling."""
+    dangling, checked = [], 0
+    for path in _scanned_paths():
+        text = path.read_text(encoding="utf-8")
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:  # a step template under tests/data: $PLACEHOLDERs, not Python
+            own: frozenset[str] = frozenset()
+        else:
+            own = frozenset(_defined(tree)) | frozenset(_imported(tree))
+        for m in _BARE_ROLE_RE.finditer(text):
+            role, target = m.groups()
+            if target == "chemrefine" or target.startswith("chemrefine."):
+                continue  # the absolute check's
+            checked += 1
+            if not _bare_resolves(path, role, target, own):
+                dangling.append(f"{_where(path, text, m.start())} -> {target}")
+    assert checked, "no bare role references found — the scanner itself has broken"
+    assert dangling == [], (
+        "these bare docstring cross-references point at nothing; correct the name or "
+        "write it absolute (chemrefine.…):\n" + "\n".join(dangling)
     )
 
 

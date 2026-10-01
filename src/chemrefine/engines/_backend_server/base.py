@@ -106,7 +106,7 @@ class ComputeBackend(ABC):
     idiom :class:`~chemrefine.engines._job.JobEngine` set.
 
     Concrete backends own their CLI surface (no backend literals in the
-    shared :mod:`server` / :mod:`client`):
+    shared :mod:`server`, or in the client that relays a program's requests to it):
 
     * :meth:`add_cli_args` registers backend-specific argparse flags on
       the shared server / client parsers — the shared layer iterates

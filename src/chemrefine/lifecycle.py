@@ -235,7 +235,7 @@ def retryable_best(failure: Failure) -> Structure | None:
     and a convergence failure with no geometry to restart from has nothing to offer either.
 
     Both retry paths ask this and only this. How a retry is then *scheduled* differs between
-    them for a real reason — :func:`rerun_from_best` submits a whole batch and parses it
+    them for a real reason — :func:`retry_unconverged` submits a whole batch and parses it
     against one combined ``prev_state``, while :class:`_QueueSink` handles one job at a time
     and carries each structure separately — so that part is deliberately not shared.
     """

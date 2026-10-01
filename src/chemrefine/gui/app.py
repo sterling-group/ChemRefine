@@ -831,7 +831,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         ``{error, exit_code: 10}`` shape; the browser confirmed the action already,
         and the child outlives this server exactly as it outlives an agent session.
 
-        The two budgets are wire numbers (:data:`_WireIntOrUnset`) like the rest of them, and
+        The two budgets are wire numbers (:data:`_CountOrUnset`) like the rest of them, and
         the two that reach a *child process*: ``start_run`` renders them onto its argv,
         where one Typer cannot read is exit 2 into a log nobody is watching — after this
         call has already returned a pid and a log path. Unset stays unset, because the

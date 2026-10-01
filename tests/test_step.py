@@ -2076,12 +2076,12 @@ def test_a_run_killed_between_a_retrys_archive_and_its_output_recovers_on_resume
 
     Preparing a retry archives round 1's output into ``attempt1/`` and writes a fresh input at
     the canonical path, so between those two moments the structure has *no* output where the
-    manifest says one should be. Streaming does not create that window — ``rerun_from_best``
-    has always had it — but it moves it from the tail of the step to almost all of it, because
-    retries now start as soon as their own job frees a slot.
+    manifest says one should be. Streaming does not create that window — the batch retry,
+    ``retry_unconverged``, has it too — but it moves it from the tail of the step to almost
+    all of it, because retries now start as soon as their own job frees a slot.
 
     Resume must therefore treat "manifest entry with no output" as work to redo, not as a
-    verdict. It does: ``_partial_step_outcome`` files it ``MISSING_OUTPUT`` and
+    verdict. It does: ``_incremental_step_outcome`` files it ``MISSING_OUTPUT`` and
     ``_resubmit_failed`` re-runs it, because only ``NOT_CONVERGED`` is held back for the
     retry pass.
     """
