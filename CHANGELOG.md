@@ -606,7 +606,7 @@ for those and the full map.
   exited 0. 2.0 refuses a step number or name the config does not define with exit
   code 2, from every entry point and under `--dry-run` too, before anything touches the
   tree.
-- **A negative `seed` is refused at config load.** v1.3.1 handed a training step's `seed`
+- **A negative `seed` is refused before the run starts.** v1.3.1 handed a training step's `seed`
   to its train/test split, which refused a negative one with a traceback once every
   labelling step upstream had run. 2.0 holds the training and NMS `seed` to `>= 0`, so
   `chemrefine validate` and the run's preflight name the field before anything is
@@ -614,9 +614,9 @@ for those and the full map.
 - **A float knob refuses `.inf` and `.nan`.** v1.3.1 took any number as the NMS
   displacement (`displacement_vector`), so `.nan`, `.inf` or `0` sent out a full batch of
   displaced children whose coordinates were not finite or were their parent's unchanged.
-  2.0 holds `displacement_value` positive and finite at config load, and `window_kcalmol`,
+  2.0 holds `displacement_value` positive and finite, and `window_kcalmol`,
   `temperature_k`, `job_timeout_seconds` and `gradient_timeout_seconds` finite, naming
-  the field. To wait without a bound, write `null` for `job_timeout_seconds`;
+  the field before anything is submitted. To wait without a bound, write `null` for `job_timeout_seconds`;
   `gradient_timeout_seconds` always has one, so raise it instead.
 - **`model_name` reaches CHGNet.** In v1 the CHGNet branch never consumed it —
   `CHGNet.load()` ran bare, so a pinned `model_name: "0.2.0"` silently served the

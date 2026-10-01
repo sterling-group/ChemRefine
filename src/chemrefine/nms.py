@@ -39,6 +39,7 @@ from typing import Protocol
 import numpy as np
 from ase import Atoms
 from numpy.typing import NDArray
+from pydantic import ValidationError
 
 from chemrefine import attempts, cache, filtering, io, lifecycle
 from chemrefine.config import NmsKnobs, StepConfig
@@ -241,6 +242,22 @@ class NmsResolution:
 # ---------------------------------------------------------------------------
 
 
+def read_options(step_cfg: StepConfig) -> NmsOptions:
+    """A sampling step's NMS knobs, validated, or a :class:`~chemrefine.errors.ConfigError`
+    naming the step.
+
+    The config's own reading of the knobs: no template is read, so the run's t=0 walk
+    (:func:`chemrefine.step.preflight_batches`) and ``chemrefine validate`` ask it before
+    anything runs, and :func:`resolved_options` — what the cache key and the coordinator
+    read — starts from the same answer. A bare pydantic error would leave the exit-code
+    contract as a traceback three layers from the YAML that caused it.
+    """
+    try:
+        return NmsOptions.from_raw(step_cfg.options)
+    except ValidationError as e:
+        raise ConfigError(f"step {step_cfg.step}: invalid NMS options:\n{e}") from e
+
+
 def require_frequencies(engine: NmsCapableEngine, ctx: StepContext) -> None:
     """Refuse an ``nms: true`` step whose input computes no frequencies.
 
@@ -272,7 +289,7 @@ def resolved_options(engine: NmsCapableEngine, ctx: StepContext) -> NmsOptions:
     input implies keys exactly as one that leaves it out.
     """
     raw = ctx.step_cfg.options or {}
-    opts = NmsOptions.from_raw(raw)
+    opts = read_options(ctx.step_cfg)
     if "target" not in raw:
         is_ts = engine.nms_input_info(ctx).is_transition_state
         opts = opts.model_copy(update={"target": "ts" if is_ts else "minimum"})

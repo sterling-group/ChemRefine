@@ -26,8 +26,6 @@ from enum import StrEnum
 from pathlib import Path
 from typing import assert_never
 
-from pydantic import ValidationError
-
 from chemrefine import attempts, cache, filtering, ids, io, lifecycle, nms, slurm
 from chemrefine.config import (
     STEP_OPTION_PATHS,
@@ -53,7 +51,6 @@ from chemrefine.engines.api import (
 from chemrefine.errors import (
     CacheError,
     ChemRefineError,
-    ConfigError,
     JobFailureError,
     NoUsableCacheError,
 )
@@ -144,9 +141,10 @@ def preflight_batches(config: Config, steps: Iterable[StepConfig], *, local: boo
     (:func:`chemrefine.ids.require_template`) and held to the engine's own template rules
     (:class:`~chemrefine.engines.api.TemplateChecking`), with what the run should say about
     the operation the step's outputs are read as said once, here
-    (:func:`~chemrefine.engines.api.operation_notice`); an ``nms: true`` step's input held
-    to computing frequencies (:func:`chemrefine.nms.require_frequencies`); then, for a step
-    the scheduler runs, its whole batch plan — SLURM header, job shape, GPU budget
+    (:func:`~chemrefine.engines.api.operation_notice`); an ``nms: true`` step's knobs read
+    (:func:`chemrefine.nms.read_options`) and its input held to computing frequencies
+    (:func:`chemrefine.nms.require_frequencies`); then, for a step the scheduler runs, its
+    whole batch plan — SLURM header, job shape, GPU budget
     (:meth:`chemrefine.engines.BatchPlan.of`) — under this run's ``max_cores``, dispatch and
     resolved GPU budget.
     """
@@ -161,6 +159,7 @@ def preflight_batches(config: Config, steps: Iterable[StepConfig], *, local: boo
             if (notice := operation_notice(engine, step_cfg, template)) is not None:
                 logger.warning("%s", notice)
         if step_cfg.nms and isinstance(engine, NmsCapableEngine):
+            nms.read_options(step_cfg)
             nms.require_frequencies(engine, ctx)
         if isinstance(engine, JobExecutable):
             BatchPlan.of(engine, ctx, local=local, gpu_budget=budget)
@@ -409,14 +408,7 @@ def derive_step_key(
     resolution = None
     if step_cfg.nms and isinstance(engine, NmsCapableEngine):
         readable = ctx.template is None or ctx.template.is_file()
-        try:
-            options = (
-                nms.resolved_options(engine, ctx)
-                if readable
-                else nms.NmsOptions.from_raw(step_cfg.options)
-            )
-        except ValidationError as e:
-            raise ConfigError(f"step {step_cfg.step}: invalid NMS options:\n{e}") from e
+        options = nms.resolved_options(engine, ctx) if readable else nms.read_options(step_cfg)
         resolution = options.resolution_spec()
     return cache.StepKey.of(
         step_cfg,

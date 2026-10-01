@@ -203,10 +203,11 @@ class NmsKnobs(BaseModel):
     displacement_value: float = Field(1.0, gt=0, allow_inf_nan=False)
     """Magnitude (Å) of the ± displacement along each selected mode.
 
-    Positive and finite, refused at config load like the other float knobs: ``0`` submits a
-    whole round-2 batch of children identical to their parents and then reports every
-    parent unresolved, and ``.nan`` / ``.inf`` put a non-number into every child geometry
-    the batch runs — the config boundary is the one place that can say so by name."""
+    Positive and finite, refused before the run starts like the other float knobs
+    (:func:`chemrefine.nms.read_options`): ``0`` submits a whole round-2 batch of children
+    identical to their parents and then reports every parent unresolved, and ``.nan`` /
+    ``.inf`` put a non-number into every child geometry the batch runs — the config
+    boundary is the one place that can say so by name."""
 
     num_random_displacements: int = Field(1, ge=1)
     """``random`` only: how many modes to draw."""

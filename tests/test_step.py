@@ -784,6 +784,21 @@ def test_rebuild_cache_refuses_a_sampling_step_whose_input_computes_no_frequenci
         rebuild_cache_step(cfg, cfg.steps[0], _seed_state(["0"]))
 
 
+def test_the_walk_refuses_an_invalid_nms_knob(tmp_path: Path):
+    """Refused before anything runs, not when the key is derived at the step's turn."""
+    from chemrefine.step import preflight_batches
+
+    _templates(tmp_path, "cpu.slurm.header")
+    (tmp_path / "templates" / "step1.inp").write_text(
+        "! B3LYP def2-SVP Opt Freq\n", encoding="utf-8"
+    )
+    cfg = _config(
+        tmp_path, engine="orca", nms=True, operation=None, options={"displacement_value": 0}
+    )
+    with pytest.raises(ConfigError, match="step 1: invalid NMS options"):
+        preflight_batches(cfg, cfg.steps, local=True)
+
+
 def test_invalid_nms_options_are_refused_when_the_key_is_derived(tmp_path: Path):
     """A bad NMS knob fails as a ConfigError naming the step, not a bare ValidationError.
 

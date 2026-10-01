@@ -341,9 +341,21 @@ def test_a_lenient_options_failure_skips_the_backend_check(tmp_path: Path):
 def test_bad_nms_knobs_are_an_error(tmp_path: Path):
     report = _validate(
         tmp_path,
+        steps=[{"step": 1, "engine": "orca", "nms": True, "options": {"target": "bogus"}}],
+    )
+    [issue] = [i for i in report.issues if i.kind == "nms"]
+    assert issue.loc == ("steps", 0, "options") and "step 1: invalid NMS options" in issue.message
+
+
+def test_nms_knobs_an_engine_cannot_use_are_left_to_the_ignored_warning(tmp_path: Path):
+    """The run never reads them for an engine that cannot sample, so they are no error;
+    the one thing worth saying is that ``nms: true`` does nothing."""
+    report = _validate(
+        tmp_path,
         steps=[{"step": 1, "engine": "fake", "nms": True, "options": {"target": "bogus"}}],
     )
-    assert "nms" in _kinds(report)
+    assert "nms" not in _kinds(report)
+    assert any(w.kind == "nms" and "ignored" in w.message for w in report.warnings)
 
 
 def test_nms_knobs_on_an_extopt_step_are_not_a_preflight_issue(tmp_path: Path):

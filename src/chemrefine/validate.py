@@ -79,7 +79,7 @@ from chemrefine.engines.api import (
 )
 from chemrefine.errors import ChemRefineError, ConfigError
 from chemrefine.ids import StepTemplate, require_template, step_template_path
-from chemrefine.nms import NmsOptions, require_frequencies
+from chemrefine.nms import NmsOptions, read_options, require_frequencies
 from chemrefine.state import PipelineState, StepContext
 from chemrefine.step import build_context
 
@@ -396,26 +396,27 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
                 issues.append(
                     ValidationIssue(loc=("steps", index, "options"), kind="backend", message=str(e))
                 )
-        if step.nms:
+        if step.nms and isinstance(engine, NmsCapableEngine):
+            # The walk's own read of the knobs; an engine that cannot sample never reads them.
             try:
-                NmsOptions.from_raw(step.options)
-            except ValidationError as e:
+                read_options(step)
+            except ConfigError as e:
                 issues.append(
                     ValidationIssue(loc=("steps", index, "options"), kind="nms", message=str(e))
                 )
-            if not isinstance(engine, NmsCapableEngine):
-                # The run silently skips NMS for an incapable engine (step.py narrows and
-                # moves on) — the one silent no-op a pre-run check can catch.
-                warnings.append(
-                    ValidationIssue(
-                        loc=("steps", index, "nms"),
-                        kind="nms",
-                        message=(
-                            f"engine {step.engine!r} cannot normal-mode sample; "
-                            "nms: true will be ignored"
-                        ),
-                    )
+        elif step.nms:
+            # The run silently skips NMS for an incapable engine (step.py narrows and moves
+            # on) — the one silent no-op a pre-run check can catch.
+            warnings.append(
+                ValidationIssue(
+                    loc=("steps", index, "nms"),
+                    kind="nms",
+                    message=(
+                        f"engine {step.engine!r} cannot normal-mode sample; "
+                        "nms: true will be ignored"
+                    ),
                 )
+            )
         if (silent := undeclared_options(step)) is not None:
             warnings.append(
                 ValidationIssue(loc=("steps", index, "options"), kind="options", message=silent)
