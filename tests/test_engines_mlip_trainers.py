@@ -948,10 +948,6 @@ def test_the_driver_refuses_a_template_that_contradicts_the_step(tmp_path: Path,
     facts = ["--device", "cpu", "--seed", "7"]
     with pytest.raises(SystemExit, match="authoritative"):
         train_driver.main(["chgnet", str(_driver_config(tmp_path, device="cuda")), *facts])
-    with pytest.raises(SystemExit, match="start_from"):
-        train_driver.main(
-            ["chgnet", str(_driver_config(tmp_path, start_from="some_release")), *facts]
-        )
 
 
 @pytest.mark.parametrize(
@@ -1010,14 +1006,14 @@ def test_a_template_still_rendering_the_placeholders_keeps_working(tmp_path: Pat
     """`device: $DEVICE`-style templates render the argv's own values — no conflict.
 
     Equality is judged as strings because the template channel only carries strings; a
-    pre-channel template that rendered the placeholders (or `start_from:
-    $FOUNDATION_MODEL`) holds exactly what argv carries and must not start refusing.
+    template that renders the placeholders holds exactly what argv carries and must not
+    start refusing.
     """
     from chemrefine.engines.mlip.train import driver as train_driver
 
     recorded = _install_fake_chgnet_stack(monkeypatch)
     monkeypatch.chdir(tmp_path)
-    config = _driver_config(tmp_path, device="cpu", seed=7, start_from="/m/prev.pth.tar")
+    config = _driver_config(tmp_path, device="cpu", seed=7)
     facts = ["--device", "cpu", "--seed", "7", "--weights-path", "/m/prev.pth.tar"]
     assert train_driver.main(["chgnet", str(config), *facts]) == 0
     recorded["chgnet_cls"].from_file.assert_called_once_with("/m/prev.pth.tar")

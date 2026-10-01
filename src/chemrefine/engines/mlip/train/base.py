@@ -164,11 +164,11 @@ class TrainingPlan:
     weights: Path | None
     """A local checkpoint to fine-tune from; ``None`` means no file was named.
 
-    Two typed fields rather than the folded ``start_from`` string they replace, mirroring
+    Two typed fields rather than one folded string, mirroring
     :class:`~chemrefine.engines.mlip.registry.CalculatorSpec` — the same subsystem's
     statement that a name and a path are different facts a consumer must not have to
-    guess apart. Folded, CHGNet's hook sent a release *name* through ``from_file`` (a
-    path-only door) while its own builder twenty lines up dispatches the two correctly."""
+    guess apart. Folded, a hook could send a release *name* through a path-only door
+    (CHGNet's ``from_file``) while its own builder dispatches the two correctly."""
 
     foundation: str | None
     """A released foundation model to start from, in the library's own spelling; ``None``
@@ -256,8 +256,8 @@ def starting_point(facts: Mapping[str, object]) -> str | None:
     """What a run starts from, as one string: its first start fact that is set; else scratch.
 
     A local checkpoint before a released model, in :data:`PLAN_FACTS` order — the display
-    ``$FOUNDATION_MODEL``, the runlog and the sidecar show, and the value the driver holds a
-    template's legacy ``start_from:`` to. ``None`` means training from scratch.
+    ``$FOUNDATION_MODEL``, the runlog and the sidecar show. ``None`` means training from
+    scratch.
     """
     return next(
         (str(facts[fact.key]) for fact in PLAN_FACTS if fact.start and fact.key in facts), None

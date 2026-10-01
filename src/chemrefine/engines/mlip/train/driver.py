@@ -35,7 +35,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from chemrefine.engines.mlip.train.base import PLAN_FACTS, ApiTrainerBase, starting_point
+from chemrefine.engines.mlip.train.base import PLAN_FACTS, ApiTrainerBase
 
 
 def _load_config(path: Path) -> dict[str, Any]:
@@ -79,9 +79,7 @@ def _overlay_plan_facts(config: dict[str, Any], args: argparse.Namespace) -> dic
     (``$FOUNDATION_MODEL`` renders empty for a from-scratch step). Equality is judged as
     strings because the template channel only carries strings: a template that rendered
     ``seed: $SEED`` holds the same digits argv carries, and harmless duplication is not a
-    conflict. ``start_from`` is the legacy spelling a template may still render; the hooks
-    do not read it, so a value that names something *else* is refused rather than
-    silently outranked.
+    conflict.
     """
     facts = {fact.key: v for fact in PLAN_FACTS if (v := getattr(args, fact.key)) is not None}
     for fact in PLAN_FACTS:
@@ -95,16 +93,6 @@ def _overlay_plan_facts(config: dict[str, Any], args: argparse.Namespace) -> dic
             f"are authoritative for a plan fact. Set the value you mean as the step's "
             f"`{fact.option}` and remove `{fact.key}:` from the template; the driver hands "
             f"the trainer the step's value itself."
-        )
-    shown = starting_point(facts) or ""
-    legacy = config.get("start_from")
-    if legacy is not None and str(legacy) not in ("", shown):
-        options = " or ".join(f"`{fact.option}`" for fact in PLAN_FACTS if fact.start)
-        raise SystemExit(
-            f"train_driver: the template renders start_from: {legacy!r} but the step starts "
-            f"from {shown or 'nothing'} (its {options}, or the default when both are unset) "
-            f"— the options are authoritative. Set {options} on the step (or reference "
-            f"$FOUNDATION_MODEL, which renders the same value)."
         )
     return {**config, **facts}
 
