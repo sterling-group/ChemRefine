@@ -1583,8 +1583,7 @@ def test_leases_round_trip_and_an_absent_ledger_reads_empty(tmp_path: Path):
     proc = subprocess.Popen(["sleep", "5"])
     try:
         with patch.dict(dispatch._LOCAL_PROCS, {"local-7": (proc, None, None)}):
-            slurm.record_lease(tmp_path, "12345")
-            slurm.record_lease(tmp_path, "local-7")
+            slurm.record_leases(tmp_path, ["12345", "local-7"])
     finally:
         proc.kill()
         proc.wait()
@@ -1595,10 +1594,16 @@ def test_leases_round_trip_and_an_absent_ledger_reads_empty(tmp_path: Path):
     assert all(lease.host for lease in by_id.values())
 
 
+def test_the_ledger_is_written_whole_as_the_jobs_in_flight(tmp_path: Path):
+    """Each write replaces the ledger: a job no longer in flight leaves it."""
+    slurm.record_leases(tmp_path, ["local-1", "local-2"])
+    slurm.record_leases(tmp_path, ["local-2", "local-3"])
+    assert [lease.id for lease in slurm.load_leases(tmp_path)] == ["local-2", "local-3"]
+
+
 def test_an_unwinding_release_keeps_the_slurm_leases_only(tmp_path: Path):
     """`keep_slurm` is the unwind's shape: local jobs were just killed, SLURM jobs run on."""
-    slurm.record_lease(tmp_path, "12345")
-    slurm.record_lease(tmp_path, "local-3")  # no registry entry: pid stays None
+    slurm.record_leases(tmp_path, ["12345", "local-3"])  # no registry entry: pid stays None
 
     slurm.release_leases(tmp_path, keep_slurm=True)
     assert [lease.id for lease in slurm.load_leases(tmp_path)] == ["12345"]
@@ -1606,7 +1611,7 @@ def test_an_unwinding_release_keeps_the_slurm_leases_only(tmp_path: Path):
     # A second unwind with nothing but local leases must not leave an empty ledger
     # behind — an existing-but-empty file and no file must mean the same thing.
     slurm.release_leases(tmp_path)
-    slurm.record_lease(tmp_path, "local-4")
+    slurm.record_leases(tmp_path, ["local-4"])
     slurm.release_leases(tmp_path, keep_slurm=True)
     assert not slurm.lease_path(tmp_path).exists()
 
@@ -1632,7 +1637,7 @@ def test_an_unreadable_lease_ledger_is_the_same_worded_refusal(tmp_path: Path):
     """
     from chemrefine.errors import CacheError
 
-    slurm.record_lease(tmp_path, "local-1")
+    slurm.record_leases(tmp_path, ["local-1"])
     path = slurm.lease_path(tmp_path)
     path.chmod(0)
     try:
@@ -1653,7 +1658,7 @@ def test_the_lease_ledger_is_written_readable_for_the_next_driver(tmp_path: Path
 
     previous = os.umask(0o027)
     try:
-        slurm.record_lease(tmp_path, "local-1")
+        slurm.record_leases(tmp_path, ["local-1"])
         mode = stat.S_IMODE(slurm.lease_path(tmp_path).stat().st_mode)
     finally:
         os.umask(previous)
@@ -1666,7 +1671,7 @@ def test_a_failed_lease_write_leaves_no_temp_file_behind(tmp_path: Path):
         patch.object(Path, "replace", side_effect=OSError("disk full")),
         pytest.raises(OSError, match="disk full"),
     ):
-        slurm.record_lease(tmp_path, "local-1")
+        slurm.record_leases(tmp_path, ["local-1"])
     assert not list(slurm.lease_path(tmp_path).parent.glob(".tmp_*"))
     assert not slurm.lease_path(tmp_path).exists()
 

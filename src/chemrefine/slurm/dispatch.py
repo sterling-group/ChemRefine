@@ -26,7 +26,7 @@ import signal
 import socket
 import subprocess
 import time
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
@@ -426,8 +426,8 @@ outlive its jobs: a SIGTERM unwind deliberately leaves SLURM jobs running, and a
 leaves the local ones too (they run in sessions of their own). A prompt ``resume`` then
 passes the lock, sees a matching manifest, and archives directories the old jobs' exit
 traps are still copying into — the very overlap the lock exists to prevent, reopened
-through its own release. The lease is the record that closes it: every submission writes
-one, a cleanly drained batch releases its own, and
+through its own release. The lease is the record that closes it: each submission rewrites
+it as the jobs then in flight, a cleanly drained batch releases its own, and
 :func:`chemrefine.pipeline.require_no_live_jobs` refuses a new driver while any recorded
 job is still alive.
 
@@ -493,20 +493,21 @@ def _write_leases(path: Path, leases: list[JobLease]) -> None:
     atomic_write(path, json.dumps(rows).encode("utf-8"))
 
 
-def record_lease(step_dir: Path, job_id: str) -> None:
-    """Append one submitted job to ``step_dir``'s ledger, before anyone waits on it.
+def record_leases(step_dir: Path, job_ids: Iterable[str]) -> None:
+    """Write ``step_dir``'s ledger as exactly ``job_ids``, the jobs in flight, before anyone waits.
 
-    Recorded at submission so the lease survives the one thing it exists for — a driver
-    that dies without unwinding. A local job carries its session leader's pid (the
-    process :func:`terminate_local_jobs` signals); a SLURM id carries none.
+    Written at each submission, so the record survives the one thing it exists for — a
+    driver that dies without unwinding — and holds what that driver had running, not every
+    job its batch ever submitted: a job that finished has left the set the caller passes,
+    so the ledger stays bounded by the batch's concurrency, and the fence probes only what
+    could still be alive. A local job carries its session leader's pid (the process
+    :func:`terminate_local_jobs` signals); a SLURM id carries none.
     """
-    entry = _LOCAL_PROCS.get(job_id)
-    lease = JobLease(
-        id=job_id,
-        host=socket.gethostname(),
-        pid=entry[0].pid if entry is not None else None,
+    host = socket.gethostname()
+    _write_leases(
+        lease_path(step_dir),
+        [JobLease(j, host, _LOCAL_PROCS[j][0].pid if j in _LOCAL_PROCS else None) for j in job_ids],
     )
-    _write_leases(lease_path(step_dir), [*load_leases(step_dir), lease])
 
 
 def release_leases(step_dir: Path, *, keep_slurm: bool = False) -> None:

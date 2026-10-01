@@ -1306,7 +1306,7 @@ def test_a_sigtermed_driver_process_releases_the_lock_on_disk(tmp_path: Path):
 def _plant_leases(step_dir: Path, *leases: dict) -> Path:
     """Write a lease ledger as a dead driver would have left it.
 
-    By hand rather than through :func:`chemrefine.slurm.record_lease`: the on-disk JSON
+    By hand rather than through :func:`chemrefine.slurm.record_leases`: the on-disk JSON
     is the contract between the run that recorded and the run that fences, and these
     tests hold the reading side to it independently of the writing side.
     """

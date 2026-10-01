@@ -98,8 +98,9 @@ chemrefine resume input.yaml
 
 A dead driver is not the whole story: the SLURM jobs it submitted keep running
 after it is gone (that is the scheduler's job), and so do locally dispatched
-jobs after a `kill -9`. Every submission is therefore recorded in the step's
-`_cache/active_jobs.json`, and a new run checks those records — with the same
+jobs after a `kill -9`. The jobs in flight are therefore recorded in the step's
+`_cache/active_jobs.json`, rewritten at each submission, and a new run checks
+those records — with the same
 exit code `10` — before touching the tree, because those jobs' exit traps still
 copy results into it.
 

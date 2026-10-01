@@ -491,8 +491,8 @@ def require_no_live_jobs(config: Config) -> None:
     ones too, and the reclaim machinery then hands the lock to the next driver — which
     would archive and re-parse directories the old jobs' exit traps are still copying
     into, the very overlap the lock exists to prevent, reopened through its own release.
-    Every submission therefore records a lease
-    (:func:`chemrefine.slurm.dispatch.record_lease`, released when its batch drains),
+    Every submission therefore records the jobs in flight
+    (:func:`chemrefine.slurm.dispatch.record_leases`, released when its batch drains),
     and this fence — called with the lock already held, before anything mutates the
     tree — walks every step's ledger and answers each lease by kind:
 

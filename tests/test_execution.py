@@ -370,6 +370,45 @@ def test_an_unwinding_batch_keeps_its_slurm_leases(tmp_path: Path):
     assert [lease.id for lease in slurm.load_leases(ctx.step_dir)] == ["12345"]
 
 
+@patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
+@patch.object(slurm, "submit")
+def test_the_ledger_holds_the_jobs_in_flight_not_the_whole_batch(submit, _finished, tmp_path: Path):
+    """With one core, each job is reaped before the next is submitted.
+
+    So each submission finds the ledger holding the one job before it. A ledger of every
+    job the batch ever submitted grows with the batch, and after a hard-killed driver the
+    fence probes every pid it ever ran, recycled ones included.
+    """
+    engine = _FakeJobEngine()
+    ctx = replace(_ctx(tmp_path, ids=("0", "1", "2")), max_cores=1)
+    seen: list[list[str]] = []
+
+    def _submit(*_args: object, **_kwargs: object) -> str:
+        seen.append([lease.id for lease in slurm.load_leases(ctx.step_dir)])
+        return f"j{len(seen) - 1}"
+
+    submit.side_effect = _submit
+    _execution.run_batch(engine, engine.prepare(ctx), ctx)
+    assert seen == [[], ["j0"], ["j1"]]
+
+
+def test_a_failed_ledger_write_leaves_its_job_in_the_unwinds_sweep(tmp_path: Path):
+    """Registered before it is leased, so the unwind terminates the job it was recording."""
+    engine = _FakeJobEngine()
+    ctx = _ctx(tmp_path)
+    terminated: list[tuple[str, ...]] = []
+    with (
+        patch.object(slurm, "submit", return_value="local-1"),
+        patch.object(slurm, "record_leases", side_effect=OSError("disk full")),
+        patch.object(
+            slurm, "terminate_local_jobs", side_effect=lambda ids=(): terminated.append(tuple(ids))
+        ),
+        pytest.raises(OSError, match="disk full"),
+    ):
+        _execution.run_batch(engine, engine.prepare(ctx), ctx)
+    assert terminated == [("local-1",)]
+
+
 def test_run_batch_touches_nothing_on_the_happy_path(tmp_path: Path):
     """A clean drain sweeps no jobs and leaves no leases behind.
 

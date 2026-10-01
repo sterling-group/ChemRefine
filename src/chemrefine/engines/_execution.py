@@ -268,10 +268,11 @@ def _submit_one(
         extra_header_fields=engine.extra_header_fields(ctx),
     )
     job_id = slurm.submit(script_path, env=env, dispatch=ctx.dispatch)
-    # Leased before anyone waits on it, so the record survives a driver that dies
-    # without unwinding — the case the resume fence exists for.
-    slurm.record_lease(ctx.step_dir, job_id)
     throttler.register(job_id, plan.shape.cores, gpus=plan.shape.gpus, device=device)
+    # Leased before anyone waits on it, so the record survives a driver that dies without
+    # unwinding — the case the resume fence exists for. Registered first, so a job whose
+    # ledger write fails is in the set the unwind terminates.
+    slurm.record_leases(ctx.step_dir, throttler.active_jobs)
     logger.info(
         "submitted %s as job %s (cores=%d, gpus=%d)",
         inp.name,
@@ -407,11 +408,13 @@ def _run_array(
     # cores = 1536 against a `max_cores: 512`.
     max_concurrent = max(1, ctx.max_cores // (plan.shape.cores * len(manifests)))
     jobs: dict[Path, str] = {}
+    submitted: list[str] = []
     for manifest, chunk in manifests:
         parent_id = slurm.submit_array(
             script_path, n_tasks=len(chunk), max_concurrent=max_concurrent, manifest=manifest
         )
-        slurm.record_lease(output_dir, parent_id)
+        submitted.append(parent_id)
+        slurm.record_leases(output_dir, submitted)
         for inp, _out, _sid in chunk:
             jobs[inp] = parent_id
         logger.info(
