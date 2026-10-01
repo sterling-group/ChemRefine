@@ -5,26 +5,26 @@ write the ``.in`` (:mod:`chemrefine.engines.qchem.input`), give the run command,
 ``.out`` (:mod:`chemrefine.engines.qchem.output`) — while the shared base handles
 ``prepare`` / ``submit`` / ``parse`` and :mod:`chemrefine.engines._execution` runs the batch.
 
-Where Q-Chem differs from ORCA, and how each difference is answered:
+What shapes this engine, and how each is answered:
 
 * **Parallelism is CLI-side** (``-nt`` threads, ``-mpi -np`` ranks), never in the input
   file — so the numbers live in the YAML (``options.cores`` / ``options.nprocs``) and
   :meth:`QchemEngine.slurm_layout` spells them to SLURM as ``(1, threads)`` or
-  ``(ranks, threads)``, where ORCA's ranks are ``(pal, 1)``.
+  ``(ranks, threads)``.
 * **The install is an environment**, not one binary: the ``qchem`` wrapper needs ``QC`` (and
   ``QCAUX``, which Q-Chem itself defaults to ``$QC/qcaux`` when unset — the manual says so,
   and the run block spells that default visibly). Both come from the config's
-  ``executables`` map (machine facts, like the ``orca`` binary); a cluster with
+  ``executables`` map (machine facts); a cluster with
   ``module load qchem`` in its header needs neither.
 * **Scratch is ``QCSCRATCH`` + a savename**: the per-job ``$WORK_DIR`` *is* the QCSCRATCH
   role, and the savename (the structure stem, derived in bash so the array sentinel
   survives) is what makes Q-Chem keep its key scratch files instead of deleting them —
   ``options.save`` then copies that directory home via the run block's cleanup.
-* **Memory is ``mem_total``** in the ``$rem`` block, ORCA's ``%maxcore`` counterpart —
-  declared to the scheduler through :meth:`memory_mb`, no headroom factor (qqchem accepts a
+* **Memory is ``mem_total``** in the ``$rem`` block — declared to the scheduler through
+  :meth:`memory_mb`, no headroom factor (qqchem accepts a
   ``mem_total`` up to the full allocation).
 
-NMS-capable like ORCA: :meth:`nms_input_info` reads the template's ``JOBTYPE`` facts, and
+NMS-capable: :meth:`nms_input_info` reads the template's ``JOBTYPE`` facts, and
 the frequency values ride on each parsed structure (see the output module's mode-index
 contract).
 """
@@ -101,8 +101,8 @@ class QchemEngine(JobEngine):
     output_globs: ClassVar[tuple[str, ...]] = ("*.out", "*.fchk")
     """Result files copied back out of ``$WORK_DIR``.
 
-    The ``.out`` is written straight to ``$OUTPUT_DIR`` (ORCA's redirect pattern, so it
-    live-tails); the glob still covers a template that writes extra ``.out`` artifacts.
+    The ``.out`` is written straight to ``$OUTPUT_DIR`` (a redirect, so it live-tails); the
+    glob still covers a template that writes extra ``.out`` artifacts.
     ``.fchk`` is what a ``GUI=2`` job leaves beside the run for visualisation tooling."""
 
     options_cls: ClassVar[type[QchemOptions]] = QchemOptions
@@ -196,9 +196,9 @@ class QchemEngine(JobEngine):
         return (opts.nprocs, opts.cores)
 
     def memory_mb(self, ctx: StepContext) -> int | None:
-        """The peak ``mem_total`` the template declares — Q-Chem's ``%maxcore`` counterpart.
+        """The peak ``mem_total`` the template declares.
 
-        No headroom factor, unlike ORCA's 75% rule: ``mem_total`` is the whole job's
+        No headroom factor: ``mem_total`` is the whole job's
         declaration and qqchem accepts one up to the full SLURM allocation. ``None`` when
         the template declares nothing — the header's memory policy stands.
         """

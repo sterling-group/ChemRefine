@@ -166,7 +166,7 @@ class MaceTrainer(TrainerBase):
 
         ``ase.io`` is imported here, when a split is written: this module is loaded with
         every other plugin by any process that imports the engine package, and the ExtOpt
-        wrapper is one of those, once per ORCA optimizer step.
+        wrapper is one of those, once per optimizer step.
         """
         from ase.io import write as ase_write
 

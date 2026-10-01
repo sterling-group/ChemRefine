@@ -122,7 +122,7 @@ class OrcaEngine(JobEngine):
         )
 
     def _extra_blocks(self, ctx: StepContext) -> str:
-        """Extra ORCA blocks; MLIP/PySCF ExtOpt override to inject ``%method ProgExt …``."""
+        """Extra ORCA blocks; the ExtOpt engines override it to inject ``%method ProgExt …``."""
         return ""
 
     # -- run ---------------------------------------------------------------

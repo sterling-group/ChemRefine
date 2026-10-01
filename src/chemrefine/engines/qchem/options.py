@@ -4,7 +4,7 @@ Mirrors the other engines' ``options.py`` modules: one validated model, the sing
 of the step's knobs. ``cores`` and ``device`` come from
 :class:`~chemrefine.engines._options.EngineOptions`; ``cores`` is Q-Chem's ``-nt`` thread
 count, because Q-Chem takes its parallelism on the command line and not in the input file —
-the YAML is where the number natively lives, where ORCA's lives in the template's ``%pal``.
+the YAML is where the number natively lives.
 """
 
 from __future__ import annotations

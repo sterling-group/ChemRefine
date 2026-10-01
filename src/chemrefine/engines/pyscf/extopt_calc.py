@@ -1,8 +1,8 @@
 """PySCF backend for the shared ExtOpt server.
 
 Wraps :mod:`chemrefine.engines.pyscf._runtime` so the shared ExtOpt
-server can serve PySCF gradients via the same
-:class:`ComputeBackend` contract MLIP uses. **Single channel:** the calculator
+server can serve PySCF gradients via the :class:`ComputeBackend` contract every
+served backend implements. **Single channel:** the calculator
 holds the step's validated :class:`~chemrefine.engines.pyscf.options.PyscfExtOptOptions`,
 built once, at server construction, from the argv the engine wrote out of the step's
 YAML options — the wrapper and the per-call POST carry nothing. Optional
@@ -129,7 +129,7 @@ class PyscfExtOptCalculator(ComputeBackend):
         """Translate validated YAML options into the flags :meth:`add_cli_args` registers.
 
         The same three groups, so the engine writes exactly what the server parses; the
-        server injects the per-call correlation ``tag`` itself (single-channel, like MLIP).
+        server injects the per-call correlation ``tag`` itself (single-channel).
         """
         return tokens_from_options(
             options, value_flags=_VALUE_FLAGS, bool_flags=_BOOL_FLAGS, false_flags=_FALSE_FLAGS

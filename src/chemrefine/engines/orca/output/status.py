@@ -37,9 +37,9 @@ _TERMINATED_RE = re.compile(r"ORCA TERMINATED NORMALLY")
 #: verified against its binaries and against the recorded outputs — because guessing at the
 #: wording here fails silently in both directions. Matched case and all: other text that
 #: says "SCF not converged" reaches an output too — an ExtOpt external program's own log
-#: (PySCF prints ``SCF not converged.``), ORCA's NEB warning about images that are not the
-#: structure read — and none of it is a verdict on this one, which a verdict of its kind
-#: printed later would not always override.
+#: (an SCF backend prints its own ``SCF not converged.``), ORCA's NEB warning about images
+#: that are not the structure read — and none of it is a verdict on this one, which a verdict
+#: of its kind printed later would not always override.
 #:
 #: Two deliberate omissions:
 #:

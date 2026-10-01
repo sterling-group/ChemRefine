@@ -55,8 +55,8 @@ def build_mol(
     """Return a ``pyscf.gto.Mole`` built from Cartesian coordinates.
 
     Coordinates are converted to Bohr internally so ``mol.unit = "Bohr"``
-    and downstream gradients come out in Hartree/Bohr (matching ORCA's
-    ``.engrad`` convention).
+    and downstream gradients come out in Hartree/Bohr (the unit every
+    gradient channel here carries).
     """
     from pyscf import gto
 

@@ -11,9 +11,7 @@ a backend and not a set of knobs:
 An engine declares the model whose fields it reads. Declared together, the direct engine
 accepts knobs it has no way to honour — and because ``accepted_names()`` reports them as
 declared, ``chemrefine validate`` cannot warn about them either, so naming one is silence in
-both directions. The same split :class:`~chemrefine.engines.mlip.options.MlipOptions` and
-:class:`~chemrefine.engines.mlip.options.MlipTrainOptions` make, so an inference step cannot
-accept a training knob.
+both directions.
 """
 
 from __future__ import annotations
@@ -102,8 +100,8 @@ class PyscfOptions(EngineOptions):
         ExtOpt calculator, at construction) take it already narrowed to ``str``.
 
         ``basis`` must be named, and ``xc`` when ``method`` is ``dft`` — every other
-        engine makes the user say the level of theory (ORCA's lives in the template's
-        ``!`` line, Q-Chem's in ``$rem``), so a silent ``def2-svp``/``pbe`` would make
+        engine makes the user say the level of theory — in its template or its options —
+        so a silent ``def2-svp``/``pbe`` would make
         pyscf the one exception, and the wrong kind of exception: a level of theory the
         user never chose. The fields default to ``None`` — a bare instance is
         constructible — but nothing runs without the values named: this rule, the strict

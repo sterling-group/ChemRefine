@@ -42,7 +42,7 @@ def parse_forces_from_text(
 
     * **Finite.** ``float()`` accepts an overflowing exponent and yields ``inf``, exactly as
       it accepts ``nan``. A non-finite force is stored unexamined by the ``arrays.npz``
-      sidecar and is what an ``mlip-train`` step would go on to fit
+      sidecar and is what a downstream training step would go on to fit
       (:func:`chemrefine.engines._script.output._require_finite` states the rule;
       :func:`chemrefine.cache._require_finite_arrays` is the backstop, and reaching it costs
       the whole step's results rather than one structure).
@@ -53,7 +53,7 @@ def parse_forces_from_text(
       row (a ``*****`` field overflow) would otherwise yield a short array against a full
       geometry, which nothing downstream re-checks:
       :attr:`~chemrefine.state.Structure.forces_ev_per_a` declares no shape, the finiteness
-      backstop passes it, and FAIRChem's dataset writer stores it.
+      backstop passes it, and a training dataset writer stores it.
       :func:`chemrefine.engines._script.contract.forces_from_gradient` holds the other forces
       reader to the same count, and is where this wording comes from.
     """

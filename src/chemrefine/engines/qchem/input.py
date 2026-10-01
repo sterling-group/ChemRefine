@@ -1,11 +1,10 @@
 """Q-Chem input generation from a template + XYZ geometry (the writer half).
 
 The template is a user-provided Q-Chem input (e.g. ``step1.in``) declaring the ``$rem``
-settings; this module puts the per-structure geometry into it. Unlike ORCA — whose
-``* xyzfile`` directive is appended at the end, because ORCA reads geometry from a named
-file wherever the directive sits — Q-Chem takes its geometry **inline**, in the first job's
-``$molecule`` block, and a multi-job ``@@@`` template's later jobs read it back with
-``$molecule read $end``. So the generated block must land in job 1 and nowhere else:
+settings; this module puts the per-structure geometry into it. Q-Chem takes its geometry
+**inline**, in the first job's ``$molecule`` block, and a multi-job ``@@@`` template's later
+jobs read it back with ``$molecule read $end``. So the generated block must land in job 1
+and nowhere else:
 
 * the template is split at its first ``@@@`` and only job 1 is edited — its ``$molecule``
   block, if it has one, is replaced in place whatever its body (a job-1 ``read`` has nothing

@@ -122,8 +122,9 @@ def test_a_structure_without_energy_is_refused_by_name():
 def test_a_structure_without_forces_is_refused_by_name():
     """The likeliest real misconfiguration: a training step fed by a step computing no gradients."""
     bad = Structure(id="3", atoms=Atoms("H"), energy_hartree=-1.0, forces_ev_per_a=None)
-    with pytest.raises(ConfigError, match="structure 3 has no forces"):
+    with pytest.raises(ConfigError, match="structure 3 has no forces") as refused:
         split_structures([bad], valid_fraction=0.1, test_fraction=0.0, seed=1)
+    assert "a gradient or an optimisation job" in str(refused.value)
 
 
 def test_an_empty_ensemble_is_refused():

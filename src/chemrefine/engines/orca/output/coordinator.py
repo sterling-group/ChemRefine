@@ -285,7 +285,7 @@ def _parse_frequency_block(
         # minimum. ``{}`` for the imaginary set is the verdict "counted, and none" —
         # `nms._already_at_target` passes such a structure through as resolved and
         # `get_frequencies` reports it as a minimum — and a table that parsed nothing has
-        # counted nothing. The Q-Chem reader draws the same line.
+        # counted nothing.
         return None, None, None
     try:
         modes: NDArray[np.float64] | None = frequencies.parse_normal_modes_tensor_from_text(

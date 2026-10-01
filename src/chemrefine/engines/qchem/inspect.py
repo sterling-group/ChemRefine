@@ -8,8 +8,7 @@ and the declared ``mem_total`` (for the SLURM memory request), in one pass.
 Every ``$rem`` block is scanned, not just the first: a Q-Chem opt→freq workflow is a
 multi-job ``@@@`` input whose *second* job carries ``jobtype freq``, so a first-block-only
 scan would refuse NMS to exactly the template shape NMS needs. ``!`` comments are stripped
-per line first, so a commented-out ``! jobtype freq`` is never mistaken for a directive —
-the same discipline as ORCA's inspector.
+per line first, so a commented-out ``! jobtype freq`` is never mistaken for a directive.
 
 Frequencies can also be asked for without a second job: Q-Chem 6 runs them after an
 optimisation when a ``$geom_opt`` block sets ``final_vibrational_analysis true`` — the

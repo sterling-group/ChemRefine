@@ -542,8 +542,8 @@ class ApiTrainerBase(TrainerBase):
         necessity — their libraries read the config file themselves — not this route's.
 
         Every fact passes through ``shlex.quote``, the same protection every other emitted
-        command applies to a value it did not mint (``orca_command``, the
-        ``console_script`` helper above): ``device`` is a validated Literal and ``seed`` an
+        command applies to a value it did not mint (the ``console_script`` helper
+        above): ``device`` is a validated Literal and ``seed`` an
         int, which quote to themselves, but a checkpoint path and a model name are the
         user's own text. Which facts, and under which flags, is :data:`PLAN_FACTS`.
         """
@@ -626,7 +626,7 @@ def split_structures(
             raise ConfigError(
                 f"structure {struct.id} has no forces, so it cannot be trained on. "
                 f"An MLIP is fitted to energies and forces — check that the step feeding "
-                f"this one computes gradients (ORCA: `! EnGrad`, or an optimisation)."
+                f"this one computes gradients (a gradient or an optimisation job)."
             )
 
     n = len(structures)

@@ -1,8 +1,6 @@
 """Pydantic validator for MLIP engine YAML options.
 
-Mirrors :class:`chemrefine.engines.pyscf.options.PyscfOptions` so a
-new engine implementer adds an ``options.py`` per backend by the
-same pattern. Both the direct (:class:`~chemrefine.engines.mlip.engine.MlipEngine`)
+Both the direct (:class:`~chemrefine.engines.mlip.engine.MlipEngine`)
 and ExtOpt (:class:`~chemrefine.engines.mlip.extopt_engine.MlipExtOptEngine`)
 engines route ``step.options`` through this validator instead of
 reading the raw YAML dict.

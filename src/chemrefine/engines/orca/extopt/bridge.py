@@ -208,7 +208,7 @@ def _tag_for(inputfile: str) -> str:
 
     ORCA reuses the same ``<job>.extinp.tmp`` for every geometry step of one
     optimisation, so this tags all calls of one structure with that structure's
-    name. Backends that dump per-call artefacts (e.g. PySCF active-space tensors)
+    name. Backends that dump per-call artefacts (a tensor dump, say)
     then write one file per structure, holding the converged-geometry result
     (last write wins) instead of overwriting a single shared file across
     structures.

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 
+from chemrefine.engines.api import ENGINES
 from chemrefine.engines.orca.input import build_input, clamp_pal
 from chemrefine.engines.orca.inspect import inspect_template
 from chemrefine.errors import ConfigError
@@ -138,8 +140,9 @@ def test_build_input_refuses_a_geometry_path_with_whitespace(tmp_path: Path):
         )
 
 
-def test_build_input_names_the_reason_and_the_unaffected_engines(tmp_path: Path):
-    """The message has to be actionable: what ORCA does, and who is not affected."""
+def test_build_input_names_the_reason_and_who_is_unaffected(tmp_path: Path):
+    """The message has to be actionable: what ORCA does, and who is not affected — said by
+    what they do, so no other engine's name has to be kept true here."""
     spaced = tmp_path / "my outputs"
     spaced.mkdir()
     with pytest.raises(ConfigError) as excinfo:
@@ -152,8 +155,9 @@ def test_build_input_names_the_reason_and_the_unaffected_engines(tmp_path: Path)
         )
     message = str(excinfo.value)
     assert "xyzfile" in message and "quotable" in message
-    assert "output_dir" in message
-    assert "mlip" in message and "qchem" in message
+    assert "output_dir" in message and "unaffected" in message
+    others = [name for name in ENGINES if name != "orca"]
+    assert not [name for name in others if re.search(rf"\b{re.escape(name)}\b", message)]
 
 
 @pytest.mark.parametrize("whitespace", [" ", "\t", "\v"])

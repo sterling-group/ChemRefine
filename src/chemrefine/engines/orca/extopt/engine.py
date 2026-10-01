@@ -1,15 +1,15 @@
-"""Shared base class for ORCA-driven ExtOpt engines (MLIP, PySCF, …).
+"""Shared base class for the ORCA-driven ExtOpt engines.
 
-The MLIP and PySCF ExtOpt engines both run an external HTTP server for the gradient
-evaluation and use ORCA itself as the optimizer. They differ only in *which* server they
-spin up and which option/calculator classes describe it — so this base owns everything
+Every ExtOpt engine runs an external HTTP server for the gradient evaluation and uses ORCA
+itself as the optimizer. They differ only in *which* server they spin up and which
+option/calculator classes describe it — so this base owns everything
 shared (the ``%method ProgExt`` block, the server-launch ``run_block``, the per-step wrapper,
 the ``_server_cmd`` template) and a concrete subclass declares just four ClassVars:
 ``backend`` / ``wrapper_filename`` / ``options_cls`` / ``calculator_cls``.
 
 ExtOpt engines are **NMS-capable**: they inherit ORCA's ``nms_input_info`` hook and its
 frequency-carrying parse, because ORCA computes the Hessian numerically over the backend's
-gradients — so a ``Freq`` template yields real frequencies on each parsed structure. It is
+gradients — so a ``NumFreq`` template yields real frequencies on each parsed structure. It is
 also why every strict read here takes :meth:`~chemrefine.config.StepConfig.engine_options`
 rather than the raw ``options``: with ``nms: true`` the NMS knobs share that mapping, and a
 model with ``extra="forbid"`` handed the whole of it refused them as strangers.
@@ -142,9 +142,9 @@ class ExtOptOrcaEngine(OrcaEngine):
 
         The same strict read :meth:`_server_cmd` makes when the job script is built —
         hoisted onto :class:`~chemrefine.engines.api.PreflightChecking` so a typoed
-        knob (``extra="forbid"``) or a missing required one (PySCF's ``basis``/``xc``)
-        is refused before any earlier step is paid for, rather than at this step's own
-        turn. On the base because every ExtOpt engine validates strictly — its options
+        knob (``extra="forbid"``) or a missing required one (a level of theory the backend
+        requires) is refused before any earlier step is paid for, rather than at this step's
+        own turn. On the base because every ExtOpt engine validates strictly — its options
         configure a server, not a template a user's own code reads — so each subclass
         gets the preflight for the price of its existing ``options_cls`` declaration; a
         subclass with a refusal of its own extends rather than replaces.

@@ -50,7 +50,7 @@ _SCAN_TOKEN_RE = re.compile(r"\bscan\b", re.IGNORECASE)
 # The optimisation prefixes are the convergence levels (``SloppyOpt`` … ``VeryTightOpt``)
 # and the Cartesian / external-optimiser variants (``COpt``, ``ExtOpt``). ``ExtOpt`` counts
 # as an optimisation because it is one — ORCA runs its own optimiser over gradients from an
-# external program, which is what the ``mlip-extopt`` / ``pyscf-extopt`` engines do.
+# external program, which is what the ExtOpt engines do.
 #
 # ``TS`` is a separate alternative rather than a suffix on the prefixed forms, because it
 # only attaches to the bare keyword: ORCA takes ``OptTS`` and rejects ``TightOptTS``,

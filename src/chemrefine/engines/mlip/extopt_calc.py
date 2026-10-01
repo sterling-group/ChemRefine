@@ -2,8 +2,8 @@
 
 Wraps an :class:`MlipCalculator` (the ASE-style backend dispatcher in
 ``calculator.py``) and exposes it as a :class:`ComputeBackend` so
-the shared ExtOpt server can serve MLIP gradients alongside PySCF
-gradients without duplicating any HTTP / file-I/O glue.
+the shared ExtOpt server can serve MLIP gradients alongside any other
+served backend without duplicating any HTTP / file-I/O glue.
 """
 
 from __future__ import annotations

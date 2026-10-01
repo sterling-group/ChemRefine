@@ -1,11 +1,10 @@
 """ORCA-driven PySCF engine (ORCA optimises, PySCF provides gradients).
 
-Mirrors :class:`~chemrefine.engines.mlip.extopt_engine.MlipExtOptEngine` — a pure declaration
-over :class:`~chemrefine.engines.orca.extopt.engine.ExtOptOrcaEngine`, differing only in the
-backend name + option/calculator classes. Its knobs are
-:class:`~chemrefine.engines.pyscf.options.PyscfExtOptOptions` — the SCF selection the direct
-engine also reads, plus the ones only the gradient server acts on. The one extra behaviour is
-copying the ``save_tensors`` output directory back into each structure's dir.
+A pure declaration over :class:`~chemrefine.engines.orca.extopt.engine.ExtOptOrcaEngine`, as
+every ExtOpt engine is, differing only in the backend name + option/calculator classes. Its
+knobs are :class:`~chemrefine.engines.pyscf.options.PyscfExtOptOptions` — the SCF selection
+the direct engine also reads, plus the ones only the gradient server acts on. The one extra
+behaviour is copying the ``save_tensors`` output directory back into each structure's dir.
 """
 
 from __future__ import annotations

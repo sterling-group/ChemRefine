@@ -8,7 +8,7 @@ This module appends an ``* xyzfile`` directive (pointing at the per-structure
 different seed geometries. No ``%base`` is emitted — ORCA defaults the base to
 the input filename's stem, keeping its outputs distinct from the input geometry.
 
-Engines that drive ORCA from an external program (MLIP, PySCF) pass
+The ExtOpt engines, which drive ORCA from an external program, pass
 their own ``extra_blocks`` argument — typically a ``%method ... end``
 block that points to the external server wrapper.
 
@@ -161,8 +161,8 @@ def require_whitespace_free(path: Path, *, what: str) -> None:
             f"{what} contains whitespace: {str(path)!r}. {WHITESPACE_PATH_REASON} — so this "
             f"step cannot run from here. Point `output_dir` at a path without whitespace "
             f"(a relative one inherits the config file's own directory), or move the "
-            f"project. Engines that do not write paths into an ORCA input — mlip, pyscf, "
-            f"qchem — are unaffected and need no change."
+            f"project. Engines that do not write paths into an ORCA input are unaffected and "
+            f"need no change."
         )
 
 

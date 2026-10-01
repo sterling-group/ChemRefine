@@ -21,10 +21,8 @@ another.
 Merging them makes two things true by construction rather than by discipline: a trainable task
 is a runnable task, and it resolves the same environment in both directions.
 
-This is the rule the rest of ``engines/`` already follows — a concern two siblings both need
-gets one home so neither imports from the other (see
-:mod:`chemrefine.engines.orca.output.status`, :mod:`chemrefine.engines.pyscf._runtime`,
-:mod:`chemrefine.engines.orca.extopt.run_block`).
+This is the rule the rest of ``engines/`` follows: a concern two siblings both need gets one
+home, so neither imports from the other.
 
 Three knobs, one dispatch
 -------------------------

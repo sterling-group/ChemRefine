@@ -5,9 +5,8 @@ The backend a step runs on is a property of the **backend family**, not of the e
 PySCF, whatever their options say. Declared once, here, and mixed into each engine — rather
 than repeated per engine, where the two are free to drift apart.
 
-Derived from the step's options, like :class:`~chemrefine.engines.mlip.backend.MlipBackend`:
-PySCF is one library, but it has two stacks, and a step that asks for a GPU needs the one
-with ``gpu4pyscf`` in it. Both install into a single env — see
+Derived from the step's options: PySCF is one library, but it has two stacks, and a step that
+asks for a GPU needs the one with ``gpu4pyscf`` in it. Both install into a single env — see
 :func:`chemrefine.engines._provision.backend_env_path`.
 """
 
