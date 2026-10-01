@@ -204,8 +204,6 @@ def build_input(
     :func:`clamp_pal` so the input never asks for more ranks than the SLURM
     allocation grants.
     """
-    if not template_path.is_file():
-        raise ConfigError(f"ORCA template not found: {template_path}")
     require_whitespace_free(xyz_path, what="the ORCA geometry path")
 
     template = io.read_utf8(template_path, what="ORCA template")

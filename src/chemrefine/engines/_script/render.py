@@ -42,7 +42,6 @@ from string import Template
 from chemrefine import io
 from chemrefine.engines._options import EngineOptions
 from chemrefine.engines._script.contract import SCRIPT_OUTPUT, OutputField
-from chemrefine.errors import ConfigError
 
 
 def json_placeholder(payload: object) -> str:
@@ -156,15 +155,7 @@ def build_input(
     / scratch). ``fields`` defaults to the shared contract; an engine passes its own to let a
     template report more (see
     :attr:`~chemrefine.engines._script.engine.ScriptEngine.output_fields`).
-
-    Engines call this through
-    :class:`chemrefine.engines._script.engine.ScriptEngine`,
-    which already raises a backend-specific ``ConfigError`` for
-    a missing template; the same check is kept here as a defensive
-    guard for any direct caller.
     """
-    if not template_path.is_file():
-        raise ConfigError(f"template not found: {template_path}")
     text = io.read_utf8(template_path, what="script template")
     substitutions: dict[str, object] = {
         "XYZ_PATH": str(xyz_path),

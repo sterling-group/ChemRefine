@@ -260,20 +260,12 @@ def require_template(template: Path | None, *, label: str) -> Path:
 
     The one home for "this engine cannot run without its input". ``None`` means the engine
     declared no template at all (it is not
-    :class:`~chemrefine.engines.api.TemplateDriven`); a path that is not a file means the
-    template was named but is missing — the likeliest error of a first run. A file that is
-    not UTF-8 text is unusable too: it is read here by the reader every consumer of a
-    template uses (:func:`chemrefine.io.read_utf8`), so the run's t=0 walk refuses the
-    template its ``prepare`` would.
-
-    :class:`~chemrefine.errors.ConfigError` rather than a bare ``OSError`` because
-    :mod:`chemrefine.errors` promises every exception carries an ``exit_code`` the CLI maps
-    to a deterministic status, and ``cli._dispatch`` catches only
-    :class:`~chemrefine.errors.ChemRefineError`.
+    :class:`~chemrefine.engines.api.TemplateDriven`). Otherwise the template is read by the
+    reader every consumer of a template uses (:func:`chemrefine.io.read_utf8`), which
+    refuses one that is missing — the likeliest error of a first run — unreadable, or not
+    UTF-8 text, so the run's t=0 walk refuses the template its ``prepare`` would.
     """
     if template is None:
         raise ConfigError(f"{label} needs an input template, but this engine declares none")
-    if not template.is_file():
-        raise ConfigError(f"{label} template not found: {template}")
     io.read_utf8(template, what=f"{label} template")
     return template

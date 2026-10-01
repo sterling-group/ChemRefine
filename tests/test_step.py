@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import fields
 from pathlib import Path
@@ -2434,6 +2435,34 @@ def test_the_walk_refuses_a_template_or_header_its_job_could_not_read(tmp_path: 
     mlip = StepConfig(step=2, engine="mlip", options={"device": "cpu"})
     with pytest.raises(ConfigError, match=rf"{re.escape(latin1)} is not UTF-8 text"):
         preflight_batches(_config(tmp_path), [mlip], local=True)
+
+
+@pytest.mark.parametrize(
+    ("unreadable", "what"),
+    [("step2.py", "MLIP template"), ("cpu.slurm.header", "SLURM header template")],
+)
+def test_the_walk_refuses_a_template_or_header_this_account_cannot_read(
+    tmp_path: Path, unreadable: str, what: str
+):
+    """Another account's file is a ConfigError at t=0 naming it, not a bare PermissionError.
+
+    The walk reads both files as their consumers do, and an ``OSError`` out of that read
+    would escape the exit-code contract: ``chemrefine run`` would end in a traceback.
+    """
+    if os.geteuid() == 0:
+        pytest.skip("root reads everything; the permission wall cannot be built")
+    from chemrefine.errors import ConfigError
+    from chemrefine.step import preflight_batches
+
+    _templates(tmp_path, "step2.py", "cpu.slurm.header")
+    target = tmp_path / "templates" / unreadable
+    target.chmod(0)
+    mlip = StepConfig(step=2, engine="mlip", options={"device": "cpu"})
+    try:
+        with pytest.raises(ConfigError, match=re.escape(f"cannot read {what} {target}")):
+            preflight_batches(_config(tmp_path), [mlip], local=True)
+    finally:
+        target.chmod(0o644)
 
 
 def test_a_gpu_step_meets_the_budget_the_run_resolves(tmp_path: Path):

@@ -11,6 +11,7 @@ header dispatch would pick), the test drives the same input through both spellin
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -390,6 +391,36 @@ def test_a_template_or_header_that_is_not_utf8_is_an_issue(tmp_path: Path, name:
     assert "is not UTF-8 text" in report.issues[0].message
 
 
+@pytest.mark.parametrize(
+    ("name", "kind", "what"),
+    [
+        ("step1.inp", "template", "ORCA template"),
+        ("cpu.slurm.header", "slurm-header", "SLURM header template"),
+    ],
+)
+def test_a_template_or_header_that_cannot_be_read_is_an_issue(
+    tmp_path: Path, name: str, kind: str, what: str
+):
+    """Another account's file is a row naming it: validate never raises.
+
+    The read raised ``PermissionError`` past that contract, which the GUI answered with a
+    500 and the MCP server with a generic tool failure.
+    """
+    if os.geteuid() == 0:
+        pytest.skip("root reads everything; the permission wall cannot be built")
+    templates = tmp_path / "templates"
+    templates.mkdir()
+    (templates / "step1.inp").write_text("! Opt\n", encoding="utf-8")
+    (templates / "cpu.slurm.header").write_text("#SBATCH -N1\n", encoding="utf-8")
+    (templates / name).chmod(0)
+    try:
+        report = _validate(tmp_path, steps=[{"step": 1, "engine": "orca"}])
+    finally:
+        (templates / name).chmod(0o644)
+    assert _kinds(report) == [kind]
+    assert f"cannot read {what} {templates / name}" in report.issues[0].message
+
+
 def test_a_gpu_step_is_held_to_the_cuda_header(tmp_path: Path):
     """Header choice mirrors dispatch: GPU demand read through the engine's own model."""
     report = _validate(
@@ -656,3 +687,27 @@ def test_a_preflight_refusal_does_not_hide_the_budget_row(tmp_path: Path):
     )
     assert "preflight" in [issue.kind for issue in report.issues]
     assert any("local dispatch pins one device" in message for message in _budget(report))
+
+
+def test_a_layout_its_options_cannot_give_is_left_to_their_row(tmp_path: Path):
+    """A typoed knob is one finding, on the preflight row, and never again as a budget row.
+
+    A training step's layout reads its options strictly, so the knob the preflight row
+    refuses refuses the layout too. That refusal is the row's to report; the budget is
+    judged on a layout the step can compute, here the same over-asking ``gpus: 2`` the
+    previous test is warned about, once the knob is fixed.
+    """
+    report = _validate(
+        tmp_path,
+        dispatch="local",
+        steps=[
+            {
+                "step": 1,
+                "engine": "mlip-train",
+                "options": {"task_name": "mace_off", "device": "cuda", "gpus": 2, "max_epocs": 3},
+            }
+        ],
+    )
+    assert _kinds(report) == ["preflight"]
+    assert "max_epocs" in report.issues[0].message
+    assert _budget(report) == []

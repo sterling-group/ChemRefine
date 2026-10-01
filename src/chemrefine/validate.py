@@ -231,10 +231,8 @@ def validate_config_file(path: Path) -> ValidationReport:
     """
     try:
         text = io.read_utf8(path, what="config")
-    except OSError as e:
-        return _failed("io", f"could not read {path}: {e}")
     except ConfigError as e:
-        # The decode half of "cannot be read" — the reader's own refusal, as a row.
+        # Missing, unreadable or not UTF-8 text: the reader's own refusal, as a row.
         return _failed("io", str(e))
     return validate_config_text(text, base_dir=path.parent)
 
@@ -523,17 +521,18 @@ def _over_budget(config: Config, step: StepConfig, engine: CalculationEngine) ->
     ``max_gpus`` are for the host to answer, so they bound nothing here; a config authored
     on a laptop for a cluster must not be judged by the laptop.
 
-    A layout the engine cannot compute from here — one read off a template that does not
-    exist yet (the report's own ``template`` warning) or cannot be read — is left to the
-    run, which refuses it by name; the rest of the step is still checked above. An engine
-    the scheduler does not run (an inline one) has no jobs to budget.
+    A layout the engine cannot compute from here is another row's to report, so it gets no
+    row of its own: one read off a template that does not exist yet or cannot be read (the
+    template row), or off options the strict read refuses (the preflight row). Budgeted
+    without this probe, either refusal would come back a second time as a "budget" warning.
+    An engine the scheduler does not run (an inline one) has no jobs to budget.
     """
     if not isinstance(engine, JobExecutable):
         return None
     ctx = build_context(config, step, PipelineState(), engine)
     try:
         engine.slurm_layout(ctx)
-    except (ChemRefineError, OSError):
+    except ChemRefineError:
         return None
     try:
         check_batch(engine, ctx, local=config.dispatch == "local", gpu_budget=config.max_gpus)

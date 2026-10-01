@@ -99,8 +99,6 @@ def read_header(template_path: Path) -> tuple[list[str], list[str]]:
     time limit with nothing said. Owned options are stripped in place and the line kept
     whenever any other directive survives on it.
     """
-    if not template_path.is_file():
-        raise ConfigError(f"SLURM header template {template_path} not found")
     sbatch_lines: list[str] = []
     body_lines: list[str] = []
     for raw in io.read_utf8(template_path, what="SLURM header template").splitlines():

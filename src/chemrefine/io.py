@@ -162,18 +162,21 @@ def read_utf8(path: Path, *, what: str) -> str:
     """Read a user-authored text file as UTF-8, or refuse it as a :class:`ConfigError`.
 
     The one reader for the files a person writes and ChemRefine parses — the config, the
-    step templates, the SLURM header. ``UnicodeDecodeError`` is a ``ValueError``, not an
-    ``OSError``, so every ``except OSError`` around a ``read_text`` let a latin-1 file
-    (an ``Å`` in a comment, saved by an editor on a cluster) escape as a traceback: the
-    loader exited 1 where every other malformed file exits 2, the validator raised past
-    its never-raises contract, and the GUI answered a logged 500. ``what`` names the kind
-    of file so the refusal reads as the mistake it is. ``OSError`` is left to the caller,
-    which already has its own wording for a file that cannot be opened.
+    step templates, the SLURM header — and the one refusal for each that cannot be used:
+    missing, unreadable (a directory, another account's mode, an I/O error), or not UTF-8
+    text. A :class:`ConfigError` carries the exit code the CLI maps and is a row in
+    ``chemrefine validate`` and a 400 in the GUI, where a bare ``OSError`` or
+    ``UnicodeDecodeError`` (a ``ValueError``) would be a traceback. ``what`` names the kind
+    of file so the refusal reads as the mistake it is, and no caller words it again.
     """
     try:
         return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise ConfigError(f"{what} not found: {path}") from None
     except UnicodeDecodeError as e:
         raise ConfigError(f"{what} {path} is not UTF-8 text ({e})") from e
+    except OSError as e:
+        raise ConfigError(f"cannot read {what} {path}: {e.strerror or e}") from e
 
 
 # ---------------------------------------------------------------------------

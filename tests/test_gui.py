@@ -724,10 +724,10 @@ def _saving_model(path: Path, yaml_text: str) -> Any:
 def test_load_reads_a_config_back_and_refuses_what_it_cannot(client: Any, tmp_path: Path):
     """The missing half of ``/api/save``, and the three ways it can be asked for nothing.
 
-    ``UnicodeDecodeError`` is the one worth naming: it is a ``ValueError``, not an
-    ``OSError``, so a binary file picked by mistake would sail past an ``OSError`` handler
-    into ``surface`` and come back as a 500 with a traceback, where every other bad input
-    to this app is a plain 400.
+    Each is the reader's own refusal, answered as the plain 400 every other bad input to
+    this app gets. A binary file picked by mistake is the one worth naming: its
+    ``UnicodeDecodeError`` is a ``ValueError``, not an ``OSError``, so anything short of
+    the reader's :class:`ConfigError` would reach ``surface`` as a 500 with a traceback.
     """
     config = tmp_path / "input.yaml"
     config.write_text(yaml.safe_dump({"steps": [{"step": 1, "engine": "orca"}]}), "utf-8")
@@ -737,14 +737,18 @@ def test_load_reads_a_config_back_and_refuses_what_it_cannot(client: Any, tmp_pa
     assert loaded.get_json()["path"] == str(config)
     assert "steps" in loaded.get_json()["yaml_text"]
 
-    assert _get(client, f"/api/load?path={tmp_path / 'nope.yaml'}").status_code == 400
-    assert _get(client, f"/api/load?path={tmp_path}").status_code == 400  # a directory
+    missing = _get(client, f"/api/load?path={tmp_path / 'nope.yaml'}")
+    assert missing.status_code == 400
+    assert "config not found" in missing.get_json()["error"]
+    directory = _get(client, f"/api/load?path={tmp_path}")
+    assert directory.status_code == 400
+    assert "cannot read config" in directory.get_json()["error"]
 
     binary = tmp_path / "binary.yaml"
     binary.write_bytes(b"\xff\xfe\x00\x01")
     undecodable = _get(client, f"/api/load?path={binary}")
     assert undecodable.status_code == 400
-    assert "cannot read" in undecodable.get_json()["error"]
+    assert "is not UTF-8 text" in undecodable.get_json()["error"]
 
 
 def test_a_turn_that_writes_the_config_says_so_on_both_branches(

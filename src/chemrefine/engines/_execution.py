@@ -45,16 +45,13 @@ def _header_name(engine: JobExecutable, ctx: StepContext) -> str:
 def _header_path(engine: JobExecutable, ctx: StepContext) -> Path:
     """Resolve + validate the SLURM header template path for this step.
 
-    Raises :class:`~chemrefine.errors.ConfigError` (not a bare ``FileNotFoundError``) so
-    a missing header — the other likeliest first-run error, and one a GPU step can hit
-    without ever naming ``cuda.slurm.header`` itself — exits with the documented code
-    instead of a traceback. The header is read as the job script reads it
-    (:func:`chemrefine.slurm.read_header`), so one that script would refuse — not UTF-8
-    text — is refused here, which the run's t=0 walk reaches before anything runs.
+    The header is read as the job script reads it (:func:`chemrefine.slurm.read_header`),
+    so one that script would refuse — missing, which a GPU step can be without ever naming
+    ``cuda.slurm.header`` itself, unreadable, or not UTF-8 text — is refused here as a
+    :class:`~chemrefine.errors.ConfigError`, which the run's t=0 walk reaches before
+    anything runs.
     """
     header_path = ctx.template_dir / _header_name(engine, ctx)
-    if not header_path.is_file():
-        raise ConfigError(f"SLURM header template not found: {header_path}")
     slurm.read_header(header_path)
     return header_path
 

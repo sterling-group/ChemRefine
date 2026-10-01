@@ -937,10 +937,7 @@ def load_config(path: str | Path) -> Config:
     raw Pydantic error text — already actionable for the user.
     """
     p = Path(path)
-    try:
-        text = io.read_utf8(p, what="config")
-    except OSError as e:
-        raise ConfigError(f"could not read {p}: {e}") from e
+    text = io.read_utf8(p, what="config")
     try:
         raw = yaml.safe_load(text)
     except yaml.YAMLError as e:

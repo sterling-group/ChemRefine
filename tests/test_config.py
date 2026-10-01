@@ -130,6 +130,15 @@ def test_a_config_that_is_not_utf8_is_a_config_error(tmp_path: Path):
         load_config(p)
 
 
+def test_a_config_that_cannot_be_read_is_refused_naming_it(tmp_path: Path):
+    """Missing, or not a file at all: the one reader's refusals, each naming the path."""
+    missing = tmp_path / "absent.yaml"
+    with pytest.raises(ConfigError, match=re.escape(f"config not found: {missing}")):
+        load_config(missing)
+    with pytest.raises(ConfigError, match=re.escape(f"cannot read config {tmp_path}: ")):
+        load_config(tmp_path)
+
+
 # ---------------------------------------------------------------------------
 # Step ordering + uniqueness
 # ---------------------------------------------------------------------------

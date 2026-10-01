@@ -174,20 +174,17 @@ def read_template(config_path: str, step: int | str) -> dict[str, Any]:
     """One step's template text — the file the engine will actually render.
 
     A file this account cannot read is a :class:`~chemrefine.errors.ConfigError` naming
-    the path — the module's contract, held for the read as :func:`write_template` holds it
-    for the write — rather than an :class:`OSError` the GUI answers as a 500 and the MCP
-    server as a generic tool failure.
+    the path (:func:`chemrefine.io.read_utf8`'s refusal) — the module's contract, held for
+    the read as :func:`write_template` holds it for the write — rather than an
+    :class:`OSError` the GUI would answer as a 500 and the MCP server as a generic tool
+    failure.
     """
     plan = _step_template_plan(load_config(_config_path(config_path)), step)
     if not plan.exists:
         raise ConfigError(
             f"template {plan.path} does not exist yet (scaffold_templates writes a starter)"
         )
-    try:
-        text = io.read_utf8(plan.path, what="template")
-    except OSError as e:
-        raise ConfigError(f"cannot read template {plan.path}: {e}") from e
-    return {"path": str(plan.path), "text": text}
+    return {"path": str(plan.path), "text": io.read_utf8(plan.path, what="template")}
 
 
 def write_template(config_path: str, step: int | str, text: str) -> dict[str, Any]:

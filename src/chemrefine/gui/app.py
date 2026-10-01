@@ -419,21 +419,14 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         beside it went on showing the previous text and the user had to reload the page to
         see what had happened.
 
-        A directory or an unreadable file is a plain 400 like every other bad input here.
-        A binary file picked by mistake is the same 400: :func:`chemrefine.io.read_utf8`
-        refuses it as a :class:`ConfigError` (``UnicodeDecodeError`` is a ``ValueError``,
-        not an ``OSError``, and would otherwise reach :func:`surface` as a 500 with a
-        traceback). A ``~name`` the host cannot resolve is
-        :func:`chemrefine.agent_tools.expand_user_path`'s refusal, which :func:`surface`
-        answers with the same 400 — every path a user types here goes through it.
+        A missing path, a directory, an unreadable file and a binary one picked by mistake
+        are all :func:`chemrefine.io.read_utf8`'s :class:`ConfigError`, which :func:`surface`
+        answers with the plain 400 every other bad input here gets. So is a ``~name`` the
+        host cannot resolve: :func:`chemrefine.agent_tools.expand_user_path` refuses it,
+        and every path a user types here goes through it.
         """
         path = agent_tools.expand_user_path(_query(_PathQuery).path)
-        if not path.is_file():
-            return jsonify({"error": f"not a file: {path}"}), 400
-        try:
-            return jsonify(_config_payload(path))
-        except (OSError, ConfigError) as e:
-            return jsonify({"error": f"cannot read {path}: {e}"}), 400
+        return jsonify(_config_payload(path))
 
     @app.post("/api/validate")
     def validate() -> Any:

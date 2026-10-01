@@ -85,8 +85,6 @@ def build_input(
     ``$molecule read $end`` included, passes through byte-for-byte. A job-1 block split
     into fragments is refused by name.
     """
-    if not template_path.is_file():
-        raise ConfigError(f"Q-Chem template not found: {template_path}")
     template = read_utf8(template_path, what="Q-Chem template")
     if _INPUT_BOHR_RE.search(template):
         # The block below is written in Å (every geometry this package writes is), so a
