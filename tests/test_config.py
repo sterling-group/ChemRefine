@@ -914,8 +914,9 @@ def test_each_written_out_default_is_reported_where_it_lands():
         ({"engine": "DFT", "mlff": {"model_name": "medium"}}, "orca"),
         ({"engine": "MLFF", "operation": "MLFF_TRAIN", "mlff": {"model_name": "x"}}, "mlip-train"),
         ({"engine": "orca", "trainer": {"seed": 1}}, "orca"),
+        ({"engine": "DFT", "mlip": {"task_name": "omol"}}, "orca"),
     ],
-    ids=["mlff-on-dft", "mlff-on-training", "trainer-on-orca"],
+    ids=["mlff-on-dft", "mlff-on-training", "trainer-on-orca", "mlip-on-dft"],
 )
 def test_a_v1_block_on_a_step_v1_never_used_it_on_is_dropped(step: dict[str, object], engine: str):
     """v1.3.1 used a block only where its engine read it; elsewhere it configured nothing.
@@ -928,12 +929,49 @@ def test_a_v1_block_on_a_step_v1_never_used_it_on_is_dropped(step: dict[str, obj
     seen, sink = _collect()
     out = _normalize_legacy({"steps": [{"step": 1, **step}]}, report=sink)["steps"][0]
     assert out["engine"] == engine
-    (block,) = [key for key in ("mlff", "trainer") if key in step]
+    (block,) = [key for key in ("mlff", "mlip", "trainer") if key in step]
     held = step[block]
     assert isinstance(held, dict)
     assert block not in out
     assert not set(held) & set(out.get("options", {}))
     assert "configures nothing on this step" in dict(seen)[("steps", 0, block)]
+
+
+def test_v1s_mlip_block_configures_the_gradient_server_as_mlff_does():
+    """``engine: MLIP`` beside an ``mlip:`` block is the gradient server's engine, with
+    ``mlff``'s defaults written out; the row says v1.3.1 never started that server, so the
+    template decides what runs."""
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    seen, sink = _collect()
+    out = _normalize_legacy(
+        {"steps": [{"step": 1, "engine": "MLIP", "mlip": {"task_name": "omol"}}]}, report=sink
+    )["steps"][0]
+    assert out["engine"] == "mlip-extopt"
+    assert out["options"] == {"task_name": "omol", "device": "cuda"}
+    by_loc = dict(seen)
+    assert "never started the gradient server" in by_loc[("steps", 0, "engine")]
+    assert "`engine: orca`" in by_loc[("steps", 0, "engine")]
+    assert by_loc[("steps", 0, "mlip")].endswith("use `options:`")
+
+
+@pytest.mark.parametrize(
+    ("step", "dropped"),
+    [
+        ({"engine": "mlip"}, None),
+        ({"engine": "mlip", "mlff": {"model_name": "small"}}, "mlff"),
+    ],
+    ids=["bare", "beside-mlff"],
+)
+def test_a_bare_mlip_engine_is_the_direct_engine(step: dict[str, object], dropped: str | None):
+    """Without an ``mlip:`` block the name is v2's own: it passes through, and an ``mlff:``
+    block beside it — which v1.3.1 never read there — is dropped, reported."""
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    seen, sink = _collect()
+    out = _normalize_legacy({"steps": [{"step": 1, **step}]}, report=sink)["steps"][0]
+    assert out == {"step": 1, "engine": "mlip"}
+    assert [loc for loc, _ in seen] == ([("steps", 0, dropped)] if dropped else [])
 
 
 def test_a_v1_block_moves_only_the_keys_v1_read():

@@ -42,7 +42,8 @@ by hand:
 |------------------------------------------------|-----------------------------------------------|
 | `engine: "DFT"`                                | `engine: orca` (an engine name is read in any case) |
 | `engine: "MLFF"`, with or without an `mlff:` block | `engine: mlip-extopt` — ORCA over the model, as in v1.3.1 ([details](#machine-learned-steps)) |
-| `mlff:` / `trainer:` block                     | `options: { … }` on the step v1.3.1 used it on; dropped elsewhere |
+| `engine: "MLIP"` with an `mlip:` block         | `engine: mlip-extopt`, as for MLFF ([details](#machine-learned-steps)) |
+| `mlff:` / `mlip:` / `trainer:` block           | `options: { … }` on the step v1.3.1 used it on; dropped elsewhere |
 | `operation: "OPT+SP"` / `"GOAT"`               | unchanged — read in any case, `+` for `_`     |
 | `operation: "MLFF_TRAIN"`                      | `engine: mlip-train` ([training steps](#training-steps)) |
 | `normal_mode_sampling: true`                   | `nms: true`                                   |
@@ -93,8 +94,12 @@ the server. A v1.3.1 template without it ran ORCA's own method under the MLFF la
 the server idled — add `ExtOpt` to run the model the step names, or write
 `engine: orca` to keep what v1.3.1 computed.
 
-The `mlip` engine in v2 is a different, direct path: the model runs a Python template,
-with no ORCA. FAIRChem's model names are the installed `fairchem-core`'s, and v1.3.1's
+A v1.3.1 `engine: MLIP` step with an `mlip:` block is translated the same way, to
+`mlip-extopt`: v1.3.1 read that block with `mlff`'s keys and defaults but never started the
+server for it, so the step ran its template as ORCA's own method — give the template
+`! ExtOpt` to run the model the block names, or write `engine: orca` to keep what v1.3.1
+computed. Without a block, `engine: MLIP` keeps its name: in v2 that is the direct engine,
+a different path, where the model runs a Python template with no ORCA. FAIRChem's model names are the installed `fairchem-core`'s, and v1.3.1's
 `uma-s-1` is not among the current library's — name a current one, such as `uma-s-1p2`;
 the library refuses a name it does not have when the job loads the model.
 

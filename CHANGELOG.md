@@ -496,7 +496,7 @@ for those and the full map.
 - **v1.3.1's config keys are renamed.** `sample:` replaces `sample_type:` (its methods and
   parameters renamed too), `nms:` + `options:` replace `normal_mode_sampling*`,
   `executables:` replaces `orca_executable`, `input:` replaces `initial_xyz`, and a step's
-  `mlff:` or `trainer:` block becomes its `options:`. The loader rewrites each old
+  `mlff:`, `mlip:` or `trainer:` block becomes its `options:`. The loader rewrites each old
   spelling with a deprecation warning. It refuses `calculation_type`, a v1.0 key v1.3.1
   did not read (it took `engine:` + `operation:`), with a pointer to the migration guide.
   A v1.3.1 `energy_window` keeps its unit: `energy` is read as hartree unless
@@ -511,7 +511,9 @@ for those and the full map.
   v1.3.1 read a missing key as (`task_name: mace_off`, `model_name: medium` under
   the MACE families whose loader took it, `device: cuda`) are written out, each
   reported, so a translated step runs the model v1.3.1 ran; a block on a step v1.3.1
-  never used it on is dropped, reported. `mlip` names v2's direct engine.
+  never used it on is dropped, reported. v1.3.1's `engine: MLIP` with an `mlip:` block,
+  whose server v1.3.1 never started, is translated the same way; a bare `mlip` names
+  v2's direct engine.
 - `options.device` defaults to `cpu` on all four MLIP/PySCF engines (`mlip`,
   `mlip-extopt`, `pyscf`, `pyscf-extopt`). It is read by both the rendered
   script and the scheduler, so one setting drives the header and the run;

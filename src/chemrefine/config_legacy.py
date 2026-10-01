@@ -62,6 +62,7 @@ _LEGACY_BLOCKS: dict[str, tuple[str, str]] = {
         "mlip-extopt",
         "v1.3.1 used it only for the gradient server of an `engine: MLFF` step",
     ),
+    "mlip": ("mlip-extopt", "v1.3.1 read it only on an `engine: MLIP` step"),
     "trainer": ("mlip-train", "v1.3.1 used it only for a training step"),
 }
 
@@ -153,13 +154,13 @@ def normalize(raw: dict[str, Any], *, report: DeprecationSink | None = None) -> 
 
 
 def _v1_server_step(s: dict[str, Any]) -> bool:
-    """Whether ``s`` is spelled for v1.3.1's gradient server: ``engine: MLFF``, or its block.
+    """Whether ``s`` is spelled for v1.3.1's gradient server: ``engine: MLFF``, or a block.
 
     Read before anything is rewritten, because the rewrite is what it decides: a step spelled
     this way gets the defaults v1.3.1 ran it with written out (:func:`_write_out_v1_server`),
     and a step written in v2's own terms keeps v2's.
     """
-    return _folded(s.get("engine")) == "mlff" or "mlff" in s
+    return _folded(s.get("engine")) == "mlff" or "mlff" in s or "mlip" in s
 
 
 def _train_operation(s: dict[str, Any], loc: tuple[str | int, ...], sink: DeprecationSink) -> bool:
@@ -187,10 +188,22 @@ def _rename_engine(s: dict[str, Any], loc: tuple[str | int, ...], sink: Deprecat
     """Rewrite a v1.3.1 engine name to its canonical one, reported.
 
     A legacy name is matched in any case; a current one passes through as written, its case
-    the config's own rule (``StepConfig._fold_engine``).
+    the config's own rule (``StepConfig._fold_engine``). ``mlip`` is both: beside an
+    ``mlip:`` block it is v1.3.1's other spelling of a gradient-server step — v1.3.1 read the
+    block with ``mlff``'s keys and defaults, but never started the server, so the template
+    ran ORCA's own method — and alone it is v2's direct engine, passed through.
     """
     engine = _folded(s.get("engine"))
-    if engine is not None and engine in _ENGINE_RENAMES:
+    if engine == "mlip" and "mlip" in s:
+        sink(
+            (*loc, "engine"),
+            "engine `mlip` beside an `mlip:` block is deprecated; use `mlip-extopt` — v1.3.1 "
+            "never started the gradient server for it, so the template ran ORCA's own method: "
+            "name `! ExtOpt` in it to run the model the block names, or write `engine: orca` "
+            "to keep what v1.3.1 computed",
+        )
+        s["engine"] = "mlip-extopt"
+    elif engine is not None and engine in _ENGINE_RENAMES:
         renamed = _ENGINE_RENAMES[engine]
         # The most common legacy spelling of all — a config whose only legacy
         # feature is `engine: mlff` must be named before 3.0 removes the map.
