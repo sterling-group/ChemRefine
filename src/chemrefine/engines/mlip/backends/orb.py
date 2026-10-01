@@ -76,21 +76,6 @@ def _loader(pretrained: Any, name: str) -> Any:
     return loader
 
 
-def _same_loader(pretrained: Any, name: str, other: str) -> bool:
-    """Whether two names are one pretrained loader: by what each resolves to, else as written.
-
-    orb registers a loader under its key, the key with underscores and the function's own name
-    (:func:`_loader`), so two spellings can name one model. A name that resolves to no loader
-    is compared as written, so the disagreement is reported before the unknown name is.
-    """
-    if name == other:
-        return True
-    try:
-        return _loader(pretrained, name) is _loader(pretrained, other)
-    except ConfigError:
-        return False
-
-
 @ORB.calculator("orb")
 def _build_orb(spec: CalculatorSpec) -> Any:
     """ORB potential; ``model_name`` picks a loader from ``orb_models...pretrained``.
@@ -233,22 +218,22 @@ class OrbTrainer(ApiTrainerBase):
         device = torch.device(str(config["device"]))
         seed_everything(int(config["seed"]))
         # The architecture: the step's `model_name`, which the plan hands over as the
-        # `foundation` fact, the default loader when the step names none. A template
-        # `base_model` is the reference script's word for the same loader. Silently
-        # preferring either is how a declared model_name went ignored while the sidecar
-        # recorded it, so a template that names another loader is refused by name — another
-        # loader, not another of orb's spellings of the same one.
+        # `foundation` fact, the default loader when the step names none. A template's
+        # `base_model` is the reference script's word for the same loader, so it must name
+        # the step's loader, in any of orb's spellings of it (:func:`_loader`); one naming
+        # another loader is refused by name rather than silently preferred over the
+        # model_name the sidecar records, and an unknown name in either is refused as such.
         foundation = str(config.get("foundation") or "") or _DEFAULT_MODEL
         base_model = str(config.get("base_model") or "")
-        if base_model and not _same_loader(pretrained, base_model, foundation):
-            raise SystemExit(
-                f"orb training: the template names base_model {base_model!r} but the step "
-                f"starts from {foundation!r} (its model_name, or ORB's default when unset) "
-                f"— name the loader once, as the step's model_name, and drop base_model "
-                f"from the template"
-            )
         try:
             loader_fn = _loader(pretrained, foundation)
+            if base_model and _loader(pretrained, base_model) is not loader_fn:
+                raise SystemExit(
+                    f"orb training: the template names base_model {base_model!r} but the "
+                    f"step starts from {foundation!r} (its model_name, or ORB's default when "
+                    f"unset) — name the loader once, as the step's model_name, and drop "
+                    f"base_model from the template"
+                )
         except ConfigError as e:
             raise SystemExit(f"orb training: {e}") from e
         weights = str(config.get("weights_path") or "")

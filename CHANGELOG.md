@@ -503,7 +503,9 @@ for the full map.
   registers one loader under its key, the key with underscores, and the function's own
   name, and a step resolves all three, but the training job compared a template's
   `base_model` with the step's loader as written. A template naming the default loader by
-  its registry key was refused as another model once the labelling steps had run.
+  its registry key was refused as another model once the labelling steps had run. The two
+  are now compared by the loader each names, and a name orb-models does not know, in
+  either, is refused as an unknown model rather than as a disagreement.
 - **An ORB model is found by the name orb-models registers it under.** A step named its
   loader by function name only, so the names orb-models documents for its aliases
   (`orbmol_v1_direct`, `orbmol_v1_conservative`) were unknown models. A `model_name` now

@@ -1151,10 +1151,17 @@ def _install_fake_orb_stack(monkeypatch) -> dict:
     adapter = MagicMock()
     loader_fn = MagicMock(return_value=(model, adapter))
     loader_fn.__name__ = "orb_v3_conservative_inf_omat"
+    # A second, different loader, so a template naming another model disagrees for real.
+    other_fn = MagicMock(return_value=(model, adapter))
+    other_fn.__name__ = "orb_v2"
 
     pretrained = types.ModuleType("orb_models.forcefield.pretrained")
     pretrained.orb_v3_conservative_inf_omat = loader_fn
-    pretrained.ORB_PRETRAINED_MODELS = {"orb-v3-conservative-inf-omat": loader_fn}
+    pretrained.orb_v2 = other_fn
+    pretrained.ORB_PRETRAINED_MODELS = {
+        "orb-v3-conservative-inf-omat": loader_fn,
+        "orb-v2": other_fn,
+    }
     forcefield = types.ModuleType("orb_models.forcefield")
     forcefield.pretrained = pretrained
 
@@ -1387,6 +1394,19 @@ def test_a_template_architecture_must_be_the_one_the_step_starts_from(monkeypatc
     monkeypatch.chdir(tmp_path)
     with pytest.raises(SystemExit, match="starts from 'orb_v3_conservative_inf_omat'"):
         OrbTrainer().run_training(_orb_config(base_model="orb_v2"))
+
+
+def test_an_unknown_loader_in_the_template_or_the_step_is_refused_as_unknown(
+    monkeypatch, tmp_path: Path
+):
+    """Not as a disagreement: a typo is named as the unknown model it is, wherever it sits."""
+    from chemrefine.engines.mlip.backends.orb import OrbTrainer
+
+    _install_fake_orb_stack(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    for config in (_orb_config(base_model="orb_v9"), _orb_config(foundation="orb_v9")):
+        with pytest.raises(SystemExit, match="orb training: unknown ORB model 'orb_v9'"):
+            OrbTrainer().run_training(config)
 
 
 def test_a_template_may_name_the_steps_loader_by_any_of_orbs_spellings(monkeypatch, tmp_path: Path):
