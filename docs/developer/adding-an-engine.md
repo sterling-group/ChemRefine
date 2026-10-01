@@ -51,10 +51,10 @@ Decorate the class with `@register("<name>")` and choose the **kind** that match
 
 | Kind | Base | You provide |
 |------|------|-------------|
-| Per-structure program (own input format) | [`JobEngine`](../api/engines_job.md) | `build_input`, `run_block`, `parse_one`, `pal`, `gpus` + the ClassVars (`label` / `template_suffix` / `output_suffix` / `output_globs`) |
-| User Python script | [`ScriptEngine`](../api/engines_job.md) (a `JobEngine`) | `_vars_from` (inject `$VAR`s from `step.options`), and `output_fields` when the template reports more than the shared set (energy / geometry / gradient / `converged`); a field declared with `field=None` is kept in the raw JSON sidecar only |
+| Per-structure program (own input format) | [`JobEngine`](../api/engines_job.md) | `build_input`, `run_block`, `parse_one`, `pal`, `gpus` + the ClassVars (`label` / `template_suffix` / `template_starter` / `output_suffix` / `output_globs`) |
+| User Python script | [`ScriptEngine`](../api/engines_job.md) (a `JobEngine`) | `template_starter` (its `$OUTPUT_CONTRACT` line becomes the comment naming the output fields), `_vars_from` (inject `$VAR`s from `step.options`), and `output_fields` when the template reports more than the shared set (energy / geometry / gradient / `converged`); a field declared with `field=None` is kept in the raw JSON sidecar only |
 | ORCA optimises using *this* engine's gradients | `ExtOptOrcaEngine` | the ClassVars `backend` / `wrapper_filename` / `options_cls` / `calculator_cls`, plus a `ComputeBackend` in `extopt_calc.py` |
-| Not a per-structure job (e.g. a training step) | `CalculationEngine` directly | `prepare` / `submit` / `parse`, plus `artifact` + `run_dir` for `ArtifactEngine`, and the `JobExecutable` members to run through the scheduler |
+| Not a per-structure job (e.g. a training step) | `CalculationEngine` directly | `prepare` / `submit` / `parse`, plus `artifact` + `run_dir` for `ArtifactEngine`, the `JobExecutable` members to run through the scheduler, and `label` / `template_suffix` / `template_starter` when it reads a template |
 
 A `JobEngine` provides only **primitives** — the public provision surface chemrefine requests
 (`build_input` / `run_block` / `parse_one` / `pal` / `gpus`, the `JobExecutable` contract). The
@@ -68,12 +68,14 @@ step, not an engine-specific feature.
 `name`, plus the base-required ClassVars (`label`, `template_suffix`, `output_suffix`,
 `output_globs`), as `ClassVar[...]` annotations matching the other engines. Two more travel
 with the engine rather than with any central list: `template_starter`, the text
-`chemrefine scaffold` writes for a missing template ([`StarterProviding`](../api/engines_api.md);
-an engine that declares none gets a suffix-shaped fallback), and — only if the engine takes the
+`chemrefine scaffold` writes for a missing template (every template-driven engine declares
+one; see [`TemplateDriven`](../api/engines_api.md)), and — only if the engine takes the
 `check_step` hook — `preflight_refuses`, one sentence naming what the hook refuses
-([`PreflightChecking`](../api/engines_api.md); `register` refuses a hook without it, and the
-invariants hold the sentence unrepeated across engines). There is no `supports_nms` flag — NMS
-is a *capability* (below), detected via `isinstance`.
+([`PreflightChecking`](../api/engines_api.md); the invariants hold the sentence unrepeated
+across engines). `register` refuses an engine that declares part of a capability — a template
+engine without its starter, a hook without its sentence — because a capability taken in part
+is not detected at all. There is no `supports_nms` flag — NMS is a *capability* (below),
+detected via `isinstance`.
 
 ## Validate the YAML knobs
 
@@ -325,6 +327,10 @@ class DemoqmEngine(JobEngine):
     name: ClassVar[str] = "demoqm"
     label: ClassVar[str] = "DemoQM"
     template_suffix: ClassVar[str] = "inp"  # input-file extension
+    template_starter: ClassVar[str] = (
+        "# DemoQM starter: set the method; $BASIS and $XYZ are filled per structure.\n"
+        "basis $BASIS\ngeometry $XYZ\n"
+    )
     output_suffix: ClassVar[str] = "out"  # output-file extension
     output_globs: ClassVar[tuple[str, ...]] = ("*.out",)
 

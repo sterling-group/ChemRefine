@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import cast
 
 import pytest
@@ -286,9 +287,74 @@ def test_register_refuses_a_preflight_hook_without_its_claim():
             "check_step": lambda self, step_cfg, *, charge, multiplicity: None,
         },
     )
-    with pytest.raises(TypeError, match="check_step without preflight_refuses"):
+    refusal = "declares ['check_step'] of PreflightChecking but not ['preflight_refuses']"
+    with pytest.raises(TypeError, match=re.escape(refusal)):
         register("gate-probe")(hooked)
     assert "gate-probe" not in ENGINES
+
+
+_RUNNABLE = {
+    "prepare": lambda self, ctx: None,
+    "submit": lambda self, inputs, ctx: None,
+    "parse": lambda self, inputs, ctx: None,
+}
+
+
+def test_register_refuses_a_template_engine_without_its_starter():
+    """Without ``template_starter`` the class would silently not be ``TemplateDriven``.
+
+    ``isinstance`` answers no to a class that declares only some of a Protocol's members,
+    so the engine would read no template — every consumer of the capability would pass it
+    by — while its author believed it declared one.
+    """
+    partial = type(
+        "Partial",
+        (),
+        {"name": "gate-probe", "label": "Gate", "template_suffix": "toml", **_RUNNABLE},
+    )
+    refusal = "declares ['label', 'template_suffix'] of TemplateDriven but not ['template_starter']"
+    with pytest.raises(TypeError, match=re.escape(refusal)):
+        register("gate-probe")(partial)
+    assert "gate-probe" not in ENGINES
+
+
+@pytest.mark.parametrize(
+    ("member", "refusal"),
+    [
+        (
+            "template_starter",
+            "declares ['template_starter'] of TemplateDriven but not ['label', 'template_suffix']",
+        ),
+        (
+            "preflight_refuses",
+            "declares ['preflight_refuses'] of PreflightChecking but not ['check_step']",
+        ),
+    ],
+)
+def test_register_refuses_a_claim_without_its_capability(member: str, refusal: str):
+    """A member alone claims a capability the class does not have."""
+    claimed = type("Claimed", (), {"name": "gate-probe", member: "x", **_RUNNABLE})
+    with pytest.raises(TypeError, match=re.escape(refusal)):
+        register("gate-probe")(claimed)
+    assert "gate-probe" not in ENGINES
+
+
+def test_the_capabilities_register_holds_whole_have_these_members():
+    """Literal pins of what each capability is taken by: a member added to either is a
+    member every engine taking it must now declare, so it lands here as a decision."""
+    from chemrefine.engines.api import (
+        CalculationEngine,
+        PreflightChecking,
+        TemplateDriven,
+        contract_members,
+    )
+
+    assert contract_members(TemplateDriven) - contract_members(CalculationEngine) == {
+        "label",
+        "template_starter",
+        "template_suffix",
+    }
+    assert contract_members(PreflightChecking) == {"check_step", "preflight_refuses"}
 
 
 def test_register_refuses_a_class_that_inherits_the_protocol():

@@ -10,10 +10,10 @@ template chips and an agent's next-action decision render from — and
 working file instead of authoring one from a blank page.
 
 Starters are deliberately minimal echoes of the shipped examples (``examples/first_run``
-et al.). Each engine declares its own (:class:`~chemrefine.engines.api.StarterProviding`),
-so the text travels with the engine and adding one edits nothing here; an engine that
-declares none gets a suffix-shaped fallback, so a drop-in still scaffolds something
-useful. The trainer's starter is honest about its limits: a real ``mlip-train`` template is
+et al.). Each template-driven engine declares its own
+(:attr:`~chemrefine.engines.api.TemplateDriven.template_starter`, which registration
+requires), so the text travels with the engine and adding one edits nothing here. The
+trainer's starter is honest about its limits: a real ``mlip-train`` template is
 load-bearing in ways a stub cannot be, so it points at the worked example rather than
 pretending.
 
@@ -26,25 +26,16 @@ from __future__ import annotations
 
 import dataclasses
 import textwrap
-from contextlib import suppress
 from pathlib import Path
 from typing import Literal, cast
 
 from chemrefine.config import Config
-from chemrefine.engines.api import JobExecutable, StarterProviding, TemplateDriven, get_engine
-from chemrefine.errors import ConfigError, EngineNotFoundError
+from chemrefine.engines.api import JobExecutable, TemplateDriven, get_engine
+from chemrefine.errors import ConfigError
 from chemrefine.ids import step_template_path
 from chemrefine.io import atomic_write
 from chemrefine.slurm import CUDA_HEADER
 from chemrefine.validate import effective_header, shared_template_clash
-
-_SCRIPT_FALLBACK = (
-    "# Script starter. Rendered per structure: $XYZ_PATH / $CHARGE / $MULTIPLICITY\n"
-    "# come from the pipeline; step options render as $UPPERCASE placeholders.\n"
-    "$OUTPUT_CONTRACT"
-)
-"""The starter for a ``.py`` template of an engine that declares none of its own."""
-_GENERIC_STARTER = "# ChemRefine step template — this engine documents its own format.\n"
 
 _HEADER_STARTERS: dict[str, str] = {
     CUDA_HEADER: (
@@ -149,42 +140,15 @@ def _output_contract_comment(engine: object) -> str:
 
 
 def _starter_for(plan: TemplatePlan) -> str:
-    """The starter body for one planned file — the engine's own, else the suffix fallback."""
-    if plan.kind == "slurm-header":
+    """The starter body for one planned file: the engine's own, or the header's by name."""
+    if plan.engine is None:  # a SLURM header, which any number of steps may share
         return _HEADER_STARTERS.get(plan.path.name, _HEADER_DEFAULT)
-    # `plan_templates` resolves every engine before any starter is chosen, so a name that
-    # does not resolve reaches here only from a direct caller — and an engine nobody can look
-    # up has no starter and no contract to describe, which is what a non-script engine
-    # without a starter answers too.
-    engine: object = None
-    if plan.engine is not None:
-        with suppress(EngineNotFoundError):
-            engine = get_engine(plan.engine)
-    starter = (
-        engine.template_starter
-        if isinstance(engine, StarterProviding)
-        else _fallback_starter(plan.path.suffix.lstrip("."))
-    )
+    # `plan_templates` plans a step only for a TemplateDriven engine, and registration holds
+    # that capability whole, so the narrowing is for the type checker alone.
+    engine = cast(TemplateDriven, get_engine(plan.engine))
     # Only this one placeholder is filled: a starter is a *template*, and its `$XYZ_PATH`,
     # `$CHARGE` and option placeholders belong to the renderer that runs per structure.
-    return starter.replace("$OUTPUT_CONTRACT", _output_contract_comment(engine))
-
-
-def _fallback_starter(suffix: str) -> str:
-    """A starter for an engine that declares none, from the suffix alone.
-
-    ``.py`` gets the neutral script starter — MLIP's and PySCF's bodies are their own, so
-    neither would serve a stranger. ``.inp`` is ORCA-shaped, the one input format other
-    programs mimic, so ORCA's own starter serves a third-party ``.inp`` engine. Anything else
-    gets a comment saying the engine documents its own format.
-    """
-    if suffix == "py":
-        return _SCRIPT_FALLBACK
-    if suffix == "inp":
-        # ORCA declares a starter — `test_each_bundled_engine_gets_its_own_starter` holds it
-        # to that — so the narrowing is for the type checker alone, with no arm to cover.
-        return cast(StarterProviding, get_engine("orca")).template_starter
-    return _GENERIC_STARTER
+    return engine.template_starter.replace("$OUTPUT_CONTRACT", _output_contract_comment(engine))
 
 
 def scaffold_templates(config: Config, *, overwrite: bool = False) -> tuple[Path, ...]:

@@ -173,7 +173,10 @@ for the full map.
   MLIP backends are **auto-discovered** — a new engine package or backend
   module is dropped in and registers itself, with no central import list to
   edit. Bundled engines: `orca`, `mlip`, `mlip-extopt`, `mlip-train`,
-  `pyscf`, `pyscf-extopt`, `qchem`.
+  `pyscf`, `pyscf-extopt`, `qchem`. A template-driven engine declares the starter
+  `chemrefine scaffold` writes for it, and registration refuses an engine that
+  declares part of a capability: a template engine without its starter, a
+  preflight hook without its sentence.
 - Subcommand CLI — `run`, `resume`, `rerun [step]`, `rerun-errors [step]`,
   `rebuild-cache [step]`, `rebuild-nms [step]` — with documented process
   exit codes per failure class.

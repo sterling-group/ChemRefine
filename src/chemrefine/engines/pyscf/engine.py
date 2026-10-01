@@ -54,8 +54,8 @@ class PyscfEngine(PyscfBackend, ScriptEngine[PyscfOptions]):
         "converged = bool(mf.converged)\n"
     )
     """What ``chemrefine scaffold`` writes for a missing ``stepN.py`` — see
-    :class:`~chemrefine.engines.api.StarterProviding`; ``$OUTPUT_CONTRACT`` becomes the
-    comment naming this engine's output fields."""
+    :attr:`~chemrefine.engines.api.TemplateDriven.template_starter`; ``$OUTPUT_CONTRACT``
+    becomes the comment naming this engine's output fields."""
     preflight_refuses: ClassVar[str] = (
         "a step naming no level of theory (`basis`, and `xc` under `method: dft`), the one "
         "engine that would otherwise compute at defaults nobody chose"

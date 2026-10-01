@@ -149,7 +149,7 @@ def test_each_bundled_engine_gets_its_own_starter(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# Starter fallbacks (third-party engine shapes the bundled set cannot exercise)
+# Starters come from the engine
 # ---------------------------------------------------------------------------
 
 
@@ -165,21 +165,14 @@ def _plan(
     )
 
 
-def test_unknown_engines_fall_back_by_suffix_then_generically():
-    assert "$XYZ_PATH" in _starter_for(_plan("step1.py", "somebody-elses-engine"))
-    assert "%pal" in _starter_for(_plan("step1.inp", "somebody-elses-orca"))
-    assert "ChemRefine step template" in _starter_for(_plan("step1.toml", "exotic"))
-    assert "ChemRefine step template" in _starter_for(_plan("step1.toml", None))
-
-
 def test_a_drop_in_engine_declares_its_own_starter():
     """``template_starter`` on the engine is what ``chemrefine scaffold`` writes for it.
 
     Keyed by name in ``scaffold.py``, a starter was one more central list an engine had to
-    be added to — and a drop-in got the suffix fallback however good its own example was.
-    Declared on the class it travels with the engine; the fallback stays for an engine that
-    declares none, and the contract comment is still filled in here, so a script engine's
-    starter names its own fields.
+    be added to — and a drop-in got a suffix-shaped guess however good its own example was.
+    Declared on the class it travels with the engine, and is the only source: registration
+    refuses a template engine that declares none. The contract comment is still filled in
+    here, so a script engine's starter names its own fields.
     """
     from chemrefine.engines.api import ENGINES, register
 

@@ -80,7 +80,7 @@ class QchemEngine(JobEngine):
         "$end\n"
     )
     """What ``chemrefine scaffold`` writes for a missing ``stepN.in`` — see
-    :class:`~chemrefine.engines.api.StarterProviding`."""
+    :attr:`~chemrefine.engines.api.TemplateDriven.template_starter`."""
     preflight_refuses: ClassVar[str] = (
         "a `device: cuda` or `backend_python` the shared options accept but nothing here "
         "reads, refused before a GPU is charged or an interpreter named for a job that "

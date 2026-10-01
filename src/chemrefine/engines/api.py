@@ -23,12 +23,15 @@ Kind                          Base                            The engine provide
 Per-structure program         :class:`._job.JobEngine`        ``build_input`` / ``run_block`` /
 (own input format, like ORCA)                                 ``parse_one`` / ``pal`` / ``gpus``
                                                               + the ClassVars
-User Python script            :class:`._script.ScriptEngine`  usually only ``_template_vars``
+User Python script            :class:`._script.ScriptEngine`  ``template_starter``, usually
+                                                              ``_vars_from``
 ORCA-driven gradients         :class:`.orca.extopt.engine.    ``backend`` / ``wrapper_filename`` /
                               ExtOptOrcaEngine`               ``options_cls`` / ``calculator_cls``
 One job, one product          :class:`CalculationEngine` +    ``prepare`` / ``submit`` / ``parse`` /
 (mlip-train)                  :class:`ArtifactEngine`         ``artifact`` (+ ``JobExecutable`` to
-                                                              run through the scheduler)
+                                                              run through the scheduler, +
+                                                              :class:`TemplateDriven`'s ClassVars
+                                                              when it reads a template)
 ============================  ==============================  =====================================
 
 * **Capabilities** — never a flag, always a Protocol detected via ``isinstance``. NMS:
@@ -192,10 +195,13 @@ class TemplateDriven(CalculationEngine, Protocol):
     """An engine whose step input is rendered from a per-step template.
 
     **Declarations only — no methods.** This says *which file the engine reads*, not
-    anything it does differently, so it costs an implementer two ClassVars and no code.
-    :func:`chemrefine.step.build_context` reads them once per step and puts the resolved
-    path on :attr:`~chemrefine.state.StepContext.template`; everything downstream — the
-    engine rendering it, the cache digesting it — reads that field.
+    anything it does differently, so it costs an implementer three ClassVars and no code.
+    :func:`chemrefine.step.build_context` reads the file's name once per step and puts the
+    resolved path on :attr:`~chemrefine.state.StepContext.template`; everything downstream —
+    the engine rendering it, the cache digesting it — reads that field, and ``chemrefine
+    scaffold`` writes :attr:`template_starter` where the file is missing. :func:`register`
+    refuses a class that declares some of the three but not all: ``isinstance`` would answer
+    no, and the engine would silently read no template.
 
     A capability rather than part of :class:`CalculationEngine`, because being
     template-driven is genuinely optional: ``mlip-train`` reads a template but writes no
@@ -215,22 +221,13 @@ class TemplateDriven(CalculationEngine, Protocol):
     label: ClassVar[str]
     """Human name for this engine's inputs, used in "…​ template not found" errors."""
 
-
-@runtime_checkable
-class StarterProviding(Protocol):
-    """An engine that ships the starter ``chemrefine scaffold`` writes for its template.
-
-    **Declarations only**, like :class:`TemplateDriven`: one ClassVar holding the text a
-    first ``templates/stepN.<suffix>`` should contain — a minimal echo of the engine's
-    shipped example, with ``$OUTPUT_CONTRACT`` where a script engine's harvest comment goes
-    (:mod:`chemrefine.scaffold` fills it from the engine's own output contract). Declared on
-    the engine rather than keyed by name in the scaffold module, so the starter travels with
-    the engine and no central list is edited to add one; an engine that declares none gets
-    the scaffold's suffix-shaped fallback.
-    """
-
     template_starter: ClassVar[str]
-    """The starter text; ``$OUTPUT_CONTRACT`` is replaced by the engine's contract comment."""
+    """The text ``chemrefine scaffold`` writes for a missing template.
+
+    A minimal echo of the engine's shipped example, with ``$OUTPUT_CONTRACT`` where a script
+    engine's harvest comment goes (:mod:`chemrefine.scaffold` fills it from the engine's own
+    output contract). Declared on the engine rather than keyed by name in the scaffold, so
+    the starter travels with the engine and no central list is edited to add one."""
 
 
 @runtime_checkable
@@ -669,9 +666,9 @@ class PreflightChecking(Protocol):
 
     The claim that the hook is a *targeted* refusal and not boilerplate, carried by the
     engine itself — in the declarations-only style of :class:`WhitespacePathIntolerant` —
-    rather than by a list of engine names pinned in a test. :func:`register` refuses a class
-    that defines ``check_step`` without it, because a Protocol member left unset would not
-    fail loudly: ``isinstance`` would answer no and the engine would silently leave the
+    rather than by a list of engine names pinned in a test. :func:`register` refuses a member
+    declared without the rest of its capability, because a Protocol member left unset would
+    not fail loudly: ``isinstance`` would answer no and the engine would silently leave the
     preflight walk. The invariants hold it non-empty and unrepeated across engines, and
     :func:`chemrefine.introspect.describe_engines` exposes it."""
 
@@ -711,6 +708,15 @@ def contract_members(protocol: type) -> frozenset[str]:
 
 _CONTRACT_MEMBERS = contract_members(CalculationEngine)
 
+_CAPABILITIES: tuple[tuple[type, frozenset[str]], ...] = tuple(
+    (capability, contract_members(capability) - _CONTRACT_MEMBERS)
+    for capability in (TemplateDriven, PreflightChecking)
+)
+"""The capabilities an engine takes by declaring members, each with the members that take it.
+
+Derived from the Protocols, like :data:`_CONTRACT_MEMBERS`, so the gate cannot come to
+disagree with the contracts it enforces."""
+
 
 def register(name: str) -> Callable[[type[CalculationEngine]], type[CalculationEngine]]:
     """Decorator: register ``cls`` under ``name`` in :data:`ENGINES`, if it qualifies.
@@ -740,11 +746,13 @@ def register(name: str) -> Callable[[type[CalculationEngine]], type[CalculationE
       surfaces as a bare ``AttributeError`` inside ``prepare``, and ``template_suffix`` is
       worse: the engine simply stops satisfying :class:`TemplateDriven`, and the user is told
       their template does not exist while it sits on disk.
-    * **It takes the preflight hook without saying why.** ``check_step`` claims the engine owns
-      a fail-fast refusal, and :class:`PreflightChecking` asks for that claim in one sentence
-      (``preflight_refuses``). Left unset, the omission would not fail: a Protocol member
-      that is missing makes ``isinstance`` answer no, and the engine would silently drop out
-      of the preflight walk it meant to join.
+    * **It takes a capability in part.** :class:`TemplateDriven` and
+      :class:`PreflightChecking` are taken by declaring their members, and ``isinstance``
+      answers no to a class that declares only some — so a template engine without its
+      starter would silently read no template, and a ``check_step`` without the sentence
+      that says what it refuses would silently drop out of the preflight walk it meant to
+      join. Every member a class declares must belong to a capability it declares whole
+      (:data:`_CAPABILITIES`).
 
     The check runs on the class, never on an instance: constructing one to interrogate it would
     make an engine's ``__init__`` run at import of the package that defines it.
@@ -776,12 +784,16 @@ def register(name: str) -> Callable[[type[CalculationEngine]], type[CalculationE
                 f"engine {name!r}: {cls.__name__} is missing declaration(s) {undeclared} — "
                 f"the machinery reads them; see the base it inherits from."
             )
-        if hasattr(cls, "check_step") and not hasattr(cls, "preflight_refuses"):
-            raise TypeError(
-                f"engine {name!r}: {cls.__name__} defines check_step without preflight_refuses "
-                f"— a preflight hook says in one sentence what it refuses (see "
-                f"PreflightChecking); without the declaration the capability is not detected."
-            )
+        declared = {m for _, members in _CAPABILITIES for m in members if hasattr(cls, m)}
+        held = frozenset[str]().union(*(m for _, m in _CAPABILITIES if m <= declared))
+        for capability, members in _CAPABILITIES:
+            if (members & declared) - held:
+                raise TypeError(
+                    f"engine {name!r}: {cls.__name__} declares {sorted(members & declared)} "
+                    f"of {capability.__name__} but not {sorted(members - declared)}: a "
+                    f"capability declared in part is not detected, so the engine would "
+                    f"silently go without it. See {capability.__name__}."
+                )
         ENGINES[name] = cls
         return cls
 

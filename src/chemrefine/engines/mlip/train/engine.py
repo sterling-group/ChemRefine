@@ -135,7 +135,7 @@ class MlipTrainEngine(MlipBackend):
     """What ``chemrefine scaffold`` writes for a missing ``stepN.yaml`` — honest about its
     limits: a real trainer template is load-bearing in ways a stub cannot be, so it points at
     the worked example rather than pretending. See
-    :class:`~chemrefine.engines.api.StarterProviding`."""
+    :attr:`~chemrefine.engines.api.TemplateDriven.template_starter`."""
 
     # -- the backend this step needs ---------------------------------------
 

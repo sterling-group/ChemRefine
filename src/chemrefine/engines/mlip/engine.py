@@ -59,5 +59,5 @@ class MlipEngine(MlipBackend, ScriptEngine[MlipOptions]):
         "converged = mlip.last_converged\n"
     )
     """What ``chemrefine scaffold`` writes for a missing ``stepN.py`` — see
-    :class:`~chemrefine.engines.api.StarterProviding`; ``$OUTPUT_CONTRACT`` becomes the
-    comment naming this engine's output fields."""
+    :attr:`~chemrefine.engines.api.TemplateDriven.template_starter`; ``$OUTPUT_CONTRACT``
+    becomes the comment naming this engine's output fields."""
