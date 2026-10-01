@@ -14,9 +14,10 @@ file wherever the directive sits — Q-Chem takes its geometry **inline**, in th
   included. Splitting first is what keeps a chain whose job 1 leaves the block to ChemRefine
   from having the geometry spliced over job 2's ``read`` while job 1 runs with no molecule;
 * a job-1 block partitioned into fragments (``--`` separators — the EDA / SCFMI idiom) is
-  refused by name: the block is regenerated from one whole-molecule geometry, and nothing
-  can say which of the new atoms belong to which fragment, so a flattened block would run a
-  different calculation than the template describes.
+  refused by name (:func:`require_fillable`, asked when the run starts): the block is
+  regenerated from one whole-molecule geometry, and nothing can say which of the new atoms
+  belong to which fragment, so a flattened block would run a different calculation than
+  the template describes.
 
 Q-Chem reads its sections in any order within a job, so the replacement never has to move a
 block — position is preserved, and the diff between template and rendered input is exactly
@@ -70,6 +71,45 @@ def _molecule_block(xyz_path: Path, charge: int, multiplicity: int) -> str:
     return "\n".join([r"$molecule", f"{charge} {multiplicity}", *rows, r"$end"])
 
 
+def _split_job1(text: str) -> tuple[str, str]:
+    """``text`` split at its first ``@@@``: job 1, and every later job (``""`` for none)."""
+    separator = _JOB_SEPARATOR_RE.search(text)
+    if separator is None:
+        return text, ""
+    return text[: separator.start()], text[separator.start() :]
+
+
+def require_fillable(template: StepTemplate) -> None:
+    """Refuse a template a structure's geometry cannot be put into faithfully.
+
+    Both cases are decided by the template alone, so the engine's template rule
+    (:meth:`~chemrefine.engines.qchem.engine.QchemEngine.check_template`) refuses them
+    when the run starts, before :func:`build_input` is reached:
+
+    * ``input_bohr`` — the block is written in Å (every geometry this package writes is), so
+      a template declaring Bohr input would have Q-Chem compute on a molecule scaled by
+      1/0.529. The output parser holds the other half of the same rule: its banner match
+      pins ``(Angstroms)``, so a Bohr run would parse to nothing rather than to wrong
+      coordinates.
+    * a job-1 ``$molecule`` block split into fragments — see the module docstring.
+    """
+    if _INPUT_BOHR_RE.search(template.text):
+        raise ConfigError(
+            f"Q-Chem template {template.path} sets `input_bohr`, but ChemRefine writes the "
+            f"$molecule geometry in Ångström — the job would run on a molecule scaled by "
+            f"1/0.529. Remove the rem; coordinates are supplied in Å."
+        )
+    job1, _ = _split_job1(template.text)
+    existing = _MOLECULE_BLOCK_RE.search(job1)
+    if existing and _FRAGMENT_SEPARATOR_RE.search(existing.group(0)):
+        raise ConfigError(
+            f"Q-Chem template {template.path} partitions its $molecule block into fragments "
+            f"(`--`), which ChemRefine cannot preserve: the block is regenerated per structure "
+            f"from one whole-molecule geometry, and nothing can say which of its atoms belong "
+            f"to which fragment. Drop the fragment lines (and the fragment rems) for this step."
+        )
+
+
 def build_input(
     *,
     xyz_path: Path,
@@ -83,35 +123,13 @@ def build_input(
     The geometry replaces job 1's ``$molecule … $end`` block in place, or is prepended to
     job 1 when it declares none — see the module docstring for why job 1 and only job 1.
     Everything else in the template, every later job of a ``@@@`` chain and its
-    ``$molecule read $end`` included, passes through byte-for-byte. A job-1 block split
-    into fragments is refused by name.
+    ``$molecule read $end`` included, passes through byte-for-byte. The template has been
+    held to :func:`require_fillable` before it reaches here, so this refuses nothing.
     """
     text = template.text
-    if _INPUT_BOHR_RE.search(text):
-        # The block below is written in Å (every geometry this package writes is), so a
-        # template declaring Bohr input would have Q-Chem compute on a molecule scaled by
-        # 1/0.529 — and the output parser holds the other half of the same rule: its
-        # banner match pins `(Angstroms)`, so a Bohr run would parse to nothing rather
-        # than to wrong coordinates. Refused at the point of use, like ORCA's
-        # whitespace-path rule, because this is the moment the two units would meet.
-        raise ConfigError(
-            f"Q-Chem template {template.path} sets `input_bohr`, but ChemRefine writes the "
-            f"$molecule geometry in Ångström — the job would run on a molecule scaled by "
-            f"1/0.529. Remove the rem; coordinates are supplied in Å."
-        )
     block = _molecule_block(xyz_path, charge, multiplicity)
-    separator = _JOB_SEPARATOR_RE.search(text)
-    job1, later_jobs = (
-        (text[: separator.start()], text[separator.start() :]) if separator else (text, "")
-    )
+    job1, later_jobs = _split_job1(text)
     existing = _MOLECULE_BLOCK_RE.search(job1)
-    if existing and _FRAGMENT_SEPARATOR_RE.search(existing.group(0)):
-        raise ConfigError(
-            f"Q-Chem template {template.path} partitions its $molecule block into fragments "
-            f"(`--`), which ChemRefine cannot preserve: the block is regenerated per structure "
-            f"from one whole-molecule geometry, and nothing can say which of its atoms belong "
-            f"to which fragment. Drop the fragment lines (and the fragment rems) for this step."
-        )
     if existing:
         rendered_job1 = job1[: existing.start()] + block + job1[existing.end() :]
     else:

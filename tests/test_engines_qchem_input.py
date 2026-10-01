@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from chemrefine.engines.qchem.input import build_input
+from chemrefine.engines.qchem.input import build_input, require_fillable
 from chemrefine.errors import ConfigError
-from chemrefine.ids import require_template
+from chemrefine.ids import StepTemplate, require_template
 from chemrefine.io import write_single_xyz
 
 
@@ -19,13 +19,18 @@ def _seed_xyz(tmp_path: Path) -> Path:
     )
 
 
-def _render(tmp_path: Path, template_text: str, *, charge: int = 0, multiplicity: int = 1) -> str:
-    """Render ``template_text`` against the seed geometry and return the result."""
+def _template(tmp_path: Path, template_text: str) -> StepTemplate:
+    """``template_text`` as the engine reads a step's template."""
     template = tmp_path / "step1.in"
     template.write_text(template_text, encoding="utf-8")
+    return require_template(template, label="Q-Chem")
+
+
+def _render(tmp_path: Path, template_text: str, *, charge: int = 0, multiplicity: int = 1) -> str:
+    """Render ``template_text`` against the seed geometry and return the result."""
     out = build_input(
         xyz_path=_seed_xyz(tmp_path),
-        template=require_template(template, label="Q-Chem"),
+        template=_template(tmp_path, template_text),
         output_path=tmp_path / "0" / "step1_0.in",
         charge=charge,
         multiplicity=multiplicity,
@@ -95,11 +100,25 @@ def test_a_fragment_partitioned_block_is_refused_by_name(tmp_path: Path):
     the template describes — refused up front, like ``input_bohr``.
     """
     with pytest.raises(ConfigError, match="fragments"):
-        _render(
-            tmp_path,
-            "$molecule\n0 1\n--\n0 1\nHe 0.0 0.0 0.0\n--\n0 1\nNe 3.0 0.0 0.0\n$end\n"
-            "$rem\n  jobtype sp\n  frgm_method stoll\n$end\n",
+        require_fillable(
+            _template(
+                tmp_path,
+                "$molecule\n0 1\n--\n0 1\nHe 0.0 0.0 0.0\n--\n0 1\nNe 3.0 0.0 0.0\n$end\n"
+                "$rem\n  jobtype sp\n  frgm_method stoll\n$end\n",
+            )
         )
+
+
+def test_a_later_jobs_fragments_are_its_own(tmp_path: Path):
+    """Only job 1's block is regenerated, so a fragmented block in a later job of the chain
+    passes through as written."""
+    text = (
+        "$rem\n  jobtype sp\n$end\n@@@\n"
+        "$molecule\n0 1\n--\n0 1\nHe 0.0 0.0 0.0\n--\n0 1\nNe 3.0 0.0 0.0\n$end\n"
+        "$rem\n  jobtype sp\n  frgm_method stoll\n$end\n"
+    )
+    require_fillable(_template(tmp_path, text))
+    assert "--\n0 1\nHe 0.0 0.0 0.0" in _render(tmp_path, text)
 
 
 def test_charge_and_multiplicity_render_into_the_block(tmp_path: Path):
@@ -119,17 +138,17 @@ def test_an_input_bohr_template_is_refused_by_name(tmp_path: Path, rem: str):
     where the two units would actually meet.
     """
     with pytest.raises(ConfigError, match="input_bohr"):
-        _render(tmp_path, f"$rem\n  jobtype sp\n  {rem}\n$end\n")
+        require_fillable(_template(tmp_path, f"$rem\n  jobtype sp\n  {rem}\n$end\n"))
 
 
 def test_a_comment_mentioning_input_bohr_is_not_the_rem(tmp_path: Path):
     """The refusal is line-anchored, so prose about the rem does not trip it."""
-    text = _render(
-        tmp_path,
+    text = (
         "$comment\nnever set input_bohr true here — geometry arrives in Angstrom\n$end\n\n"
-        "$rem\n  jobtype sp\n$end\n",
+        "$rem\n  jobtype sp\n$end\n"
     )
-    assert "jobtype sp" in text
+    require_fillable(_template(tmp_path, text))
+    assert "jobtype sp" in _render(tmp_path, text)
 
 
 def test_a_comment_mentioning_the_block_name_is_not_the_block(tmp_path: Path):

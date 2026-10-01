@@ -276,6 +276,36 @@ def test_prepare_without_its_template_names_the_file_to_create(tmp_path: Path):
     assert str(missing) in str(refused.value)
 
 
+@pytest.mark.parametrize(
+    ("template", "refusal"),
+    [
+        ("$rem\n  jobtype sp\n  input_bohr true\n$end\n", "input_bohr"),
+        (
+            "$molecule\n0 1\n--\n0 1\nHe 0.0 0.0 0.0\n--\n0 1\nNe 3.0 0.0 0.0\n$end\n"
+            "$rem\n  jobtype sp\n$end\n",
+            "fragments",
+        ),
+    ],
+    ids=["input-bohr", "fragments"],
+)
+def test_a_template_the_engine_cannot_fill_is_refused_when_the_run_starts(
+    tmp_path: Path, template: str, refusal: str
+):
+    """Decided by the template alone, so the walk refuses it before anything runs — and
+    ``prepare`` again, on its own read, before it writes a file."""
+    from chemrefine.step import preflight_batches
+
+    ctx = _ctx(tmp_path, template=template)
+    cfg = Config(
+        template_dir=ctx.template_dir, output_dir=tmp_path / "outputs", steps=[ctx.step_cfg]
+    )
+    with pytest.raises(ConfigError, match=refusal):
+        preflight_batches(cfg, cfg.steps, local=True)
+    with pytest.raises(ConfigError, match=refusal):
+        get_engine("qchem").prepare(ctx)
+    assert not ctx.step_dir.exists()
+
+
 # ---------------------------------------------------------------------------
 # The submission proof: the whole pipeline, a stub binary, no licence
 # ---------------------------------------------------------------------------

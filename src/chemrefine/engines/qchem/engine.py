@@ -81,7 +81,8 @@ class QchemEngine(JobEngine):
     preflight_refuses: ClassVar[str] = (
         "a `device: cuda` or `backend_python` the shared options accept but nothing here "
         "reads, refused before a GPU is charged or an interpreter named for a job that "
-        "launches the same command either way"
+        "launches the same command either way; and a template a structure's geometry cannot "
+        "be put into faithfully — `input_bohr`, or a job-1 `$molecule` split into fragments"
     )
     operations: ClassVar[tuple[str, ...]] = tuple(sorted(output.known_operations()))
     """The ``operation:`` vocabulary this engine interprets — the parser dispatch's own
@@ -150,6 +151,14 @@ class QchemEngine(JobEngine):
                 f"step {step_cfg.step}: `backend_python` on a Q-Chem step — Q-Chem is a program "
                 f"named in `executables`, not a Python backend, so nothing reads it. Remove it."
             )
+
+    def check_template(self, ctx: StepContext, template: StepTemplate) -> None:
+        """Satisfies :class:`~chemrefine.engines.api.TemplateChecking`: the template must be
+        one each structure's geometry can be put into faithfully
+        (:func:`~chemrefine.engines.qchem.input.require_fillable`), refused by the run's t=0
+        walk and by ``chemrefine validate`` before anything runs. ``ctx`` is unread — the
+        signature is the capability's."""
+        qchem_input.require_fillable(template)
 
     # -- run ---------------------------------------------------------------
 

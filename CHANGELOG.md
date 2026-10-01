@@ -126,7 +126,8 @@ for those and the full map.
 - **Q-Chem engine** (`engine: qchem`): per-structure Q-Chem jobs from a `stepN.in`
   template, with the geometry generated into job 1's `$molecule` block (only job 1 of a
   multi-job `@@@` chain is edited — a later `$molecule read $end` survives untouched —
-  and a block partitioned into fragments is refused by name). Parallelism is
+  and a block partitioned into fragments is refused by name when the run starts).
+  Parallelism is
   CLI-side, as Q-Chem wants it: `options.cores` renders `-nt N` and is allocated as
   `--ntasks=1 --cpus-per-task=N`; `options.nprocs` opts into MPI (`-mpi -np P [-nt N]`,
   allocated `P×N` — partial method support, so never a default). The install environment
@@ -147,8 +148,8 @@ for those and the full map.
   optimisation's own `$geom_opt` block — gates it; the frequency parse numbers Q-Chem's
   vibrational modes behind six zero columns, so the tensor and the frequency table share
   one index. Geometry is exchanged in Ångström only — a template setting
-  `$rem input_bohr` is refused by name, since the writer emits Å and the reader assumes
-  it. Each output is read in one pass: the final energy and geometry, the forces,
+  `$rem input_bohr` is refused by name when the run starts, since the writer emits Å and
+  the reader assumes it. Each output is read in one pass: the final energy and geometry, the forces,
   thermochemistry and frequency table where the run printed them, and whether it
   converged and terminated normally.
 - **Memory-aware SLURM requests**: an input that declares its memory shapes its
