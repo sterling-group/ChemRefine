@@ -1192,21 +1192,13 @@ def _runnable_libraries() -> list[ParameterSet]:
 def test_backend_missing_dependency_names_the_extra(lib, package, extra, tasks, monkeypatch):
     """A missing backend lib → a helpful ImportError naming the package + extra.
 
-    Every task of the library is tried: one whose builder refuses before its lazy
-    import (``custom_mace`` with nothing to load) may raise its own ConfigError, but at
-    least one task per library must reach the import and surface the install hint.
+    Every task of the library is tried, and each must reach its lazy import and surface
+    the install hint: no builder refuses before it imports its library.
     """
     monkeypatch.setitem(sys.modules, lib, None)  # force the lazy import to fail
     from chemrefine.engines.mlip.calculator import build_calculator
 
-    hints: list[str] = []
     for task in tasks:
-        try:
+        with pytest.raises(ImportError) as exc:
             build_calculator(task_name=task, model_name="x")
-        except ImportError as exc:
-            hints.append(str(exc))
-        except ConfigError:
-            continue  # a pre-import refusal is that builder's own documented business
-    assert hints, f"no {extra} task reaches its lazy import — the install hint can never fire"
-    for hint in hints:
-        assert re.search(f"{package}.*{extra}", hint), hint
+        assert re.search(f"{package}.*{extra}", str(exc.value)), str(exc.value)

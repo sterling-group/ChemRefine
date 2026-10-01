@@ -35,13 +35,19 @@ from chemrefine.engines.mlip.backends.fairchem import _METADATA_NAME, FairchemTr
 from chemrefine.engines.mlip.backends.mace import (
     CHARGE_KEY,
     ENERGY_KEY,
+    FAMILIES,
     FORCES_KEY,
     MACE,
     SPIN_KEY,
     MaceTrainer,
     _to_atoms,
 )
-from chemrefine.engines.mlip.registry import requirement_from_options
+from chemrefine.engines.mlip.registry import (
+    backend_spec,
+    registered_backends,
+    registered_trainers,
+    requirement_from_options,
+)
 from chemrefine.engines.mlip.train.base import DatasetSplit, TrainingPlan
 from chemrefine.errors import ConfigError
 from chemrefine.quantities import HARTREE_TO_EV
@@ -195,7 +201,6 @@ def test_a_mace_release_reaches_run_train_in_its_own_family(
         ("mace_off", "medium-mpa-0"),
         ("mace_off", "extra_large"),
         ("mace_off", "small_off"),
-        ("custom_mace", "small"),
         ("mace_off", "/models/previous.model"),
     ],
 )
@@ -204,12 +209,22 @@ def test_a_name_that_is_no_release_of_the_family_is_refused(task: str, model_nam
 
     A ``mace_omol`` step naming ``medium`` fine-tuned MACE-MP-0 medium while its runlog said
     it started from ``medium``. A checkpoint is ``model_path``'s to name, which is digested,
-    resolved and keyed by its basename; the legacy alias names no family, so it releases
-    nothing.
+    resolved and keyed by its basename.
     """
     with pytest.raises(ConfigError, match=re.escape(f"{task} has no release {model_name!r}")) as e:
         MACE.release(task, model_name)
     assert "model_path" in str(e.value)
+
+
+def test_mace_registers_its_three_families_and_nothing_else():
+    """Each MACE family is runnable and trainable, and no other task name reaches MACE.
+
+    A fine-tuned checkpoint is ``model_path`` under the family that trained it, so no task
+    name stands for "a MACE model of your own".
+    """
+    mace_tasks = {t for t in registered_backends() if backend_spec(t).library is MACE}
+    assert mace_tasks == set(FAMILIES)
+    assert mace_tasks <= registered_trainers()
 
 
 @pytest.mark.integration

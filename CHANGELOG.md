@@ -377,11 +377,6 @@ for the full map.
   output files relative to the step directory, so a copied or moved output tree can be
   `rebuild-cache`d, `rerun` and inspected where it lands. A hand-written v1 adoption
   manifest may give absolute paths; they are read as written.
-- **A `task_name` you state wins over the `model_path` shortcut.** A checkpoint with no
-  library named still means MACE, as it always has; naming one loads the checkpoint with
-  *that* library. The old rule sent any `model_path` to MACE, which was right while MACE was
-  the only library that could produce one and would now silently load a FAIRChem model with
-  the wrong loader.
 - **`mlip-train` is rebuilt.** It runs through the same scheduler and throttle as every
   other engine, so a training job is charged against `max_cores` / `max_gpus`, gets the
   device-aware SLURM header, the runlog, the scratch handling, local dispatch and
@@ -436,12 +431,10 @@ for the full map.
     model_path: ./outputs/step4/train/train_stagetwo.model
   ```
 
-  `custom_mace` still resolves, as a MACE alias kept for v1 configs; it now needs a
-  `model_path`, since that is the only thing it can mean. `model_name` names weights
-  *within* the selected library and is optional — unset means the library's own
-  default (FAIRChem's builder keeps `uma-s-1p2`; SevenNet loads its own default
-  release). In v1 the `model_name` prefix (`sevenn…`, `orb…`) doubled as the backend
-  selector; it no longer selects anything.
+  `model_name` names weights *within* the selected library and is optional — unset
+  means the library's own default (FAIRChem's builder keeps `uma-s-1p2`; SevenNet loads
+  its own default release). In v1 the `model_name` prefix (`sevenn…`, `orb…`) doubled
+  as the backend selector; it no longer selects anything.
 
 - The scoped recovery actions cover the steps around their target deliberately:
   - `rerun-errors N` repairs step N and then continues the run — the steps after
@@ -514,7 +507,6 @@ for the full map.
   `model_name` is now one of the family's releases, and anything else (a checkpoint
   belongs in `model_path`) is refused when the run starts and by `chemrefine validate`,
   naming the releases, for inference and training alike; the backend table lists them.
-  The legacy `custom_mace` alias names no family, so it releases nothing.
 - **An ORB template may name its step's loader in any of orb's spellings.** orb-models
   registers one loader under its key, the key with underscores, and the function's own
   name, and a step resolves all three, but the training job compared a template's

@@ -27,7 +27,6 @@ from ase import Atoms
 
 from chemrefine.engines.mlip.registry import CalculatorSpec, MlipLibrary
 from chemrefine.engines.mlip.train.base import DatasetFiles, TrainerBase, TrainingPlan
-from chemrefine.errors import ConfigError
 from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import Structure
 
@@ -37,16 +36,6 @@ FAMILIES = ("mace_off", "mace_mp", "mace_omol")
 One list, used by both capabilities below, so a family cannot be runnable and not trainable by
 an oversight in one decorator."""
 
-LEGACY_MACE_TASK = "custom_mace"
-"""A back-compat alias for MACE, kept only so configs written against v1 still resolve.
-
-It is **not** a mechanism, and there is deliberately no ``custom_fairchem`` beside it. A local
-checkpoint is ``model_path``, which every library's builder honours itself — see the registry
-module's docstring. Configs naming this should say which MACE family they mean
-(:data:`FAMILIES`) instead; it is registered here on the MACE library so that saying nothing
-still works. It names no family, so it releases nothing. MACE policy, so it lives in MACE's
-module — the shared registry houses no library's aliases."""
-
 MACE = MlipLibrary(
     extra="mlip-mace",
     package="mace-torch",
@@ -54,7 +43,6 @@ MACE = MlipLibrary(
     releases={
         "mace_off": {size: f"{size}_off" for size in ("small", "medium", "large")},
         "mace_omol": {"extra_large": "mace_omol"},
-        LEGACY_MACE_TASK: {},
     },
 )
 """The one declaration of what provides MACE — read by every capability below.
@@ -74,35 +62,23 @@ loader does."""
 # ---------------------------------------------------------------------------
 
 
-@MACE.calculator(*FAMILIES, LEGACY_MACE_TASK)
+@MACE.calculator(*FAMILIES)
 def _build_mace(spec: CalculatorSpec) -> Any:
     """A MACE calculator: ``task_name`` is the family, the weights come from name or path.
 
     One builder for all of them, because MACE's own loaders already are one:
     ``mace_off(model=…)`` is typed ``str | Path`` and documented as "path to the model", and
     its ``model in mace_off_urls or str(model).startswith("https:")`` test falls through to
-    loading a local file for anything else. So a fine-tuned checkpoint needs no separate task
-    key — which is why there is no ``custom_fairchem`` either, and why
-    :data:`LEGACY_MACE_TASK` is an alias rather than a rule. An unusable alias — the legacy
-    task with nothing to load — is reported before the library is imported, naming the
-    families to write instead.
+    loading a local file for anything else. So a fine-tuned checkpoint is ``model_path`` under
+    the family that trained it, and needs no task key of its own.
     """
-    if spec.weights is None and spec.task_name == LEGACY_MACE_TASK:
-        raise ConfigError(
-            f"task_name={LEGACY_MACE_TASK!r} names no MACE family and no `model_path` was "
-            f"given, so there is nothing to load. Name the family you mean "
-            f"({', '.join(FAMILIES)}) — `model_path` works with any of them."
-        )
-
     from mace.calculators import mace_mp, mace_off, mace_omol
 
     builders = {"mace_off": mace_off, "mace_mp": mace_mp, "mace_omol": mace_omol}
     weights: str | Path | None = (
         spec.weights if spec.weights is not None else (spec.model_name or None)
     )
-    # The alias names no family, and none is needed to load a checkpoint: the file carries
-    # its own architecture, so MACE-OFF's loader reads a MACE-MP model perfectly well.
-    return builders.get(spec.task_name, mace_off)(model=weights, device=spec.device)
+    return builders[spec.task_name](model=weights, device=spec.device)
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +121,7 @@ def _to_atoms(struct: Structure, plan: TrainingPlan) -> Atoms:
     return atoms
 
 
-@MACE.trainer(*FAMILIES, LEGACY_MACE_TASK)
+@MACE.trainer(*FAMILIES)
 class MaceTrainer(TrainerBase):
     """Train or fine-tune a MACE model on a step's labelled structures."""
 

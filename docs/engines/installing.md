@@ -58,8 +58,7 @@ a large libcint/libxc tree for nothing.
 
 `task_name` is the only key that selects a backend. To run a model you fine-tuned
 yourself, name the library that trained it and point `model_path` at the checkpoint —
-there is no `custom_<library>` task for any of them. (`custom_mace` still resolves, as a
-MACE alias kept for v1 configs.)
+there is no `custom_<library>` task for any of them.
 
 ## Each backend gets the Python it supports
 

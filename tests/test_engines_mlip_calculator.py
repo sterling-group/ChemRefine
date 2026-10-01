@@ -100,8 +100,8 @@ def test_a_local_checkpoint_goes_through_the_named_familys_own_loader(
 
     ``mace_off``'s ``model`` is typed ``str | Path`` and documented as "path to the model";
     only a known name or an ``https:`` URL is treated as a download. That is what lets one
-    builder serve released weights and fine-tuned ones alike — and why there is no
-    ``custom_fairchem`` to mirror the old ``custom_mace``.
+    builder serve released weights and fine-tuned ones alike, with no task key for a
+    checkpoint.
     """
     factories = _install_fake_mace(monkeypatch)
     model_file = tmp_path / "fake.model"
@@ -129,27 +129,6 @@ def test_a_checkpoint_that_is_not_there_names_the_task(tmp_path: Path, task: str
     missing = tmp_path / "does_not_exist.model"
     with pytest.raises(FileNotFoundError, match=f"{task} checkpoint not found: {missing}"):
         MlipCalculator(task_name=task, model_name="x", model_path=str(missing))
-
-
-def test_the_legacy_alias_without_a_checkpoint_says_what_to_write_instead(monkeypatch):
-    """``custom_mace`` is kept for old configs, and can only mean "load this file".
-
-    Naming it with nothing to load is the one case it cannot serve, so it says which family to
-    name rather than silently picking one — the alias predates the families and has no way to
-    know which was meant.
-    """
-    _install_fake_mace(monkeypatch)
-    with pytest.raises(ConfigError, match="mace_off, mace_mp, mace_omol"):
-        MlipCalculator(task_name="custom_mace", model_name="medium")
-
-
-def test_the_legacy_alias_still_loads_a_checkpoint(monkeypatch, tmp_path: Path):
-    """A v1 config naming ``custom_mace`` + ``model_path`` keeps working unchanged."""
-    factories = _install_fake_mace(monkeypatch)
-    model_file = tmp_path / "fake.model"
-    model_file.touch()
-    MlipCalculator(task_name="custom_mace", model_path=str(model_file), device="cpu")
-    factories["mace_off"].assert_called_once_with(model=model_file, device="cpu")
 
 
 # ---------------------------------------------------------------------------
@@ -471,20 +450,11 @@ def test_every_backend_builds_a_calculator_with_model_name_unset(monkeypatch, ta
     model — inside the job, after the step was scheduled. Held here over the registry
     rather than per backend, a backend added later is covered by existing, and a library
     with no fake in the table above fails loudly instead of going quietly untested.
-
-    The one task that names no library default — the legacy ``custom_mace`` alias, whose
-    meaning is "your own checkpoint" — keeps the other half of the contract: a
-    :class:`ConfigError` before the library is touched, naming ``model_path`` as the
-    knob to write. Anything else escaping a builder is the failure this test refuses.
     """
     library = backend_spec(task_name).library.import_name
     _FAKE_LIBRARIES[library](monkeypatch)
-    try:
-        calc = MlipCalculator(task_name=task_name, device="cpu")
-    except ConfigError as e:
-        assert "model_path" in str(e), f"{task_name}: a refusal that does not name the fix"
-    else:
-        assert calc.calculator is not None
+    calc = MlipCalculator(task_name=task_name, device="cpu")
+    assert calc.calculator is not None
 
 
 def test_build_orb_unknown_loader_raises(monkeypatch):
