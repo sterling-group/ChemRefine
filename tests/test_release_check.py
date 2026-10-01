@@ -69,7 +69,6 @@ _STUBS = {
 # The interpreter, as far as the gate asks it: the import check, versions, one build.
 case "$*" in
     *"import chemrefine, pathlib"*) printf '%s/src\\n' "$(cd "$(dirname "$0")/.." && pwd)" ;;
-    *"import chemrefine;"*) echo 0.0.stub ;;
     *"version_info[:3]"*) echo 3.13.0 ;;
     *"version_info[:2]"*) echo 3.13 ;;
     "-m build --sdist --wheel")
@@ -79,14 +78,10 @@ case "$*" in
 esac
 """,
     "pytest": """#!/bin/sh
-# tier-3's collection: a light case, and the heavy one whenever an -m after the script's
-# own, in any spelling pytest reads, selects integration again.
-light=tests/test_e2e_live.py::test_live_case[mlip]
-heavy=tests/test_e2e_live.py::test_live_case[fairchem_sp]
+# The heavy probe, the one question asked of pytest before the tier: the case marked heavy.
 case "$*" in
-    *"-m heavy"*) echo "$heavy" ;;
-    *"not heavy"*integration*) printf '%s\\n' "$light" "$heavy" ;;
-    *) echo "$light" ;;
+    *"-m heavy"*) echo "tests/test_e2e_live.py::test_live_case[fairchem_sp]" ;;
+    *) exit 0 ;;
 esac
 """,
     "mypy": "#!/bin/sh\nexit 0\n",
@@ -105,10 +100,15 @@ where it would hand the tier to the scheduler."""
 
 @pytest.fixture
 def stubbed(tmp_path: Path):
-    """Run the scratch copy's run half against :data:`_STUBS`; ``(exit code, out, err)``."""
+    """Run the scratch copy's run half against :data:`_STUBS`; ``(exit code, out, err)``.
+
+    The copy is a git checkout, as the gate requires; its files are untracked, which a
+    selection is allowed to run on.
+    """
     (tmp_path / "scripts").mkdir()
     shutil.copy2(_SCRIPT, tmp_path / "scripts" / _SCRIPT.name)
     (tmp_path / "tests").symlink_to(REPO / "tests", target_is_directory=True)
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     stubs = tmp_path / "bin"
     stubs.mkdir()
     for name, body in _STUBS.items():
@@ -194,31 +194,58 @@ def test_a_partial_run_of_the_matrix_names_the_legs_it_could_not_run(stubbed):
     assert "no interpreter here (3.98) did not run" in out
 
 
+_HEAVY = "tests/test_e2e_live.py::test_live_case[fairchem_sp]"
+
+
 @pytest.mark.parametrize(
     "passed_through",
-    [("-m", "integration"), ("-mintegration",), ("-xm", "integration")],
+    [("-m", "integration"), ("-mintegration",), ("-xm", "integration"), ("-v",), ("-q",)],
     ids=lambda args: " ".join(args),
 )
-def test_no_heavy_undone_by_the_pytest_arguments_is_refused_before_anything_runs(
+def test_no_heavy_deselects_the_heavy_case_whatever_follows(
     stubbed, passed_through: tuple[str, ...]
 ):
-    """pytest decides what an -m after ``--`` selects, in every spelling it reads, so it is asked.
+    """The heavy case is deselected by id, which no -m or -k after it brings back.
 
-    A pattern over the arguments missed ``-xm integration``, which pytest reads as ``-x -m
-    integration``: the heavy case ran, under a start threshold sized without it.
+    Its membership used to be read off pytest's collection of the run's own argv, which
+    lists node ids only at ``-q``: ``-- -v`` reshaped the listing, so ``--no-heavy -- -v -m
+    integration`` ran the UMA case under a start threshold sized without it.
     """
-    code, out, err = stubbed("--only", "live", "--no-heavy", "--", *passed_through)
-    assert code == 2
-    assert "test_live_case[fairchem_sp]" in err
-    assert "tier-3" not in out, "refused in the preconditions, before the live section"
-
-
-def test_no_heavy_that_holds_reaches_the_live_section(stubbed):
-    """The control: with nothing passed through, the preconditions pass and the tier starts."""
-    code, out, err = stubbed("--only", "live", "--no-heavy")
-    assert "--no-heavy, but" not in err
+    _, out, _ = stubbed("--only", "live", "--no-heavy", "--", *passed_through)
+    assert f"--deselect {_HEAVY} {' '.join(passed_through)}\n" in out
+    assert "memory  ~4G free (no heavy case in the run)" in out
     assert "tier-3: the real binaries, end to end" in out
-    assert code == 0 or "of memory available" in err
+
+
+@pytest.mark.parametrize(
+    ("args", "need"),
+    [
+        (("--only", "live"), "~7G"),
+        (("--only", "live", "--", "-v"), "~7G"),
+        (("--case", "mlip"), "~4G"),
+        (("--case", "fairchem_sp"), "~7G"),
+        (("--case", "mlip", "--", "-k", "x"), "~7G"),
+    ],
+    ids=lambda value: " ".join(value) if isinstance(value, tuple) else value,
+)
+def test_the_tier_asks_for_the_memory_its_heaviest_case_needs(
+    stubbed, args: tuple[str, ...], need: str
+):
+    """7G while a heavy case can run, 4G once none can: what the header prints is the check.
+
+    Arguments passed through could add a case, so they keep the larger need; the live
+    section's own memory check depends on the host and is not asserted here.
+    """
+    _, out, _ = stubbed(*args)
+    assert f"memory  {need} free" in out
+
+
+def test_a_tree_git_cannot_read_is_refused_not_taken_for_a_clean_one(stubbed, tmp_path: Path):
+    """A failed ``git status`` printed nothing, which read as a clean tree."""
+    shutil.rmtree(tmp_path / ".git")
+    code, _, err = stubbed("--only", "types")
+    assert code == 1
+    assert "is not a git checkout git can read" in err
 
 
 def test_skipping_a_section_is_a_selection_too(gate):
@@ -237,6 +264,13 @@ def test_a_section_reading_the_built_package_builds_it(gate, section: str):
         rf"^section_{section}\(\) {{\n(.*?)^}}", _SCRIPT.read_text(encoding="utf-8"), re.M | re.S
     )
     assert body is not None and re.search(r"^\s*build_package$", body[1], re.M)
+
+
+def test_the_preview_of_no_heavy_holds_whatever_follows(gate):
+    """``--list`` says the heavy cases are left out, and the run now leaves them out."""
+    code, out, _ = gate("--list", "--only", "live", "--no-heavy", "--", "-m", "integration")
+    assert code == 0
+    assert "the heavy ones left out" in out
 
 
 def test_a_case_runs_the_live_section_alone(gate):

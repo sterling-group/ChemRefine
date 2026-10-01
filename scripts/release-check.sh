@@ -185,8 +185,7 @@ selected() {
 if [ -n "$cases$no_heavy" ] || [ ${#pytest_args[@]} -gt 0 ]; then
     selected live || usage_error "--case, --no-heavy and pytest arguments narrow the live section, which this selection does not run"
 fi
-# Named cases leave --no-heavy nothing to decide. Whether arguments passed through to pytest
-# undo it is pytest's to say, and the live preconditions ask it before anything runs.
+# Named cases leave --no-heavy nothing to decide.
 if [ -n "$no_heavy" ]; then
     [ -z "$cases" ] || usage_error "--case names the cases outright; drop --no-heavy"
 fi
@@ -277,7 +276,9 @@ if selected suite || selected mutation; then need_tool pytest; fi
 if selected docs || selected sdist; then need_tool mkdocs; fi
 if selected package || selected sdist || selected matrix; then need_tool pyproject-build; fi
 
-if [ -n "$(git status --porcelain)" ]; then
+status="$(git status --porcelain)" ||
+    fail "$repo_root is not a git checkout git can read — the gate certifies a commit"
+if [ -n "$status" ]; then
     if [ -z "$partial" ] || selected lint; then
         fail "working tree is dirty — gate a clean tree"
     fi
@@ -317,40 +318,48 @@ if selected live; then
   For a pre-PR check that needs no ORCA, run: scripts/release-check.sh --pr"
     fi
 
-    # The tier's own argv, built once: the live section runs it, and pytest is asked what
-    # it selects. The script's -m comes first, so a -m among the pass-through arguments
-    # wins, in whatever spelling pytest accepts (`-m X`, `-mX`, `-xm X`, an @file) — which
-    # is why pytest, not a pattern here, says whether a heavy case is in the run.
-    live_marker="integration or perf"
-    if [ -n "$no_heavy" ]; then live_marker="($live_marker) and not heavy"; fi
-    live_targets=()
-    for case_name in $cases; do
-        live_targets+=("tests/test_e2e_live.py::test_live_case[$case_name]")
-    done
-    tier3=(env CHEMREFINE_REQUIRE_LIVE=1 PATH="${orca_dir:+$orca_dir:}$PATH" "$live_pytest"
-        -m "$live_marker" -q ${live_targets[@]+"${live_targets[@]}"}
-        ${pytest_args[@]+"${pytest_args[@]}"})
-
-    # What the run collects, against what `-m heavy` collects. Asked here rather than when
-    # the live section starts, so a --no-heavy the pytest arguments undo is refused in the
-    # first seconds, not after the suite; the section's memory check reads the same answer.
+    # The heavy cases, by their own mark, asked of pytest under an argv this script owns, so
+    # `-q`'s one node id per line holds whatever the caller passes through after `--`.
     rc=0
-    chosen="$("${tier3[@]}" --collect-only 2>&1)" || rc=$?
-    case "$rc" in
-        0|5) ;;
-        *) printf '%s\n' "$chosen" >&2; fail "collecting the tier-3 selection failed (pytest exit $rc)" ;;
-    esac
-    rc=0
-    heavy="$("$live_pytest" -q -m heavy --collect-only tests/test_e2e_live.py 2>&1)" || rc=$?
+    heavy="$(env -u PYTEST_ADDOPTS "$live_pytest" -q -m heavy --collect-only tests/test_e2e_live.py 2>&1)" || rc=$?
     case "$rc" in
         0|5) ;;
         *) printf '%s\n' "$heavy" >&2; fail "collecting the heavy tier-3 cases failed (pytest exit $rc)" ;;
     esac
-    heavy_run="$(comm -12 <(grep '::' <<<"$chosen" | sort) <(grep '::' <<<"$heavy" | sort))"
-    need_g=4 why="no heavy case selected"
-    if [ -n "$heavy_run" ]; then
-        [ -z "$no_heavy" ] || usage_error "--no-heavy, but the pytest arguments select ${heavy_run//$'\n'/ }: a -m after -- replaces the one --no-heavy adds to; drop one of them"
-        need_g=7 why="the UMA load alone peaks at 5.1G; --no-heavy leaves it out"
+    heavy_ids=()
+    while IFS= read -r id; do heavy_ids+=("$id"); done < <(grep '::' <<<"$heavy")
+
+    # The tier's own argv, built once: the live section runs it. --no-heavy deselects each
+    # heavy case by id, which pytest applies after any -m or -k, so no argument passed
+    # through can bring one back.
+    live_targets=()
+    for case_name in $cases; do
+        live_targets+=("tests/test_e2e_live.py::test_live_case[$case_name]")
+    done
+    leave_out=()
+    if [ -n "$no_heavy" ]; then
+        for id in ${heavy_ids[@]+"${heavy_ids[@]}"}; do leave_out+=(--deselect "$id"); done
+    fi
+    tier3_args=(-m "integration or perf" -q ${live_targets[@]+"${live_targets[@]}"}
+        ${leave_out[@]+"${leave_out[@]}"} ${pytest_args[@]+"${pytest_args[@]}"})
+    tier3=(env CHEMREFINE_REQUIRE_LIVE=1 PATH="${orca_dir:+$orca_dir:}$PATH" "$live_pytest"
+        "${tier3_args[@]}")
+
+    # What the live section needs free to start: 7G while a heavy case can run, 4G once
+    # none can — --no-heavy, or named cases none of which is heavy, with nothing passed
+    # through that could add one.
+    names_heavy() {
+        local target id
+        for target in ${live_targets[@]+"${live_targets[@]}"}; do
+            for id in ${heavy_ids[@]+"${heavy_ids[@]}"}; do
+                [ "$target" != "$id" ] || return 0
+            done
+        done
+        return 1
+    }
+    need_g=7 why="the UMA load alone peaks at 5.1G; --no-heavy leaves it out"
+    if [ -n "$no_heavy" ] || { [ -n "$cases" ] && [ ${#pytest_args[@]} -eq 0 ] && ! names_heavy; }; then
+        need_g=4 why="no heavy case in the run"
     fi
 fi
 
@@ -361,7 +370,11 @@ printf 'repo    %s\n' "$repo_root"
 printf 'python  %s (%s)\n' "$PY" "$("$PY" -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])')"
 printf 'mode    %s\n' "$mode"
 if [ -n "$partial" ]; then printf 'runs    %s%s\n' "$selection" "${dirty:-}"; fi
-if selected live; then printf 'orca    %s\n' "${orca_dir:-none (a case that needs it fails by name)}"; fi
+if selected live; then
+    printf 'orca    %s\n' "${orca_dir:-none (a case that needs it fails by name)}"
+    printf 'tier-3  pytest %s\n' "${tier3_args[*]}"
+    printf 'memory  ~%sG free (%s)\n' "$need_g" "$why"
+fi
 
 # The GUI's JavaScript is executed by exactly seven tests, and without a Node they *skip* —
 # so on a machine with none this gate has been passing while checking the frontend not at
@@ -536,8 +549,8 @@ section_live() {
     # scope sized below what is available, so a shortage kills the tier with this script's
     # message rather than whatever the kernel fancies. The cap is what is available less 1G,
     # so the need is the peak plus 2G: 7G with a heavy case in the selection, 4G without —
-    # every other case peaks near 1G of its own memory. Whether the selection holds one is
-    # pytest's answer to the run's own argv, asked in the live preconditions (`need_g`).
+    # every other case peaks near 1G of its own memory. The live preconditions decide which
+    # (`need_g`), and the header prints it.
     if command -v systemd-run >/dev/null 2>&1; then
         local avail_g
         avail_g="$(awk '/MemAvailable/ {printf "%d", $2/1048576}' /proc/meminfo)"
