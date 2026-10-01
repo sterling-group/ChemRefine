@@ -460,7 +460,7 @@ for the full map.
   `input:` replaces `initial_xyz`. Legacy spellings are rewritten with a
   deprecation warning — except `calculation_type`, which raises with a
   pointer to the migration guide.
-- `mlff` renamed to `mlip` everywhere (engines, extras, YAML); the old
+- `mlff` renamed to `mlip` in engine names and YAML; the old
   spellings remain as aliases.
 - `options.device` defaults to `cpu` on all four MLIP/PySCF engines (`mlip`,
   `mlip-extopt`, `pyscf`, `pyscf-extopt`). It is read by both the rendered

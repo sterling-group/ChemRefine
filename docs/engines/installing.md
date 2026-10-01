@@ -41,8 +41,7 @@ another install), naming the `backends install` that brings it up to date.
 ## Available backends
 
 These are the names `chemrefine backends install` accepts — and the only ones it accepts.
-`[mlip]` and `[mlff]` are pip extras that alias `[mlip-fairchem]`; neither is a backend
-name.
+`[mlip]` is a pip extra that aliases `[mlip-fairchem]`; it is not a backend name.
 
 <!-- chemrefine:backends -->
 

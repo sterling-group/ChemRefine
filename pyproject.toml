@@ -151,8 +151,6 @@ mlip-orb = [
 # may not have. Lift when chgnet ships cp313 wheels.
 mlip-chgnet = ["chgnet>=0.4; python_version < '3.13'", "chemrefine[server]"]
 mlip = ["chemrefine[mlip-fairchem]"]
-# Back-compat alias: `mlff` was renamed to `mlip`; keep the old extra working.
-mlff = ["chemrefine[mlip]"]
 # The `pyscf` and `pyscf-extopt` engines import `pyscf` lazily; the extopt
 # path also needs the server, so cross-reference `[server]`.
 pyscf = [
