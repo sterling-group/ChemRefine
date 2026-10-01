@@ -820,7 +820,7 @@ def test_legacy_engine_renames():
             {"step": 2, "engine": "mlff", "operation": "opt_sp"},
         ],
     )
-    assert [s.engine for s in cfg.steps] == ["orca", "mlip"]
+    assert [s.engine for s in cfg.steps] == ["orca", "mlip-extopt"]
     assert cfg.steps[0].operation == "opt_sp"
 
 
@@ -845,6 +845,149 @@ def test_legacy_mlff_block_becomes_options_and_extopt_engine():
     assert s.engine == "mlip-extopt"
     assert s.options == {"model_name": "uma-s-1", "task_name": "omol", "device": "cuda"}
     assert "bind" not in s.options  # obsolete sub-key dropped
+
+
+@pytest.mark.parametrize(
+    ("step", "options"),
+    [
+        (
+            {"engine": "MLFF"},
+            {"task_name": "mace_off", "model_name": "medium", "device": "cuda"},
+        ),
+        (
+            {"engine": "mlff", "mlff": {"task_name": "mace_mp"}},
+            {"task_name": "mace_mp", "model_name": "medium", "device": "cuda"},
+        ),
+        (
+            {"engine": "MLFF", "mlff": {"task_name": "omol", "device": "cpu"}},
+            {"task_name": "omol", "device": "cpu"},
+        ),
+        (
+            {"engine": "MLFF", "mlff": {"task_name": "mace_omol", "model_name": "extralarge"}},
+            {"task_name": "mace_omol", "device": "cuda"},
+        ),
+        (
+            {"engine": "MLFF", "mlff": {"model_name": "small", "bind": "x:1"}},
+            {"model_name": "small", "task_name": "mace_off", "device": "cuda"},
+        ),
+        (
+            {"engine": "MLIP-ExtOpt", "mlff": {"task_name": "mace_off"}},
+            {"task_name": "mace_off", "model_name": "medium", "device": "cuda"},
+        ),
+    ],
+    ids=["bare", "mace-mp", "omol", "mace-omol", "bind", "current-name-any-case"],
+)
+def test_a_v1_mlff_step_runs_the_engine_and_model_v1_ran(
+    step: dict[str, object], options: dict[str, object]
+):
+    """ORCA over the gradient server, with the defaults v1.3.1 read a missing key as.
+
+    ``medium`` is written out only under the families whose loader took it, a
+    ``mace_omol`` ``model_name`` (which v1.3.1's loader ignored) is dropped, and a value
+    the block names always wins over the default.
+    """
+    cfg = Config.model_validate(
+        {"template_dir": "./t", "steps": [{"step": 1, "operation": "opt_sp", **step}]}
+    )
+    assert cfg.steps[0].engine == "mlip-extopt"
+    assert dict(cfg.steps[0].options) == options
+
+
+def test_each_written_out_default_is_reported_where_it_lands():
+    """One row per carried default, at ``options.<key>``; the device row names the fix."""
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    seen, sink = _collect()
+    _normalize_legacy(
+        {"steps": [{"step": 1, "engine": "MLFF", "operation": "opt_sp"}]}, report=sink
+    )
+    by_loc = dict(seen)
+    assert "use `mlip-extopt`" in by_loc[("steps", 0, "engine")]
+    assert "`task_name: mace_off`" in by_loc[("steps", 0, "options", "task_name")]
+    assert "`model_name: medium`" in by_loc[("steps", 0, "options", "model_name")]
+    assert "`device: cpu`" in by_loc[("steps", 0, "options", "device")]
+
+
+@pytest.mark.parametrize(
+    ("step", "engine"),
+    [
+        ({"engine": "DFT", "mlff": {"model_name": "medium"}}, "orca"),
+        ({"engine": "MLFF", "operation": "MLFF_TRAIN", "mlff": {"model_name": "x"}}, "mlip-train"),
+        ({"engine": "orca", "trainer": {"seed": 1}}, "orca"),
+    ],
+    ids=["mlff-on-dft", "mlff-on-training", "trainer-on-orca"],
+)
+def test_a_v1_block_on_a_step_v1_never_used_it_on_is_dropped(step: dict[str, object], engine: str):
+    """v1.3.1 used a block only where its engine read it; elsewhere it configured nothing.
+
+    So it is dropped, reported, rather than switching the step's engine — a leftover
+    ``mlff:`` beside ``engine: DFT`` stays a DFT step, as it ran in v1.3.1.
+    """
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    seen, sink = _collect()
+    out = _normalize_legacy({"steps": [{"step": 1, **step}]}, report=sink)["steps"][0]
+    assert out["engine"] == engine
+    (block,) = [key for key in ("mlff", "trainer") if key in step]
+    held = step[block]
+    assert isinstance(held, dict)
+    assert block not in out
+    assert not set(held) & set(out.get("options", {}))
+    assert "configures nothing on this step" in dict(seen)[("steps", 0, block)]
+
+
+def test_a_v1_block_moves_only_the_keys_v1_read():
+    """A key v1.3.1 never read from the block is dropped, so it cannot collide with one
+    it did — ``task`` beside a written-out ``task_name`` would be two spellings of one
+    option."""
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    seen, sink = _collect()
+    out = _normalize_legacy(
+        {"steps": [{"step": 1, "engine": "MLFF", "mlff": {"task": "omol", "model_name": "small"}}]},
+        report=sink,
+    )["steps"][0]
+    assert out["options"] == {"model_name": "small", "task_name": "mace_off", "device": "cuda"}
+    assert "configured nothing in v1.3.1" in dict(seen)[("steps", 0, "mlff", "task")]
+
+
+def test_a_v1_trainer_block_moves_onto_a_current_trainer_name_in_any_case():
+    """The block owner is compared as the config folds the engine, not as written."""
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    step = {"step": 1, "engine": "MLIP-TRAIN", "operation": "mlip_train", "trainer": {"seed": 1}}
+    out = _normalize_legacy({"steps": [step]}, report=_silent)["steps"][0]
+    assert out["options"] == {"seed": 1}
+
+
+def test_a_step_written_in_v2s_terms_keeps_v2s_defaults():
+    """Only a step spelled for v1.3.1's server gets v1.3.1's defaults written out."""
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    seen, sink = _collect()
+    step = {"step": 1, "engine": "mlip-extopt", "options": {"task_name": "omol"}}
+    assert _normalize_legacy({"steps": [step]}, report=sink) == {"steps": [step]}
+    assert seen == []
+
+
+def test_normalize_changes_nothing_it_is_handed():
+    """The validator normalizes one raw mapping twice, so the first pass must not edit it."""
+    import copy
+
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    raw = {
+        "orca_executable": "/orca",
+        "steps": [
+            {"step": 1, "engine": "MLFF", "mlff": {"model_name": "small", "bind": "x:1"}},
+            {"step": 2, "engine": "DFT", "mlff": {"task_name": "omol"}},
+            {"step": 3, "operation": "MLFF_TRAIN", "trainer": {"seed": 3}},
+            {"step": 4, "engine": "mlff", "options": {"device": "cpu"}},
+        ],
+    }
+    before = copy.deepcopy(raw)
+    _normalize_legacy(raw, report=_silent)
+    assert raw == before
 
 
 def test_legacy_train_operation_selects_trainer():
@@ -1009,22 +1152,33 @@ def test_a_quoted_legacy_energy_still_carries_its_hartree_meaning():
     assert out["steps"][1]["sample"]["window_kcalmol"] == "abc"
 
 
-def test_scalar_options_are_a_field_error_not_a_traceback():
-    """``options: 3`` must land as a pydantic row, from both loaders.
+@pytest.mark.parametrize(
+    ("step", "match"),
+    [
+        ({"step": 1, "engine": "orca", "operation": "sp", "options": 3}, "valid dictionary"),
+        (
+            {"step": 1, "engine": "MLFF", "mlff": {"task_name": "omol"}, "options": 3},
+            r"steps\[0\]\.options must be a mapping",
+        ),
+    ],
+    ids=["read-by-the-schema", "read-by-the-v1-layer"],
+)
+def test_scalar_options_are_a_field_error_not_a_traceback(step: dict[str, object], match: str):
+    """``options: 3`` lands as a pydantic row, from both loaders, whichever reads it first.
 
-    ``dict(3)`` raised a raw ``TypeError`` out of the legacy normalizer — a traceback
-    past ``load_config``'s exit-code contract, and a 500 out of
-    ``validate_config_text``, whose documented contract is "never raises". A
-    ``ValueError`` is what pydantic wraps.
+    The schema refuses it on a current step, and the v1 layer refuses it by name where it
+    merges a moved block into ``options``. Either way it is a row: a raw ``TypeError`` would
+    be a traceback past ``load_config``'s exit-code contract, and a 500 out of
+    ``validate_config_text``, whose documented contract is "never raises". A ``ValueError``
+    is what pydantic wraps.
     """
     from chemrefine.validate import validate_config_text
 
-    step = {"step": 1, "engine": "orca", "operation": "sp", "options": 3}
-    with pytest.raises(ValidationError, match="must be a mapping"):
+    with pytest.raises(ValidationError, match=match):
         Config(template_dir="./t", steps=[step])
-    report = validate_config_text("steps:\n  - step: 1\n    engine: orca\n    options: 3\n")
+    report = validate_config_text(yaml.safe_dump({"steps": [step]}))
     assert not report.ok
-    assert any("must be a mapping" in issue.message for issue in report.issues)
+    assert any(re.search(match, issue.message) for issue in report.issues)
 
 
 @pytest.mark.parametrize(
@@ -1081,14 +1235,14 @@ def test_every_legacy_rewrite_announces_itself():
             "steps": [
                 {"step": 1, "engine": "mlff", "operation": "sp"},
                 {"step": 2, "operation": "MLFF_TRAIN"},
-                {"step": 3, "engine": "orca", "mlff": {"model_name": "m", "bind": "x:1"}},
+                {"step": 3, "engine": "MLFF", "mlff": {"model_name": "m", "bind": "x:1"}},
                 {"step": 4, "engine": "DFT"},
             ]
         },
         report=lambda loc, message: rows.append((loc, message)),
     )
     by_loc = dict(rows)
-    assert "use `mlip`" in by_loc[("steps", 0, "engine")]
+    assert "use `mlip-extopt`" in by_loc[("steps", 0, "engine")]
     assert "use `orca`" in by_loc[("steps", 3, "engine")]
     assert "mlip-train" in by_loc[("steps", 1, "operation")]
     assert "dropped" in by_loc[("steps", 2, "mlff", "bind")]

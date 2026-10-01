@@ -5,10 +5,16 @@ Every legacy spelling ChemRefine still accepts is rewritten here, once, before v
 else in the package knows these names exist. A config that is already current passes through
 untouched, and each rewrite logs one deprecation warning naming what to change.
 
-**Removal horizon: 3.0.** This layer is correct and single-homed, but it is the largest
-concentration of branches in the config path and it has no reason to grow — every key it
-handles was renamed before 2.0. Deleting the module and its one call site is the whole
-removal; see ``docs/get-started/upgrading-from-v1.md``.
+It translates a v1.3.1 step into the step v1.3.1 ran. A key v1.3.1 read keeps the meaning
+it had there — including the default v1.3.1 read in its absence, written out where v2's
+would differ — and a key or block v1.3.1 never read configured nothing, so it is dropped.
+Every rewrite, written-out default and dropped key reaches the :data:`DeprecationSink` at
+its own ``loc``. :func:`normalize` reads no file and changes nothing it is handed, so the
+validator can run it twice over one mapping.
+
+**Removal horizon: 3.0.** This layer is single-homed, and every key it handles was renamed
+before 2.0, so deleting the module and its one call site is the whole removal; see
+``docs/get-started/upgrading-from-v1.md``.
 
 Kept out of :mod:`chemrefine.config` so the schema reads as the schema. Someone learning
 what a step *is* should not have to read two hundred lines of translation for older ones.
@@ -41,22 +47,34 @@ def _log_deprecation(loc: tuple[str | int, ...], message: str) -> None:
     logger.warning("%s", message)
 
 
-#: v1.3.1's engine names → canonical, matched in any case.
+#: v1.3.1's engine names → canonical, matched in any case. v1.3.1 ran an ``MLFF`` step through
+#: ORCA, with a machine-learned gradient server standing in for ORCA's own method — which is
+#: ``mlip-extopt``.
 _ENGINE_RENAMES = {
-    "mlff": "mlip",
+    "mlff": "mlip-extopt",
     "dft": "orca",
 }
 
-#: v1.3.1's step-level engine-config blocks → the canonical engine each implies. v1.3.1
-#: ran MLFF through ORCA, and the ``mlff:`` block configured its gradient server, so it
-#: maps to ``mlip-extopt``; ``trainer:`` configured a training step.
-_LEGACY_BLOCKS = {
-    "mlff": "mlip-extopt",
-    "trainer": "mlip-train",
+#: v1.3.1's step-level engine blocks: each → the engine whose ``options`` it holds now, and
+#: why it configures nothing on any other step, where it is dropped rather than moved.
+_LEGACY_BLOCKS: dict[str, tuple[str, str]] = {
+    "mlff": (
+        "mlip-extopt",
+        "v1.3.1 used it only for the gradient server of an `engine: MLFF` step",
+    ),
+    "trainer": ("mlip-train", "v1.3.1 used it only for a training step"),
 }
+
+#: The keys v1.3.1 read from a gradient-server block. Any other key in one configured
+#: nothing, so it is dropped rather than moved.
+_V1_SERVER_KEYS = frozenset({"model_name", "task_name", "bind", "device"})
 
 #: Option sub-keys that are auto-managed now and dropped from a moved block.
 _OBSOLETE_OPTION_KEYS = frozenset({"bind"})
+
+#: The MACE families whose v1.3.1 loader took ``model_name`` — the only tasks under which
+#: v1.3.1's ``medium`` default ran as written.
+_V1_MACE_LOADERS = frozenset({"mace_off", "mace_mp"})
 
 #: Old sample-method name → canonical v2 name. ``integer``/``high_energy`` became
 #: ``min``/``max``; ``energy_window`` folded into ``min`` + a ``window_kcalmol`` knob.
@@ -105,8 +123,8 @@ def normalize(raw: dict[str, Any], *, report: DeprecationSink | None = None) -> 
     """Rewrite v1.3.1's YAML keys to the current schema.
 
     The single place that knows the old vocabulary. Idempotent — new-style input
-    passes through unchanged — and announces one deprecation per legacy feature
-    rewritten. ``calculation_type`` is intentionally unsupported and raises
+    passes through unchanged — and announces every rewrite, each at the key it
+    changed. ``calculation_type`` is intentionally unsupported and raises
     :class:`~chemrefine.errors.ConfigError`.
 
     ``report`` redirects those announcements to a caller instead of the log, which is how
@@ -134,36 +152,148 @@ def normalize(raw: dict[str, Any], *, report: DeprecationSink | None = None) -> 
     return out
 
 
-def _move_engine_block(
-    s: dict[str, Any], loc: tuple[str | int, ...], sink: DeprecationSink
-) -> str | None:
-    """Fold one of v1.3.1's engine blocks (``mlff:``/``trainer:``) into ``options``.
+def _v1_server_step(s: dict[str, Any]) -> bool:
+    """Whether ``s`` is spelled for v1.3.1's gradient server: ``engine: MLFF``, or its block.
 
-    Mutates ``s`` (pops the block, merges its keys into ``options``) and returns the
-    canonical engine that block implies, or ``None`` when no block is present.
+    Read before anything is rewritten, because the rewrite is what it decides: a step spelled
+    this way gets the defaults v1.3.1 ran it with written out (:func:`_write_out_v1_server`),
+    and a step written in v2's own terms keeps v2's.
+    """
+    return _folded(s.get("engine")) == "mlff" or "mlff" in s
+
+
+def _train_operation(s: dict[str, Any], loc: tuple[str | int, ...], sink: DeprecationSink) -> bool:
+    """Rewrite v1.3.1's training operation to the trainer engine; whether it did.
+
+    ``MLFF_TRAIN`` — and ``MLIP_TRAIN`` on another engine — was a training *operation* that
+    implied the trainer engine. Decided before the engine rename, so an ``engine: MLFF``
+    training step is not told to use the gradient server's engine. Any other spelling is the
+    config's own rule (``StepConfig._fold_operation``), not a v1 one.
+    """
+    op = _folded(s.get("operation"))
+    if op != "mlff_train" and (op != "mlip_train" or _folded(s.get("engine")) == "mlip-train"):
+        return False
+    sink(
+        (*loc, "operation"),
+        f"operation `{op}` implying the trainer engine is deprecated; write "
+        f"`engine: mlip-train` + `operation: mlip_train`",
+    )
+    s["engine"] = "mlip-train"
+    s["operation"] = "mlip_train"
+    return True
+
+
+def _rename_engine(s: dict[str, Any], loc: tuple[str | int, ...], sink: DeprecationSink) -> None:
+    """Rewrite a v1.3.1 engine name to its canonical one, reported.
+
+    A legacy name is matched in any case; a current one passes through as written, its case
+    the config's own rule (``StepConfig._fold_engine``).
+    """
+    engine = _folded(s.get("engine"))
+    if engine is not None and engine in _ENGINE_RENAMES:
+        renamed = _ENGINE_RENAMES[engine]
+        # The most common legacy spelling of all — a config whose only legacy
+        # feature is `engine: mlff` must be named before 3.0 removes the map.
+        sink((*loc, "engine"), f"engine `{engine}` is deprecated; use `{renamed}`")
+        s["engine"] = renamed
+
+
+def _move_blocks(s: dict[str, Any], loc: tuple[str | int, ...], sink: DeprecationSink) -> None:
+    """Move each of v1.3.1's engine blocks into ``options`` on the step v1.3.1 used it on.
+
+    Mutates ``s``. On any other step the block configured nothing in v1.3.1, so it is
+    dropped, reported. A gradient-server block moves the keys v1.3.1 read from it
+    (:data:`_V1_SERVER_KEYS`) and drops the rest, each reported — so a key v1.3.1 never read
+    cannot meet one it did as two spellings of the same option.
+    """
+    engine = _folded(s.get("engine"))
+    for block, (owner, elsewhere) in _LEGACY_BLOCKS.items():
+        if block not in s:
+            continue
+        held = _mapping(s.pop(block), what=f"steps[{loc[1]}].{block}", of="option names to values")
+        if engine != owner:
+            sink(
+                (*loc, block),
+                f"step-level `{block}:` block is deprecated, and {elsewhere}; it configures "
+                f"nothing on this step and is dropped",
+            )
+            continue
+        sink((*loc, block), f"step-level `{block}:` block is deprecated; use `options:`")
+        options = _mapping(
+            s.get("options"), what=f"steps[{loc[1]}].options", of="option names to values"
+        )
+        for k, v in held.items():
+            key = str(k)
+            if key in _OBSOLETE_OPTION_KEYS:
+                # Announced, not silently swallowed: a key that vanishes without a row
+                # reads as either kept or mistyped.
+                sink(
+                    (*loc, block, key),
+                    f"`{block}.{key}` is auto-managed now and was dropped from the moved block",
+                )
+            elif owner == "mlip-extopt" and key not in _V1_SERVER_KEYS:
+                sink(
+                    (*loc, block, key),
+                    f"`{block}.{key}` configured nothing in v1.3.1, which read only "
+                    f"{', '.join(f'`{name}`' for name in sorted(_V1_SERVER_KEYS))}; dropped",
+                )
+            else:
+                options.setdefault(key, v)
+        s["options"] = options
+
+
+def _write_out_v1_server(
+    s: dict[str, Any], loc: tuple[str | int, ...], sink: DeprecationSink
+) -> None:
+    """Write out the defaults v1.3.1 ran a gradient-server step with, one row per key.
+
+    v1.3.1 read a missing ``task_name`` as ``mace_off``, a missing ``model_name`` as
+    ``medium`` and a missing ``device`` as ``cuda``. v2's own defaults differ, so a step that
+    named none of them would run another library's model on another device. Each is written
+    out where v1.3.1 used it:
+
+    * ``task_name: mace_off`` when the step names none;
+    * ``model_name: medium`` under the families whose loader took it
+      (:data:`_V1_MACE_LOADERS`), when the step names neither it nor a ``model_path``. Under
+      any other task v1.3.1 ignored the default or failed on it, so the library's own default
+      runs now — and under ``mace_omol``, whose loader ignored ``model_name`` altogether, a
+      value the step names is dropped;
+    * ``device: cuda`` when the step names none.
     """
     options = _mapping(
         s.get("options"), what=f"steps[{loc[1]}].options", of="option names to values"
     )
-    block_engine: str | None = None
-    for block, engine_name in _LEGACY_BLOCKS.items():
-        if isinstance(s.get(block), dict):
-            sink((*loc, block), f"step-level `{block}:` block is deprecated; use `options:`")
-            for k, v in s.pop(block).items():
-                if k in _OBSOLETE_OPTION_KEYS:
-                    # Announced, not silently swallowed: the migration doc promises one
-                    # deprecation per legacy feature, and a key that vanishes without a
-                    # row reads as either kept or mistyped.
-                    sink(
-                        (*loc, block, str(k)),
-                        f"`{block}.{k}` is auto-managed now and was dropped from the moved block",
-                    )
-                else:
-                    options.setdefault(k, v)
-            block_engine = engine_name
-    if options or "options" in s:
-        s["options"] = options
-    return block_engine
+    if "task_name" not in options:
+        options["task_name"] = "mace_off"
+        sink(
+            (*loc, "options", "task_name"),
+            "v1.3.1 ran a step that names no `task_name` as `mace_off`; written out as "
+            "`task_name: mace_off`",
+        )
+    task = options["task_name"]
+    if isinstance(task, str) and task in _V1_MACE_LOADERS:
+        if "model_name" not in options and "model_path" not in options:
+            options["model_name"] = "medium"
+            sink(
+                (*loc, "options", "model_name"),
+                f"v1.3.1 ran `{task}` with no `model_name` as `medium`; written out as "
+                f"`model_name: medium`",
+            )
+    elif task == "mace_omol" and "model_name" in options:
+        ignored = options.pop("model_name")
+        sink(
+            (*loc, "options", "model_name"),
+            f"v1.3.1's `mace_omol` loader ignored `model_name: {ignored}`; dropped, so the "
+            f"family's own model runs, as it did",
+        )
+    if "device" not in options:
+        options["device"] = "cuda"
+        sink(
+            (*loc, "options", "device"),
+            "v1.3.1 ran a step that names no `device` on `cuda`; written out as "
+            "`device: cuda` — on a host with no GPU, write `device: cpu`",
+        )
+    s["options"] = options
 
 
 def _normalize_nms_keys(
@@ -218,32 +348,14 @@ def _normalize_step(step: Any, index: int, sink: DeprecationSink) -> Any:
             "(see docs/get-started/upgrading-from-v1.md)"
         )
 
-    # Engine name: a moved engine-config block decides it, else the rename map. A legacy
-    # name is matched in any case; a current one passes through as written, its case the
-    # config's own rule (``StepConfig._fold_engine``).
-    block_engine = _move_engine_block(s, loc, sink)
-    engine = _folded(s.get("engine"))
-    if block_engine is not None:
-        s["engine"] = block_engine
-    elif engine is not None and engine in _ENGINE_RENAMES:
-        renamed = _ENGINE_RENAMES[engine]
-        # The most common legacy spelling of all — a config whose only legacy
-        # feature is `engine: mlff` must be named before 3.0 removes the map.
-        sink((*loc, "engine"), f"engine `{engine}` is deprecated; use `{renamed}`")
-        s["engine"] = renamed
-
-    # Operation: ``MLFF_TRAIN`` — and ``MLIP_TRAIN`` on another engine — was a training
-    # *operation* that implied the trainer engine. Any other spelling is the config's own
-    # rule (``StepConfig._fold_operation``), not a v1 one.
-    op = _folded(s.get("operation"))
-    if op == "mlff_train" or (op == "mlip_train" and _folded(s.get("engine")) != "mlip-train"):
-        sink(
-            (*loc, "operation"),
-            f"operation `{op}` implying the trainer engine is deprecated; write "
-            f"`engine: mlip-train` + `operation: mlip_train`",
-        )
-        s["engine"] = "mlip-train"
-        s["operation"] = "mlip_train"
+    # Whether v1.3.1 ran this step on its gradient server, read before anything is
+    # rewritten: it decides the defaults written out below.
+    v1_server = _v1_server_step(s)
+    if not _train_operation(s, loc, sink):
+        _rename_engine(s, loc, sink)
+    _move_blocks(s, loc, sink)
+    if v1_server and _folded(s.get("engine")) == "mlip-extopt":
+        _write_out_v1_server(s, loc, sink)
 
     _normalize_nms_keys(s, loc, sink)
 

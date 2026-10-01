@@ -65,17 +65,18 @@ def test_mlip_engines_are_registered():
     assert "mlip-extopt" in ENGINES
 
 
-def test_mlff_engine_keys_normalize_to_mlip_at_config_layer():
-    """v1.3.1's ``mlff`` engine name is rewritten by the config normalizer (the single
-    place), so the registry only ever sees canonical names."""
+def test_v1s_mlff_engine_normalizes_to_the_extopt_engine_at_config_layer():
+    """v1.3.1's ``mlff`` engine is rewritten by the config normalizer (the single place)
+    to the engine that runs what v1.3.1 ran — ORCA over a gradient server — so the registry
+    only ever sees canonical names."""
     from chemrefine.config import Config
 
     cfg = Config(
         template_dir="./t",
         steps=[{"step": 1, "engine": "mlff", "operation": "opt_sp"}],
     )
-    assert [s.engine for s in cfg.steps] == ["mlip"]
-    assert get_engine(cfg.steps[0].engine).name == "mlip"
+    assert [s.engine for s in cfg.steps] == ["mlip-extopt"]
+    assert get_engine(cfg.steps[0].engine).name == "mlip-extopt"
 
 
 def test_mlip_direct_engine_is_not_nms_capable():

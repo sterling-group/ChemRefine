@@ -162,8 +162,8 @@ sampling](nms.md).
 
 ## Legacy (v1.3.1) configs
 
-Old keys are auto-translated with one deprecation warning each
+Old keys are auto-translated, each rewrite reported as a deprecation warning
 (`initial_xyz`→`input`, `orca_executable`→`executables`, `sample_type`→`sample`,
 the `mlff:`/`trainer:` blocks → `options:`, `normal_mode_sampling`→`nms`, …).
-Only `calculation_type` is a hard error. See
-[Migrating from v1 to v2](../get-started/upgrading-from-v1.md).
+`calculation_type`, a step with no `engine:` and a training step's template are
+edited by hand. See [Migrating from v1 to v2](../get-started/upgrading-from-v1.md).

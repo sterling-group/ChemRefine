@@ -1,7 +1,5 @@
 """Direct template-driven MLIP engine, registered as ``"mlip"``.
 
-Legacy ``mlff`` YAML is rewritten to ``mlip`` by the config normalizer.
-
 All lifecycle logic lives on
 :class:`chemrefine.engines._script.ScriptEngine`; this
 module just binds the backend identity (``name`` + ``label``), the registry

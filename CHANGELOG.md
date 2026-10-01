@@ -506,8 +506,12 @@ for those and the full map.
   `normal_mode_sampling_parameters` holds a mapping is refused at load, naming the key,
   where v1.3.1 failed with a traceback once that step's jobs had run. A training step
   needs editing by hand (see `mlip-train` above).
-- `mlff` renamed to `mlip` in engine names and YAML; the old
-  spellings remain as aliases.
+- v1.3.1's `engine: MLFF` — ORCA over a machine-learned gradient server — is
+  `mlip-extopt`, and its `mlff:` block becomes the step's `options:`. The defaults
+  v1.3.1 read a missing key as (`task_name: mace_off`, `model_name: medium` under
+  the MACE families whose loader took it, `device: cuda`) are written out, each
+  reported, so a translated step runs the model v1.3.1 ran; a block on a step v1.3.1
+  never used it on is dropped, reported. `mlip` names v2's direct engine.
 - `options.device` defaults to `cpu` on all four MLIP/PySCF engines (`mlip`,
   `mlip-extopt`, `pyscf`, `pyscf-extopt`). It is read by both the rendered
   script and the scheduler, so one setting drives the header and the run;

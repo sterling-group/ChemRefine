@@ -1,12 +1,18 @@
 # Migrating from v1 to v2
 
-ChemRefine v2 loads your existing v1.3.1 workflow YAML **unchanged** — the config
-loader rewrites the old keys to the current schema at parse time (you'll see a
-one-line deprecation warning per legacy feature). This page documents that
-mapping so you can modernise your files when convenient.
+ChemRefine v2 reads a v1.3.1 workflow YAML through a translation layer: the config
+loader rewrites the old keys to the current schema at parse time and reports every
+rewrite as a one-line deprecation warning naming what to write instead. This page
+documents that mapping so you can modernise your files when convenient.
 
-Everything below is rewritten automatically **except `calculation_type`**, which
-must be replaced by hand with `engine:` + `operation:`.
+Everything below is rewritten automatically except three things, which are edits
+by hand:
+
+- `calculation_type`, replaced with `engine:` + `operation:`;
+- a step with no `engine:`, which v1.3.1 read as DFT and v2 refuses — write
+  `engine: orca`;
+- a training step's template, which moves from MACE's own YAML in `stepN.inp` to a
+  `stepN.yaml` with placeholders — see [Training steps](#training-steps).
 
 !!! warning "The compatibility layer is scheduled for removal in 3.0"
 
@@ -35,11 +41,10 @@ must be replaced by hand with `engine:` + `operation:`.
 | v1.3.1                                         | v2                                            |
 |------------------------------------------------|-----------------------------------------------|
 | `engine: "DFT"`                                | `engine: orca` (an engine name is read in any case) |
-| `engine: "MLFF"` + an `mlff:` block            | `engine: mlip-extopt` (ORCA-driven, as before)|
-| `engine: "MLFF"` / `mlff` (no block)           | `engine: mlip` (the **new** direct, in-process path) |
-| `mlff:` / `trainer:` block                     | `options: { … }` (the engine block → options) |
+| `engine: "MLFF"`, with or without an `mlff:` block | `engine: mlip-extopt` — ORCA over the model, as in v1.3.1 ([details](#machine-learned-steps)) |
+| `mlff:` / `trainer:` block                     | `options: { … }` on the step v1.3.1 used it on; dropped elsewhere |
 | `operation: "OPT+SP"` / `"GOAT"`               | unchanged — read in any case, `+` for `_`     |
-| `operation: "MLFF_TRAIN"`                      | `engine: mlip-train`                          |
+| `operation: "MLFF_TRAIN"`                      | `engine: mlip-train` ([training steps](#training-steps)) |
 | `normal_mode_sampling: true`                   | `nms: true`                                   |
 | `normal_mode_sampling_parameters: { … }`       | folded into `options:` (see NMS table below)  |
 | `calculation_type: "DFT"` **(manual)**         | `engine: orca` + `operation: opt_sp`          |
@@ -56,19 +61,50 @@ must be replaced by hand with `engine:` + `operation:`.
 | `num_random_displacements`      | `num_random_displacements` | unchanged |
 
 > v2 adds a third target, `target: minimum` (remove **all** imaginary modes → a true minimum), which
-> v1.3.1 did not have. A bare `normal_mode_sampling: true` maps to `target: ts` to match main's default.
+> v1.3.1 did not have. A bare `normal_mode_sampling: true` maps to `target: ts` to match v1.3.1's default.
 
 > **Scheduling.** The two rounds share **one** queue and one `max_cores`/`max_gpus` budget. A structure's
 > displaced children are submitted the moment *its own* round-1 job finishes, alongside whatever is still
-> running — not after the whole of round 1 drains, and not one parent at a time. So the slots freed by
-> the early finishers go to round-2 work instead of idling, and a step with 50 unresolved structures
-> uses the whole budget rather than one parent's worth of it. See
-> [Normal-Mode Sampling](../workflow/nms.md).
+> running, rather than after the whole of round 1 drains — so the slots freed by the early finishers go
+> to round-2 work instead of idling. See [Normal-Mode Sampling](../workflow/nms.md).
 
-> **MLFF was ORCA-driven in v1.3.1.** `engine: MLFF` ran ORCA using a machine-learned
-> gradient server — that is `mlip-extopt` in v2. The bare `mlip`/`mlff` engine in v2
-> is the *new* direct (template-driven, no ORCA) path. A v1.3.1 step is recognised by
-> its `mlff:` block and mapped to `mlip-extopt` so it keeps doing what it did.
+## Machine-learned steps
+
+v1.3.1 ran an `engine: MLFF` step through ORCA, with a machine-learned gradient server
+standing in for ORCA's own method — `mlip-extopt` in v2, which is where the step is
+translated. Its `mlff:` block becomes the step's `options:`. v1.3.1 read four keys from
+the block, each with a default of its own, and v2's defaults differ, so a key the block
+leaves unset is written out as v1.3.1 ran it:
+
+| v1.3.1 key | v1.3.1 ran it unset as | translated to |
+|------------|------------------------|---------------|
+| `task_name` | `mace_off` | `task_name: mace_off` |
+| `model_name` | `medium` | `model_name: medium` under `mace_off` and `mace_mp`, the families whose loader read it; under any other task v1.3.1 ignored the default or failed on it, so the library's own default runs. Under `mace_omol`, whose loader ignored `model_name`, a value the block names is dropped |
+| `device` | `cuda` | `device: cuda` — on a host with no GPU, write `device: cpu` |
+| `bind` | `127.0.0.1:8888` | dropped: the server's address is managed for you |
+
+Each written-out default and each dropped key is reported with a deprecation warning of
+its own. Any other key in the block configured nothing in v1.3.1 and is dropped, reported;
+so is a block on a step v1.3.1 never used it on — an `mlff:` block beside `engine: DFT`
+stays a DFT step, as it ran.
+
+The template is what makes the step run the model: `! ExtOpt` hands ORCA's gradients to
+the server. A v1.3.1 template without it ran ORCA's own method under the MLFF label while
+the server idled — add `ExtOpt` to run the model the step names, or write
+`engine: orca` to keep what v1.3.1 computed.
+
+The `mlip` engine in v2 is a different, direct path: the model runs a Python template,
+with no ORCA. FAIRChem's model names are the installed `fairchem-core`'s, and v1.3.1's
+`uma-s-1` is not among the current library's — name a current one, such as `uma-s-1p2`;
+the library refuses a name it does not have when the job loads the model.
+
+### Training steps
+
+`operation: MLFF_TRAIN` (or `MLIP_TRAIN`) becomes `engine: mlip-train` +
+`operation: mlip_train`. The template is the edit by hand: v1.3.1 read MACE's own
+`run_train` YAML from `stepN.inp` and rewrote its file paths, while v2 renders
+`stepN.yaml` and hands it the dataset through placeholders — see [Training a
+potential](../engines/index.md#training-a-potential-mlip-train).
 
 ## Sampling
 
@@ -102,7 +138,7 @@ steps:
   - step: 1
     operation: "OPT+SP"
     engine: "MLFF"
-    mlff: { model_name: uma-s-1, task_name: omol, device: cuda }
+    mlff: { model_name: medium, task_name: mace_off, bind: "127.0.0.1:8888" }
     sample_type: { method: boltzmann, parameters: { weight: 95 } }
 
 # v2 (what the loader produces; also what you'd write by hand)
@@ -112,7 +148,7 @@ steps:
   - step: 1
     operation: opt_sp
     engine: mlip-extopt
-    options: { model_name: uma-s-1, task_name: omol, device: cuda }
+    options: { model_name: medium, task_name: mace_off, device: cuda }
     sample: { method: boltzmann, percent_cumulative: 95 }
 ```
 
@@ -132,19 +168,21 @@ one-line warning), so existing scripts keep working:
 
 ## v2 default changes
 
-A few defaults differ from earlier expectations (all overridable):
+A few defaults differ from v1.3.1's (all overridable):
 
-- **`on_failure` defaults to `stop`** (was `skip`) — failures halt the run after caching successes rather
-  than being silently dropped. Set `on_failure: skip` per step to restore the drop-and-continue behaviour.
+- **`on_failure` defaults to `stop`** — a failure halts the run once the step's successes are cached, as
+  v1.3.1 stopped a step with any output it could not parse. `on_failure: skip` drops the failures and
+  continues; `best` backfills them.
 - **`max_cores` defaults to `4`** (a safe local default) — raise it in the YAML or with `--maxcores`.
 - **`--maxgpus`** is a new flag mirroring `--maxcores` (overrides `max_gpus`).
-- **PySCF**: `basis` is now required (and `xc` for `method: dft`) on both engines — no silent level of theory; the direct engine refuses at preflight, before anything runs;
-  `df` defaults **on**; `gpu` is derived from a new `device` knob (`cuda` ⇒ attempt GPU, with CPU fallback).
-- **Direct `pyscf` templates** can now read `$METHOD` / `$XC` / `$BASIS` (parity with direct `mlip`).
+- **A machine-learned step written in v2's terms** runs v2's defaults — `task_name: omol`
+  (FAIRChem), the library's own model and `device: cpu`. A step translated from v1.3.1 has
+  v1.3.1's written out instead; see [Machine-learned steps](#machine-learned-steps).
 
 ## Failure handling & recovery
 
-v1 had no per-step failure policy and no way to re-attempt part of a run. v2 has
+v1.3.1 stopped a step with any output it could not parse, and `--rerun_errors` resubmitted
+the jobs it recorded. v2 has
 `on_failure: stop | skip | best` per step and six recovery commands, all described in
 [When a run fails](../running/when-a-run-fails.md) — the same page a v2 user reaches
 for, rather than a second account of it here.
