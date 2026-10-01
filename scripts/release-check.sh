@@ -26,7 +26,8 @@
 #   · the dependency-floors job — it needs a Python 3.11, which most machines lack, and
 #     CI runs it on every pull request as well as every tag;
 #   · the matrix legs this machine has no interpreter for — the ones it has are run, and
-#     the ones it lacks are named at the end;
+#     the ones it lacks are named at the end, where every ending prints this list
+#     (`left_to_ci`);
 #   · CodeQL, Scorecard and dependency-review, which are GitHub-hosted analyses with no
 #     local equivalent.
 #
@@ -199,6 +200,16 @@ fi
 # What a run of this selection passes as: `selection`, `pr` or `release`. --list says it and
 # the run's ending acts on it, so the preview and the verdict cannot come apart.
 verdict() { if [ -n "$partial" ]; then echo selection; else echo "$mode"; fi; }
+
+# What the run left to CI, as every ending prints it, so no ending can drop a clause.
+left_to_ci() {
+    local legs=""
+    if selected matrix && [ "$unmatched" != none ]; then
+        legs=", the matrix legs with no interpreter here ($unmatched)"
+    fi
+    printf '  Still CI-only: the dependency floors%s, CodeQL, Scorecard and dependency-review.\n' \
+        "$legs"
+}
 
 if [ -n "$list" ]; then
     printf 'sections (* runs with these options):\n'
@@ -578,24 +589,19 @@ done
 case "$(verdict)" in
     selection)
         printf '\n\033[32m✓ passed: %s\033[0m\n' "$selection"
-        if selected matrix; then
-            printf '  The matrix legs with no interpreter here (%s) did not run; CI runs them.\n' \
-                "$unmatched"
-        fi
+        left_to_ci
         printf '  A selection, not the gate: before %s, run it whole.\n' \
             "$([ "$mode" = pr ] && echo 'opening a pull request' || echo 'tagging')"
         exit 0 ;;
     pr)
         printf '\n\033[32m✓ PR gate passed\033[0m\n'
-        printf '  Still CI-only: the dependency floors, the matrix legs with no interpreter\n'
-        printf '  here (%s), CodeQL, Scorecard and dependency-review. All run on your\n' "$unmatched"
-        printf '  pull request.\n'
+        left_to_ci
+        printf '  All run on your pull request.\n'
         exit 0 ;;
 esac
 
 version="$("$PY" -c 'import chemrefine; print(chemrefine.__version__)')"
 printf '\n\033[32m✓ ready to tag v%s\033[0m\n' "$version"
-printf '  Still CI-only: the dependency floors, the matrix legs with no interpreter\n'
-printf '  here (%s), CodeQL, Scorecard and dependency-review — all run on the tag,\n' "$unmatched"
-printf '  since publish.yml calls ci.yml before anything is published.\n'
+left_to_ci
+printf '  All run on the tag, since publish.yml calls ci.yml before anything is published.\n'
 printf '  remaining by hand: CHANGELOG Unreleased section retitled to %s\n' "$version"

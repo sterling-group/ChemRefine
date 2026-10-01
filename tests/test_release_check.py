@@ -178,20 +178,24 @@ def test_a_partial_run_passes_as_that_selection_and_never_as_ready_to_tag(stubbe
     code, out, err = stubbed("--only", "types")
     assert code == 0, err
     assert "✓ passed: types" in out
+    assert "Still CI-only: the dependency floors, CodeQL, Scorecard and dependency-review." in out
     assert "A selection, not the gate: before tagging, run it whole." in out
     assert "ready to tag" not in out
 
 
 def test_a_partial_run_of_the_matrix_names_the_legs_it_could_not_run(stubbed):
-    """The whole gate names them among what only CI runs; a selection did not say at all.
+    """Every ending names them among what only CI runs, through the one roster it prints.
 
     On a machine with no second interpreter, ``--only matrix`` built the package, ran no
-    leg, and ended ``✓ passed: matrix``.
+    leg, and ended ``✓ passed: matrix``; each ending then spelled the roster by hand.
     """
     code, out, err = stubbed("--only", "matrix")
     assert code == 0, err
     assert "✓ passed: matrix" in out
-    assert "no interpreter here (3.98) did not run" in out
+    assert (
+        "Still CI-only: the dependency floors, the matrix legs with no interpreter here "
+        "(3.98), CodeQL, Scorecard and dependency-review." in out
+    )
 
 
 _HEAVY = "tests/test_e2e_live.py::test_live_case[fairchem_sp]"
