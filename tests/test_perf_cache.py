@@ -47,6 +47,7 @@ from fake_engine import FakeEngine
 
 from chemrefine import cache, io, lifecycle
 from chemrefine.config import StepConfig
+from chemrefine.quantities import DEFAULT_TEMPERATURE_K
 from chemrefine.state import PipelineState, StepContext, StepResults, Structure
 
 pytestmark = pytest.mark.perf
@@ -127,7 +128,12 @@ def test_per_step_bookkeeping_scales_linearly(tmp_path: Path, capsys) -> None:
     # column reports an import cost as its smallest data point and the shape check reads it
     # as work. One throwaway call up front buys the column its own subject.
     io.save_step_csv(
-        energies_hartree=[], structure_ids=[], step_number=0, path=tmp_path / "warmup" / "steps.csv"
+        energies_hartree=[],
+        structure_ids=[],
+        step_number=0,
+        path=tmp_path / "warmup" / "steps.csv",
+        temperature_k=DEFAULT_TEMPERATURE_K,
+        energy_type="electronic",
     )
 
     for n in SIZES:
@@ -155,6 +161,8 @@ def test_per_step_bookkeeping_scales_linearly(tmp_path: Path, capsys) -> None:
                 structure_ids=[s.id for s in structures],
                 step_number=1,
                 path=step_dir / "steps.csv",
+                temperature_k=DEFAULT_TEMPERATURE_K,
+                energy_type="electronic",
             )
         size_mb = sum(p.stat().st_size for p in (step_dir / "_cache").iterdir()) / 1e6
         # The parse the driver performs: one job at a time, each against the whole previous

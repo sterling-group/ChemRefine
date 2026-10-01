@@ -23,6 +23,7 @@ from chemrefine.io import (
     write_ensemble_xyz,
     write_xyz,
 )
+from chemrefine.quantities import DEFAULT_TEMPERATURE_K
 from chemrefine.state import Structure
 
 
@@ -167,7 +168,13 @@ def test_write_ensemble_xyz_round_trips_through_the_one_reader(tmp_path: Path):
             energy_hartree=-76.4,
         ),
     )
-    path = write_ensemble_xyz(structures, tmp_path / "step1_ensemble.xyz", step=1)
+    path = write_ensemble_xyz(
+        structures,
+        tmp_path / "step1_ensemble.xyz",
+        step=1,
+        energy_attr="energy_hartree",
+        energy_label="E",
+    )
 
     frames = read_xyz_frames(path)
 
@@ -191,7 +198,13 @@ def test_write_ensemble_xyz_orders_by_energy_with_energyless_last(tmp_path: Path
         _ensemble_structure("no-e-second", energy=None),
         _ensemble_structure("low", energy=-2.0),
     )
-    path = write_ensemble_xyz(structures, tmp_path / "step1_ensemble.xyz", step=1)
+    path = write_ensemble_xyz(
+        structures,
+        tmp_path / "step1_ensemble.xyz",
+        step=1,
+        energy_attr="energy_hartree",
+        energy_label="E",
+    )
 
     ids = [
         line.split()[1]
@@ -208,6 +221,8 @@ def test_write_ensemble_xyz_comment_carries_step_id_and_energy(tmp_path: Path):
         (_ensemble_structure("0-3", energy=-153.123456789),),
         tmp_path / "step1_ensemble.xyz",
         step=1,
+        energy_attr="energy_hartree",
+        energy_label="E",
     )
     assert path.read_text(encoding="utf-8").splitlines()[1] == "step1 id=0-3 E=-153.12345679 Eh"
 
@@ -239,7 +254,11 @@ def test_write_ensemble_xyz_captions_the_steps_own_ranking_energy(tmp_path: Path
 def test_write_ensemble_xyz_marks_a_missing_energy_as_na(tmp_path: Path):
     """No value is a stated ``n/a``, never a fabricated number the frame would rank by."""
     path = write_ensemble_xyz(
-        (_ensemble_structure("0", energy=None),), tmp_path / "step1_ensemble.xyz", step=1
+        (_ensemble_structure("0", energy=None),),
+        tmp_path / "step1_ensemble.xyz",
+        step=1,
+        energy_attr="energy_hartree",
+        energy_label="E",
     )
     assert path.read_text(encoding="utf-8").splitlines()[1] == "step1 id=0 E=n/a"
 
@@ -254,10 +273,12 @@ def test_write_ensemble_xyz_empty_input_removes_a_stale_file(tmp_path: Path):
     path = tmp_path / "step1_survivors.xyz"
     path.write_text("stale\n", encoding="utf-8")
 
-    write_ensemble_xyz((), path, step=1)
+    write_ensemble_xyz((), path, step=1, energy_attr="energy_hartree", energy_label="E")
 
     assert not path.exists()
-    write_ensemble_xyz((), path, step=1)  # absent stays absent, no raise
+    write_ensemble_xyz(
+        (), path, step=1, energy_attr="energy_hartree", energy_label="E"
+    )  # absent stays absent, no raise
 
 
 # ---------------------------------------------------------------------------
@@ -296,15 +317,36 @@ def test_gather_output_files_missing_dir_returns_empty(tmp_path: Path):
 
 
 def test_save_step_csv_writes_header_on_step_one(tmp_path: Path):
-    path = save_step_csv([-1.0, -1.001], ["0", "1"], step_number=1, path=tmp_path / "steps.csv")
+    path = save_step_csv(
+        [-1.0, -1.001],
+        ["0", "1"],
+        step_number=1,
+        path=tmp_path / "steps.csv",
+        temperature_k=DEFAULT_TEMPERATURE_K,
+        energy_type="electronic",
+    )
     text = path.read_text(encoding="utf-8")
     assert "Step,Conformer,Energy (Hartree)" in text.splitlines()[0]
     assert "% Cumulative" in text.splitlines()[0]
 
 
 def test_save_step_csv_appends_without_header_on_later_steps(tmp_path: Path):
-    save_step_csv([-1.0], ["0"], step_number=1, path=tmp_path / "steps.csv")
-    save_step_csv([-2.0], ["1"], step_number=2, path=tmp_path / "steps.csv")
+    save_step_csv(
+        [-1.0],
+        ["0"],
+        step_number=1,
+        path=tmp_path / "steps.csv",
+        temperature_k=DEFAULT_TEMPERATURE_K,
+        energy_type="electronic",
+    )
+    save_step_csv(
+        [-2.0],
+        ["1"],
+        step_number=2,
+        path=tmp_path / "steps.csv",
+        temperature_k=DEFAULT_TEMPERATURE_K,
+        energy_type="electronic",
+    )
     text = (tmp_path / "steps.csv").read_text(encoding="utf-8")
     # header appears exactly once
     assert text.count("Step,Conformer,Energy (Hartree)") == 1
@@ -312,7 +354,12 @@ def test_save_step_csv_appends_without_header_on_later_steps(tmp_path: Path):
 
 def test_save_step_csv_sorts_by_energy(tmp_path: Path):
     path = save_step_csv(
-        [-1.0, -2.0, -0.5], ["a", "b", "c"], step_number=1, path=tmp_path / "steps.csv"
+        [-1.0, -2.0, -0.5],
+        ["a", "b", "c"],
+        step_number=1,
+        path=tmp_path / "steps.csv",
+        temperature_k=DEFAULT_TEMPERATURE_K,
+        energy_type="electronic",
     )
     rows = path.read_text(encoding="utf-8").strip().splitlines()[1:]  # drop header
     conformers = [row.split(",")[1] for row in rows]
@@ -335,6 +382,8 @@ def test_save_step_csv_derived_columns_carry_the_right_numbers(tmp_path: Path):
         ["low", "high"],
         step_number=1,
         path=tmp_path / "steps.csv",
+        temperature_k=DEFAULT_TEMPERATURE_K,
+        energy_type="electronic",
     )
     with path.open(encoding="utf-8", newline="") as handle:
         low, high = list(csv.DictReader(handle))
@@ -354,7 +403,12 @@ def test_save_step_csv_derived_columns_carry_the_right_numbers(tmp_path: Path):
 def test_save_step_csv_all_nan_energies_skips_write(tmp_path: Path):
     """No finite energies → skip the summary instead of crashing on an empty frame."""
     path = save_step_csv(
-        [float("nan"), float("nan")], ["0", "1"], step_number=1, path=tmp_path / "steps.csv"
+        [float("nan"), float("nan")],
+        ["0", "1"],
+        step_number=1,
+        path=tmp_path / "steps.csv",
+        temperature_k=DEFAULT_TEMPERATURE_K,
+        energy_type="electronic",
     )
     assert not path.exists()
 
@@ -365,9 +419,23 @@ def test_save_step_csv_step_one_truncates_stale_file(tmp_path: Path):
     Otherwise step 2 would append onto the stale step-1 rows from the
     previous run instead of starting a fresh report.
     """
-    stale = save_step_csv([-1.0], ["0"], step_number=1, path=tmp_path / "steps.csv")
+    stale = save_step_csv(
+        [-1.0],
+        ["0"],
+        step_number=1,
+        path=tmp_path / "steps.csv",
+        temperature_k=DEFAULT_TEMPERATURE_K,
+        energy_type="electronic",
+    )
     assert stale.exists()
-    path = save_step_csv([float("nan")], ["0"], step_number=1, path=tmp_path / "steps.csv")
+    path = save_step_csv(
+        [float("nan")],
+        ["0"],
+        step_number=1,
+        path=tmp_path / "steps.csv",
+        temperature_k=DEFAULT_TEMPERATURE_K,
+        energy_type="electronic",
+    )
     assert not path.exists()
 
 
@@ -383,10 +451,22 @@ def test_save_step_csv_writes_a_header_when_step_one_wrote_nothing(tmp_path: Pat
     backfilled seeds, and those carry no energy yet.
     """
     assert not save_step_csv(
-        [None, None], ["0", "1"], step_number=1, path=tmp_path / "steps.csv"
+        [None, None],
+        ["0", "1"],
+        step_number=1,
+        path=tmp_path / "steps.csv",
+        temperature_k=DEFAULT_TEMPERATURE_K,
+        energy_type="electronic",
     ).exists()
 
-    path = save_step_csv([-1.0, -1.5], ["0", "1"], step_number=2, path=tmp_path / "steps.csv")
+    path = save_step_csv(
+        [-1.0, -1.5],
+        ["0", "1"],
+        step_number=2,
+        path=tmp_path / "steps.csv",
+        temperature_k=DEFAULT_TEMPERATURE_K,
+        energy_type="electronic",
+    )
 
     assert path.read_text(encoding="utf-8").splitlines()[0].startswith("Step,Conformer,")
     frame = pd.read_csv(path)

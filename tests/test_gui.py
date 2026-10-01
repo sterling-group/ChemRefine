@@ -26,6 +26,7 @@ import yaml
 import chemrefine.gui.serve as serve_mod
 from chemrefine.agent import providers
 from chemrefine.gui.app import create_app
+from chemrefine.quantities import DEFAULT_TEMPERATURE_K
 
 TOKEN = "test-token"
 
@@ -381,6 +382,8 @@ def _reported_tree(tmp_path: Path) -> Path:
         structure_ids=["0", "1"],
         step_number=1,
         path=ids.steps_report_path(outputs),
+        temperature_k=DEFAULT_TEMPERATURE_K,
+        energy_type="electronic",
     )
     save_failure_records(
         outputs / "step1_screen",

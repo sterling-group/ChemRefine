@@ -442,3 +442,20 @@ def test_ranking_energy_is_the_steps_own(sample, energy_type: str, attr: str, la
     energy at once, which is why the fallback is a mutation-gate entry.
     """
     assert ranking_energy(sample) == (energy_type, attr, label)
+
+
+def test_an_energy_type_outside_the_vocabulary_fails_loud():
+    """Both exhaustive matches end in `assert_never`: a forced type fails where it lands.
+
+    The guard that matters is mypy's — a fifth type without its label or its attribute fails
+    type-checking — but a value forced past validation must not rank on another's energy.
+    """
+    from typing import cast
+
+    from chemrefine.config import EnergyType, energy_label
+
+    forced = cast(EnergyType, "free")
+    with pytest.raises(AssertionError):
+        energy_label(forced)
+    with pytest.raises(AssertionError):
+        ranking_energy(MinSample.model_construct(method="min", count=1, energy_type=forced))

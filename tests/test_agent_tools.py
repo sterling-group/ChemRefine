@@ -28,6 +28,7 @@ import yaml
 from chemrefine import agent_tools, cache, ids, io, pipeline
 from chemrefine.cache import save_failure_records
 from chemrefine.errors import ConfigError, JobSubmissionError, RunLockError
+from chemrefine.quantities import DEFAULT_TEMPERATURE_K
 from chemrefine.state import FailureKind, FailureRecord
 
 
@@ -638,12 +639,16 @@ def _reported_tree(tmp_path: Path) -> Path:
         structure_ids=["0", "1"],
         step_number=1,
         path=ids.steps_report_path(outputs),
+        temperature_k=DEFAULT_TEMPERATURE_K,
+        energy_type="electronic",
     )
     io.save_step_csv(
         energies_hartree=[-1.1],
         structure_ids=["0"],
         step_number=2,
         path=ids.steps_report_path(outputs),
+        temperature_k=DEFAULT_TEMPERATURE_K,
+        energy_type="electronic",
     )
     step1 = outputs / "step1_screen"
     save_failure_records(

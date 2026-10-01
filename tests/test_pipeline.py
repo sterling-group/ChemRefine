@@ -11,6 +11,7 @@ from ase import Atoms
 from chemrefine import io, pipeline
 from chemrefine.config import Config, StepConfig
 from chemrefine.errors import ChemRefineError, ConfigError
+from chemrefine.quantities import DEFAULT_TEMPERATURE_K
 from chemrefine.step import RunPlan, StepMode
 
 
@@ -558,12 +559,15 @@ def test_steps_csv_is_summarised_at_the_steps_own_temperature(tmp_path: Path):
         step_number=1,
         path=tmp_path / "at77" / "steps.csv",
         temperature_k=77.0,
+        energy_type="electronic",
     )
     io.save_step_csv(
         energies_hartree=energies,
         structure_ids=ids,
         step_number=1,
         path=tmp_path / "at_room" / "steps.csv",
+        temperature_k=DEFAULT_TEMPERATURE_K,
+        energy_type="electronic",
     )
     written = pd.read_csv(cfg.output_dir / "steps.csv")
     cold = pd.read_csv(tmp_path / "at77" / "steps.csv")

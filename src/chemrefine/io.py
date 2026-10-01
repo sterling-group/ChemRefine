@@ -33,15 +33,13 @@ from ase import Atoms
 from numpy.typing import NDArray
 
 from chemrefine.errors import ConfigError
-from chemrefine.quantities import (
-    DEFAULT_TEMPERATURE_K,
-    HARTREE_TO_KCALMOL,
-    boltzmann_weights,
-)
+from chemrefine.quantities import HARTREE_TO_KCALMOL, boltzmann_weights
 
 if TYPE_CHECKING:
     # Annotation-only: the ensemble writer reads `Structure` fields via getattr, so the
-    # runtime import graph stays as it is — this module keeps importing no pydantic.
+    # runtime import graph stays as it is — this module keeps importing no pydantic, and
+    # the config, which imports this module, is not imported back.
+    from chemrefine.config import EnergyType
     from chemrefine.state import Structure
 
 _CSV_PRECISION = 8
@@ -262,8 +260,8 @@ def write_ensemble_xyz(
     path: str | Path,
     *,
     step: int,
-    energy_attr: str = "energy_hartree",
-    energy_label: str = "E",
+    energy_attr: str,
+    energy_label: str,
 ) -> Path:
     """Write ``structures`` as one multi-frame XYZ at ``path``; return ``path``.
 
@@ -479,8 +477,8 @@ def save_step_csv(
     step_number: int,
     path: Path,
     *,
-    temperature_k: float = DEFAULT_TEMPERATURE_K,
-    energy_type: str = "electronic",
+    temperature_k: float,
+    energy_type: EnergyType,
 ) -> Path:
     """Append a per-structure summary row for ``step_number`` to the cumulative CSV at ``path``.
 
@@ -489,8 +487,8 @@ def save_step_csv(
     Sorted by energy ascending. Step 1 writes the header; later steps
     append without a header.
 
-    ``energy_type`` names which energy the caller passed (``electronic`` / ``gibbs`` /
-    ``enthalpy`` / ``electronic_zero_point``) and is recorded verbatim in the last
+    ``energy_type`` names which energy the caller passed (a
+    :data:`~chemrefine.config.EnergyType`) and is recorded verbatim in the last
     column. It is a column rather than a rename of the energy headers because
     ``steps.csv`` is cumulative across steps that may filter on different energies —
     one header has to serve them all.

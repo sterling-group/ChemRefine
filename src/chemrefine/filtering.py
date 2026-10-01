@@ -31,9 +31,11 @@ import numpy as np
 
 from chemrefine.config import (
     BoltzmannSample,
+    EnergyType,
     MaxSample,
     MinSample,
     SampleConfig,
+    energy_label,
 )
 from chemrefine.errors import ConfigError
 from chemrefine.quantities import HARTREE_TO_KCALMOL, boltzmann_weights
@@ -47,27 +49,19 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-# ``sample.energy_type`` → the ``Structure`` attribute the filter reads. Public because
-# the per-step CSV report reads it too — the report must summarise the same energy the
-# step filtered on, and that mapping has one home.
-ENERGY_ATTR = {
-    "electronic": "energy_hartree",
-    "gibbs": "gibbs_hartree",
-    "enthalpy": "enthalpy_hartree",
-    "electronic_zero_point": "energy_zpe_hartree",
-}
-
-# ``sample.energy_type`` → the short label a human artifact prints beside the value
-# (the ensemble XYZ comment lines). Beside :data:`ENERGY_ATTR` because the two are one
-# vocabulary: a type that gained an attribute without a label — or the reverse — would be
-# an energy a step can rank on but not report, which :func:`ranking_energy` makes
-# impossible by reading both from the same key.
-ENERGY_LABEL = {
-    "electronic": "E",
-    "gibbs": "G",
-    "enthalpy": "H",
-    "electronic_zero_point": "E_ZPE",
-}
+def _energy_attr(energy_type: EnergyType) -> str:
+    """The :class:`~chemrefine.state.Structure` attribute holding ``energy_type``'s value."""
+    match energy_type:
+        case "electronic":
+            return "energy_hartree"
+        case "gibbs":
+            return "gibbs_hartree"
+        case "enthalpy":
+            return "enthalpy_hartree"
+        case "electronic_zero_point":
+            return "energy_zpe_hartree"
+        case _:
+            assert_never(energy_type)
 
 
 class RankingEnergy(NamedTuple):
@@ -80,7 +74,7 @@ class RankingEnergy(NamedTuple):
     electronic" rule being re-spelled at each site.
     """
 
-    energy_type: str
+    energy_type: EnergyType
     attr: str
     label: str
 
@@ -94,11 +88,10 @@ def ranking_energy(sample: SampleConfig | None) -> RankingEnergy:
     in the module that owns the energy vocabulary, rather than being re-derived at each.
 
     A step with no ``sample`` has declared no preference, so electronic — the energy every
-    calculation reports — matching what :func:`chemrefine.io.save_step_csv` is handed in
-    the same situation.
+    calculation reports.
     """
     energy_type = "electronic" if sample is None else sample.energy_type
-    return RankingEnergy(energy_type, ENERGY_ATTR[energy_type], ENERGY_LABEL[energy_type])
+    return RankingEnergy(energy_type, _energy_attr(energy_type), energy_label(energy_type))
 
 
 def apply(results: StepResults, sample: SampleConfig | None) -> PipelineState:
@@ -123,7 +116,7 @@ def apply(results: StepResults, sample: SampleConfig | None) -> PipelineState:
     if not structures:
         return PipelineState(structures=())
 
-    energy_attr = ENERGY_ATTR[sample.energy_type]
+    energy_attr = ranking_energy(sample).attr
     if energy_attr != "energy_hartree":
         structures = _with_energy(structures, energy_attr, sample.energy_type)
 
@@ -137,7 +130,7 @@ def apply(results: StepResults, sample: SampleConfig | None) -> PipelineState:
 
 
 def _with_energy(
-    structures: list[Structure], energy_attr: str, energy_type: str
+    structures: list[Structure], energy_attr: str, energy_type: EnergyType
 ) -> list[Structure]:
     """Keep the structures carrying a thermochemical energy; raise only if none do.
 

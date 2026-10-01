@@ -62,13 +62,31 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 # ---------------------------------------------------------------------------
 
 
-#: Short alias → canonical ``energy_type`` value (case-insensitive).
-_ENERGY_TYPE_ALIASES = {
-    "e": "electronic",
-    "g": "gibbs",
-    "h": "enthalpy",
-    "e_zpe": "electronic_zero_point",
-}
+EnergyType: TypeAlias = Literal["electronic", "gibbs", "enthalpy", "electronic_zero_point"]
+"""Which energy a step ranks, filters and reports on — the one declaration of the vocabulary.
+
+A type's short label (:func:`energy_label`) and the :class:`~chemrefine.state.Structure`
+attribute holding its value (:func:`chemrefine.filtering.ranking_energy`) are exhaustive
+matches over this, so a type added here without either fails type-checking, not a run."""
+
+
+def energy_label(energy_type: EnergyType) -> str:
+    """The short label printed beside ``energy_type``'s value — also the alias a config may use."""
+    match energy_type:
+        case "electronic":
+            return "E"
+        case "gibbs":
+            return "G"
+        case "enthalpy":
+            return "H"
+        case "electronic_zero_point":
+            return "E_ZPE"
+        case _:
+            assert_never(energy_type)
+
+
+#: Short alias → canonical ``energy_type`` value (case-insensitive): each type's label.
+_ENERGY_TYPE_ALIASES = {energy_label(t).lower(): t for t in get_args(EnergyType)}
 
 
 class _SampleBase(BaseModel):
@@ -82,7 +100,7 @@ class _SampleBase(BaseModel):
     temperature_k: float = Field(DEFAULT_TEMPERATURE_K, gt=0, allow_inf_nan=False)
     """Temperature used by Boltzmann-style filters (K). Finite, like every float knob."""
 
-    energy_type: Literal["electronic", "gibbs", "enthalpy", "electronic_zero_point"] = "electronic"
+    energy_type: EnergyType = "electronic"
     """Which energy the filter sorts / selects on (default electronic).
 
     ``gibbs`` / ``enthalpy`` / ``electronic_zero_point`` require a frequency calc
