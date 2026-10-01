@@ -50,10 +50,9 @@ working directory.
 
 One constant consumed by both sides — the hook's ``save_dir=`` and the class's
 ``output_dirs`` — because they are one promise: what the trainer writes there, the job's
-exit trap copies home. Spelled twice, the docstring on ``output_globs`` went on claiming
-the epoch history was "kept beside the product" for as long as the copy-back never
-reached it: the file half of the trap is non-recursive, and nothing declared the
-directory."""
+exit trap copies home. Spelled twice, the two could disagree while the copy-back never
+reaches the directory: the file half of the trap is non-recursive, so the directory must
+be declared."""
 
 
 @CHGNET.calculator("chgnet")

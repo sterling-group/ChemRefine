@@ -64,10 +64,9 @@ class PyscfEngine(PyscfBackend, ScriptEngine[PyscfOptions]):
     def check_step(self, step_cfg: StepConfig, *, charge: int, multiplicity: int) -> None:
         """Refuse a step that names no level of theory, before anything runs.
 
-        ORCA takes its level of theory from the template's ``!`` line and Q-Chem from
-        ``$rem``; a direct pyscf step that omitted ``basis`` (or ``xc`` under
-        ``method: dft``) silently rendered the model defaults into ``$BASIS``/``$XC``
-        — the one engine computing at a level the user never chose. The rule is
+        A direct pyscf step names its level of theory in its options, so one that omits
+        ``basis`` (or ``xc`` under ``method: dft``) is refused rather than rendered with
+        defaults into ``$BASIS``/``$XC`` — a level the user never chose. The rule is
         :meth:`~chemrefine.engines.pyscf.options.PyscfOptions.require_level_of_theory`,
         shared with the ExtOpt engine's strict read; asked through the preflight hook
         rather than a strict validation because the script engines read leniently by

@@ -11,11 +11,11 @@ not a crash — which also bounds what a prompt-injected instruction can do: not
 mutating happens without the human's yes.
 
 Both harnesses register the mutating tools as ``sequential`` — each runs alone, never in
-parallel with the other calls of the same response. PydanticAI runs a response's calls
-side by side and, when one of them crashes, cancels the rest and discards their results;
-a tool running in a worker thread still finishes, so a save beside a crash wrote its file
-and left no record of it. Alone, a mutation that ran is always in the conversation with
-what it returned, and the terminal's confirmation prompts cannot overlap.
+parallel with the other calls of the same response. PydanticAI runs a response's calls side
+by side and, when one of them crashes, cancels the rest and discards their results; a tool
+running in a worker thread still finishes, so a save beside a crash would write its file and
+leave no record of it. Alone, a mutation that ran is always in the conversation with what it
+returned, and the terminal's confirmation prompts cannot overlap.
 
 Instructions = the packaged agent guide (:func:`chemrefine.agent_tools.guide_text`,
 identical bytes to the MCP resource) plus the session context (which config file, if
@@ -119,9 +119,9 @@ WEB_GATE = (
 """The same contract for the web harness, whose denial is the SDK's, not ours.
 
 ``requires_approval`` denials arrive as PydanticAI's ``ToolDenied``, whose default message
-is "The tool call was denied." — no ``denied`` key anywhere. Telling the web model to look
-for the terminal's payload named a marker it could never see, so the "never retry"
-instruction had nothing to key on."""
+is "The tool call was denied." — no ``denied`` key anywhere. Told to look for the
+terminal's payload, the web model would look for a marker it never sees, and the "never
+retry" instruction would have nothing to key on."""
 
 
 def _turn_settings() -> ModelSettings:

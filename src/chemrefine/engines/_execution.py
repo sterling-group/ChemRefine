@@ -350,7 +350,7 @@ def _run_array(
     The cost of the division, since it is a real one: a chunk's share is not handed back
     when a sibling drains early, so the tail of an N-chunk step runs at 1/N of the budget.
     Chaining the chunks with ``--dependency`` would keep full utilisation inside each, and
-    was rejected for it: the slowest task of one chunk would hold up every task of the
+    is not used, because the slowest task of one chunk would hold up every task of the
     next, a cancelled parent leaves its dependents queued forever, and it would have to be
     ``afterany`` or one failed task would cancel the rest of a batch this pipeline ledgers
     per structure. ``max(1, …)`` is a floor rather than a guarantee — more chunks than

@@ -81,10 +81,10 @@ def archive_previous(step_dir: Path, structure_ids: Iterable[str]) -> list[Path]
 
     What counts as prior work is whatever :func:`seal` would move — every entry that is not
     an ``attempt*/`` directory, engine-written sub-directories included. Loose files alone
-    were the trigger once, which left a gap: a crash mid-seal that had moved the files but
-    not yet a ``tensors/`` left a canonical the next run did not archive, and the re-run's
-    copy-back then merged into it — the very two-calculations directory ``seal`` exists to
-    prevent. Structures holding nothing but attempts are skipped, so a first run is a no-op.
+    are not enough: a crash mid-seal that has moved the files but not yet a ``tensors/``
+    leaves a canonical that must still be archived, or the re-run's copy-back merges into
+    it — the very two-calculations directory ``seal`` exists to prevent. Structures holding
+    nothing but attempts are skipped, so a first run is a no-op.
     """
     archived: list[Path] = []
     for sid in structure_ids:

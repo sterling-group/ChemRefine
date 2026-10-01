@@ -67,8 +67,8 @@ function fieldSpec(key, prop) {
   if (p.type === "integer" || p.type === "number") {
     const { min, max } = numericBounds(p);
     // A real numeric default becomes the input's *displayed* value (muted), so the
-    // spinner steps from it — an empty input steps from min-or-0, which is how
-    // "max_cores shows 4 but the arrow gives 1" happened. null = genuinely unset-able.
+    // spinner steps from it — an empty input steps from min-or-0, so "max_cores shows 4
+    // but the arrow gives 1" would follow. null = genuinely unset-able.
     const fallbackNum = typeof prop.default === "number" ? prop.default : null;
     return { key, kind: "number", options: [], fallback, doc, path: false, min, max, fallbackNum };
   }
@@ -158,11 +158,11 @@ function parentDir(path) {
  *
  * The static playground's twin of the server's `_canonical_order` (gui/app.py): there
  * `/api/yaml` has the real emitter behind it, here `jsyaml.dump` writes keys in click
- * order — and a fresh session's cfg starts `{steps: []}`, so the playground's YAML led
- * with the steps block and trailed the settings, exactly the shape the server half was
- * written to fix. The order authority is the same schema document (property order is
- * the models' field order). Unknown keys sort to the end, order preserved (sort is
- * stable) — validation is the place that complains about them, not the emitter.
+ * order — and a fresh session's cfg starts `{steps: []}`, so the playground's YAML would
+ * lead with the steps block and trail the settings, the shape the server half fixes. The
+ * order authority is the same schema document (property order is the models' field order).
+ * Unknown keys sort to the end, order preserved (sort is stable) — validation is the place
+ * that complains about them, not the emitter.
  */
 // app.js calls this through the global scope — these are classic scripts, not
 // modules. tests/test_gui_assets.py executes this file in Node and is what proves
@@ -189,8 +189,8 @@ function canonicalConfigOrder(config, schemaDoc) {
 /** Join a directory and a filename the way a path is joined, not the way strings are.
  *
  * `${dir}/${name}` is right only when `name` is bare. The Save… box is free text, so a
- * pasted absolute path produced `/home/u//abs/path` — a directory named "" and a file
- * that never existed — and a `~/…` was joined rather than expanded. An absolute name or
+ * pasted absolute path would produce `/home/u//abs/path` — a directory named "" and a file
+ * that never existed — and a `~/…` would be joined rather than expanded. An absolute name or
  * a `~` one *is* the answer: it replaces the directory rather than hanging off it, which
  * is what every shell and `Path.joinpath` already do.
  */
@@ -286,10 +286,9 @@ function atomLabel(atom, mode, counts) {
 
 /** A GET url with its query, from a plain object — the one place encoding happens here.
  *
- * There were four spellings of this: two `URLSearchParams`, a template literal with a
- * hand-written `?` and `&`, and a concatenation. The hand-written one broke on any value
- * containing an `&` — a step *named* with one, which the schema permits — by splitting it
- * into two arguments the server then read as a different step.
+ * Hand-written, a query would break on any value containing an `&` — a step *named* with
+ * one, which the schema permits — by splitting it into two arguments the server reads as a
+ * different step.
  *
  * Empty values are dropped rather than sent blank, because absence and emptiness are
  * different requests to this API: no `step` asks for the input seeds, while `step=` asks
@@ -308,12 +307,12 @@ function apiUrl(path, params) {
 /** The step rows behind every "which step?" dropdown: value, label, and selectedness.
  *
  * Three selects need this — the Structure pane's, the Run panel's target, and the results
- * picker — and each had its own copy of the same two subtleties. The comparison is
+ * picker — and they share the same two subtleties. The comparison is
  * `String(a) === String(b)` because a step number arrives from a DOM value as a string and
  * from the config as a number, so `===` on the raw values is false for the selected row and
  * the box then displays something other than the state. And `:selected` has to be on the
  * option rather than `:value` on the select, because Alpine renders templated options after
- * the select binds — the engine dropdown showed `mlip` for an `orca` step exactly that way.
+ * the select binds — the engine dropdown would show `mlip` for an `orca` step that way.
  *
  * Sentinels stay in the markup: each select has a different one ("input (seeds)", "all
  * steps", "—") meaning a different thing, and none of them is a step.

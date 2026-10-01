@@ -69,8 +69,8 @@ _MAX_ROWS = 200
 """Hard ceiling on :func:`get_results`' page size — the module's pagination rule, enforced.
 
 The rule is stated at the top of this module ("a tool result cannot flood a model's
-context window") and until now nothing held it: ``limit`` went straight into a slice, so
-``limit=10**9`` returned the whole ensemble and the guarantee was decorative. A refinement
+context window"), and this ceiling holds it: a ``limit`` handed to a bare slice would return
+the whole ensemble for ``limit=10**9``. A refinement
 tree holds thousands of structures, and the caller is usually a model that pays for every
 row twice — once reading, once quoting.
 
@@ -113,9 +113,9 @@ def validate_config(yaml_text: str, base_dir: str | None = None) -> dict[str, An
     ``base_dir`` resolves relative paths (and locates templates) as if the text lived in
     that directory — pass the directory the config will be saved to. It is a user-typed
     path like every other one this module takes, and goes through :func:`expand_user_path`
-    like them: handed to ``Path`` raw, a ``~/proj`` looked for templates under a literal
-    ``~`` in the working directory and reported them missing, while ``save_config`` a call
-    later resolved the same string fine.
+    like them: handed to ``Path`` raw, a ``~/proj`` would be looked for under a literal
+    ``~`` in the working directory and its templates reported missing, while
+    ``save_config`` resolves the same string.
     """
     base = expand_user_path(base_dir) if base_dir is not None else None
     return validate_config_text(yaml_text, base_dir=base).to_json()
@@ -271,9 +271,9 @@ def start_run(
     status = pipeline.lock_status(config.output_dir)
     if status.held:
         # A held lock with no holder fields is the unreadable-file case — refused with
-        # its remedy, exactly as `run_lock` would refuse it in the child; before
-        # `lock_status` reported that file "not held", this returned a pid and a log
-        # path for a detached child that immediately exited 10 into an unwatched log.
+        # its remedy, exactly as `run_lock` would refuse it in the child; read as "not
+        # held", it would return a pid and a log path for a detached child that exits 10
+        # into an unwatched log.
         holder = (
             f"pid {status.pid} on {status.host}, started {status.started}"
             if status.host is not None
@@ -284,8 +284,8 @@ def start_run(
     log_dir.mkdir(parents=True, exist_ok=True)
     # Microseconds, not seconds: the lock check above is check-then-act — the *child*
     # claims the lock, so two calls close together can both pass it — and at one-second
-    # resolution they resolved to one filename, where `open("wb")` truncated the first
-    # child's log out from under it while it was still writing.
+    # resolution they could resolve to one filename, where `open("wb")` would truncate the
+    # first child's log out from under it while it is still writing.
     log_path = log_dir / f"{datetime.now(UTC):%Y%m%dT%H%M%S.%fZ}-{action}.log"
     argv = [sys.executable, "-m", "chemrefine", action]
     if max_cores is not None:
@@ -299,9 +299,9 @@ def start_run(
     argv.append(str(path))
     if target is not None:
         # A step number arrives as an `int`. Rendered here, so it reaches the child the
-        # way a shell would spell it — appended raw, an `int` made `Popen` raise
-        # `TypeError` *after* the log file below existed: a 500, and an empty log that
-        # `run_status` then served as the newest.
+        # way a shell would spell it — appended raw, an `int` would make `Popen` raise
+        # `TypeError` *after* the log file below exists: a 500, and an empty log that
+        # `run_status` would serve as the newest.
         argv.append(str(target))
     try:
         with log_path.open("wb") as log:
@@ -348,19 +348,19 @@ _TAIL_CHUNK = 64 * 1024
 def _tail_lines(path: Path, wanted: int) -> list[str]:
     """The last ``wanted`` lines of ``path``, read from the end rather than whole.
 
-    The tail used to be a slice of ``read_text()``, which materialises the entire log and
-    then a list of every line in it, to keep forty. That is a driver log for a run that
-    can span days, and the GUI re-asks for it every five seconds for the whole of that
-    run — so the cost was not the file's size but paying it again on every poll.
+    Read from the end because a slice of ``read_text()`` would materialise the whole log,
+    and then a list of every line in it, to keep a few. That is a driver log for a run that
+    can span days, and the GUI re-asks for the tail every five seconds for the whole of
+    that run — so the cost would be the file's size, paid again on every poll.
 
     Decoding happens once, after the blocks are joined, never per block: a multi-byte
     character straddling a chunk boundary would otherwise be split into replacement
     characters by the very ``errors="replace"`` that is meant to make partial output safe.
 
     ``wanted`` is clamped by :func:`_tail_budget` here, in the primitive, rather than by
-    whoever calls it: bounded only at ``run_status`` and only from below, the backwards
-    read ran to the start of the file for a request of a billion lines and handed back the
-    whole driver log — the one payload the module's pagination rule exists to forbid.
+    whoever calls it: bounded only by a caller, the backwards read would run to the start
+    of the file for a request of a billion lines and hand back the whole driver log — the
+    one payload the module's pagination rule exists to forbid.
     """
     wanted = _tail_budget(wanted)
     if wanted <= 0:
@@ -388,9 +388,9 @@ def run_status(config_path: str, log_tail_lines: int = 40) -> dict[str, Any]:
     driver, so the answer is the same whether the run is live, finished, or died.
 
     ``log_tail_lines`` of ``0`` (or below) means *no tail*: an empty list, with the log's
-    path still reported. It cannot mean anything larger — Python's ``-0 == 0``, so the
-    bare slice read ``[-0:]`` as "the whole file", inverting a zero into the one value the
-    module's pagination rule exists to forbid (a multi-MB driver log in a tool result).
+    path still reported. It cannot mean anything larger — Python's ``-0 == 0``, so a
+    bare slice would read ``[-0:]`` as "the whole file", inverting a zero into the one value
+    the module's pagination rule exists to forbid (a multi-MB driver log in a tool result).
     Nor can a large number: the request is granted up to :data:`_MAX_TAIL_LINES`, and the
     answer echoes the budget actually applied as ``log_tail_lines``, the way
     :func:`get_results` echoes its ``limit``. The tail itself is read backwards from the
@@ -463,9 +463,9 @@ def get_results(
 
     ``limit`` and ``offset`` are clamped into range, for the reason ``run_status`` clamps
     ``log_tail_lines``: handed to a bare slice, a negative counts from the *end* instead
-    of failing. ``limit=-1`` — an ordinary spelling of "no limit" — returned every row but
-    the last while ``total`` still reported them all, so the payload disagreed with itself
-    and the caller was quietly one row short; a negative ``offset`` re-served the tail
+    of failing. ``limit=-1`` — an ordinary spelling of "no limit" — would return every row
+    but the last while ``total`` reports them all, so the payload would disagree with itself
+    and the caller would be one row short; a negative ``offset`` would re-serve the tail
     under an offset a pager cannot page from. Above, ``limit`` is capped at
     :data:`_MAX_ROWS`. Both the clamped ``offset`` and the applied ``limit`` come back, so
     the answer always describes the slice actually returned and never implies it is
@@ -517,8 +517,8 @@ def lookup_smiles(name: str) -> dict[str, Any]:
     from chemrefine import USER_AGENT
 
     # `safe=""`: the name is one path segment, and `quote`'s default keeps `/` unescaped
-    # for whole URLs — a name carrying one was sent as two segments, and PubChem's 404 for
-    # a name it knows came back as "offline or unknown".
+    # for whole URLs — a name carrying one would go as two segments, and PubChem's 404 for
+    # a name it knows would read as "offline or unknown".
     url = _PUBCHEM_URL.format(quote(name, safe=""))
     # A `Request` rather than a bare URL for one reason: the header. urllib's default
     # announces `Python-urllib/3.x`, and NCBI's E-utilities usage policy asks callers to
@@ -576,14 +576,14 @@ def build_structures(
     in ``out_dir``, so a ``structure_*.xyz`` an earlier call left behind — a longer list, a
     failed attempt — would seed the run with a molecule this call never reported. The
     stale set is cleared before writing, and a SMILES list that fails partway is cleaned
-    up exactly as the XYZ branch always was: the directory afterwards holds this call's
+    up as the XYZ branch is: the directory afterwards holds this call's
     structures, or none.
 
     Which is why a source that names **no** structures is refused before anything is
     deleted, on both branches. Owning the seed set means an empty call would empty the
     directory and report ``written: []`` as a success — the caller's seeds gone, and the
-    payload saying the tool did its job. The XYZ branch has always refused its own
-    spelling of this (an ``xyz_text`` that parses to zero frames); an empty ``smiles``
+    payload saying the tool did its job. The XYZ branch refuses its own spelling of
+    this (an ``xyz_text`` that parses to zero frames); an empty ``smiles``
     list is the same claim and gets the same answer.
     """
     if (smiles is None) == (xyz_text is None):
@@ -596,8 +596,8 @@ def build_structures(
             "(this call would otherwise clear the seed set in out_dir and write nothing)"
         )
     # `expand_user_path`, like every path argument here: handed to `Path` raw, a `~/seeds`
-    # made a directory literally named `~` under the cwd and reported paths beginning with
-    # it, which the readers next door then expanded to somewhere else.
+    # would make a directory literally named `~` under the cwd and report paths beginning
+    # with it, which the readers next door expand to somewhere else.
     out = expand_user_path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     for stale in out.glob("structure_*.xyz"):
@@ -833,10 +833,9 @@ def expand_user_path(raw: str) -> Path:
     """``Path(raw).expanduser()`` with a ``~name`` the host cannot resolve refused by contract.
 
     ``expanduser`` raises ``RuntimeError`` for an account the host does not know — neither
-    an ``OSError`` nor a ``ChemRefineError``, so it passed every guard: the GUI's re-raising
-    handler made it a logged-traceback 500 and the MCP wrapper the generic crash text. The
-    fix landed once, inline at the GUI's ``/api/load``, while four more entry points took
-    the same user-typed path unguarded. This is the one spelling they all take now, so the
+    an ``OSError`` nor a ``ChemRefineError``, so it would pass every guard: the GUI's
+    re-raising handler would make it a logged-traceback 500 and the MCP wrapper the generic
+    crash text. Every entry point that takes a user-typed path takes it here, so the
     GUI answers its documented 400 and an MCP client a typed refusal, with no code at the
     site.
     """
@@ -850,11 +849,11 @@ def _config_path(raw: str) -> Path:
     """The ``config_path`` argument every tool here takes, as the one path it means.
 
     User-expanded and resolved, so the string an agent typed to :func:`save_config` is the
-    string every reader accepts back. Spelled per tool, the two came apart: ``save_config``
-    expanded a ``~`` and wrote the file, and ``validate_config_path`` handed the same
-    ``~/…`` to ``Path`` unexpanded and answered "could not read" about the file the tool
-    next door had just written — an agent reusing its own input string, which is the
-    natural thing for one to do, was told its config did not exist.
+    string every reader accepts back. Spelled per tool, the two would come apart: one tool
+    expanding a ``~`` and writing the file, the next handing the same ``~/…`` to ``Path``
+    unexpanded and answering "could not read" about the file the tool next door has just
+    written — and an agent reusing its own input string, which is the natural thing for
+    one to do, would be told its config does not exist.
     """
     return expand_user_path(raw).resolve()
 
@@ -924,10 +923,10 @@ def read_structure_text(name: str, text: str) -> dict[str, Any]:
     # inside a directory that is ours and is then removed.
     #
     # `.name` alone is not that guard. It strips the directories off `../../etc/POSCAR`, but
-    # a *bare* `..` is a name to pathlib and comes back whole — which resolved to the parent
-    # of the staging directory rather than a file inside it. The three components that are
-    # not filenames are named here, rather than trusted to a helper that never claimed to
-    # sanitize anything.
+    # a *bare* `..` is a name to pathlib and comes back whole — which would resolve to the
+    # parent of the staging directory rather than a file inside it. The three components that
+    # are not filenames are named here, rather than trusted to a helper that never claimed
+    # to sanitize anything.
     safe = Path(name).name
     if safe in ("", ".", ".."):
         safe = "structure"
@@ -986,8 +985,8 @@ def _seeds_for_reading(config: Config) -> tuple[Structure, ...]:
     true of one entry point and not the next.
     """
     # is_dir() first, in bootstrap's order: it takes a directory as a directory whatever it
-    # is called, so testing the suffix first refused a folder named `batch.csv` here and
-    # seeded it happily there.
+    # is called, so testing the suffix first would refuse a folder named `batch.csv` here
+    # that bootstrap seeds from.
     seeds_from_smiles = (
         config.input is not None
         and not config.input.is_dir()
@@ -1143,7 +1142,7 @@ def analyze_mode(
 
     ``top_atoms`` is clamped at zero for the reason :func:`get_results` clamps its
     pagination: ``[:top_atoms]`` on a negative counts from the end, so ``top_atoms=-1``
-    quietly returned every atom *but* the least-displaced one — the opposite of a shorter
+    would return every atom *but* the least-displaced one — the opposite of a shorter
     list, and on the tool whose whole job is to say which atoms move most.
     """
     config = load_config(_config_path(config_path))
@@ -1154,9 +1153,8 @@ def analyze_mode(
     total = float(norms.sum()) or 1.0
     leaders = np.argsort(norms)[::-1][: max(0, top_atoms)]
     imaginary = frame.imaginary_freqs or {}
-    # From the whole table, not the imaginary subset: asked about a real mode, this used to
-    # answer with its own index echoed back and `frequency_cm1: null`, because the only
-    # frequencies anyone had kept were the ones NMS needed.
+    # From the whole table, not the imaginary subset, so a real mode is answered with its
+    # own frequency.
     table = frame.frequencies or {}
     return {
         "structure_id": structure_id,

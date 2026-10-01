@@ -75,8 +75,8 @@ seconds, but ``ollama`` and ``vllm`` are first-class presets here and they run w
 user has hardware: a small model on CPU can spend minutes on prompt evaluation alone before
 emitting a token, and the panel and the REPL are both non-streaming, so nothing arrives
 until the turn is done. The OpenAI client's own default is ten minutes, which is below that
-floor — a turn that exceeded it surfaced as "model endpoint failed", naming the endpoint for
-what was really a clock.
+floor — a turn that exceeds it would surface as "model endpoint failed", naming the
+endpoint for what is really a clock.
 
 Bounded rather than disabled, so a genuinely wedged request still ends, and overridable
 through :data:`CHAT_TIMEOUT_ENV` for anyone who wants a tighter one.
@@ -138,8 +138,8 @@ class ProviderConfig:
     api_key: str | None
     provider: str = "custom"
     """Which preset resolved this, so :meth:`build_model` can tell OpenAI-the-service from
-    an OpenAI-*compatible* box. Defaulted, because three call sites construct this by
-    keyword and none of them cared until the GUI grew a key field."""
+    an OpenAI-*compatible* box. Defaulted, because only the GUI's key field needs it; the
+    other call sites construct this by keyword without it."""
 
     @classmethod
     def resolve(
@@ -179,11 +179,9 @@ class ProviderConfig:
         resolved_key = api_key or os.environ.get("CHEMREFINE_LLM_API_KEY") or preset_key
         if resolved_key is not None and (fault := _header_fault(resolved_key)):
             # Judged on the *resolved* key, after blank has fallen through, at the one
-            # place every entry point resolves: the GUI's check endpoint used to ask this
-            # of the raw box before resolution, and answered a blank one "invalid
-            # characters" while the chat endpoint beside it took the same blank as "use
-            # the environment". One rule, one home, and it now covers the environment's
-            # key and the CLI's as well as the panel's.
+            # place every entry point resolves: a blank box means "use the environment" to
+            # the check endpoint and the chat endpoint alike, and the rule covers the
+            # environment's key and the CLI's as well as the panel's.
             raise ConfigError(f"the API key cannot be sent as an Authorization header: {fault}")
         return cls(
             model=resolved_model,
@@ -230,7 +228,7 @@ class ProviderConfig:
 
         Between those sits OpenAI-the-service with a key the caller supplied. It has no
         ``base_url`` — ``OpenAIProvider`` defaults to ``api.openai.com`` on its own — so
-        without this branch the key was silently dropped and PydanticAI read the server's
+        without this branch the key would be dropped and PydanticAI would read the server's
         ``OPENAI_API_KEY`` instead, which is not a key the GUI's user can set. A
         ``provider:model`` spelling still goes through verbatim: that spelling *is* the
         instruction to let PydanticAI resolve it, and handing ``openai:gpt-5-mini`` to
@@ -296,8 +294,8 @@ def check(config: ProviderConfig, *, timeout: float = 5.0) -> CheckReport:
         if ":" not in config.model:
             # "Provider-native" means a `provider:model` spelling PydanticAI can place.
             # A bare name with nowhere to send it is not that — it is a name PydanticAI
-            # raises `UnknownModel` on at construction — and reporting it usable made the
-            # panel arm Send for a configuration that could never build a model, which is
+            # raises `UnknownModel` on at construction — and reporting it usable would make
+            # the panel arm Send for a configuration that can never build a model, which is
             # the one thing the preflight exists to prevent.
             return CheckReport(
                 ok=False,
@@ -321,10 +319,10 @@ def check(config: ProviderConfig, *, timeout: float = 5.0) -> CheckReport:
 
     url = probe.rstrip("/") + "/models"
     # `User-Agent` is not decoration: urllib's default announces `Python-urllib/3.x`, and
-    # Groq's edge answers that token with a flat 403 — so this preflight reported a good key
-    # as "authentication rejected" while the chat, which goes through the OpenAI SDK and its
-    # own product token, worked. Verified by isolating the header: identical request, 403
-    # with the default, 200 with any real name.
+    # Groq's edge answers that token with a flat 403 — so without a real name this preflight
+    # would report a good key as "authentication rejected" while the chat, which goes
+    # through the OpenAI SDK and its own product token, works. Verified by isolating the
+    # header: identical request, 403 with the default, 200 with any real name.
     request = Request(  # noqa: S310 — scheme constrained to http(s) above
         url,
         headers={
@@ -350,8 +348,8 @@ def check(config: ProviderConfig, *, timeout: float = 5.0) -> CheckReport:
     # A reachable endpoint answering something other than ``{"data": [{"id": ...}]}`` is a
     # misconfiguration, and turning misconfiguration into a finding is this function's whole
     # contract — a base URL pointing at a web app or a proxy's login page answers 200 with
-    # HTML, and some gateways answer a bare list. Every one of those used to raise out of
-    # here, so the preflight crashed on the mistake it exists to diagnose.
+    # HTML, and some gateways answer a bare list. Each of those is a finding here, never an
+    # exception out of the preflight that exists to diagnose it.
     entries = listing.get("data") if isinstance(listing, dict) else None
     served = (
         [e["id"] for e in entries if isinstance(e, dict) and isinstance(e.get("id"), str)]

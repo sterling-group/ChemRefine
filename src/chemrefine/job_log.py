@@ -14,10 +14,6 @@ put them there:
   a job that *ran* inside the attempt: an NMS round-2 child, or that
   child's own retry one level deeper.
 
-(The ``step{N}_structure_{ID}`` basename this module once documented is
-the **v1.3.1** spelling; ``structure_`` was dropped from every artifact
-name in 2.0 — see the v1→v2 migration guide.)
-
 The bash header/footer snippets here are embedded in every generated
 SLURM script (which also runs via the local bash fallback), so every
 engine emits the same skeleton:

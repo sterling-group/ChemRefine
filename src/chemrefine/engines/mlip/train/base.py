@@ -421,12 +421,12 @@ class TrainerBase(ABC):
         """Refuse, warn, and write each non-empty split through :meth:`write_split`.
 
         The refusal fires only when a declaration says the library cannot take the data —
-        :attr:`needs_validation` without a validation split — and says why in that
-        library's own words (:attr:`validation_reason`). The warning fires for non-neutral
-        data only when the dataset format carries no charge/spin channel — silence is the
-        only wrong answer, and it is not per-library prose any more. An empty split gets no
-        file at all: ase refuses a zero-byte extxyz, so naming one would turn "no test set"
-        into a crash. A periodic-only library's structures arrive already boxed
+        :attr:`needs_validation` without a validation split — and says why in that library's
+        own words (:attr:`validation_reason`). The warning fires for non-neutral data only
+        when the dataset format carries no charge/spin channel — silence is the only wrong
+        answer, and the declaration decides it, not per-library prose. An empty split gets
+        no file at all: ase refuses a zero-byte extxyz, so naming one would turn "no test
+        set" into a crash. A periodic-only library's structures arrive already boxed
         (:meth:`~chemrefine.engines.mlip.registry.MlipLibrary.boxed`, applied by the step).
         """
         if self.needs_validation and not split.valid:
@@ -536,9 +536,9 @@ class ApiTrainerBase(TrainerBase):
         seed and the foundation weights go straight across as authoritative values
         (:func:`~chemrefine.engines.mlip.train.driver.main` overlays them onto the
         rendered config and refuses a template value that disagrees). Routed through the
-        user's template as ``$DEVICE``-style placeholders, each fact was silently lost the
-        moment a template did not reference it, while the budget, the cache key and the
-        sidecar all asserted the declared value. A template channel is the CLI trainers'
+        user's template as ``$DEVICE``-style placeholders, each fact would be lost the
+        moment a template does not reference it, while the budget, the cache key and the
+        sidecar all assert the declared value. A template channel is the CLI trainers'
         necessity — their libraries read the config file themselves — not this route's.
 
         Every fact passes through ``shlex.quote``, the same protection every other emitted

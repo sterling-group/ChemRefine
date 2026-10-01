@@ -188,9 +188,9 @@ class PyscfExtOptCalculator(ComputeBackend):
         if opts.gpu and not meta["gpu_used"]:
             # `_build_scf` answers a GPU that could not be set up by falling back to CPU
             # and *returning* the reason; this is where that reason reaches a log. Without
-            # it a `device: cuda` step whose gpu4pyscf import passed preflight on the login
-            # node and failed to construct on the compute node ran every gradient on CPU,
-            # with `gpu=False` in the line above the only trace and the exception dropped.
+            # it a `device: cuda` step whose gpu4pyscf import passes preflight on the login
+            # node and fails to construct on the compute node would run every gradient on
+            # CPU, with `gpu=False` in the line above the only trace and the exception dropped.
             logger.warning("%s", meta["gpu_msg"])
         if opts.strict_scf and not meta["converged"]:
             raise JobFailureError(

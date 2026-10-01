@@ -158,10 +158,10 @@ class PipelineState:
         """The structures indexed by id, built once per state however many readers ask.
 
         Every per-job reader — the assembler's parent lookup, a script engine's seed lookup,
-        the ``on_failure: best`` backfill — asked the tuple the same question and each built
-        the map again, so parsing a step was quadratic in its parent count: the driver parses
-        one job at a time, and every parse rebuilt the index. Cached on the instance because
-        the state is frozen — its structures never change, so the index cannot go stale.
+        the ``on_failure: best`` backfill — asks the same question; built per reader, the
+        index would make parsing a step quadratic in its parent count, since the driver
+        parses one job at a time. Cached on the instance because the state is frozen — its
+        structures never change, so the index cannot go stale.
         """
         return {s.id: s for s in self.structures}
 
@@ -283,8 +283,8 @@ class JobBatch:
     describes jobs that have already finished.
 
     **Opaque** is the operative word: a structure re-run in the same batch reuses its input
-    path, so the mapping holds that structure's *latest* attempt and there is no longer one
-    entry per prepared job. Nothing reads it back — treat it as a receipt, not an index.
+    path, so the mapping holds that structure's *latest* attempt, not one entry per
+    prepared job. Nothing reads it back — treat it as a receipt, not an index.
     """
 
     jobs: dict[Path, str]
@@ -300,8 +300,8 @@ class FailureKind(StrEnum):
 
     A closed vocabulary rather than free text: ``retry_unconverged``, ``_resubmit_failed``
     and ``reattempt_nms`` each route on *which* kind of failure this is, so the comparison
-    has to survive an edit to the wording a user reads. Matching on the message itself made
-    rewording it — a docs change, to all appearances — disable a recovery path.
+    has to survive an edit to the wording a user reads. Matched on the message itself,
+    rewording it — a docs change, to all appearances — would disable a recovery path.
 
     The values *are* that wording, so the ledger on disk and the log lines stay readable;
     what the code compares is the name.

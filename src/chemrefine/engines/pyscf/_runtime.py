@@ -253,14 +253,10 @@ def save_tensors(
     one-electron tensor, ``h2e`` for the two-electron tensor) name the
     format for whatever reads the file — chemrefine only writes it.
 
-    There is deliberately no reader here. A ``print_tensors_file`` pretty-printer sat
-    beside this for a long time with no caller in the package, which cost more than the
-    lines: it was the one ``np.load`` in ChemRefine without ``allow_pickle=False`` (see
-    :func:`chemrefine.cache._read_arrays`, where that flag is the stated reason a cache
-    load cannot execute code), so a reader comparing the two learned the wrong rule from
-    code nothing ran. Anything consuming these tensors is downstream analysis, and it
-    should load them with ``allow_pickle=False`` like every other ``.npz`` this package
-    reads.
+    There is deliberately no reader here: anything consuming these tensors is downstream
+    analysis, and it should load them with ``allow_pickle=False`` like every other ``.npz``
+    this package reads (:func:`chemrefine.cache._read_arrays` gives that flag as the reason
+    a cache load cannot execute code).
     """
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)

@@ -252,9 +252,9 @@ def lock_status(output_dir: Path) -> LockStatus:
     holder field ``None`` — the same side of "held" :func:`run_lock` puts it on. That
     file was damaged from outside (a partial copy, a truncating editor — this program
     never creates the lock without its record), and the claim path refuses it until
-    someone deletes a lock they know is dead; reporting it "not held" here sent
-    :func:`~chemrefine.agent_tools.start_run` past its own gate into a child that exited
-    into a log nobody was watching yet.
+    someone deletes a lock they know is dead; reporting it "not held" here would send
+    :func:`~chemrefine.agent_tools.start_run` past its own gate into a child that exits
+    into a log nobody is watching yet.
     """
     lock = output_dir / RUN_LOCK_NAME
     holder = _lock_holder(lock)
@@ -268,8 +268,8 @@ def lock_status(output_dir: Path) -> LockStatus:
 def _reclaim_stale(lock: Path, holder: tuple[str, int, str]) -> bool:
     """Atomically take a dead holder's lock off its path; ``True`` if this process did.
 
-    Reclaiming by ``unlink()`` was a race: two drivers that both probed the same dead pid
-    could interleave — A unlinks, A creates, B unlinks *A's fresh lock*, B creates — and
+    Reclaiming by ``unlink()`` would be a race: two drivers that both probed the same dead
+    pid could interleave — A unlinks, A creates, B unlinks *A's fresh lock*, B creates — and
     both acquire, which is the one state the lock exists to prevent. ``os.replace`` moves
     the inode to a per-pid claim name instead: exactly one process wins the rename (atomic
     on POSIX, and on NFS where this tree lives), and the loser sees
@@ -323,14 +323,15 @@ def _sigterm_unwinds() -> Generator[None]:
     """Turn SIGTERM into an orderly unwind while a run holds resources.
 
     ``scancel`` and a walltime kill deliver SIGTERM, and Python's default disposition
-    terminates without unwinding — no ``finally``, no ``atexit`` — so the run lock stayed
-    behind (stranding a cross-host resume on a lock nobody could probe) and the local jobs
-    kept burning their cores. Raising :class:`SystemExit` from the handler makes the signal
-    an ordinary exception at whatever bytecode is executing: :func:`run_lock`'s ``finally``
-    releases the lock, :func:`chemrefine.engines._execution.run_batch`'s ``finally`` reaps
-    the local jobs, and ``atexit`` still fires. ``143`` is the conventional ``128+SIGTERM``
-    status, so the driver's exit code still says what stopped it. A genuine SIGKILL remains
-    unhandleable — the same-host dead-pid reclaim stays as the net for that.
+    terminates without unwinding — no ``finally``, no ``atexit`` — so the run lock would
+    stay behind (stranding a cross-host resume on a lock nobody can probe) and the local
+    jobs would keep burning their cores. Raising :class:`SystemExit` from the handler makes
+    the signal an ordinary exception at whatever bytecode is executing: :func:`run_lock`'s
+    ``finally`` releases the lock, :func:`chemrefine.engines._execution.run_batch`'s
+    ``finally`` reaps the local jobs, and ``atexit`` still fires. ``143`` is the
+    conventional ``128+SIGTERM`` status, so the driver's exit code still says what stopped
+    it. A genuine SIGKILL remains unhandleable — the same-host dead-pid reclaim stays as the
+    net for that.
 
     The previous handler is restored on exit, and off the main thread this is a no-op:
     ``signal.signal`` raises there, and a host application driving the pipeline from a
@@ -376,21 +377,21 @@ def run_lock(output_dir: Path) -> Generator[None]:
     **The record and the lock are one operation.** The record is written to a per-pid
     claim beside the lock and *linked* into place, so the lock never exists without a
     complete record from this program. Created empty and written afterwards, it could:
-    a full disk at that instant left a 0-byte lock the ownership-checked release below
-    could not recognise as its own, and every later driver refused the tree as
-    "unreadable" until someone deleted it by hand. An unreadable lock can now only have
-    been damaged from outside.
+    a full disk at that instant would leave a 0-byte lock the ownership-checked release
+    below cannot recognise as its own, and every later driver would refuse the tree as
+    "unreadable" until someone deleted it by hand. So an unreadable lock can only have been
+    damaged from outside.
 
-    **Reclaim is an atomic rename, and release is ownership-checked.** Deleting a stale
-    lock with ``unlink()`` let two drivers that both probed the same dead pid interleave —
-    one deleted the other's freshly created lock — and both acquire; :func:`_reclaim_stale`
+    **Reclaim is an atomic rename, and release is ownership-checked.** Deleting a stale lock
+    with ``unlink()`` would let two drivers that both probed the same dead pid interleave —
+    one deleting the other's freshly created lock — and both acquire; :func:`_reclaim_stale`
     renames the stale lock to a per-pid claim instead, so exactly one process wins, and
     verifies the claim against the record that justified it in case a fresh lock was swept
-    up in the window. The release mirrors it: unlinking whatever sits at the lock path
-    would let a driver whose lock was deleted out from under it (the error message's own
-    advice, followed against a run that was in fact alive) remove the *current* holder's
-    lock on exit, reopening the tree to a third driver — so the ``finally`` deletes the
-    file only while it still names this process.
+    up in the window. The release mirrors it: unlinking whatever sits at the lock path would
+    let a driver whose lock was deleted out from under it (the error message's own advice,
+    followed against a run that was in fact alive) remove the *current* holder's lock on
+    exit, reopening the tree to a third driver — so the ``finally`` deletes the file only
+    while it still names this process.
 
     **Reentrant by pid**: :func:`chemrefine.recovery.execute` takes the lock around a
     whole action — ``run``'s cache invalidation mutates the tree *before*
@@ -435,9 +436,9 @@ def run_lock(output_dir: Path) -> Generator[None]:
                         f"filesystem that supports them."
                     ) from e
                 # Every decision about a held lock is made here, past the handler, on purpose.
-                # The reentrant `yield` used to sit inside it, which ran the whole inner action
-                # with the FileExistsError still active — so any error the action raised was
-                # chained to it, and every traceback that escaped a run opened with "During
+                # Inside the handler, the reentrant `yield` would run the whole inner action
+                # with the FileExistsError still active — so any error the action raised would
+                # chain to it, and every traceback that escaped a run would open with "During
                 # handling of the above exception (FileExistsError: … run.lock)", pointing the
                 # reader at the lock before the real error. Out here the exception is over,
                 # and the refusal below needs no `from None` to keep it out of its traceback.
@@ -650,12 +651,11 @@ def run(config: Config, plan: RunPlan | None = None) -> list[StepOutcome]:
         submittable = [cfg for cfg in config.steps if plan.for_step(cfg.step).may_submit()]
         preflight_backends(submittable)
         preflight_steps(submittable, charge=config.charge, multiplicity=config.multiplicity)
-        # The one config-decidable rule the walk lacked: a key no reader declares changes
-        # nothing, and `chemrefine validate` was the only place that said so — which a
-        # `resume` after an edit, the GUI's Run button and an agent's `start_run` never
-        # pass through. A warning rather than a refusal, for the report's own reason: the
-        # lenient script-engine read is the documented design, and on an ORCA or Q-Chem
-        # step the NMS knobs share this dict with the engine's.
+        # A key no reader declares changes nothing, and the walk says so as `chemrefine
+        # validate` does, because a `resume` after an edit, the GUI's Run button and an
+        # agent's `start_run` never pass through validate. A warning rather than a refusal,
+        # for the report's own reason: the lenient script-engine read is the documented
+        # design, and with `nms: true` the NMS knobs share this dict with the engine's.
         for step_cfg in submittable:
             if (silent := undeclared_options(step_cfg)) is not None:
                 logger.warning("step %d: %s", step_cfg.step, silent)

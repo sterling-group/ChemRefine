@@ -323,8 +323,8 @@ def _require_server_deps(requirement: BackendRequirement) -> None:
     import itself. ``require_backend`` accepting "the backend is importable in the current
     env" is what admits the single-env case — and in that case the gradient server runs
     under this same interpreter, so a `pip install -e .` without extras beside a
-    hand-installed backend passed preflight and died at server startup *inside the job*,
-    after every upstream step had already been paid for. The error names both fixes,
+    hand-installed backend would pass preflight and die at server startup *inside the job*,
+    after every upstream step has been paid for. The error names both fixes,
     like the backend one does.
     """
     missing = [name for name in ("flask", "waitress") if importlib.util.find_spec(name) is None]
@@ -375,8 +375,7 @@ def _candidate_pythons() -> tuple[str, ...]:
     one more thing to move when the matrix moves.
 
     Falls back to the running interpreter alone when the metadata says nothing (a tree run
-    without an installed dist): the honest answer there is "the Python I am", which is also
-    exactly the behaviour this module had before it could choose.
+    without an installed dist): the honest answer there is "the Python I am".
     """
     from packaging.specifiers import SpecifierSet
 
@@ -495,11 +494,10 @@ def resolve_base_python(
     """The Python a managed env for ``extra`` is built on, and how it is obtained.
 
     The orchestrator's own interpreter whenever ``chemrefine[<extra>]`` installs on it — the
-    common case, and what this module did unconditionally before it could choose. Otherwise
-    the newest Python the extra claims (:func:`_supported_pythons`), because a backend whose
-    stack has no wheels here is not a slow install but a source build of torch or a vendored
-    abseil, and the whole point of a *managed* env is that a backend's dependencies never had
-    to match anyone else's. The interpreter is the last part of that stack that did.
+    common case. Otherwise the newest Python the extra claims (:func:`_supported_pythons`),
+    because a backend whose stack has no wheels here is not a slow install but a source
+    build of torch or a vendored abseil, and the whole point of a *managed* env is that a
+    backend's dependencies, its interpreter included, need not match anyone else's.
 
     Raises
     ------
@@ -689,9 +687,9 @@ def _install_spec(extra: str, version: str, direct: dict[str, Any] | None) -> li
     install (a local path, a git URL) reinstalls from the same source, since that version
     is typically not published on any index; and an **editable** checkout is installed
     editably — the env then runs the checkout itself, so the code the orchestrator drives
-    with is the code the job imports. A snapshot of an editable tree is what that
-    replaced: correct on the day it was built and behind by the next commit, while the
-    direct engines and the ExtOpt server import this package *inside* the env.
+    with is the code the job imports. A snapshot of an editable tree would be correct on
+    the day it is built and behind by the next commit, while the direct engines and the
+    ExtOpt server import this package *inside* the env.
 
     Pure, so the same description fits both sides of :func:`_require_matched`: the
     orchestrator (:func:`_install_target`) and a managed env's own dist. A ``file://``
@@ -801,13 +799,13 @@ def build_backend_env(
     outright (:func:`_require_supported_env`) rather than installed into, for the same
     reason: pip succeeds there having installed nothing.
 
-    **The install always runs**, where this used to return early whenever the env's
-    ``python`` existed. That early return made ``backends install pyscf-gpu`` a silent no-op
-    on a machine that already had a ``pyscf`` env — the two share a directory (see
-    :func:`backend_env_path`), so the command reported success having installed nothing and
-    the GPU step then ran on CPU. pip is idempotent and cheap when the requirement is
-    already satisfied, and this is an explicit user command rather than a per-run path, so
-    letting pip decide costs a few seconds and removes a whole class of wrong.
+    **The install always runs**, even when the env's ``python`` exists: ``pyscf`` and
+    ``pyscf-gpu`` share a directory (see :func:`backend_env_path`), so returning early would
+    make ``backends install pyscf-gpu`` a silent no-op on a machine with a ``pyscf`` env —
+    success reported, nothing installed, and the GPU step on CPU. pip is idempotent and
+    cheap when the requirement is already satisfied, and this is an explicit user command
+    rather than a per-run path, so letting pip decide costs a few seconds and removes a
+    whole class of wrong.
 
     Builds with ``tool`` (default: :func:`detect_env_tool`); every subprocess must succeed.
 
@@ -851,7 +849,7 @@ def build_backend_env(
     # past any (OSError, CalledProcessError) net — leaving `<env>/bin/python` present
     # with the install half-done, which `require_backend` then accepts by name on every
     # later run. Exactly the state the docstring above says must not exist, reachable
-    # only through the exceptions the old net did not catch.
+    # only through exceptions such a net does not catch.
     built = False
     try:
         for argv in [create, install] if fresh else [install]:

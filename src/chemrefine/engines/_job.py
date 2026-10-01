@@ -99,8 +99,8 @@ def _require_elements(symbols: Sequence[str], sid: str) -> None:
     The readers hand symbols through as the program printed them, and only the
     :class:`~ase.Atoms` built below judges them — with a ``KeyError``, which is outside the
     family :func:`chemrefine.lifecycle._parse_job` contains. Left to it, one dummy centre
-    (a constraint anchor a program prints as ``XX``) ended the whole run in a traceback and
-    discarded the successes of the same step, which were about to be cached. Judged here,
+    (a constraint anchor a program prints as ``XX``) would end the whole run in a traceback
+    and discard the successes of the same step before they are cached. Judged here,
     beside the construction and for every engine at once, it is this structure's ledgered
     failure, naming what it saw. A ghost centre is a different case and cannot be caught:
     a program prints it with its element's own symbol, so it reads as an atom.

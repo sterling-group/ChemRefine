@@ -224,8 +224,8 @@ class MlipTrainEngine(MlipBackend):
         runlog, the ``.err`` and, when no ``scratch_dir`` is configured, ``$WORK_DIR`` itself.
         Handing it :meth:`artifact` works for a trainer whose model lands beside its config
         and fails quietly for one whose model is nested — FAIRChem's parent is
-        ``train/train/checkpoints/final``, so a run's own log and scratch were created three
-        levels inside the directory it was about to write its final checkpoint into.
+        ``train/train/checkpoints/final``, so a run's own log and scratch would be created
+        three levels inside the directory it is about to write its final checkpoint into.
 
         Naming the artifact's basename at the run directory keeps that parent right while
         still saying what the job is for. For MACE the two paths are the same file; for a
@@ -419,9 +419,7 @@ class MlipTrainEngine(MlipBackend):
         A property rather than a ``ClassVar`` because the registry is only populated
         after this class body runs (backends auto-discover later in the import chain),
         while every read is on an instance, after discovery. Computed, the roster cannot
-        go stale — the hand-union this replaces carried the backend-private
-        ``"log.sevenn"`` in the shared engine and was held equal to the registry only by
-        a test.
+        go stale, and no backend-private name lives in the shared engine.
         """
         return trainer_output_globs()
 

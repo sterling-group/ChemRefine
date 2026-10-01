@@ -128,8 +128,8 @@ def submit_calculation(
     straight from the socket while the server is still computing, or wrapped in a
     ``URLError`` when the connection itself timed out — and both are named as what they
     are: a gradient slower than the step's ``gradient_timeout_seconds``, or a hung
-    server. The bare form escaped every handler here and crashed the wrapper with a
-    traceback; the wrapped one read as an unreachable server.
+    server. Unnamed, the bare form would escape every handler here and crash the wrapper
+    with a traceback, and the wrapped one would read as an unreachable server.
     """
     payload = {
         "atom_types": list(data.symbols),
@@ -163,9 +163,9 @@ def submit_calculation(
         raise JobFailureError(_timed_out(server_url, timeout)) from e
     except HTTPException as e:
         # A server that answers and then breaks the protocol mid-body (IncompleteRead on a
-        # dying worker) — neither an HTTPError nor a URLError, so it crashed the wrapper
-        # with a traceback in the runlog instead of the classified failure ORCA's step
-        # records like every other server fault.
+        # dying worker) — neither an HTTPError nor a URLError, so without this clause it
+        # would crash the wrapper with a traceback in the runlog instead of the classified
+        # failure ORCA's step records like every other server fault.
         raise JobFailureError(f"ExtOpt server sent a broken response: {e!r}") from e
     except ENDPOINT_UNREACHABLE as e:
         # Every other way the endpoint gives no usable answer — a socket reset after the
@@ -254,8 +254,8 @@ def main() -> int:
     reached or refuses the request, a geometry it cannot read — exits with its one-line
     refusal on stderr and its code, as the CLI does. ORCA stops on the non-zero exit either
     way, and it passes the wrapper's stderr to the job's ``.err``, which the step's ledgered
-    reason quotes: raised, that quote ended in traceback frames naming install paths rather
-    than the reason. Anything else is a defect and keeps its traceback.
+    reason quotes: raised, that quote would end in traceback frames naming install paths
+    rather than the reason. Anything else is a defect and keeps its traceback.
     """
     import sys
 

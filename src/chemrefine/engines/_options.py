@@ -75,12 +75,11 @@ class EngineOptions(BaseModel):
         at subclass fields by name: a model with another way to ask overrides this (PySCF's
         ``gpu``), and :meth:`chemrefine.engines._job.JobEngine.gpus` asks every declaring
         engine's model the same question. Read through the model rather than off the raw
-        dict because the two disagree about what "unset" means: ``options.get("device", "")``
-        yielded no GPU while the field default once said ``cuda``, so a step that named no
-        device rendered ``$DEVICE=cuda`` into its script while being scheduled as a CPU job
-        on the CPU header — bypassing the GPU budget and
-        :meth:`~chemrefine.throttle.Throttler.assign_device`, so concurrent local steps piled
-        onto device 0. One reader, one default.
+        dict because a second reader with its own idea of "unset" can disagree with the
+        field default: a step that named no device could render ``$DEVICE=cuda`` into its
+        script while being scheduled as a CPU job on the CPU header — bypassing the GPU
+        budget and :meth:`~chemrefine.throttle.Throttler.assign_device`, so concurrent local
+        steps would pile onto device 0. One reader, one default.
         """
         return 1 if self.device == "cuda" else 0
 
@@ -193,8 +192,8 @@ class ExtOptOptions(EngineOptions):
     a healthy server takes longer than that per geometry. On expiry the step records a
     timeout that names this knob, not an unreachable server.
 
-    Finite as well as positive. ``.inf`` — an ordinary spelling of "no timeout" — passed
-    ``gt=0``, rode into the wrapper as ``--timeout inf``, and reached the socket as a
-    timeout Python cannot represent (``OverflowError``, none of the failures the bridge
-    classifies), so every geometry step died in the wrapper with a traceback naming
+    Finite as well as positive. ``.inf`` — an ordinary spelling of "no timeout" — passes
+    ``gt=0``, and would ride into the wrapper as ``--timeout inf`` and reach the socket as
+    a timeout Python cannot represent (``OverflowError``, none of the failures the bridge
+    classifies), so every geometry step would die in the wrapper with a traceback naming
     neither the knob nor the value. There is no unbounded setting: raise the number."""

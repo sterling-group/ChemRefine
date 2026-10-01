@@ -688,8 +688,8 @@ SUBCOMMANDS: frozenset[str] = frozenset(get_group(app).commands)
 The vocabulary :func:`chemrefine.cli_legacy.translate_argv` passes through untouched:
 a first positional outside it is read as a v1.3.1 ``CONFIG`` and rewritten to
 ``chemrefine run <name>``. Read off the built Click group once every command above is
-registered, so a new command joins the translator by existing — a hand-kept copy once
-lacked ``mcp``, and ``chemrefine mcp`` became ``run mcp`` ("File 'mcp' does not exist").
+registered, so a new command joins the translator by existing — a hand-kept copy would
+miss the next new command, and ``chemrefine <it>`` would be rewritten to ``run <it>``.
 """
 
 

@@ -28,16 +28,16 @@ logger = logging.getLogger(__name__)
 DeprecationSink = Callable[[tuple[str | int, ...], str], None]
 """``(loc, message) -> None`` — where a rewrite announces itself.
 
-Every legacy spelling this module rewrites is a finding, and until it had somewhere to go
-other than a logger it was a finding only for whoever happened to be watching stderr. The
-agent, the GUI's Validate button and every MCP client read
-:class:`~chemrefine.validate.ValidationReport` and nothing else, so they were told a config
-using a removed-in-3.0 key was clean. ``loc`` follows pydantic's convention, the same one
-:class:`~chemrefine.validate.ValidationIssue` anchors every other finding with."""
+Every legacy spelling this module rewrites is a finding, and one only a logger hears
+reaches only whoever is watching stderr. The agent, the GUI's Validate button and every MCP
+client read :class:`~chemrefine.validate.ValidationReport` and nothing else, and would be
+told a config using a removed-in-3.0 key is clean. ``loc`` follows pydantic's convention,
+the same one :class:`~chemrefine.validate.ValidationIssue` anchors every other finding
+with."""
 
 
 def _log_deprecation(loc: tuple[str | int, ...], message: str) -> None:
-    """The default sink: what this module has always done, unchanged."""
+    """The default sink: each rewrite as a deprecation warning in the log."""
     logger.warning("%s", message)
 
 
@@ -106,7 +106,7 @@ def normalize(raw: dict[str, Any], *, report: DeprecationSink | None = None) -> 
     :func:`chemrefine.validate.validate_config_text` turns them into report warnings. It is
     a redirect rather than an addition on purpose: the validator runs this twice — once to
     collect, once inside ``Config.model_validate`` — and a sink that also logged would say
-    everything twice on a path that used to say it once.
+    everything twice.
     """
     sink = report or _log_deprecation
     out = dict(raw)

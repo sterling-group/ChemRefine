@@ -60,9 +60,8 @@ DEFAULT_TASK: str = MlipOptions.model_fields["task_name"].default
 This function is public API a user's ``step{N}.py`` may call without going through the YAML at
 all, so it needs a default of its own; taking it from the field means the template and the
 config cannot come to disagree about what "unspecified" runs. The other defaults below are
-read the same way, for the same reason — the ``device`` fallback in particular was once a
-``"cuda"`` literal here while the model said ``"cpu"``, the exact two-readers drift the
-model-fields technique exists to prevent."""
+read the same way, for the same reason: a literal here beside the model's field would be
+two readers that can drift."""
 
 _DEFAULT_MODEL_NAME: str = MlipOptions.model_fields["model_name"].default
 _DEFAULT_DEVICE: str = MlipOptions.model_fields["device"].default
@@ -239,7 +238,7 @@ class MlipCalculator:
         read them per geometry off ``atoms.info`` (see :func:`stamp_species`), so the
         values are kept and stamped at each call rather than only handed to the builder.
         A charge-blind library never reads the keys. Everything else is the shape the
-        shipped templates have always called.
+        shipped templates call.
         """
         self.model_name = model_name
         self.task_name = task_name
@@ -277,9 +276,10 @@ class MlipCalculator:
 
         ase's ``run`` answers whether ``fmax`` was reached within ``steps``, and that answer
         is kept — on ``atoms.info["converged"]`` and on :attr:`last_converged` — rather than
-        dropped. Dropped, an optimiser that ran out of steps was indistinguishable from one
-        that converged: the template wrote the last geometry's energy, the parser read no
-        verdict, and a non-stationary point ranked as a survivor against converged siblings.
+        dropped. Dropped, an optimiser that ran out of steps would be indistinguishable from
+        one that converged: the template would write the last geometry's energy, the parser
+        would read no verdict, and a non-stationary point would rank as a survivor against
+        converged siblings.
         Reported, it is what turns that run into a ``NOT_CONVERGED`` failure, ledgered and
         retried once from this geometry (:func:`chemrefine.lifecycle.retry_unconverged`).
         """

@@ -82,10 +82,11 @@ def _as_float(value: Any, _seed: Atoms) -> float:
 
     Shape is the converter's business — the sweep yields every scalar of whatever arrived, so
     a one-element list passes it finite — and this is the shape guard the two array
-    converters below carry for the same reason. Without it ``float([-1.0])`` raised a bare
-    ``TypeError`` past :func:`chemrefine.lifecycle._parse_job`, and a template that handed
-    back ``energies.tolist()`` ended the whole run over one structure instead of ledgering
-    it. ``bool`` is refused by the sweep for every numeric field; the shape is this field's.
+    converters below carry for the same reason. Without it ``float([-1.0])`` would raise a
+    bare ``TypeError`` past :func:`chemrefine.lifecycle._parse_job`, and a template that
+    hands back ``energies.tolist()`` would end the whole run over one structure instead of
+    ledgering it. ``bool`` is refused by the sweep for every numeric field; the shape is
+    this field's.
     """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise OutputParseError(
@@ -98,11 +99,11 @@ def _as_float(value: Any, _seed: Atoms) -> float:
 def _as_flag(value: Any, _seed: Atoms) -> bool | None:
     """A verdict flag: ``True``, ``False`` or ``None`` (not reported), nothing else.
 
-    The flag is exempt from the finiteness sweep and had no converter, so whatever the
-    template assigned landed on the structure as it was — and
+    The flag is exempt from the finiteness sweep, so this converter is its one guard:
+    without it whatever the template assigns would land on the structure as it is — and
     :func:`chemrefine.lifecycle.succeeded` reads only a literal ``False`` as a failure. A
-    template writing ``converged = 0``, ``"false"`` or ``"no"`` therefore ranked its
-    structure as a converged survivor, the exact verdict the field exists to refuse. The
+    template writing ``converged = 0``, ``"false"`` or ``"no"`` would rank its structure
+    as a converged survivor, the exact verdict the field exists to refuse. The
     numeric fields have a shape guard at this boundary; this is the flag's.
     """
     if value is None or isinstance(value, bool):
@@ -178,7 +179,7 @@ SCRIPT_OUTPUT: tuple[OutputField, ...] = (
     # is what makes an exhausted run a NOT_CONVERGED failure — ledgered, and retried from its
     # best geometry by `lifecycle.retry_unconverged` — instead of a survivor ranked against
     # converged siblings. Never assigned, it stays `None`, which `lifecycle.succeeded` reads
-    # as "not reported": the shape every non-reporting engine has always had. `_as_flag`
+    # as "not reported", what every engine that reports no verdict produces. `_as_flag`
     # is what keeps `0` and `"false"` from passing as anything but a parse failure.
     OutputField("converged", "converged", finite=False, convert=_as_flag),
 )

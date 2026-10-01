@@ -68,11 +68,11 @@ def _parse_job_id(stdout: str) -> str:
 
     Both submitters pass ``--parsable``, so the id is normally a line of its own. The scan
     is per line rather than one search over the whole output because site wrappers prepend
-    banners, and an unanchored search took the first number in one: a "90% of quota used"
-    warning became job 90, the throttler polled a job that did not exist, ``squeue``
-    reported it absent, and the whole batch was ledgered ``MISSING_OUTPUT`` while the real
-    jobs ran. The human ``Submitted batch job N`` line stays as an explicit fallback for a
-    wrapper that swallows the flag entirely.
+    banners, and an unanchored search would take the first number in one: a "90% of quota
+    used" warning would become job 90, the throttler would poll a job that does not exist,
+    ``squeue`` would report it absent, and the whole batch would be ledgered
+    ``MISSING_OUTPUT`` while the real jobs run. The human ``Submitted batch job N`` line
+    stays as an explicit fallback for a wrapper that swallows the flag entirely.
     """
     for line in stdout.splitlines():
         if m := _PARSABLE_ID_RE.match(line.strip()):
@@ -210,8 +210,7 @@ def _detected_devices() -> tuple[str, ...]:
     ``CUDA_VISIBLE_DEVICES`` takes. A MIG instance can only be selected by its handle, so on
     a MIG host set ``CUDA_VISIBLE_DEVICES`` (SLURM does) and :func:`_inherited_devices`
     supplies the real names instead — extracting MIG UUIDs from ``nvidia-smi -L`` would be a
-    genuine improvement and is deliberately out of scope here, since handing out indices is
-    what this already did.
+    genuine improvement and is deliberately out of scope here; this hands out indices.
 
     Cached for the life of the process, like :func:`current_user` above: the device set
     is a property of the host, and this is asked once per batch — per step *and* per retry
@@ -304,9 +303,9 @@ def _submit_local(script_path: str | Path, *, env: dict[str, str] | None = None)
     """
     script_path = Path(script_path)
     # Both handles enter a stack that closes them if *anything* below fails — the second
-    # open as much as the submission. Opened bare, a failure on the second one left the
-    # first with no owner at all: CPython's refcount closed it on the way out, but only
-    # after a ``ResourceWarning``, and the ordering that made it work was never stated.
+    # open as much as the submission. Opened bare, a failure on the second one would leave
+    # the first with no owner at all: CPython's refcount would close it on the way out, but
+    # only after a ``ResourceWarning``.
     # ``pop_all`` hands them over on success, where ``_LOCAL_PROCS`` owns them until
     # :func:`_local_is_finished` or :func:`terminate_local_jobs` closes them.
     runlog = script_path.with_suffix(".runlog")
@@ -360,7 +359,7 @@ def terminate_local_jobs(job_ids: Collection[str] | None = None) -> None:
 
     **An empty collection means empty, not "everything".** The scheduler passes its live job
     ids from a ``finally``, and on every clean exit that collection is empty; overloading
-    falsiness made the ordinary end of a batch mean "kill every local job this process
+    falsiness would make the ordinary end of a batch mean "kill every local job this process
     started", which is the opposite of the caller's intent and would reach another batch's
     jobs the moment anything ran two.
 
@@ -610,10 +609,11 @@ class QueueState:
 
     ``None`` when the poll never reached the scheduler. That is a third state, not the same
     as an empty set: no rows says the queue drained, ``None`` says nothing was learned.
-    Reporting the polled *ids* back as though they were rows collapsed the two, and the
+    Reporting the polled *ids* back as though they were rows would collapse the two, and the
     fabricated set differs from the real task rows every time — so a ``squeue`` alternating
-    between working and failing read as a queue moving on every single poll, and the stall
-    bound behind :attr:`~chemrefine.config.Config.job_timeout_seconds` never fired."""
+    between working and failing would read as a queue moving on every single poll, and the
+    stall bound behind :attr:`~chemrefine.config.Config.job_timeout_seconds` would never
+    fire."""
 
 
 def poll_jobs(job_ids: Collection[str], *, squeue_cmd: str = "squeue") -> QueueState:
@@ -646,10 +646,10 @@ def poll_jobs(job_ids: Collection[str], *, squeue_cmd: str = "squeue") -> QueueS
     :func:`submit` handles both the same way. Neither case can be told from a genuinely
     idle queue, so neither adds to :attr:`~QueueState.finished` — and
     :attr:`~QueueState.rows` is ``None``, saying the poll learned nothing rather than
-    inventing rows for it. Reporting the polled *ids* there instead is what made an
+    inventing rows for it. Reporting the polled *ids* there instead would make an
     intermittent ``squeue`` restart the stall clock forever: ids made up from the parents
     differ from the real task rows on every alternation, so a caller watching for movement
-    saw it on every tick.
+    would see it on every tick.
     """
     ids = set(job_ids)
     local = {jid for jid in ids if jid.startswith(_LOCAL_JOB_PREFIX)}
@@ -749,8 +749,8 @@ def submit_array(
     The chunk's manifest rides as the script's first argument — sbatch forwards
     everything after the script path to it — which the generated script captures
     into ``$CR_MANIFEST`` before anything else runs. Not through ``--export``:
-    sbatch splits that on commas, so a comma in the output path truncated the
-    variable and every task read a manifest that did not exist; the argument
+    sbatch splits that on commas, so a comma in the output path would truncate the
+    variable and every task would read a manifest that does not exist; the argument
     channel reserves no character. ``%max_concurrent`` is the scheduler-enforced concurrency cap
     (the caller computes this chunk's *share* of ``max_cores // PAL``, so all
     of a step's arrays together respect the same core budget the per-job

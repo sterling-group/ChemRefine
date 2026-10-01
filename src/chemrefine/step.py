@@ -367,10 +367,10 @@ def derive_step_key(
     cache anyway, and the actionable error arrives at rendering.
 
     A path-valued option (:data:`chemrefine.config.STEP_OPTION_PATHS`) is keyed by its
-    **basename**. The loader resolved it to an absolute path so the job can find the file,
-    and the same config over the same model bytes then derived a different row key at
-    every directory it ran from: a tree copied off a cluster missed its cache on
-    ``resume`` and was refused by ``rebuild-cache`` as a different configuration. The
+    **basename**. The loader resolves it to an absolute path so the job can find the file;
+    keyed by that path, the same config over the same model bytes would derive a different
+    row key at every directory it runs from, and a tree copied off a cluster would miss its
+    cache on ``resume`` and be refused by ``rebuild-cache`` as a different configuration. The
     file's *bytes* are pinned by :func:`chemrefine.cache.option_file_digests` under the
     same option name, so the basename is all the key needs from the string — enough to
     tell two same-byte files with different names apart, and nothing that names a machine.
@@ -447,9 +447,9 @@ def run_step(
     """
     engine = engine if engine is not None else get_engine(step_cfg.engine)
     ctx = build_context(config, step_cfg, prev_state, engine)
-    # Derived once, here, and passed down as a value. Every route below needs the same
-    # answer to "would this configuration have written the cache on disk", and each used
-    # to re-derive it from whatever context it held. See `cache.StepKey`.
+    # Derived once, here, and passed down as a value: every route below needs the same
+    # answer to "would this configuration have written the cache on disk". See
+    # `cache.StepKey`.
     key = derive_step_key(ctx, step_cfg, engine)
     ctx.step_dir.mkdir(parents=True, exist_ok=True)
     # Narrow once, here, instead of asserting the capability again with a cast at
@@ -751,16 +751,16 @@ def _incremental_step_outcome(
         len(current) - len(changed),
         len(changed),
     )
-    # The resolution half of the stamp is carried forward from the stored one: it
-    # describes the `attemptK/` children on disk, and those are still the previous
-    # submission's until the resolution pass below replaces them. Stamped current here, a
-    # driver killed anywhere in the hours between this write and that pass left old-search
-    # attempts under a current-search stamp — adoptable by `rebuild-cache`, whose search
-    # guard reads exactly this stamp, and trusted by the next resume's label check. The
-    # current halves are written only once the resolution they describe exists (after
-    # `finalize`, cache first, then provenance — `_restamp`). Rows and fingerprint stamp
-    # early as every route's do: they describe round-1 outputs, which the archive of the
-    # condemned rows makes honest.
+    # The resolution half of the stamp is carried forward from the stored one: it describes
+    # the `attemptK/` children on disk, and those are still the previous submission's until
+    # the resolution pass below replaces them. Stamped current here, a driver killed
+    # anywhere in the hours between this write and that pass would leave old-search attempts
+    # under a current-search stamp — adoptable by `rebuild-cache`, whose search guard reads
+    # exactly this stamp, and trusted by the next resume's label check. The current halves
+    # are written only once the resolution they describe exists (after `finalize`, cache
+    # first, then provenance — `_restamp`). Rows and fingerprint stamp early as every
+    # route's do: they describe round-1 outputs, which the archive of the condemned rows
+    # makes honest.
     stamp = key.manifest_stamp()
     stamp["criterion_key"] = provenance.criterion_key
     stamp["search_key"] = provenance.search_key

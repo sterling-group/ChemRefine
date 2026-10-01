@@ -68,9 +68,9 @@ def translate_argv(argv: list[str], subcommands: Collection[str]) -> list[str]:
 
     # Anything the legacy parser did not claim rides through to Typer verbatim, so a
     # *current* flag on a legacy-shaped invocation is honoured or refused by the real
-    # grammar — never silently dropped. Dropping was how `chemrefine x.yaml --dry-run`
-    # became the cache-invalidating `run x.yaml`: the one flag that promises "do not
-    # execute" was discarded, and the run started before the warning could matter.
+    # grammar — never silently dropped. Dropped, `chemrefine x.yaml --dry-run` would
+    # become the cache-invalidating `run x.yaml`: the one flag that promises "do not
+    # execute" discarded, and the run started before the warning can matter.
     new_argv = (["-v"] if ns.verbose else []) + [command, ns.input_yaml, *step, *unknown]
     if ns.maxcores is not None:
         new_argv += ["--maxcores", str(ns.maxcores)]

@@ -89,12 +89,12 @@ class ComputeBackend(ABC):
     (:class:`~chemrefine.engines.mlip.train.base.TrainerBase` states it: an ABC where
     an explicit declaration channel exists, Protocols across package boundaries). The
     declaration channel is :class:`ExtOptServed` — an engine *names* its backend in
-    ``calculator_cls`` — and both shipped backends already subclassed this class for
-    its :meth:`settings_from_args` default, so the relationship was nominal in
-    practice. As a ``runtime_checkable`` Protocol it was structural only on paper:
-    no production ``isinstance`` ever tested it, while subclassing manufactured
-    conformance — every stub arrived as an ellipsis body returning ``None``, so a
-    class implementing nothing passed every check and failed as a 500 per geometry.
+    ``calculator_cls`` — and both shipped backends subclass this class for its
+    :meth:`settings_from_args` default. A ``runtime_checkable`` Protocol would be
+    structural only on paper: nothing in production tests it with ``isinstance``, and
+    subclassing a Protocol manufactures conformance — every stub an ellipsis body
+    returning ``None`` — so a class implementing nothing would pass every check and fail
+    as a 500 per geometry.
     Abstract hooks close that: an incomplete backend cannot be instantiated, and
     Python's own error names the missing methods.
 
@@ -173,12 +173,12 @@ class ExtOptServed(Protocol):
     The registry's side of the contract the ExtOpt engines already declare: ``backend`` is
     the name the server's ``--backend`` flag takes, and ``calculator_cls`` is the
     :class:`ComputeBackend` it loads. A capability detected via ``isinstance`` like every
-    other one in ``engines/`` (:mod:`chemrefine.engines.api` sets the rule) — this used to
-    be the subsystem's one ``getattr`` duck-probe, which said the same thing without the
-    type checker watching either side of it.
+    other one in ``engines/`` (:mod:`chemrefine.engines.api` sets the rule), where a
+    ``getattr`` duck-probe would say the same thing without the type checker watching
+    either side of it.
 
     ``runtime_checkable`` on data members checks only that both attributes *exist* — the
-    same evidence the probe read — while the static half now holds the registry's reads to
+    same evidence such a probe reads — while the static half holds the registry's reads to
     the declared types.
     """
 

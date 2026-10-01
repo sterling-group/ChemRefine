@@ -31,8 +31,8 @@ logger = logging.getLogger(__name__)
 
 # The five directives this builder re-adds, matched WITH their value, so an owned option
 # is stripped out of a header line without taking its neighbours: sbatch accepts several
-# options per `#SBATCH` line, and dropping the whole line silently discarded whatever
-# shared it (`#SBATCH --time=… --output=…` lost its `--time`). The value alternatives
+# options per `#SBATCH` line, and dropping the whole line would discard whatever shares
+# it (`#SBATCH --time=… --output=…` would lose its `--time`). The value alternatives
 # cover `=v`, `="a b"`, and the space-separated `--flag v` / `--flag "a b"` forms; the
 # trailing lookahead is the prefix guard, so `--ntasks-per-node` / `--ntasks-per-core`
 # never match — after `--ntasks` the empty value alternative still demands whitespace or
@@ -130,15 +130,11 @@ def read_header(template_path: Path) -> SlurmHeader:
 _SCRATCH_CLEANUP = 'scratch_kept=false; cd "$OUTPUT_DIR" && rm -rf "$WORK_DIR"'
 """On-exit scratch removal shared by the per-job and array scripts.
 
-Unconditional on both paths. :func:`build_script` once took a ``save_scratch`` flag that
-swapped this for a keep-and-announce line, but it was a v1 concept carried into the
-rewrite's signature and never wired to anything — no config knob, no caller — so it was
-removed rather than left as a knob nobody could reach. The engine-owned equivalents are the
-ones that work, and there are two of them: an engine copies a directory home by naming it in
-``output_dirs`` (``pyscf-extopt``'s ``tensors/``), or runs its own teardown by returning it as
-:attr:`~chemrefine.state.RunBlock.cleanup` (``qchem``'s ``options.save``, which copies
-``$QCSCRATCH/$QCSAVE``; the ExtOpt server stop). Both are honoured on the array path as well
-— where a builder flag would have had to be added twice.
+Unconditional on both paths: no config knob keeps scratch. An engine that needs something
+out of it has two ways, both honoured on the array path as well: it copies a directory home
+by naming it in ``output_dirs`` (``pyscf-extopt``'s ``tensors/``), or runs its own teardown
+by returning it as :attr:`~chemrefine.state.RunBlock.cleanup` (``qchem``'s
+``options.save``, which copies ``$QCSCRATCH/$QCSAVE``; the ExtOpt server stop).
 
 ``scratch_kept`` stays in the runlog: the footer is a published artifact, the field still
 reports truthfully, and changing that format is a decision of its own."""
@@ -249,7 +245,7 @@ def _apply_single_node(sbatch: tuple[str, ...], single_node: bool) -> tuple[str,
     span. ``True`` is the ExtOpt case (:meth:`~chemrefine.engines.api.JobExecutable.
     single_node`): N tasks for ORCA's ranks *and* one process threading N, which is only
     right on one machine. The directive is written by the script rather than asked of
-    every header, because a header that forgot it produced a job that was wrong only on
+    every header, because a header that forgets it produces a job that is wrong only on
     the partitions that split it — the failure that is never reproduced on a laptop. A
     header's own ``--nodes`` is stripped in place so the two cannot disagree.
     """
@@ -532,8 +528,8 @@ def build_array_script(
     may ``set`` or ``shift`` the positional parameters — and loudly (``${1:?}``)
     when missing. An argument rather than ``--export=…,CR_MANIFEST=<path>``
     because sbatch splits ``--export`` on commas: a legal comma anywhere in the
-    output path truncated the variable, and every task of the array read a
-    manifest that did not exist. The argument channel has no such character.
+    output path would truncate the variable, and every task of the array would read a
+    manifest that does not exist. The argument channel has no such character.
     """
     _refuse_shell_unsafe(("output_dir", output_dir), ("scratch_dir", scratch_dir))
     sbatch = _apply_single_node(

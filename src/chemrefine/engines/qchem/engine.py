@@ -156,8 +156,8 @@ class QchemEngine(JobEngine):
         Strict, over the engine's share of the mapping (:meth:`~chemrefine.config.StepConfig.
         engine_options`, which keeps the NMS knobs out of the read): every knob here reaches
         the command line and the SLURM layout, and nothing else reads the mapping, so a
-        misspelled one has no reader to fall back on. Read leniently, ``core: 8`` was
-        dropped and the job ran on one thread at full wall-clock cost.
+        misspelled one has no reader to fall back on. Read leniently, ``core: 8`` would be
+        dropped and the job would run on one thread at full wall-clock cost.
         """
         return self.options_cls.from_raw(ctx.step_cfg.engine_options())
 
@@ -269,17 +269,15 @@ class QchemEngine(JobEngine):
     def extra_header_fields(self, ctx: StepContext) -> tuple[tuple[str, object], ...]:
         """Record which qchem binary ran in the runlog header — as raw text, never ``$QC``.
 
-        ORCA's raw-value convention, deliberately not :meth:`_executable`'s quoted
-        invocation. This used to record ``"$QC/bin/qchem"`` on the belief that the header
-        heredoc would expand ``$QC`` "to the run's real root when set" — but the header
-        executes *before* the run block that exports ``QC``, under the script's
-        ``set -euo pipefail``, where an unset ``$QC`` in a heredoc is fatal. Every job
-        configured the documented way (``executables: {qc: …}``, no explicit ``qchem``)
-        died at its own header, before the trap was armed: no footer, no copy-back, the
-        whole step ledgered ``output missing``. The recorded value is now the configured
-        path text itself, derived by the same precedence :meth:`_executable` uses —
-        and :func:`chemrefine.job_log.bash_header` refuses any ``$``-carrying field
-        value outright, so this cannot quietly regress.
+        The configured path text itself, derived by the same precedence
+        :meth:`_executable` uses, and deliberately not its quoted invocation; never
+        ``$QC``. The header executes *before* the run block that exports ``QC``, under the
+        script's ``set -euo pipefail``, where an unset ``$QC`` in a heredoc is fatal, so
+        every job configured the documented way (``executables: {qc: …}``, no explicit
+        ``qchem``) would die at its own header, before the trap is armed: no footer, no
+        copy-back, the whole step ledgered ``output missing``.
+        :func:`chemrefine.job_log.bash_header` refuses any ``$``-carrying field value
+        outright.
         """
         explicit = ctx.executables.get("qchem")
         qc = ctx.executables.get("qc")

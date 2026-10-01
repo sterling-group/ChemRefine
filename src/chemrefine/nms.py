@@ -385,10 +385,10 @@ class NmsRound:
     interrupted earlier run, a manual copy — is all it would take for them to disagree,
     silently, about which exploration a winner was promoted from.
 
-    That is also what lets every parent's children share one queue. Submitting them per
-    parent, as this module used to, built a :class:`~chemrefine.throttle.Throttler` per parent
-    and drained it before the next one started: 50 unresolved parents meant 50 sequential
-    batches, each using one parent's worth of the core budget and idling the rest.
+    That is also what lets every parent's children share one queue. Submitted per parent,
+    they would need a :class:`~chemrefine.throttle.Throttler` per parent, drained before the
+    next one starts: 50 unresolved parents would be 50 sequential batches, each using one
+    parent's worth of the core budget and idling the rest.
     """
 
     def __init__(self, ctx: StepContext, opts: NmsOptions) -> None:
@@ -844,8 +844,8 @@ def reattempt_nms(
     NMS round-2 is then re-run for them and the merged result is re-cached.
 
     Resubmitting only the ``MISSING_OUTPUT`` parents and re-parsing everyone else's round-1
-    file left a truncated or crashed round 1 failing the same way on every ``resume`` —
-    the one outcome ``rerun-errors`` is documented to repair.
+    file would leave a truncated or crashed round 1 failing the same way on every
+    ``resume`` — the one outcome ``rerun-errors`` is documented to repair.
 
     **Why only the re-run parents are archived**, where
     :func:`chemrefine.step._resubmit_failed` archives everything it re-runs. Reusing round 1

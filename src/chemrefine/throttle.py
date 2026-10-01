@@ -39,10 +39,10 @@ class GpuBudget:
     """How many GPU jobs may run at once, and which devices they may be pinned to.
 
     One value because the two facts are one decision and have to agree. A count without the
-    matching devices is what let :meth:`Throttler.assign_device` hand out index ``0`` on a
-    host where the run had been granted devices ``2`` and ``3``: the budget was the host's
-    total and the pin was the lowest free *index*, so jobs landed on hardware the run did
-    not own.
+    matching devices would let :meth:`Throttler.assign_device` hand out index ``0`` on a host
+    where the run is granted devices ``2`` and ``3``: the budget would be the host's total
+    and the pin the lowest free *index*, so jobs would land on hardware the run does not
+    own.
 
     ``devices`` is empty exactly when chemrefine is not the one placing GPUs — under SLURM,
     where ``--gres`` does it and :attr:`count` is effectively unlimited. Locally the two
@@ -73,13 +73,12 @@ class StallDeadline:
     """How long a wait may go **without progress** — what ``job_timeout_seconds`` means.
 
     One definition for every wait in the codebase. Both polling loops
-    (:meth:`Throttler.wait_for_completion` and :func:`chemrefine.slurm.wait_for_jobs`)
-    used to carry their own arithmetic and raise their own
-    :class:`~chemrefine.errors.ThrottleTimeoutError`, and they drifted: one restarted the
-    clock whenever a job completed, the other only when a whole *array* did, so the same
-    number meant a stall bound on one path and a total-runtime bound on the other. A shared
-    object cannot drift — what remains per-caller is what counts as progress, which is
-    genuinely different (a completion here, any scheduler activity there).
+    (:meth:`Throttler.wait_for_completion` and :func:`chemrefine.slurm.wait_for_jobs`) raise
+    their :class:`~chemrefine.errors.ThrottleTimeoutError` through this one object, so the
+    same number is a stall bound on both; with arithmetic of their own, one could restart
+    the clock whenever a job completes and the other only when a whole *array* does. What
+    remains per-caller is what counts as progress, which is genuinely different (a
+    completion here, any scheduler activity there).
 
     ``None`` waits forever, which is the default: under SLURM the partition's own time limit
     already bounds a job, and a deadline chemrefine invents on top of that can only fire

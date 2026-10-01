@@ -34,10 +34,10 @@ from chemrefine.io import read_xyz_frames
 
 # Both markers are anchored to their own lines, which is where Q-Chem reads them. Matched
 # anywhere, the literal text ``$molecule`` inside a ``$comment`` block starts the match and
-# the *comment's* ``$end`` closes it — so a template whose comment merely mentioned the
-# block name had the generated geometry spliced into its comment and Q-Chem ran job 1 on
-# the template's own placeholder geometry instead. The shipped starter's comment was
-# exactly such a mention.
+# the *comment's* ``$end`` closes it — so a template whose comment merely mentions the
+# block name would have the generated geometry spliced into its comment, and Q-Chem would
+# run job 1 on the template's own placeholder geometry instead. The shipped starter's
+# comment is such a mention.
 _MOLECULE_BLOCK_RE = re.compile(
     r"^[ \t]*\$molecule\b.*?^[ \t]*\$end[ \t]*$", re.IGNORECASE | re.DOTALL | re.MULTILINE
 )

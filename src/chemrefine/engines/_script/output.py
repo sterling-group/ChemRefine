@@ -89,13 +89,13 @@ def _load_output_json(
     or not anyone remembered to add it to a tuple in this module.
 
     ``required`` means present **and non-null**, and the document must be a mapping at all.
-    Judged by key presence alone, ``{"energy_hartree": null}`` sailed through: the null was
-    skipped by every later read, and ``ParsedResult`` raised a bare ``TypeError`` for its
-    missing argument — outside the :class:`OutputParseError` family
-    :func:`chemrefine.lifecycle._parse_job` contains, so one structure's odd output ended
-    the whole run with a traceback instead of a ledgered failure. A top-level ``null`` or
-    list escaped the same way, one line earlier. The generated footer can write none of
-    these — the trigger is a template that writes its output document itself, which the
+    Judged by key presence alone, ``{"energy_hartree": null}`` would pass: every later read
+    skips the null, and ``ParsedResult`` would raise a bare ``TypeError`` for its missing
+    argument — outside the :class:`OutputParseError` family
+    :func:`chemrefine.lifecycle._parse_job` contains, so one structure's odd output would
+    end the whole run with a traceback instead of a ledgered failure. A top-level ``null``
+    or list would escape the same way, one line earlier. The generated footer can write none
+    of these — the trigger is a template that writes its output document itself, which the
     script engines document as the user's right.
 
     ``src`` is what the messages call the document — ``out_path`` itself when ``None``.
@@ -177,7 +177,7 @@ def _require_finite(value: Any, *, what: str, label: str, src: str) -> float:
     served to every later step. Refused here, both become this one ledger entry.
     """
     # ``bool`` first: ``float(True)`` is ``1.0``, so a JSON ``true`` — a flag assigned to
-    # the wrong name — read as one Hartree, or as a coordinate, without a word. Refused
+    # the wrong name — would read as one Hartree, or as a coordinate, without a word. Refused
     # here, once, for every numeric field the sweep visits.
     if isinstance(value, bool):
         raise OutputParseError(

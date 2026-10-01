@@ -10,13 +10,13 @@ library.
 Why one registry and not two
 ----------------------------
 
-Because ``task_name: mace_off`` names **one library** whether a step trains a model or runs
-one, and the environment it needs is the same environment either way. Two registries said that
-in prose and implemented it as a copy: the packaging triple was declared once per registry
-rather than once per library, as was the dispatch rule and the task-key list, with nothing to
-catch them drifting. The triple is what resolves *which environment a step launches from*, so a
-drift is silent at import and surfaces as a step provisioned into one env and launched
-expecting another.
+Because ``task_name: mace_off`` names **one library** whether a step trains a model or runs one,
+and the environment it needs is the same environment either way. Two registries would say that
+in prose and implement it as a copy: the packaging triple declared once per registry rather than
+once per library, as would be the dispatch rule and the task-key list, with nothing to catch
+them drifting. The triple is what resolves *which environment a step launches from*, so a drift
+is silent at import and surfaces as a step provisioned into one env and launched expecting
+another.
 
 Merging them makes two things true by construction rather than by discipline: a trainable task
 is a runnable task, and it resolves the same environment in both directions.
@@ -101,20 +101,15 @@ the boxed energy is the molecule's own."""
 class CalculatorSpec:
     """Everything a builder may read — filled and vetted by the dispatch, never by hand.
 
-    **This frozen value is the whole calculator-builder contract.** The previous contract
-    was four keyword arguments plus ``**_``, stated in docstrings and enforced by nothing
-    — which is how three shipped builders came to silently swallow a knob the dispatch
-    was passing (``model_path`` on sevenn and orb, ``model_name`` on chgnet): a keyword
-    that lands in a catch-all vanishes without a trace. A single positional spec has no
-    catch-all to vanish into; a builder that ignores a field ignores it *visibly*, in
-    code a reviewer can read.
+    **This frozen value is the whole calculator-builder contract.** Keyword arguments plus
+    ``**_`` would be stated in docstrings and enforced by nothing: a keyword that lands in a
+    catch-all vanishes without a trace. A single positional spec has no catch-all to vanish
+    into; a builder that ignores a field ignores it *visibly*, in code a reviewer can read.
 
-    ``weights`` arrives already existence-checked (the dispatch's job, done once —
-    previously five pasted copies of the same ``is_file()`` idiom, one per builder).
-    ``charge`` and ``multiplicity`` are ``None`` when the caller did not say — the door
-    for charge-aware libraries (AIMNet2's calculator takes a total charge; ``mace_omol``
-    reads one), which the old four-knob shape could not express. A builder for a
-    charge-blind library simply never reads them.
+    ``weights`` arrives already existence-checked (the dispatch's job, done once for every
+    builder). ``charge`` and ``multiplicity`` are ``None`` when the caller did not say — the
+    door for charge-aware libraries (AIMNet2's calculator takes a total charge;
+    ``mace_omol`` reads one). A builder for a charge-blind library simply never reads them.
 
     The builder's *return* stays ``Any`` deliberately: ASE calculators are an untyped
     third-party surface, and a home-grown protocol over them would be aspirational
@@ -226,10 +221,9 @@ class MlipLibrary:
         metadata.
 
         The decorator is the gate: a builder that is not a single-parameter callable is
-        refused **here**, at import of the module that declares it. The old shape —
-        keyword arguments plus a catch-all — was checked by nothing, and three shipped
-        builders silently swallowed a knob the dispatch was passing before anyone
-        noticed; arity is the property a signature can actually prove, so it is proven.
+        refused **here**, at import of the module that declares it. Keyword arguments plus
+        a catch-all can be checked by nothing; arity is the property a signature can
+        actually prove, so it is proven.
         """
 
         def _wrap(fn: CalculatorBuilder) -> CalculatorBuilder:

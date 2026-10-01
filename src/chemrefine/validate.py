@@ -152,11 +152,10 @@ def validate_config_text(text: str, *, base_dir: Path | None = None) -> Validati
     deprecations: list[ValidationIssue] = []
     try:
         # A reporting-only pass over the legacy vocabulary, before the model runs. The
-        # rewrites happen anyway inside `Config.model_validate` below — the point is that
-        # until now they announced themselves to a *logger*, so a config using a spelling
-        # slated for removal in 3.0 came back from here with `ok` and an empty warnings
-        # list. That is the whole contract for the agent, the GUI's Validate button and
-        # every MCP client, and it was quietly telling them the file was clean. `normalize`
+        # rewrites happen anyway inside `Config.model_validate` below; this pass puts them
+        # in the report, which is the whole contract for the agent, the GUI's Validate
+        # button and every MCP client — heard only by a logger, a config using a spelling
+        # slated for removal in 3.0 would come back `ok` with no warnings. `normalize`
         # is idempotent and pure, so running it twice costs a dict copy and nothing else;
         # `report=` suppresses its logging so the pass below still speaks exactly once.
         # The suppress is for a refusal (`options: 3`), not a deprecation — and *here*
@@ -172,7 +171,7 @@ def validate_config_text(text: str, *, base_dir: Path | None = None) -> Validati
             )
         # `model_validate`, not `Config(**raw)`: splatting imposes a str-keys rule pydantic
         # never sees, so a non-string key — YAML 1.1 reads an unquoted `on:` as a boolean —
-        # raised a bare TypeError past both handlers below. pydantic's own answer is a
+        # would raise a bare TypeError past both handlers below. pydantic's own answer is a
         # ValidationError row ("Keys should be strings") like any other finding.
         config = Config.model_validate(raw)
     except ValidationError as e:
@@ -188,9 +187,8 @@ def validate_config_text(text: str, *, base_dir: Path | None = None) -> Validati
         config = resolve_relative_paths(config, base=base_dir.resolve())
     issues_list, warnings_list = _inspect_steps(config)
     # A report row, not only the load-time log line: `chemrefine validate`, the GUI and
-    # every MCP client read this report and nothing else, and a log-only warning told
-    # them all `ok` — the same finding-only-for-stderr-watchers class the deprecation
-    # sink closed for legacy spellings.
+    # every MCP client read this report and nothing else, and a log-only warning would
+    # tell them all `ok` — the class the deprecation sink closes for legacy spellings.
     warnings_list += [
         ValidationIssue(
             loc=("executables", tool),
@@ -203,10 +201,10 @@ def validate_config_text(text: str, *, base_dir: Path | None = None) -> Validati
         for tool, value in config.missing_executable_paths()
     ]
     # The seed is the first file every run reads and the one file the per-step checks never
-    # look at: `input:` pointing at nothing was `ok` here with no row, and ASE's traceback at
-    # the run. A warning like the template's, not an issue — the file may be written later
-    # (`build_structures`) or exist only on the cluster the config is for, and `save_config`
-    # must still be able to write the config.
+    # look at: without this row, `input:` pointing at nothing would be `ok` here and an ASE
+    # traceback at the run. A warning like the template's, not an issue — the file may be
+    # written later (`build_structures`) or exist only on the cluster the config is for, and
+    # `save_config` must still be able to write the config.
     if config.input is not None and not config.input.exists():
         warnings_list.append(
             ValidationIssue(
@@ -255,8 +253,7 @@ def undeclared_options(step: StepConfig) -> str | None:
     engine's model declares. So a key outside every declared set changes nothing, and a typo of
     a real knob looks exactly like one. The sentence is shared by :func:`validate_config_text`'s
     report and the run's own preflight walk (:func:`chemrefine.pipeline.run`), so the two cannot
-    describe the same mistake differently — or one of them fail to mention it, which is what a
-    ``resume`` after an edit used to get.
+    describe the same mistake differently — or one of them fail to mention it.
 
     The engine is resolved here rather than passed in because both callers have already
     established it resolves: the report skips an unregistered engine before this point and the
@@ -460,9 +457,9 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
         # next path-valued knob is covered by being declared, and read off the engine's own
         # model rather than the raw dict, like every declared knob. A warning and never a
         # refusal: the shipped tutorials point `model_path` at a product an earlier step
-        # trains, which does not exist until that step has run. A typo, by contrast, used to
-        # pass every pre-run check and fail inside the job's library loader — after the
-        # labelling steps upstream of a training step had run for days.
+        # trains, which does not exist until that step has run. A typo, by contrast, would
+        # otherwise pass every pre-run check and fail inside the job's library loader —
+        # after the labelling steps upstream of a training step have run for days.
         for key in STEP_OPTION_PATHS:
             value = getattr(declared, key, None)
             if isinstance(value, str) and not Path(value).is_file():
@@ -535,7 +532,8 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
     if (clash := shared_template_clash(config)) is not None:
         # A run serves both steps the same file, so the config is runnable; the scaffold
         # and the template editor refuse it. A warning here, because the run is not
-        # broken — and a row, because the very next command was otherwise the first to say.
+        # broken — and a row, because otherwise the very next command would be the first to
+        # say.
         warnings.append(ValidationIssue(loc=("steps",), kind="template", message=clash))
     return issues, warnings
 

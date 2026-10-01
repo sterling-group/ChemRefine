@@ -100,13 +100,13 @@ class CalculationEngine(Protocol):
     name: ClassVar[str]
     """The canonical YAML ``engine:`` spelling, on the class.
 
-    A ``ClassVar``, not an instance attribute, because that is what every engine declares and
-    what :func:`register` requires: the gate runs on the class without constructing anything,
-    so an engine's ``__init__`` never runs at import of the package that defines it. Declared
-    as a plain ``name: str``, the Protocol said an *instance* variable — which no engine has,
-    so ``type[Engine]`` did not satisfy it and any function annotating this Protocol had to
-    take ``object`` instead. That is a typing lie in the load-bearing direction: it is the
-    contract every consumer narrows from.
+    A ``ClassVar``, not an instance attribute, because that is what every engine declares
+    and what :func:`register` requires: the gate runs on the class without constructing
+    anything, so an engine's ``__init__`` never runs at import of the package that defines
+    it. Declared as a plain ``name: str``, the Protocol would say an *instance* variable —
+    which no engine has — so ``type[Engine]`` would not satisfy it, and a function
+    annotating this Protocol would have to take ``object`` instead. That is a typing lie in
+    the load-bearing direction: it is the contract every consumer narrows from.
     """
 
     def prepare(self, ctx: StepContext) -> StepInputs:
@@ -153,9 +153,9 @@ NULL_SINK: CompletionSink = _NullSink()
 
 ``run_batch`` takes a sink always, never ``None``, and this is what "no sink" means. That is
 what lets there be **one** submission loop: a queue driven by a sink that never adds to it
-submits exactly what it was given and drains it, which is the whole of what the old
-fixed-batch path did. Keeping the two apart would mean two loops answering the same questions
-about the same budget, differing only in whether anyone was listening.
+submits exactly what it was given and drains it — a fixed batch is that case, not a second loop.
+Keeping the two apart would mean two loops answering the same questions about the same budget,
+differing only in whether anyone was listening.
 """
 
 
@@ -245,10 +245,10 @@ class WhitespacePathIntolerant(Protocol):
     interpolates.
 
     A capability rather than a rule in :mod:`chemrefine.config`, and that placement is the
-    whole point. Held at config load it made *validity depend on where a project sits on
-    disk*: a relative ``output_dir`` inherits the config file's directory, so an mlip-only
-    workflow under ``~/My Drive`` — which runs perfectly well — was refused, and this
-    repository's own example suite went red whenever the checkout path contained a space.
+    whole point. Held at config load it would make *validity depend on where a project sits
+    on disk*: a relative ``output_dir`` inherits the config file's directory, so an mlip-only
+    workflow under ``~/My Drive`` — which runs perfectly well — would be refused, and this
+    repository's own example suite would fail whenever the checkout path contains a space.
     The engine that cannot express the path is the one that should refuse it, and it refuses
     the *resolved* path it is about to write, which is also what closes the symlinked-parent
     case that a check on the configured value cannot see.
@@ -270,8 +270,8 @@ class AuxFileConsuming(Protocol):
     (``%DOCKER GUEST "../templates/cl.xyz"``), a point-charge file — and the job's
     result then depends on that file's *bytes* exactly as it depends on the template
     text. The template digest covers only the path string, so without this hook an
-    edit to the referenced file changed every job's answer while every fingerprint
-    stood still, and ``resume`` served results computed from the old file.
+    edit to the referenced file would change every job's answer while every fingerprint
+    stands still, and ``resume`` would serve results computed from the old file.
 
     A capability rather than a rule in :mod:`chemrefine.cache` because only the engine
     knows its template grammar: what counts as a reference in an ORCA ``.inp`` is not a
@@ -383,10 +383,9 @@ class ParsedResult:
     displaces along.
 
     ``frequencies`` is the whole mode table in the same index space, of which
-    ``imaginary_freqs`` is a subset. NMS only ever needed the imaginary ones, so for a long
-    time only those were kept and every real mode's frequency was thrown away at the parse
-    boundary — leaving anything that named a mode afterwards (a viewer's mode list,
-    :func:`chemrefine.agent_tools.analyze_mode`) with an index and no cm⁻¹ to put beside it.
+    ``imaginary_freqs`` is a subset: NMS needs the imaginary ones, and anything naming a
+    mode afterwards (a viewer's mode list, :func:`chemrefine.agent_tools.analyze_mode`)
+    needs a cm⁻¹ beside every index.
     """
 
     symbols: tuple[str, ...]
@@ -469,8 +468,7 @@ class JobExecutable(Protocol):
         Read from the step's own input where the program reads it — ORCA's ``%maxcore``,
         Q-Chem's ``mem_total`` — and already carrying the engine's headroom rule, so the
         script builder can compare it against the header's allocation whole. ``None``
-        leaves the header's memory policy untouched, which is what every engine did before
-        this existed.
+        leaves the header's memory policy untouched.
         """
         ...
 

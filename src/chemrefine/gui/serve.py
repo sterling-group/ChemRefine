@@ -65,13 +65,11 @@ def _opens_a_window() -> bool:
     """Whether handing the URL to ``webbrowser`` opens a window rather than seizing this
     terminal.
 
-    This used to be a ``DISPLAY`` check, and ``DISPLAY`` is the wrong question. ``ssh -X``
-    sets it on a login node that has no graphical browser at all, and ``webbrowser``
-    registers the console browsers — lynx, w3m, links — whenever ``TERM`` is set, so it
-    then hands the URL to one of those. Their ``open()`` *waits* for the child, so a text
-    browser draws over the user's shell and the server does not start until they quit it:
-    exactly the outcome this guard was written to prevent, reached through the branch it
-    did not check.
+    ``DISPLAY`` alone is the wrong question. ``ssh -X`` sets it on a login node that has no
+    graphical browser at all, and ``webbrowser`` registers the console browsers — lynx,
+    w3m, links — whenever ``TERM`` is set, so it would hand the URL to one of those. Their
+    ``open()`` *waits* for the child, so a text browser would draw over the user's shell and
+    the server would not start until they quit it.
 
     :class:`webbrowser.BackgroundBrowser` is the discriminator. It is the class every
     windowed launcher registers as, and the only one whose ``open()`` returns without
@@ -102,7 +100,7 @@ def _is_remote_session() -> bool:
     """Whether this shell arrived over SSH — the case a forwarding recipe exists for.
 
     Consulted only to decide whether to *also* print the recipe, never to decide whether
-    to launch a browser. That distinction is what keeps the old rationale intact:
+    to launch a browser. That distinction matters:
     tmux/screen and batch jobs drop ``SSH_CONNECTION``, so it must not gate the launch —
     but a session that does carry it is one where a local tunnel beats whatever the
     forwarded display is doing, and saying so costs two lines.
@@ -119,7 +117,7 @@ def _log_forwarding_recipe(port: int) -> None:
     host = fields[2] if len(fields) == 4 else "<the host you ssh to>"
     # Worded for both callers: this prints when nothing opened here *and* when something
     # did but the session is remote, where a tunnel still beats a forwarded display.
-    # "no browser here" was true only of the first and would have been a lie in the second.
+    # "no browser here" is true only of the first.
     logger.info("to reach it from your machine: ssh -L %d:127.0.0.1:%d %s", port, port, host)
     logger.info(
         "or once in ~/.ssh/config on your machine — Host %s / LocalForward %d 127.0.0.1:%d — "

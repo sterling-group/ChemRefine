@@ -85,12 +85,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def _require_finite(energy: Any, gradient: Any) -> None:
     """Refuse a non-finite energy or gradient component before it leaves the server.
 
-    Every other numeric boundary in the package refuses ``nan`` / ``inf`` by name; this
-    was the one that did not, and it is the one that feeds numbers *back into* a running
-    calculation: Flask serialises ``NaN`` bare, the bridge accepts it, and ORCA read
-    ``nan`` out of its ``.engrad``. A model that cannot evaluate a geometry (two centres
-    driven together, an out-of-distribution structure, a diverged SCF) is a backend
-    failure like any other, and it takes the same 500 with the same correlation id.
+    Every other numeric boundary in the package refuses ``nan`` / ``inf`` by name, and this
+    one feeds numbers *back into* a running calculation: Flask serialises ``NaN`` bare, the
+    bridge would accept it, and the program would read ``nan`` out of its ``.engrad``. A
+    model that cannot evaluate a geometry (two centres driven together, an
+    out-of-distribution structure, a diverged SCF) is a backend failure like any other, and
+    it takes the same 500 with the same correlation id.
     """
     values = [float(energy), *(float(component) for row in gradient for component in row)]
     if not all(math.isfinite(value) for value in values):
@@ -218,9 +218,9 @@ def main() -> int:
 
     # Probed after logging is configured and before anything imports them, so a missing
     # server stack is an actionable line in the ``--log-file`` the run block tails on
-    # failure. Importing first crashed before the log file existed, and the job reported
-    # ``cat: …server_….log: No such file or directory`` instead of the reason — with the
-    # traceback stranded in the job's ``.err``, which nothing pointed at.
+    # failure. Importing first would crash before the log file exists, and the job would
+    # report ``cat: …server_….log: No such file or directory`` instead of the reason — with
+    # the traceback stranded in the job's ``.err``, which nothing points at.
     #
     # A module already in ``sys.modules`` counts as importable — ``import`` would return
     # it — and must not reach ``find_spec``, which raises on one whose ``__spec__`` is

@@ -151,10 +151,9 @@ def _fingerprint_sha1() -> hashlib._Hash:
     the only way to reach the flag is to hand it a constructor instead. This is that
     constructor.
 
-    The gap it closes was invisible to review for a mechanical reason worth recording:
-    ruff's ``S324`` matches ``hashlib.sha1(...)`` by name and does not match
-    ``file_digest(handle, "sha1")``, so the lint-visible sites acquired the flag and the two
-    streamed ones did not. Nothing chose that asymmetry.
+    No lint catches a streamed digest without the flag: ruff's ``S324`` matches
+    ``hashlib.sha1(...)`` by name and not ``file_digest(handle, "sha1")``, so every streamed
+    site takes this constructor.
     """
     return hashlib.sha1(usedforsecurity=False)
 
@@ -219,10 +218,10 @@ def option_file_digests(options: Mapping[str, Any] | None) -> dict[str, str]:
     loader resolves and :func:`chemrefine.step.derive_step_key` keys by basename; this is
     its third reader, and the three agree by construction. Guessed from the value instead
     — every string that happens to name an existing file — the digest pins the wrong
-    things: ``backend_python`` names an interpreter, so patching Python in place re-ran
-    every finished step of a workflow that had merely named it, and a value never meant
-    as a path resolved against the working directory, so a step keyed differently
-    depending on where the driver was launched from. A knob that names a file is declared
+    things: ``backend_python`` names an interpreter, so patching Python in place would
+    re-run every finished step of a workflow that merely names it, and a value never meant
+    as a path would resolve against the working directory, keying a step by where the
+    driver is launched from. A knob that names a file is declared
     in that list, and the declaration is what makes it one.
 
     A declared path whose file is missing or unreadable contributes **no entry at all**
@@ -252,8 +251,9 @@ def aux_file_digests(references: Mapping[str, Path]) -> dict[str, str]:
     :func:`option_file_digests`, with the latter's rationale applying verbatim: a
     template that quotes a docking guest or point-charge file makes every job's result
     depend on that file's bytes, while the template digest covers only the *path
-    string* — so editing the referenced file in place left every fingerprint standing
-    and ``resume`` served results computed from the old file. Which strings reference
+    string* — so without these digests, editing the referenced file in place would leave
+    every fingerprint standing and ``resume`` would serve results computed from the old
+    file. Which strings reference
     which files is the engine's reading, not this module's
     (:class:`chemrefine.engines.api.AuxFileConsuming`); this digests the enumeration it
     is handed, streamed like :func:`option_file_digests` and with its same escape — a
@@ -627,9 +627,9 @@ def _write_cache_file(path: Path, data: bytes) -> None:
     ``atomic_write`` itself stays raw: the config writers (:func:`chemrefine.agent_tools.
     save_config`, the GUI's save) call it for the user's own file and answer their own
     error. Here the file is the cache's, and the docs promise "cache corrupt or unwritable"
-    the cache's exit code and the ``rebuild-cache`` advice — which the bare ``OSError`` from
-    a read-only ``_cache/`` (another account's tree, a full or read-only mount) never
-    reached: it escaped every handler as a traceback with exit 1.
+    the cache's exit code and the ``rebuild-cache`` advice — which a bare ``OSError`` from
+    a read-only ``_cache/`` (another account's tree, a full or read-only mount) would not
+    reach: it would escape every handler as a traceback with exit 1.
     """
     try:
         atomic_write(path, data)
@@ -706,8 +706,8 @@ def _read_arrays(path: Path) -> Any:
         # a torn archive or a member whose CRC no longer matches in ``BadZipFile``; a short
         # or garbled member in ``ValueError``, which is also numpy's refusal of an object
         # array. Named by layer the list can be checked complete — one test per layer holds
-        # it — where a list grown from surprises let a truncated ``rsync`` reach the user
-        # as a traceback with exit 1, in place of this error and its rebuild advice.
+        # it — where a list grown from surprises lets the next unlisted failure reach the
+        # user as a traceback with exit 1, in place of this error and its rebuild advice.
         raise CacheError(f"corrupt coordinate sidecar at {path}: {e}") from e
 
 
@@ -719,7 +719,7 @@ def read_json(path: Path, default: Any, *, label: str) -> Any:
     treat a corrupt or unreadable sidecar as fatal rather than silently continuing from
     an empty state. Unreadable is in the net for the reason the lease and sidecar readers
     give: ``is_file`` is true of a mode-000 document or another user's, and left to the
-    reader the ``PermissionError`` escaped every handler as a traceback with exit 1,
+    reader the ``PermissionError`` would escape every handler as a traceback with exit 1,
     where the docs promise the cache's own code and the ``rebuild-cache`` advice.
     """
     if not path.is_file():
@@ -744,13 +744,13 @@ def _require_finite_arrays(structure: Structure, step_dir: Path) -> None:
     ``allow_nan=False``, so a non-finite value in the *document* is refused — but the
     coordinates and forces are the one part of a record that never reaches it: they are moved
     out by :func:`_split_arrays` and written to the ``arrays.npz`` sidecar, which is a raw
-    buffer with no such check. So the very fields the document protects most carefully were
-    the only ones that could be stored unexamined.
+    buffer with no such check. Unchecked here, the very fields the document protects most
+    carefully would be the only ones stored unexamined.
 
-    What that cost is not a crash but a silence. A NaN geometry round-trips ``save`` → ``load``
-    intact, and :func:`structure_digest` hashes it to a perfectly stable key, so the step
-    validates, the fingerprint matches, and every later step is computed from coordinates
-    that are not numbers — with nothing anywhere reporting a problem.
+    What that would cost is not a crash but a silence. A NaN geometry round-trips
+    ``save`` → ``load`` intact, and :func:`structure_digest` hashes it to a perfectly stable
+    key, so the step validates, the fingerprint matches, and every later step is computed
+    from coordinates that are not numbers — with nothing anywhere reporting a problem.
 
     A backstop, and meant to stay one: the parse boundaries and
     :func:`chemrefine.pipeline._state_from_frames` refuse these values where a person can act
@@ -1030,9 +1030,9 @@ def has_results(step_dir: Path) -> bool:
 
     The document, not the directory: ``_cache/`` also holds the manifest, the failure
     ledger and the lease ledger, and it outlives :func:`discard_step`. A status read that
-    probed the directory reported a step ``rerun`` had just discarded as cached, and the
-    GUI drew the tick. Existence only — validity against a key is :func:`load_if_valid`'s
-    question, and it needs the key.
+    probed the directory would report a step ``rerun`` has just discarded as cached, and
+    the GUI would draw the tick. Existence only — validity against a key is
+    :func:`load_if_valid`'s question, and it needs the key.
     """
     return _cache_path(step_dir).is_file()
 

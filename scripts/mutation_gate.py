@@ -58,7 +58,7 @@ REPO = Path(__file__).resolve().parent.parent
 #: so a timeout on the *named test file* counts as caught: that file did not complete,
 #: which is a red build. The whole-suite fallback is a different case — it runs only after
 #: the named file stayed green, and its timeout is as likely the suite outgrowing this
-#: budget on a slow runner as a hang. Reported as caught, that was a false green from the
+#: budget on a slow runner as a hang. Reported as caught, it would be a false green from the
 #: one gate whose job is to refuse them; it is reported as *inconclusive* instead, and
 #: fails the gate (see :class:`Verdict`).
 TIMEOUT_SECONDS = 300
@@ -602,8 +602,8 @@ MUTATIONS: tuple[Mutation, ...] = (*_BUNDLED, *engine_mutations(REPO))
 #: are living documentation and several tests resolve their templates; ``README.md`` and
 #: ``docs`` because ``test_docs_examples`` validates every full config their prose shows.
 #: The last four are ``test_docs_urls``'s: it reads the canonical ``site_url``/``repo_url``
-#: out of ``mkdocs.yml`` at *import* time — so that one's absence was a collection error
-#: rather than a failing test, and the whole gate refused to run — and it resolves every
+#: out of ``mkdocs.yml`` at *import* time — so its absence would be a collection error
+#: rather than a failing test, and the whole gate would refuse to run — and it resolves every
 #: self-referential ``blob/main/…`` URL against the tree, which is what names the three
 #: top-level files the prose links to.
 #: An incomplete copy fails on its own, which :func:`_assert_baseline_is_green` catches
@@ -674,9 +674,9 @@ def stale_anchors(root: Path, mutations: Sequence[Mutation]) -> list[str]:
     """One report line per mutation whose ``old`` is not unique, or whose ``tests`` is gone.
 
     Every anchor is checked before any is applied, and every stale one is reported
-    together. Failing on the first made a single moved line hide the state of the whole
-    gate: the run stopped there, the mutations after it never executed, and the exit code
-    said "gate failed" without saying that most of it had not run.
+    together. Failing on the first would let a single moved line hide the state of the
+    whole gate: the run would stop there, the mutations after it would never execute, and
+    the exit code would say "gate failed" without saying that most of it had not run.
 
     Checked against the repository rather than the scratch copy, so a stale anchor costs
     milliseconds instead of a tree copy plus a baseline suite. Public because
@@ -688,7 +688,7 @@ def stale_anchors(root: Path, mutations: Sequence[Mutation]) -> list[str]:
         source = root / mutation.path
         if not source.is_file():
             # The same report line the tests half gets: a `git mv` of a mutated source
-            # file otherwise raised FileNotFoundError out of main() — the one moved file
+            # file would otherwise raise FileNotFoundError out of main() — the one moved file
             # hiding the state of the whole gate, which is the failure this function's
             # aggregate report exists to prevent.
             problems.append(
@@ -713,9 +713,9 @@ def stale_anchors(root: Path, mutations: Sequence[Mutation]) -> list[str]:
 def _prepended_path(environ: Mapping[str, str], first: Path) -> str:
     """``PYTHONPATH`` with *first* ahead of whatever the caller already had on it.
 
-    Replacing the variable outright dropped a developer's own entries — on a login node
-    whose dependencies arrive through ``PYTHONPATH`` the baseline then failed to import
-    them, and the gate reported its copy "not green" with a message pointing at the copy.
+    Replacing the variable outright would drop a developer's own entries — on a login node
+    whose dependencies arrive through ``PYTHONPATH`` the baseline would fail to import
+    them, and the gate would report its copy "not green" with a message pointing at the copy.
     """
     existing = environ.get("PYTHONPATH", "")
     return os.pathsep.join([str(first), existing]) if existing else str(first)
@@ -792,7 +792,7 @@ def _run_suite(work: Path, env: dict[str, str], target: str | None = None) -> Ve
     if completed.returncode == 5:
         # pytest's "no tests collected": the named file was emptied, or everything in it
         # is deselected by the default addopts. Nothing ran, so nothing was caught — and
-        # "non-zero means red" reported it caught, the false green this gate exists to
+        # "non-zero means red" would report it caught, the false green this gate exists to
         # refuse. `stale_anchors` cannot see it: `is_file()` is true of a 0-byte file.
         # A named file that ran nothing is simply not a catch, and `main` then asks the
         # whole suite, which is where the verdict really comes from; the whole suite

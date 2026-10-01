@@ -157,11 +157,9 @@ EXIT_CODES: dict[str, int] = {
 }
 """Every class above, mapped to the code it exits with — the taxonomy, derived once.
 
-Two callers used to derive this for themselves, and one of them derived it wrongly:
-``agent_tools`` built it from ``ChemRefineError.__subclasses__()``, which is direct
-subclasses only, so :class:`OutputTerminationError` was missing from every failure payload
-that advertised the whole taxonomy. Scanning this module's own namespace is what catches an
-indirect subclass, and living beside the classes is what stops a third copy appearing.
+Scanned from this module's own namespace, which catches an indirect subclass:
+``ChemRefineError.__subclasses__()`` lists direct subclasses only and would miss
+:class:`OutputTerminationError`. Beside the classes, it is the one table every caller reads.
 """
 
 
@@ -171,9 +169,9 @@ ENDPOINT_UNREACHABLE: tuple[type[BaseException], ...] = (URLError, OSError, HTTP
 Every fetch this package makes goes through :func:`fetch` and catches this, after any
 narrower class it words for itself, rather than a tuple of its own: spelled per site,
 ``HTTPException`` — a reply that arrives and then breaks the protocol, ``IncompleteRead``
-on a dropped connection — reached one fetch and not the other. ``URLError`` is DNS and a
-refused connection (and, as ``HTTPError``, an HTTP status a caller that wants the code
-catches first); ``OSError`` is a socket that fails or times out (``TimeoutError`` is
+on a dropped connection — would reach one fetch and not the other. ``URLError`` is DNS
+and a refused connection (and, as ``HTTPError``, an HTTP status a caller that wants the
+code catches first); ``OSError`` is a socket that fails or times out (``TimeoutError`` is
 one); ``HTTPException`` is the broken protocol. What a *body* that did arrive means —
 undecodable, not JSON, empty — is each caller's own verdict and stays beside it.
 """

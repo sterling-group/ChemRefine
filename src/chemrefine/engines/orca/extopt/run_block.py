@@ -31,10 +31,10 @@ its download — before the job gives it up.
 
 Its own ceiling, and a long one, because the load is the one startup phase whose length
 is not the server's to control: a foundation checkpoint is a gigabyte, and a compute
-node's link to the model hub is whatever the site provides. The readiness budget above
-used to cover it, and a first run on a cold cache died as "did not become ready" at two
-minutes for a download that would have finished. A stuck download still ends here rather
-than at the partition's wall-time."""
+node's link to the model hub is whatever the site provides. Under the readiness budget
+above, a first run on a cold cache would die as "did not become ready" at two minutes
+for a download that would have finished. A stuck download still ends here rather than at
+the partition's wall-time."""
 
 
 def server_command(
@@ -85,9 +85,9 @@ def build_extopt_run_block(
     ``interpreter`` is the Python that hosts the server — the same one
     :func:`server_command` was given — and it is what polls ``/healthz``: a stdlib
     ``urllib`` one-liner, so the probe needs nothing the job does not already have.
-    ``curl`` used to do it, and nothing declared or checked for it; on a node image
-    without one every iteration failed with exit 127, the loop ran its full
-    ``SERVER_TIMEOUT`` and the job died with "did not become ready" — the wrong
+    A ``curl`` probe would be a binary nothing declares or checks for: on a node image
+    without one every iteration would fail with exit 127, the loop would run its full
+    ``SERVER_TIMEOUT``, and the job would die with "did not become ready" — the wrong
     diagnosis for a missing binary.
 
     The ``cleanup`` stops the server — ``kill -TERM`` + ``wait``, which gives it a chance to

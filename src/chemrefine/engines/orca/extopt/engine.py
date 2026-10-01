@@ -189,10 +189,10 @@ class ExtOptOrcaEngine(OrcaEngine):
         The ORCA invocation itself comes from :meth:`OrcaEngine.orca_command`, so this
         path runs the identically-quoted command the plain ORCA path does.
 
-        This is the engine that made :class:`~chemrefine.engines.api.RunBlock` two fields:
-        its gradient server has to be stopped however the job ends, and expressing that as a
-        ``trap`` inside the body replaced the script's own ``EXIT`` handler. Now the teardown
-        is returned as ``cleanup`` and the infra layer places it.
+        Its gradient server has to be stopped however the job ends, and a ``trap`` inside
+        the body would replace the script's own ``EXIT`` handler, so the teardown is returned
+        as the :class:`~chemrefine.engines.api.RunBlock`'s ``cleanup`` and the infra layer
+        places it.
         """
         # The granted cores, not the template's ask: the `.inp` rewrite and the SLURM
         # directives both clamp to max_cores, and the server's thread export must say the

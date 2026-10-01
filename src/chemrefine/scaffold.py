@@ -169,8 +169,8 @@ def scaffold_templates(config: Config, *, overwrite: bool = False) -> tuple[Path
         config.template_dir.mkdir(parents=True, exist_ok=True)
         for plan in plan_templates(config):
             # Steps sharing a template each carry a plan (per-step lookups need one), so
-            # the file itself is written once: `exists` was snapshotted before any write,
-            # and re-writing per sharing step re-did identical work at best.
+            # the file itself is written once: `exists` is snapshotted before any write, so
+            # re-writing per sharing step would redo identical work at best.
             if plan.path in written or (plan.exists and not overwrite):
                 continue
             # A `template:` override may name a subdirectory (or an absolute path elsewhere)

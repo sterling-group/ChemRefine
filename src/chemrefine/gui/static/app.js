@@ -9,23 +9,20 @@
  */
 "use strict";
 
-// The chat settings that persist, as one vocabulary. They were nine bare string literals
-// across three methods — read, write and reset — while the recents key next door was already
-// a named constant. A typo in any one of the nine is a setting that silently stops
-// persisting, which nothing would have caught.
+// The chat settings that persist, as one vocabulary that read, write and reset share: a
+// typo in a bare literal is a setting that silently stops persisting.
 const CHAT_KEYS = { provider: "cr-provider", model: "cr-model", baseUrl: "cr-baseurl" };
 const CHAT_DEFAULTS = { provider: "ollama", model: "", baseUrl: "" };
 
 // How many result rows a page holds. One constant: the fetch limit and the two paging
-// buttons were three literals across two files, so changing the limit made the buttons page
-// by the old stride — skipping or repeating rows, with nothing to say so.
+// buttons read it, so the buttons always page by the limit fetched.
 const RESULTS_PAGE = 20;
 
 const SPHERE_SCALE = 0.25;
 // The one style the model is drawn with. Beside SPHERE_SCALE rather than written out at each
 // draw path, because the label push is computed from that same radius: with the literal
-// copied into the draw calls, changing it moved every sphere and left every label pushed by
-// the radius the spheres used to have.
+// copied into the draw calls, changing it would move every sphere and leave every label
+// pushed by the old radius.
 const MODEL_STYLE = { stick: { radius: 0.12 }, sphere: { scale: SPHERE_SCALE } };
 
 // Three facts about the vendored bundle set the shape of everything below. All three were
@@ -63,9 +60,9 @@ const MODEL_STYLE = { stick: { radius: 0.12 }, sphere: { scale: SPHERE_SCALE } }
 //
 // 3. Dropping the background box costs the halo outright: the bundle never calls
 //    strokeText, shadowBlur or shadowColor, and `borderThickness` strokes the background
-//    box rather than the glyphs. Legibility now rests on the glyphs being bold and roughly
+//    box rather than the glyphs. Legibility rests on the glyphs being bold and roughly
 //    atom-sized. The tightest case is nitrogen, #3050F8 against black at 3.6:1 — the
-//    large-text floor, which these now are.
+//    large-text floor, which these meet.
 const LABEL_STYLE = {
   // The texture's resolution, not its size on screen — LABEL_INK_HEIGHT sets that. 32 is
   // not inherited taste, it is where the resampling is least bad. The renderer draws into a
@@ -92,20 +89,16 @@ const LABEL_STYLE = {
 // A bold digit's cap height as a fraction of fontSize. The bundle sizes the label canvas
 // `1.25 * fontSize + 2 * padding` tall and puts the baseline at `fontSize + padding`, so
 // roughly half of that texture is leading and descender air no glyph ever touches — which
-// is why sizing a label by its canvas height (what LABEL_WORLD_HEIGHT used to do) describes
-// something the eye cannot see. Measured from the three faces `sans-serif:bold` resolves to
-// on Linux: Noto Sans Bold 0.725, DejaVu Sans Bold 0.742, Liberation Sans Bold 0.698. The
-// ±3% spread moves a label by well under a pixel.
+// is why sizing a label by its canvas height describes something the eye cannot see.
+// Measured from the three faces `sans-serif:bold` resolves to on Linux: Noto Sans Bold
+// 0.725, DejaVu Sans Bold 0.742, Liberation Sans Bold 0.698. The ±3% spread moves a label
+// by well under a pixel.
 const LABEL_CAP_EM = 0.72;
 
 // Angstroms of scene a digit's cap spans — the ink, not the texture. The yardstick is the
 // hydrogen blob, the smallest sphere the viewer draws: 2 * vdwRadii.H * SPHERE_SCALE =
 // 2 * 1.2 * 0.25 = 0.600 A. At 0.30 a digit's cap is exactly half of that, so the number
 // reads as smaller than the smallest atom it can name instead of sitting on it like a lid.
-//
-// It was 0.36 until each label started taking its own atom's depth, which made near labels
-// about 16% larger than the shared-depth figure they had been eyed against — so this is
-// mostly that back out again.
 const LABEL_INK_HEIGHT = 0.3;
 
 // Angstroms of scene the ink may span horizontally before the label is scaled down to fit.
@@ -124,9 +117,9 @@ const LABEL_INK_WIDTH = 0.71;
 const LABEL_CLEARANCE = 0.15;
 
 // Legibility bounds on the drawn ink, in CSS pixels — a bound on what is seen, not on the
-// scale factor. The old LABEL_SCALE_MIN/MAX were multiples of the texture's height, so they
-// silently meant a different on-screen size the moment fontSize moved. These are the same
-// two limits at today's texture: 0.35 * 0.72 * 32 = 8.1 px and 4 * 0.72 * 32 = 92 px.
+// scale factor. A bound in multiples of the texture's height would mean a different
+// on-screen size the moment fontSize moves; at this texture the two limits are
+// 0.35 * 0.72 * 32 = 8.1 px and 4 * 0.72 * 32 = 92 px.
 // Six, not eight, and it falls with the ink for the same reason the width budget does: it
 // is a fixed pixel size, so it is what a label stops shrinking at — and left at 8 while the
 // ink dropped, every structure past about 10 A on a small pane would have been pinned there
@@ -236,9 +229,9 @@ function builder() {
       // typed for. It lives here for as long as the tab does, and goes out per request.
       apiKey: "",
       // The preflight verdict, in its own state rather than sharing `detail`, which
-      // chatAvailability() overwrites unconditionally. Sharing them meant every probe
-      // wiped the check result — invisible until the panel became a tab that re-probes
-      // on each switch. `ok: null` is "not checked yet", distinct from a failed check.
+      // chatAvailability() overwrites unconditionally. Shared, every probe would wipe the
+      // check result, and the panel re-probes on each tab switch. `ok: null` is "not
+      // checked yet", distinct from a failed check.
       check: { ok: null, findings: [], busy: false },
       // Field shapes per provider, served by /api/agent/availability. Never copied into
       // this file: a second copy of the URLs would beat CHEMREFINE_LLM_BASE_URL.
@@ -254,8 +247,9 @@ function builder() {
       filename: "input.yaml",
       onPick: null,
       // The typed-path box. Every other path field on this page can be typed or pasted;
-      // this modal was the one place a path could only be walked to, which is a long way
-      // to click on a cluster tree whose interesting directory is eight levels down.
+      // without this box the modal would be the one place a path can only be walked to,
+      // which is a long way to click on a cluster tree whose interesting directory is eight
+      // levels down.
       typed: "",
     },
     // The last few workflows opened, newest first. Paths only, never file contents: this
@@ -290,11 +284,10 @@ function builder() {
       // URL lost its query — same server, wrong key). Copied onto the static docs
       // site, the probe still *answers* — the docs host says 404, it never refuses
       // the connection — and only schema.json exists, baked at docs build time. And a
-      // bookmark on a dead port gets no answer at all: the fetch throws. Each world
-      // used to be inferred from the wrong signal (a 401 read as "no server" sent the
-      // local page into playground mode; a 404 read as "server said no" hid the
-      // published playground behind a stale-token banner), so the dispatch reads the
-      // actual status.
+      // bookmark on a dead port gets no answer at all: the fetch throws. The dispatch
+      // reads the actual status, because the signals are easy to misread: a 401 read as
+      // "no server" would send the local page into playground mode, and a 404 read as
+      // "server said no" would hide the published playground behind a stale-token banner.
       let data = null;
       let status = null; // stays null when nothing answered on this origin at all
       let adopted = false; // whether a launched config already went through adopt()
@@ -329,7 +322,6 @@ function builder() {
         if (data.initial) {
           this.savedPath = data.initial.path;
           // Through adopt(), like every other route from YAML text to a populated form.
-          // This used to be a fourth hand-written copy, which is exactly how it drifted.
           adopted = await this.adopt(data.initial.yaml_text);
         }
       } else {
@@ -349,8 +341,8 @@ function builder() {
       if (this.savedPath) {
         // A launched config is on disk and the form now mirrors it, so record that —
         // otherwise savedText stays "" and dirty() answers true from the first paint,
-        // which made the agent's very first write arrive as "you have unsaved edits"
-        // for a user who had typed nothing at all.
+        // which would make the agent's very first write arrive as "you have unsaved edits"
+        // for a user who has typed nothing at all.
         await this.recordOnDisk();
       } else {
         this.syncYaml();
@@ -649,10 +641,9 @@ function builder() {
       });
       // Three panels name a step by number, and after renumbering that number means a
       // different step (or none) — so each must let go rather than keep serving the old
-      // one under a selector that has silently snapped back to "—". Each was added later
-      // than the last and inherited the bug this guard was written for; the Run panel's
-      // target was the third and went longest without it, which disabled Run and Resume
-      // (`:disabled="!!runTarget"`) against a step that no longer existed.
+      // one under a selector that has silently snapped back to "—". A stale Run target
+      // would disable Run and Resume (`:disabled="!!runTarget"`) against a step that no
+      // longer exists.
       const gone = (chosen) =>
         chosen && !this.cfg.steps.some((s) => String(s.step) === String(chosen));
       if (gone(this.resultsStep)) {
@@ -720,10 +711,8 @@ function builder() {
       return true;
     },
     // The tail of adopt(), split out only because init()'s *empty* form needs the same
-    // treatment without any YAML to parse. Keeping the starter step in here is what stops
-    // the two paths diverging again: it used to live in init() alone, so a stepless file
-    // opened from the command line showed one seeded step and the same file opened through
-    // Open… showed an empty builder.
+    // treatment without any YAML to parse. The starter step lives here, so a stepless file
+    // shows the same seeded step whether opened from the command line or through Open….
     refreshForm() {
       this.seedWorkflowDefaults(); // the form shows them; the file states them
       this.rekeySteps();
@@ -766,9 +755,8 @@ function builder() {
       }
     },
     // The published playground has no server behind it, so everything that reads or writes
-    // the disk stops here. One wording in one place: the three hand-written refusals had
-    // drifted into three different sentences for the same fact, and the next caller would
-    // have written a fourth. Answers whether it refused, so a caller is one line.
+    // the disk stops here. One wording in one place, so every caller refuses the same fact
+    // in the same sentence. Answers whether it refused, so a caller is one line.
     playgroundRefuses(what) {
       if (!this.staticMode) return false;
       this.flash = `${what} needs the local chemrefine gui — pip install 'chemrefine[gui]'`;
@@ -823,8 +811,7 @@ function builder() {
         this.refreshStatus();
       }
     },
-    // One page forward or back. The stride lived in the markup twice and in the fetch once,
-    // so changing the limit made the buttons page by the old one.
+    // One page forward or back, by the RESULTS_PAGE the fetch uses.
     pageResults(direction) {
       this.loadResults(this.resultsStep, this.runResults.offset + direction * RESULTS_PAGE);
     },
@@ -851,11 +838,10 @@ function builder() {
     // ---------------- panels ----------------
     showTab(side, id) {
       this.tabs[side] = id;
-      // Opening the agent re-probes availability, the job the panel's `<details>` toggle
-      // used to do. Note what this must NOT do: touch the check verdict. Under a
-      // `<details>` the probe fired on open and close; as a tab it fires on every switch,
-      // so anything destructive in here becomes a per-click side effect — which is why
-      // arming lives in armCheck(), driven by settings changes rather than by visibility.
+      // Opening the agent re-probes availability. Note what this must NOT do: touch the check
+      // verdict. As a tab it fires on every switch, so anything destructive in here becomes a
+      // per-click side effect — which is why arming lives in armCheck(), driven by settings
+      // changes rather than by visibility.
       if (side === "left" && id === "agent") this.chatAvailability();
       // Mounted here rather than at init(), and this is not a preference. 3Dmol sizes its
       // canvas from the container's offsetWidth, and compensates for a hidden one only
@@ -868,8 +854,8 @@ function builder() {
     },
 
     // A structure id and a mode number belong to the step that was showing when they were
-    // typed. Carrying them to the next step is how one bad request became permanent: the
-    // mode box is hidden on the seeds view, so its value was invisible as well as wrong.
+    // typed. Carried to the next step, one bad request would become permanent: the mode
+    // box is hidden on the seeds view, so its value would be invisible as well as wrong.
     chooseViewerStep(step) {
       if (String(step) === String(this.viewer.step)) return;
       this.viewer.step = step;
@@ -941,9 +927,10 @@ function builder() {
           const tag = document.createElement("script");
           tag.src = "static/vendor/3dmol.min.js"; // relative, like every other asset here
           tag.onload = () => {
-            // A bundle that loads but defines nothing used to resolve `undefined`, and
-            // every later Show then returned at mountViewer's guard in silence — no note,
-            // no flash, for the rest of the session. Load and define are separate facts.
+            // A bundle that loads but defines nothing is a rejection: resolved as
+            // `undefined`, every later Show would return at mountViewer's guard in silence —
+            // no note, no flash, for the rest of the session. Load and define are separate
+            // facts.
             if (window.$3Dmol) return resolve(window.$3Dmol);
             this._glLib = null;
             reject(new Error("the 3Dmol bundle loaded but defined nothing"));
@@ -1042,9 +1029,7 @@ function builder() {
     // has something to show without a workflow open — a dropped or opened file — and is off
     // for the pane's own Show, which cannot be reached without one.
     //
-    // Both draw paths come through here. They used to be eight identical statements written
-    // twice, with a comment on this one claiming the sharing that was not happening, and
-    // they had already drifted.
+    // Both draw paths come through here.
     async mountViewerFor(text, { force = true } = {}) {
       await this.mountViewer({ force });
       if (!this._gl) return;
@@ -1093,10 +1078,9 @@ function builder() {
     // Label, its SpriteMaterial, its GL texture and its backing canvas alive — so without
     // this a session that opens ten structures keeps the labels of all ten.
     //
-    // Clearing `_atomLabels` is the other half. It used to be left set when the viewer was
-    // emptied, which meant every camera move for the rest of the session re-sized and
-    // re-pushed sprites that were no longer in the scene, and forced one extra full show()
-    // on a blank canvas to do it.
+    // Clearing `_atomLabels` is the other half. Left set when the viewer is emptied, every
+    // camera move for the rest of the session would re-size and re-push sprites that are no
+    // longer in the scene, and force one extra full show() on a blank canvas to do it.
     discardLabels() {
       if (!this._gl) return;
       // Read off the viewer's own list, not off `_atomLabels`, so it covers the a/b/c
@@ -1117,8 +1101,7 @@ function builder() {
       this._labelViewKey = "";
       this._gl.removeAllLabels();
       // Freed after the detach, never before: the sprites have to be off the scene before
-      // their textures go. That constraint is real and is not the one above — the two used
-      // to sit in one comment as though they were the same rule.
+      // their textures go. That constraint is real and is not the one above.
       for (const label of stale) label.dispose();
     },
     // The cell and the atom labels, redrawn together. They are one operation because
@@ -1165,8 +1148,8 @@ function builder() {
             // of width (borderThickness is forced to 0 when showBackground is false), so the
             // glyphs own LABEL_CAP_EM * fontSize of the first and all but the padding of the
             // second. Sizing off these is what lets one budget bound the height and another
-            // bound the width — the canvas box could only ever express the height, which is
-            // why a three-character label used to sprawl.
+            // bound the width — the canvas box can only ever express the height, so a
+            // three-character label would sprawl.
             inkHeight: LABEL_CAP_EM * LABEL_STYLE.fontSize,
             inkWidth: Math.max(1, label.canvas.width - 2 * LABEL_STYLE.padding),
             anchor: { x: atom.x, y: atom.y, z: atom.z },
@@ -1231,10 +1214,8 @@ function builder() {
       if (!this._gl || !this._atomLabels.length) return false;
       const view = this._gl.getView(); // [x, y, z, zoom, qx, qy, qz, qw]
       // The whole view, not a chosen subset of it. view[0..2] is modelGroup.position, and it
-      // used to be left out on the grounds that panning slides the model and the camera
-      // together — true, and enough, while every anchor was pushed along one shared view
-      // axis, because a pan cannot turn that axis. It is not enough for a push along each
-      // atom's own ray: panning changes where the camera sits relative to each atom, so a
+      // counts: panning slides the model and the camera together, but with each atom pushed
+      // along its own ray, a pan changes where the camera sits relative to each atom, so a
       // pan that returned early here would leave every label on the ray it wanted before the
       // pan — 4.4 px off its atom at the default zoom, the very error the ray push removes.
       const key = `${view.join("|")}|${this._gl.HEIGHT}`;
@@ -1290,16 +1271,16 @@ function builder() {
         const dz = cz - entry.anchor.z;
 
         // This atom's OWN depth — exactly the `w` the perspective divide uses for a point at
-        // the anchor, not an approximation of it. That is the whole of this: it is the same
-        // w the sphere beside it is drawn with. The sphere imposter offsets its billboard in
+        // the anchor, not an approximation of it. That is the whole of this: it is the same w
+        // the sphere beside it is drawn with. The sphere imposter offsets its billboard in
         // CLIP space and zeroes adjust.z, so all four corners carry the centre's w and the
-        // drawn radius is exactly r/depth. One scene-wide figure, which is what this used to
-        // compute, therefore cannot track anything — at 3Dmol's own default zoom the nearest
-        // atom of an 8 A-deep molecule sits 14% nearer than the rotation centre and the
-        // farthest 14% further, so a hydrogen at the front drew 0.52 of its own blob and an
-        // identical hydrogen at the back drew 0.68 of its own. Zoomed in three times that
-        // spread is 0.35 against 0.85. On this depth the ratio is LABEL_INK_HEIGHT / 2r at
-        // every depth, every orientation, every zoom and every pane size.
+        // drawn radius is exactly r/depth. One scene-wide figure therefore cannot track
+        // anything — at 3Dmol's own default zoom the nearest atom of an 8 A-deep molecule
+        // sits 14% nearer than the rotation centre and the farthest 14% further, so a
+        // hydrogen at the front would draw 0.52 of its own blob and an identical hydrogen at
+        // the back 0.68 of its own. Zoomed in three times that spread is 0.35 against 0.85.
+        // On this depth the ratio is LABEL_INK_HEIGHT / 2r at every depth, every orientation,
+        // every zoom and every pane size.
         //
         // The anchor, never the pushed sprite position. The push exists to clear the label
         // from its own sphere in the depth buffer, and it is element-dependent — 0.45 A for
@@ -1381,11 +1362,11 @@ function builder() {
         if (!data) {
           // Into the pane's own line as well as `flash`, which lives below the Run panel
           // and the report — a screen away from where the user is looking. Blanking this
-          // and saying nothing is what made a failure look like nothing happening.
+          // and saying nothing would make a failure look like nothing happening.
           this.viewer.note = "could not show that — see the message below";
           // A mode that cannot be drawn must not follow the user to the next structure.
-          // It is the stickiness of this one field that turned one bad request into
-          // "now I cannot show anything at all".
+          // Sticky, this one field would turn one bad request into "now I cannot show
+          // anything at all".
           this.viewer.modeIndex = "";
           return;
         }
@@ -1529,7 +1510,8 @@ function builder() {
       this.runTarget = ""; // a step number that meant something in the workflow just closed
       this.loadStructureList(); // savedPath is the new file by now, so these are its seeds
       // Nulling runStatus empties the panel; only its own @toggle and Refresh button ever
-      // refill it, so an expanded Run panel went blank on Open… and stayed blank.
+      // refill it, so without this an expanded Run panel would go blank on Open… and stay
+      // blank.
       this.refreshStatus();
       // The drawn molecule belongs to the old tree too; leaving it up (still animating)
       // reads as the new workflow's answer.
@@ -1538,8 +1520,8 @@ function builder() {
         this.discardLabels();
         this._gl.removeAllModels();
         // Detached with the models it points at. drawLabels() guards on `_model`, so
-        // leaving it set meant choosing a numbering on the now-blank canvas re-labelled —
-        // and re-boxed — the structure that had just been cleared off it.
+        // left set, choosing a numbering on the blank canvas would re-label — and re-box —
+        // the structure just cleared off it.
         this._model = null;
         this._gl.render();
       }
@@ -1699,8 +1681,7 @@ function builder() {
     },
 
     // ---------------- browse / save ----------------
-    // browseField, beside browseExec: both fill one path field from the picker. It was
-    // openBrowse, which collided with the modal opener below — same name, different job.
+    // browseField, beside browseExec: both fill one path field from the picker.
     async browseField(fieldKey) {
       await this.openBrowseWith(`Pick ${fieldKey}`, (path) => {
         this.cfg[fieldKey] = path;
@@ -1708,14 +1689,12 @@ function builder() {
       });
     },
     // Where a modal should open: beside the file being worked on, since the next path is
-    // almost always a sibling of it. Only Open… did this; Save… and the field pickers
-    // always started at $HOME even with a config open elsewhere on the disk.
+    // almost always a sibling of it. Every picker starts here.
     startDir() {
       return this.savedPath ? parentDir(this.savedPath) : null;
     },
-    // The one opener. Its three callers differed only in a mode string, a title and
-    // whether they carried an onPick — three spread-and-navigate copies whose only
-    // meaningful difference had been the one that remembered to start beside the file.
+    // The one opener; its three callers differ only in a mode string, a title and whether
+    // they carry an onPick.
     async openBrowse({ mode, title, onPick = null }) {
       this.browse = { ...this.browse, open: true, mode, onPick, title };
       await this.navigate(this.startDir());
@@ -1725,14 +1704,13 @@ function builder() {
     },
     async openConfig() {
       // The counterpart to Save…, and the only way to look at a finished run without
-      // restarting: `chemrefine gui <path>` was the single door a config could come
-      // through, and it only opens once, at launch.
+      // restarting: `chemrefine gui <path>` opens a config only once, at launch.
       await this.openBrowse({ mode: "open", title: "Open a workflow…" });
     },
     async openConfigFrom(path) {
       // Closed only once the file has actually loaded, the way saveTo() does it. Closing
-      // first meant a directory, an unreadable file or a bad ~user dismissed the browser
-      // and threw away wherever you had navigated to, leaving a flash and no way back.
+      // first would let a directory, an unreadable file or a bad ~user dismiss the browser
+      // and throw away wherever you have navigated to, leaving a flash and no way back.
       if (await this.loadConfigFrom(path, { reason: "open" })) this.browse.open = false;
     },
     async openSave() {
@@ -1781,10 +1759,9 @@ function builder() {
       if (this.browse.onPick) this.browse.onPick(this.browse.path);
       this.browse.open = false;
     },
-    // `async` so a caller can wait for the open to finish — goToTyped() needs to, and the
-    // tests that drive the click path had to sleep a microtask to work around it not being.
-    // The other two branches are still synchronous: an async function's body runs straight
-    // through until its first await.
+    // `async` so a caller can wait for the open to finish — goToTyped() needs to. The other
+    // two branches are still synchronous: an async function's body runs straight through
+    // until its first await.
     async pickFile(entry) {
       if (this.browse.mode === "open") {
         await this.openConfigFrom(entry.path);
@@ -1819,9 +1796,9 @@ function builder() {
       );
       // No hint appended on failure: `api()` has already written the server's own reason,
       // and read_template's is "template … does not exist yet (scaffold_templates writes a
-      // starter)" — which says it better. The old ` += " — run Scaffold templates first?"`
-      // was redundant when that was the reason and nonsense when it was not, gluing itself
-      // onto "the ChemRefine server is unreachable — is `chemrefine gui` still running?".
+      // starter)" — which says it better. A hint appended here would be redundant when that
+      // is the reason and nonsense when it is not (glued onto "the ChemRefine server is
+      // unreachable — is `chemrefine gui` still running?").
       if (data) this.tmpl = { open: true, step: step.step, path: data.path, text: data.text };
     },
     async saveTemplate() {

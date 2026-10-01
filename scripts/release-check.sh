@@ -277,9 +277,8 @@ imports_this_checkout "$PY"
 # Each section's own tool, checked before anything runs and only when that section does.
 # `pyproject-build` is the console script the `build` distribution ships (there is no
 # `build` binary); it stands here for the `$PY -m build` the packaging sections run.
-# Without it that step failed several minutes in — after pre-commit, mypy, two whole
-# suites and every extras resolve — on a tool this check exists to catch in the first
-# second.
+# Without it that step would fail several minutes in — after pre-commit, mypy, two whole
+# suites and every extras resolve — on a tool this check catches in the first second.
 need_tool() { [ -x "$bin/$1" ] || fail "$1 is not in $bin — run: pip install -e '.[dev]'"; }
 if selected lint; then need_tool pre-commit; fi
 if selected types; then need_tool mypy; fi
@@ -388,9 +387,9 @@ if selected live; then
 fi
 
 # The GUI's JavaScript is executed by exactly seven tests, and without a Node they *skip* —
-# so on a machine with none this gate has been passing while checking the frontend not at
-# all, the same hole the ORCA precondition above closes for tier-3. `[test]` now installs a
-# Node, so a skip here means the lookup broke, not that the machine is bare. Exported once:
+# so on a machine with none this gate would pass while checking the frontend not at all,
+# the same hole the ORCA precondition above closes for tier-3. `[test]` installs a Node, so
+# a skip here means the lookup broke, not that the machine is bare. Exported once:
 # the coverage run, the sdist run and the mutation gate all inherit it.
 export CHEMREFINE_REQUIRE_NODE=1
 
@@ -414,8 +413,7 @@ section_suite() {
 
 section_extras() {
     # Metadata only — no torch wheel is downloaded. Read out of the metadata that declares
-    # them rather than restated here, which is how CI's own hand-written list came to be
-    # missing `mlff` and `pyscf-gpu`.
+    # them rather than restated here, so no extra can be left off the list.
     local extra
     for extra in $("$PY" -c \
             "import tomllib;print(' '.join(sorted(tomllib.load(open('pyproject.toml','rb'))['project']['optional-dependencies'])))"); do
@@ -450,9 +448,8 @@ section_package() {
     "$work/twine/bin/twine" check dist/*
 
     # The sdist is the second artifact PyPI serves and a distro packager builds from it, so it
-    # gets the same proof the wheel does. It used to get none: this script built it and then
-    # installed `dist/*.whl`, which never matched the tarball — and that is how `examples/`
-    # fell out of the sdist with every gate green (5246d7a). `--help` proves the entry point
+    # gets the same proof the wheel does: the wheel's own checks never read the tarball, so a
+    # file falling out of the sdist would pass every other gate. `--help` proves the entry point
     # imports; `validate` on the shipped quickstart (its ORCA path is a placeholder, so it
     # warns and exits 0), `schema` and `engines --json` prove the installed package works.
     "$PY" -m venv "$work/smoke"
@@ -480,7 +477,7 @@ PY
 section_sdist() {
     build_package
     # The sdist ships tests and examples precisely so the suite can be run from it, and nothing
-    # else executes that suite — which is how docs/ and examples/ silently fell out of it. The
+    # else executes that suite — so a file falling out of it would otherwise go unseen. The
     # few remaining repo-only guards (.github/ and scripts/) skip themselves there with named
     # reasons.
     ( cd "$work"/chemrefine-*/ \
@@ -489,10 +486,10 @@ section_sdist() {
       && "$work/sdist-venv/bin/python" -m pytest -q -p no:cacheprovider )
 
     # The sdist also promises it can rebuild the site, which is a promise about *contents*:
-    # mkdocs.yml, the hooks, and the two root files two pages `--8<--` are all things that
-    # would fall out of the include list without a word, exactly as `examples/` did. Four
-    # seconds, and run with this environment's mkdocs rather than a second install — that
-    # proves the tarball's own docs sources are complete, which is what can rot here.
+    # mkdocs.yml, the hooks, and the two root files two pages `--8<--` are all things that would
+    # fall out of the include list without a word. Four seconds, and run with this environment's
+    # mkdocs rather than a second install — that proves the tarball's own docs sources are
+    # complete, which is what can rot here.
     "$bin/mkdocs" build --strict -f "$work"/chemrefine-*/mkdocs.yml > /dev/null
 }
 

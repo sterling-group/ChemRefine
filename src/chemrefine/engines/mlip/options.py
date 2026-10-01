@@ -187,7 +187,8 @@ class MlipTrainOptions(MlipOptions):
     """Seed for the train/validation/test split, so a re-run reproduces the same partition.
 
     Non-negative because ``numpy.random.default_rng`` refuses anything else with a bare
-    ``ValueError`` — raised in ``prepare``, after every labelling step upstream had run."""
+    ``ValueError`` — which would be raised in ``prepare``, after every labelling step
+    upstream has run."""
 
     valid_fraction: float = Field(0.1, ge=0, lt=1)
     """Share of the structures held out to validate on.

@@ -65,8 +65,8 @@ get_results` hands whole rows to agents, the GUI's results table names them in
 
 :func:`save_step_csv` selects by this tuple before writing, so the frame it assembled and
 the schema it promises cannot drift apart; ``tests/test_gui_assets.py`` compares the
-page's hardcoded names against it, so the page cannot drift from either. Renaming a column
-is still allowed — it just now has to be done here, where every reader is looking."""
+page's hardcoded names against it, so the page cannot drift from either. A column is
+renamed here, where every reader is looking."""
 
 logger = logging.getLogger(__name__)
 

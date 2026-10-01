@@ -231,12 +231,12 @@ def _parse_last_pes_coord_block(segment: str) -> list[tuple[str, float, float, f
 
     A line shaped like an atom row whose numbers are not numbers — a ``*****`` field
     overflow, a ``nan`` / ``inf`` — raises :class:`ValueError` rather than being skipped:
-    skipped, it left a shorter molecule carrying the whole molecule's energy, and nothing
-    downstream re-counts atoms (the rule :func:`~chemrefine.engines.orca.output.forces.
-    parse_forces_from_text` states for gradient rows). A line that is not shaped like an
-    atom row at all — prose, a summary line — is still skipped, which is what the
-    ``*****`` distinction is for: an overflow is a number that would not fit, and a word is
-    not a number that failed.
+    skipped, it would leave a shorter molecule carrying the whole molecule's energy, and
+    nothing downstream re-counts atoms (the rule
+    :func:`~chemrefine.engines.orca.output.forces.parse_forces_from_text` states for gradient
+    rows). A line that is not shaped like an atom row at all — prose, a summary line — is
+    still skipped, which is what the ``*****`` distinction is for: an overflow is a number
+    that would not fit, and a word is not a number that failed.
     """
     matches = list(_PES_COORD_HEADER_RE.finditer(segment))
     if not matches:

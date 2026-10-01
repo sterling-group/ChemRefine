@@ -116,11 +116,11 @@ def resolve_target(config: Config, key: str | int) -> StepConfig:
 
     **The one step lookup.** The CLI's targets, the agent tools' ``step`` arguments and
     the GUI behind them all resolve here, so one typo gets one refusal, and the refusal
-    lists what would have matched — spelled per caller, the copies drifted, and the
-    agent's answer was the one without the list. A :class:`~chemrefine.errors.ConfigError`
-    — exit 2, the documented "config invalid" code — because a target no step matches is
-    a mistake about the config's own vocabulary; as the base :class:`ChemRefineError` the
-    same typo exited 1 from the CLI and 2 from the agent tools.
+    lists what would have matched — spelled per caller, the copies would drift. A
+    :class:`~chemrefine.errors.ConfigError` — exit 2, the documented "config invalid" code
+    — because a target no step matches is a mistake about the config's own vocabulary; as
+    the base :class:`ChemRefineError` the same typo would exit 1 from the CLI and 2 from the
+    agent tools.
     """
     step = config.find_step(key)
     if step is None:
@@ -187,9 +187,9 @@ def _action_rerun_errors(config: Config, target: str | int | None) -> None:
 
     Later steps resume rather than cache-hit because the run halted at the target — that is
     what left the failures pending — so they have no cache to hit and never ran. Left
-    ``CACHE_ONLY`` they raise from :func:`chemrefine.step.run_step` for a cache that could not
-    exist, which failed the command after it had already repaired what it was pointed at, and
-    told the user to run ``resume`` when ``resume`` is what they had just run.
+    ``CACHE_ONLY`` they would raise from :func:`chemrefine.step.run_step` for a cache that
+    cannot exist, which would fail the command after it has repaired what it was pointed at,
+    and tell the user to run ``resume`` — the command they just ran.
     """
     target_step = _resolve_target_or_last(config, target)
     step_dir = config.step_dir(target_step).resolve()

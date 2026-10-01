@@ -218,9 +218,9 @@ class NmsKnobs(BaseModel):
     seed: int = Field(42, ge=0)
     """Deterministic seed for ``random`` mode selection.
 
-    Non-negative because that is what the generator behind it takes: a negative reached
-    ``numpy.random.default_rng`` as a bare ``ValueError`` at the first fan-out — after round
-    1 had run and been paid for, and outside the exit-code contract."""
+    Non-negative because that is what the generator behind it takes: a negative would
+    reach ``numpy.random.default_rng`` as a bare ``ValueError`` at the first fan-out — after
+    round 1 has run and been paid for, and outside the exit-code contract."""
 
     @classmethod
     def from_raw(cls, raw: dict[str, Any] | None) -> Self:
@@ -311,10 +311,10 @@ class StepConfig(BaseModel):
     multiplicity: int | None = Field(None, ge=1)
     """Per-step multiplicity override; falls back to ``Config.multiplicity`` when ``None``.
 
-    Held to the same floor as the workflow value: a ``0`` here reached the ORCA and
-    Q-Chem input lines and PySCF's ``spin = multiplicity - 1`` while ``chemrefine
-    validate`` said OK, so every job of the step died at the program's own input parse —
-    after the steps before it had run."""
+    Held to the same floor as the workflow value: a ``0`` here would reach every engine's
+    input as the workflow value does, with ``chemrefine validate`` saying OK, and every job
+    of the step would die at the program's own input parse — after the steps before it
+    have run."""
 
     options: dict[str, Any] = Field(default_factory=dict)
     """Engine-specific knobs (model name, basis, device, etc.). Engine decides what to read."""
@@ -445,7 +445,7 @@ class StepConfig(BaseModel):
         if v.startswith("-"):
             # Every step-targeted invocation puts the name on an argv — the CLI's and
             # `start_run`'s — where a leading hyphen parses as an option: exit 2 into
-            # an unwatched log, after a pid was already returned.
+            # an unwatched log, after a pid has been returned.
             raise ValueError("step name must not start with a hyphen (argv reads it as an option)")
         if v.isdecimal():
             # `matches` resolves an all-digit CLI target as a step *number*,
@@ -476,10 +476,9 @@ class StepConfig(BaseModel):
         """``options`` minus the NMS knobs when ``nms`` is on — the engine's own share.
 
         Two declared readers share the one mapping: the engine's options model and, with
-        ``nms: true``, :class:`NmsKnobs`. A strict engine model (``extra="forbid"``) handed
-        the whole dict refused every NMS knob as a stranger — ``target: ts`` on an ExtOpt
-        step was "Extra inputs are not permitted" — while a lenient model ignored them and
-        ORCA declares none, so only the strict engines could not sample with a knob set.
+        ``nms: true``, :class:`NmsKnobs`. Handed the whole dict, a strict engine model
+        (``extra="forbid"``) would refuse every NMS knob as a stranger, so only the strict
+        engines could not sample with a knob set.
         The partition is made here because the config is the one place that knows both
         readers; :func:`chemrefine.validate.undeclared_options` draws the same line for its
         warning. A key that is neither reader's stays in the engine's share, so a typo of an
@@ -495,7 +494,7 @@ class StepConfig(BaseModel):
         ``isdecimal``, not ``isdigit``: the two disagree on the Unicode ``No`` category —
         ``"²".isdigit()`` is ``True`` and ``int("²")`` raises — and this predicate exists
         only to guard that ``int``. A target of ``"²"`` from the CLI, an agent's
-        ``start_run`` or the GUI therefore left a raw ``ValueError``, past the module's
+        ``start_run`` or the GUI would otherwise leave a raw ``ValueError``, past the module's
         contract that every failure is a ``ChemRefineError`` carrying an exit code.
         """
         if isinstance(key, int):
@@ -576,11 +575,9 @@ bash substitutes *inside* double quotes
     # after it, and each task silently reads the wrong input or writes the wrong place.
     if "\t" in text:
         bad.add("tab")
-    # No comma rule: the manifest path once rode `sbatch --export=ALL,CR_MANIFEST=<path>`,
-    # which sbatch splits on commas, and a comma was refused here for it. The path now
-    # travels as the array script's argument (:func:`chemrefine.slurm.dispatch.submit_array`),
-    # a channel that reserves no character, so the refusal — untrue of every other site
-    # these values reach — went with the channel.
+    # No comma rule: the manifest path travels as the array script's argument
+    # (:func:`chemrefine.slurm.dispatch.submit_array`), a channel that reserves no
+    # character, and no other site these values reach reserves one.
     if bad:
         raise ValueError(
             f"{what} {text!r} contains {sorted(bad)}, which cannot be safely embedded "
@@ -597,11 +594,11 @@ def shell_unsafe_after_resolution(config: Config) -> str | None:
     so every character the rule refuses can be smuggled in through a *parent directory name*
     instead of through the YAML.
 
-    It is a real bypass of the boundary ``docs/internals/security.md`` states, and it was
-    reproduced rather than reasoned about: a config containing nothing but
-    ``output_dir: ./outputs``, placed in a directory named ``$(touch /tmp/MARKER)``, yields
-    ``export OUTPUT_DIR="…/$(touch /tmp/MARKER)/outputs"`` in the generated script — and bash
-    performs command substitution inside double quotes, so running the job created the file.
+    It is a real bypass of the boundary ``docs/internals/security.md`` states: a config
+    containing nothing but ``output_dir: ./outputs``, placed in a directory named
+    ``$(touch /tmp/MARKER)``, yields ``export OUTPUT_DIR="…/$(touch /tmp/MARKER)/outputs"``
+    in the generated script — and bash performs command substitution inside double quotes,
+    so running the job creates the file.
     The directory name is the whole payload; the user's YAML is innocent.
 
     Asked of the resolved config, therefore, and by both loaders — :func:`load_config` raises,
@@ -806,9 +803,9 @@ class Config(BaseModel):
         """``(tool, value)`` for every explicit ``executables`` path absent on this host.
 
         The one home for the predicate, read by the load-time log below **and** by
-        :mod:`chemrefine.validate`'s warning row — the log-only version reached nobody
+        :mod:`chemrefine.validate`'s warning row — a log line alone would reach nobody
         watching ``chemrefine validate``, the GUI, or an MCP client, which all read the
-        report and were told ``ok`` with no warning. A bare command name (no path
+        report and would be told ``ok`` with no warning. A bare command name (no path
         separator) is not on the list — it resolves on the executing host at submit
         time.
         """
@@ -845,9 +842,9 @@ class Config(BaseModel):
     def with_overrides(self, **updates: object) -> Config:
         """A copy with the named fields replaced, each validated by its own declared rule.
 
-        ``model_copy`` runs no validators by design, which is how a budget's floor came to
-        be spelled at every entry point that applies an override — the CLI flag, the
-        agent's ``start_run`` — each beside this model's own ``ge=1``. Here a value is
+        ``model_copy`` runs no validators by design, so without this every entry point that
+        applies an override — the CLI flag, the agent's ``start_run`` — would restate a
+        budget's floor beside this model's own ``ge=1``. Here a value is
         validated by exactly the constraint its field declares (``max_cores: ge=1``,
         ``max_gpus: ge=0``), read off the field rather than restated, so there is one
         floor and one wording, and a bad override is the same :class:`ConfigError` a bad
@@ -874,9 +871,9 @@ class Config(BaseModel):
         ``None`` means no step matches. A ``key`` that is neither a number nor a name — a
         JSON float, list or boolean off the GUI's or an agent's wire — is not a selector
         at all and is refused as a :class:`~chemrefine.errors.ConfigError`: left to
-        :meth:`StepConfig.matches` it raised a bare ``AttributeError`` (``isdecimal`` on
-        a float), past the contract that every failure carries an exit code, and a JSON
-        ``true`` — an ``int`` to :func:`isinstance` — silently selected step 1. Typed
+        :meth:`StepConfig.matches` it would raise a bare ``AttributeError`` (``isdecimal``
+        on a float), past the contract that every failure carries an exit code, and a JSON
+        ``true`` — an ``int`` to :func:`isinstance` — would select step 1. Typed
         ``object`` because this is the one funnel every wire selector passes through.
         """
         if isinstance(key, bool) or not isinstance(key, (int, str)):
@@ -981,7 +978,7 @@ def load_config(path: str | Path) -> Config:
         raise ConfigError(f"config at {p} is not a YAML mapping")
     try:
         # `model_validate`, not `Config(**raw)`: a non-string key (YAML 1.1's unquoted
-        # `on:` parses to a boolean) made the splat raise a bare TypeError past this
+        # `on:` parses to a boolean) would make the splat raise a bare TypeError past this
         # handler; pydantic itself turns it into the ValidationError caught here.
         cfg = Config.model_validate(raw)
     except ValidationError as e:

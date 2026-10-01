@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!-- Declaring an icon is also what stops the browser probing /favicon.ico at the
      root, which the server has no route for on purpose. These are served by the
-     static handler, so the log stays as quiet as the old data: no-op kept it. -->
+     static handler, so the log stays quiet. -->
 <link rel="icon" href="static/brand/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="static/brand/favicon-32.png" sizes="32x32">
 <link rel="apple-touch-icon" href="static/brand/apple-touch-icon.png">
@@ -277,9 +277,7 @@
                 <!-- One arm per kind fieldSpec() can return, not "everything that is not a
                      select". The catch-all renders a number box for a boolean or a string
                      knob, which silently writes 1 where true was meant — no NMS option is
-                     either today, so this is a trap rather than a live defect. The Sample
-                     block below had the same shape and was missing its `text` arm outright,
-                     while this comment claimed a test that did not exist. It does now:
+                     either today, so this is a trap rather than a live defect.
                      test_every_option_widget_kind_has_an_arm checks all four blocks. -->
                 <template x-if="field.kind === 'number'">
                   <input type="number" step="any" :min="field.min" :max="field.max"
@@ -363,9 +361,9 @@
     <button type="button" id="addstep" @click="addStep()">＋ Add step</button>
     </div>
     <!-- ============ Agent chat (local GUI; needs chemrefine[agent]) ============ -->
-    <!-- A div, not a details: the panel is a tab now, and #chat in style.css already
-         restates the whole card look, so it renders identically. The @toggle probe it
-         used to carry moved into showTab(). -->
+    <!-- A div, not a details: the panel is a tab, and #chat in style.css already
+         restates the whole card look, so it renders identically. Its availability probe
+         runs from showTab(). -->
     <div id="chat" x-show="tabs.left === 'agent'" style="display:none">
       <p class="muted" x-text="chat.detail"></p>
       <p class="muted" x-show="staticMode">
@@ -542,9 +540,7 @@
       </div>
       <!-- The canvas and the status line sit OUTSIDE the savedPath gate, unlike the step
            and structure controls above them, which need a workflow to name anything. A
-           dropped file needs neither — and while #viewer lived inside that gate there was
-           no element to mount into with nothing saved, so a dropped file read fine on the
-           server and then drew nowhere. -->
+           dropped file needs neither, so the viewer must exist with nothing saved. -->
       <div x-show="!staticMode">
         <!-- Numbering acts on whatever is drawn, so it lives out here with the canvas
              rather than behind the saved-workflow gate above: a file opened or dropped with
@@ -602,9 +598,9 @@
       </summary>
       <!-- The whole recovery vocabulary, rendered from the schema document's `actions`
            rather than written here: a tree whose cache predates a format, or whose NMS
-           resolution needs redoing, was fixable only from a terminal while this panel
-           offered half the vocabulary. Each button's title is the same sentence its
-           confirmation uses, because both come from the one served record. -->
+           resolution needs redoing, is fixable from this panel. Each button's title is the
+           same sentence its confirmation uses, because both come from the one served
+           record. -->
       <div class="row">
         <template x-for="action in (schema ? schema.actions : [])" :key="action.name">
           <button type="button" @click="launch(action.name)"
@@ -726,8 +722,8 @@
   <div class="dialog">
     <h3 x-text="browse.title"></h3>
     <!-- Type or paste a path, in every mode. A cluster tree's interesting directory is
-         eight levels down, and this modal was the one path field on the page that could
-         not be typed into. Enter goes; a directory navigates, anything else is taken as
+         eight levels down, and every path field on the page can be typed into, this modal
+         included. Enter goes; a directory navigates, anything else is taken as
          the chosen file. -->
     <div class="row">
       <input type="text" class="pathbox" x-model="browse.typed"

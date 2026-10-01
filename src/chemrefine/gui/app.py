@@ -17,10 +17,10 @@ URL's fragment-free query string, which the frontend keeps in memory.
 Flask is imported at module scope, the way :mod:`chemrefine.mcp_server` imports its SDK
 and for the same reason: the CLI imports *this* module inside ``except ImportError`` to
 turn a missing ``chemrefine[gui]`` into an install hint. An import deferred into
-:func:`create_app` makes that guard unreachable, so ``chemrefine gui`` without the extra
-raised a traceback past a handler written to prevent exactly that. Nothing here is
-imported by a Flask-free caller — :data:`chemrefine.gui.STATIC_DIR` is where the docs
-build gets the asset path.
+:func:`create_app` makes that guard unreachable, and ``chemrefine gui`` without the
+extra would raise a traceback past the handler written for it. Nothing here is imported
+by a Flask-free caller — :data:`chemrefine.gui.STATIC_DIR` is where the docs build gets
+the asset path.
 """
 
 from __future__ import annotations
@@ -432,10 +432,9 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
     def load() -> Any:
         """Read a config back off disk, so the builder can adopt what something else wrote.
 
-        The missing half of ``/api/save``. ``/api/bootstrap`` was the only reader and it
-        fires once, for the launch path — so when the agent saved a config, the editor
-        beside it went on showing the previous text and the user had to reload the page to
-        see what had happened.
+        The other half of ``/api/save``. ``/api/bootstrap`` fires once, for the launch
+        path, so this is how the editor adopts a config the agent saves while the page is
+        open.
 
         A missing path, a directory, an unreadable file and a binary one picked by mistake
         are all :func:`chemrefine.io.read_utf8`'s :class:`ConfigError`, which :func:`surface`
@@ -788,12 +787,12 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         try:
             # Inside the try, not above it: `Agent("gpt-5-mini")` raises `UserError` at
             # construction for a name PydanticAI cannot place, and that is neither an
-            # HTTPException nor a ChemRefineError — so `surface` re-raised it as a 500 with
-            # a traceback, for a typo in the model box. It belongs with the other
+            # HTTPException nor a ChemRefineError — so `surface` would re-raise it as a 500
+            # with a traceback, for a typo in the model box. It belongs with the other
             # outside-world failures, as the panel's 502.
             # The GUI's *current* file wins over the launch argument: the user may have
             # saved somewhere else since, and telling the agent about a path the editor
-            # left behind is how "work on the file I just saved" reached the wrong one.
+            # left behind would send "work on the file I just saved" to the wrong one.
             # `or`, not `is None`, so an empty string from a page with nothing saved yet
             # falls back rather than becoming a config_path of "".
             agent = build_web_agent(
@@ -870,7 +869,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
 
 
 def _config_payload(path: Path) -> dict[str, str]:
-    """One config file as the page wants it — the shape ``bootstrap`` has always sent."""
+    """One config file as the page wants it — the shape ``bootstrap`` sends."""
     return {"path": str(path), "yaml_text": io.read_utf8(path, what="config")}
 
 
