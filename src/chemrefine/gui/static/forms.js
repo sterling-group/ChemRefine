@@ -317,6 +317,15 @@ function apiUrl(path, params) {
  * Sentinels stay in the markup: each select has a different one ("input (seeds)", "all
  * steps", "—") meaning a different thing, and none of them is a step.
  */
+/** An engine name as the config reads `engine:` — its lower case, the spelling the registry
+ * keys (`chemrefine.config.fold_engine_name`; a test holds the two to one rule). Anything
+ * that is not a string passes through for the server to judge.
+ */
+// biome-ignore lint/correctness/noUnusedVariables: app.js and index.html are the callers
+function foldEngineName(name) {
+  return typeof name === "string" ? name.toLowerCase() : name;
+}
+
 // biome-ignore lint/correctness/noUnusedVariables: app.js is the caller
 function stepOptions(steps, chosen) {
   return (steps || []).map((step) => ({

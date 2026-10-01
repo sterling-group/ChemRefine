@@ -458,14 +458,25 @@ function builder() {
         (a, b) => (rank[a.key] ?? 99) - (rank[b.key] ?? 99),
       );
     },
-    get engineNames() {
-      return Object.keys(this.schema.engines).sort();
+    descriptorFor(step) {
+      // The step's engine as the config reads it — `engine:` in any case — so a step
+      // naming `ORCA` gets `orca`'s operations, fields and template, as the loader and
+      // the run give it. Every lookup of a step's engine goes through here.
+      return this.schema.engines?.[foldEngineName(step.engine)];
+    },
+    engineNamesFor(step) {
+      // The registered names, plus the step's own when it names none of them (a typo, or
+      // an engine this environment does not have), so the select never shows a value it
+      // cannot hold.
+      const names = Object.keys(this.schema.engines ?? {}).sort();
+      if (step.engine && !this.descriptorFor(step)) names.unshift(step.engine);
+      return names;
     },
     operationsFor(step) {
       // The engine's own declared vocabulary; an engine that declares none treats the
       // field as a label. The step's current value is offered too, so a select never
       // shows a value it cannot hold.
-      const ops = [...(this.schema.engines[step.engine]?.operations ?? [])];
+      const ops = [...(this.descriptorFor(step)?.operations ?? [])];
       if (step.operation && !ops.includes(step.operation)) ops.unshift(step.operation);
       return ops;
     },
@@ -484,8 +495,8 @@ function builder() {
         return true;
       });
     },
-    engineFields(engine) {
-      const descriptor = this.schema.engines[engine];
+    engineFields(step) {
+      const descriptor = this.descriptorFor(step);
       if (!descriptor?.options_schema) return [];
       return fieldSpecs(descriptor.options_schema, ["backend_python"]);
     },
@@ -495,18 +506,17 @@ function builder() {
       const name = byMethod[step.sample.method];
       return name ? fieldSpecs(this.schema.config.$defs[name], ["method"]) : [];
     },
-    isTemplateDriven(engine) {
-      const descriptor = this.schema.engines[engine];
-      return Boolean(descriptor?.template_driven);
+    isTemplateDriven(step) {
+      return Boolean(this.descriptorFor(step)?.template_driven);
     },
     templatePlaceholder(step) {
-      const descriptor = this.schema.engines[step.engine];
+      const descriptor = this.descriptorFor(step);
       const suffix = descriptor?.template_suffix;
       return suffix ? `step${step.step}.${suffix} (default)` : "(no template)";
     },
     passthroughKeys(step) {
       const declared = new Set(
-        engineAndNmsKeys(this.engineFields(step.engine), step.nms ? this.nmsFields : []),
+        engineAndNmsKeys(this.engineFields(step), step.nms ? this.nmsFields : []),
       );
       return Object.keys(step.options || {}).filter((key) => !declared.has(key));
     },
@@ -613,7 +623,13 @@ function builder() {
     },
 
     addStep() {
-      this.cfg.steps.push({ step: this.cfg.steps.length + 1, engine: "orca" });
+      // A new step takes the previous step's engine; the first one has none until you
+      // choose, rather than one picked for you. No key at all rather than `undefined`:
+      // the YAML dump refuses an undefined value.
+      const step = { step: this.cfg.steps.length + 1 };
+      const engine = this.cfg.steps.at(-1)?.engine;
+      if (engine) step.engine = engine;
+      this.cfg.steps.push(step);
       this.stepKeys.push(++this._uid);
       this.syncYaml();
     },

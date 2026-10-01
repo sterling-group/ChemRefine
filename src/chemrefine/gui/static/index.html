@@ -163,8 +163,12 @@
                  after the select binds, so a bare :value falls back to the first
                  option and the display lies about the state. -->
             <select @change="setEngine(index, $event.target.value)">
-              <template x-for="name in engineNames" :key="name">
-                <option :value="name" :selected="name === step.engine" x-text="name"></option>
+              <template x-if="!step.engine">
+                <option value="" selected disabled>choose an engine</option>
+              </template>
+              <template x-for="name in engineNamesFor(step)" :key="name">
+                <option :value="name" x-text="name"
+                        :selected="foldEngineName(name) === foldEngineName(step.engine)"></option>
               </template>
             </select>
           </label>
@@ -206,10 +210,10 @@
           </label>
         </div>
 
-        <div class="subform" x-show="engineFields(step.engine).length">
+        <div class="subform" x-show="engineFields(step).length">
           <h3>Engine options</h3>
           <div class="fields">
-            <template x-for="field in engineFields(step.engine)" :key="field.key">
+            <template x-for="field in engineFields(step)" :key="field.key">
               <label :title="field.doc">
                 <span x-text="field.key"></span>
                 <template x-if="field.kind === 'select'">
@@ -247,7 +251,7 @@
             </template>
           </div>
         </div>
-        <p class="muted" x-show="!engineFields(step.engine).length">
+        <p class="muted" x-show="!engineFields(step).length">
           This engine is configured through its template file — no options form.
         </p>
 
@@ -355,7 +359,7 @@
            x-text="'Untouched option keys kept as-is: ' + passthroughKeys(step).join(', ')"></p>
 
         <button type="button" class="mini" :disabled="!savedPath" @click="openTemplate(step)"
-                x-show="isTemplateDriven(step.engine) && !staticMode">Edit template…</button>
+                x-show="isTemplateDriven(step) && !staticMode">Edit template…</button>
       </details>
     </template>
     <button type="button" id="addstep" @click="addStep()">＋ Add step</button>

@@ -640,6 +640,67 @@ def test_the_panel_offers_each_provider_only_the_fields_it_can_use():
     assert out == "ollama:false:false vllm:false:false openai:false:true custom:true:true"
 
 
+def test_the_gui_folds_an_engine_name_as_the_config_does():
+    """One rule for `engine:` in any case, run in both languages over the same names."""
+    from chemrefine.config import fold_engine_name
+
+    names = ["ORCA", "Orca", "mlip_extopt", "MLIP-ExtOpt", "Q-Chem", "ÉCOLE", "İ", "ǅ"]
+    out = _run_in_node(f"console.log(JSON.stringify({json.dumps(names)}.map(foldEngineName)));")
+    assert json.loads(out) == [fold_engine_name(name) for name in names]
+
+
+def test_a_steps_engine_is_looked_up_as_the_config_folds_it():
+    """`ORCA` is `orca` to every lookup the form makes, as it is to the loader and the run.
+
+    The dropdown offers the registered names, plus a step's own only when it names none of
+    them, so a case variant selects the registered entry rather than adding a second."""
+    from chemrefine.introspect import schema_document
+
+    schema = schema_document()
+    out = _run_component_in_node(f"""
+      const b = builder();
+      b.schema = {json.dumps(schema)};
+      const shout = {{ step: 1, engine: "ORCA" }};
+      const plain = {{ step: 1, engine: "orca" }};
+      console.log(JSON.stringify([
+        JSON.stringify(b.operationsFor(shout)) === JSON.stringify(b.operationsFor(plain)),
+        b.isTemplateDriven(shout),
+        b.templatePlaceholder(shout),
+        b.engineFields(shout).length === b.engineFields(plain).length,
+        b.engineNamesFor(shout),
+        b.engineNamesFor({{ engine: "nope" }}),
+        b.engineNamesFor({{}}),
+      ]));
+    """)
+    registered = sorted(schema["engines"])
+    assert json.loads(out) == [
+        True,
+        True,
+        "step1.inp (default)",
+        True,
+        registered,
+        ["nope", *registered],
+        registered,
+    ]
+
+
+def test_a_new_step_takes_the_previous_steps_engine():
+    """The first step starts with no engine — the form asks — and each later one takes the
+    previous step's, never a name the page picked."""
+    out = _run_component_in_node(
+        _RELOAD_HARNESS
+        + """
+      b.cfg = { steps: [] };
+      b.addStep();
+      const first = { ...b.cfg.steps[0] };
+      b.cfg.steps[0].engine = "qchem";
+      b.addStep();
+      console.log(JSON.stringify([first, b.cfg.steps[1]]));
+    """
+    )
+    assert json.loads(out) == [{"step": 1}, {"step": 2, "engine": "qchem"}]
+
+
 def test_an_engines_operation_dropdown_offers_its_own_vocabulary():
     """The engine's declared operations, plus the step's current value — nothing else.
 
@@ -817,7 +878,9 @@ _RELOAD_HARNESS = """
     if (url === "/api/yaml") return { yaml_text: "from-the-server\\n" };
     return {};
   };
-  b.schema = { config: { properties: {} } };  // topFields reads it in seedWorkflowDefaults
+  // topFields reads `config` in seedWorkflowDefaults; `engines` is the registry the server
+  // serves beside it, empty here because no test below needs one.
+  b.schema = { config: { properties: {} }, engines: {} };
 """
 
 
@@ -1421,7 +1484,7 @@ def test_a_launched_config_and_an_opened_one_seed_the_same_starter_step():
         + """
       global.fetch = async () => ({
         ok: true, status: 200,
-        json: async () => ({ schema: { config: { properties: {} } }, host: "",
+        json: async () => ({ schema: { config: { properties: {} }, engines: {} }, host: "",
                              initial: { path: "/p/input.yaml", yaml_text: "steps: []\\n" } }),
       });
       await b.init();

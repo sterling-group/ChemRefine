@@ -91,7 +91,9 @@ validates with — so every knob, enum and default is current by construction:
 
 - **Steps**: add/remove/reorder (numbering stays contiguous automatically), engine
   dropdown from the live registry, operation, template override, `on_failure`,
-  per-step charge/multiplicity.
+  per-step charge/multiplicity. A new step takes the previous step's engine, and the
+  first one waits for you to choose. An engine name is read in any case, as the config
+  reads it, so a loaded `ORCA` step shows `orca`'s operations and fields.
 - **Engine options**: a subform from the engine's own declared options model. Engines
   configured through their template (ORCA) say so instead of showing an invented form.
 - **Sampling**: method dropdown (`boltzmann` / `min` / `max`) with exactly that
