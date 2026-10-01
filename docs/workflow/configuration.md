@@ -164,6 +164,6 @@ sampling](nms.md).
 
 Old keys are auto-translated with one deprecation warning each
 (`initial_xyz`→`input`, `orca_executable`→`executables`, `sample_type`→`sample`,
-the `mlff:`/`pyscf:` engine blocks → `options:`, `normal_mode_sampling`→`nms`, …).
+the `mlff:`/`trainer:` blocks → `options:`, `normal_mode_sampling`→`nms`, …).
 Only `calculation_type` is a hard error. See
 [Migrating from v1 to v2](../get-started/upgrading-from-v1.md).

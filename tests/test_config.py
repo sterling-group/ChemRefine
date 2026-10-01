@@ -1356,8 +1356,32 @@ def test_the_step_index_anchors_the_finding_to_its_own_step():
     from chemrefine.config_legacy import normalize as _normalize_legacy
 
     seen, sink = _collect()
-    _normalize_legacy({"steps": [{"step": 1}, {"step": 2, "pyscf": {"xc": "pbe"}}]}, report=sink)
-    assert [loc for loc, _ in seen] == [("steps", 1, "pyscf")]
+    _normalize_legacy(
+        {"steps": [{"step": 1}, {"step": 2, "mlff": {"model_name": "small"}}]}, report=sink
+    )
+    assert [loc for loc, _ in seen] == [("steps", 1, "mlff")]
+
+
+def test_the_v1_layer_translates_only_what_v1_spelled():
+    """A spelling no release accepted is not the v1 layer's to translate.
+
+    ``mlff-extopt``, ``mlff-train`` and a ``pyscf:`` block were never v1.3.1 spellings, so
+    the layer reports nothing for them and leaves them as written: the engine names meet
+    the registry lookup like any unknown name, and the block is an input the schema
+    forbids.
+    """
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    steps = [
+        {"step": 1, "engine": "mlff-extopt", "operation": "opt_sp"},
+        {"step": 2, "engine": "mlff-train"},
+        {"step": 3, "engine": "pyscf", "pyscf": {"xc": "pbe"}},
+    ]
+    seen, sink = _collect()
+    assert _normalize_legacy({"steps": steps}, report=sink) == {"steps": steps}
+    assert seen == []
+    with pytest.raises(ValidationError, match=r"steps\.0\.pyscf"):
+        Config.model_validate({"template_dir": "./t", "steps": [steps[2]]})
 
 
 def test_a_current_config_announces_nothing():

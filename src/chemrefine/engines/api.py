@@ -715,10 +715,10 @@ class TemplateChecking(Protocol):
 ENGINES: dict[str, type[CalculationEngine]] = {}
 """Registry mapping the YAML ``engine:`` string to a concrete engine class.
 
-Only **canonical** names live here. Old spellings (``mlff*``, ``dft``) are
-rewritten to canonical names by the config normalizer
-(:func:`chemrefine.config_legacy.normalize`) — the single place that knows the
-legacy vocabulary — before any lookup, so the registry stays alias-free.
+Only **canonical** names live here. v1.3.1's spellings are rewritten to canonical
+names by the config normalizer (:func:`chemrefine.config_legacy.normalize`) — the
+single place that knows the legacy vocabulary — before any lookup, so the registry
+stays alias-free.
 """
 
 

@@ -41,20 +41,17 @@ def _log_deprecation(loc: tuple[str | int, ...], message: str) -> None:
     logger.warning("%s", message)
 
 
-#: Old engine name → canonical. Includes the ``mlff`` ↔ ``mlip`` rename aliases.
+#: v1.3.1's engine names → canonical.
 _ENGINE_RENAMES = {
     "mlff": "mlip",
-    "mlff-extopt": "mlip-extopt",
-    "mlff-train": "mlip-train",
     "dft": "orca",
 }
 
-#: Legacy step-level engine-config block → the canonical engine it implies.
-#: v1.3.1 ran MLFF/PySCF through ORCA (the ``mlff:`` block configured the
-#: gradient server), so they map to the ``*-extopt`` engines.
+#: v1.3.1's step-level engine-config blocks → the canonical engine each implies. v1.3.1
+#: ran MLFF through ORCA, and the ``mlff:`` block configured its gradient server, so it
+#: maps to ``mlip-extopt``; ``trainer:`` configured a training step.
 _LEGACY_BLOCKS = {
     "mlff": "mlip-extopt",
-    "pyscf": "pyscf-extopt",
     "trainer": "mlip-train",
 }
 
@@ -95,7 +92,7 @@ def _mapping(value: Any, *, what: str, of: str) -> dict[str, Any]:
 
 
 def normalize(raw: dict[str, Any], *, report: DeprecationSink | None = None) -> dict[str, Any]:
-    """Rewrite legacy (v1.3.1 / ``mlff``-named) YAML keys to the current schema.
+    """Rewrite v1.3.1's YAML keys to the current schema.
 
     The single place that knows the old vocabulary. Idempotent — new-style input
     passes through unchanged — and announces one deprecation per legacy feature
@@ -130,7 +127,7 @@ def normalize(raw: dict[str, Any], *, report: DeprecationSink | None = None) -> 
 def _move_engine_block(
     s: dict[str, Any], loc: tuple[str | int, ...], sink: DeprecationSink
 ) -> str | None:
-    """Fold a legacy engine block (``mlff:``/``pyscf:``/``trainer:``) into ``options``.
+    """Fold one of v1.3.1's engine blocks (``mlff:``/``trainer:``) into ``options``.
 
     Mutates ``s`` (pops the block, merges its keys into ``options``) and returns the
     canonical engine that block implies, or ``None`` when no block is present.

@@ -66,20 +66,16 @@ def test_mlip_engines_are_registered():
 
 
 def test_mlff_engine_keys_normalize_to_mlip_at_config_layer():
-    """Legacy ``mlff*`` engine keys are rewritten to ``mlip*`` by the config
-    normalizer (the single place), so the registry only ever sees canonical names."""
+    """v1.3.1's ``mlff`` engine name is rewritten by the config normalizer (the single
+    place), so the registry only ever sees canonical names."""
     from chemrefine.config import Config
 
     cfg = Config(
         template_dir="./t",
-        steps=[
-            {"step": 1, "engine": "mlff", "operation": "opt_sp"},
-            {"step": 2, "engine": "mlff-extopt", "operation": "opt_sp"},
-            {"step": 3, "engine": "mlff-train", "operation": "mlip_train"},
-        ],
+        steps=[{"step": 1, "engine": "mlff", "operation": "opt_sp"}],
     )
-    assert [s.engine for s in cfg.steps] == ["mlip", "mlip-extopt", "mlip-train"]
-    assert get_engine(cfg.steps[1].engine).name == "mlip-extopt"
+    assert [s.engine for s in cfg.steps] == ["mlip"]
+    assert get_engine(cfg.steps[0].engine).name == "mlip"
 
 
 def test_mlip_direct_engine_is_not_nms_capable():

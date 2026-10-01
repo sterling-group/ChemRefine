@@ -639,7 +639,7 @@ class Config(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _normalize_legacy_yaml(cls, data: Any) -> Any:
-        """Rewrite legacy (v1.3.1 / ``mlff``-named) keys before validation."""
+        """Rewrite v1.3.1's keys before validation."""
         return config_legacy.normalize(data) if isinstance(data, dict) else data
 
     template_dir: Path = Path("./templates")

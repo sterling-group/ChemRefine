@@ -17,7 +17,7 @@ for the full map.
 ### Deprecated
 
 - The v1.3.1 compatibility layer — legacy YAML keys (`calculation_type` aside,
-  which already raises), the `mlff*`/`dft` engine spellings, the `sample_type`
+  which already raises), the `MLFF`/`DFT` engine spellings, the `sample_type`
   block, and the flag-style CLI (`chemrefine CONFIG --rebuild_cache N`) — is
   scheduled for removal in **3.0.0**. It warns once per rewritten feature today.
   Flags the translator does not map pass through to the subcommand CLI, so the
