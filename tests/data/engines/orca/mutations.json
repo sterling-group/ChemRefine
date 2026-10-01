@@ -22,5 +22,29 @@
     "new": "        if index > table.last_trivial",
     "tests": "tests/test_engines_orca_frequencies.py",
     "breaks": "a rotation ORCA prints imaginary, short of a stationary point, is in the imaginary set but not the mode table, so analyze_mode reports it imaginary with no frequency"
+  },
+  {
+    "id": "orca-reads-alike",
+    "path": "src/chemrefine/engines/orca/engine.py",
+    "old": "        return first == second or (first not in multi and second not in multi)",
+    "new": "        return True",
+    "tests": "tests/test_engines_contract.py",
+    "breaks": "a declared opt_sp over a conformer-search template draws no warning, and the step reads one structure off the ensemble while the run says nothing"
+  },
+  {
+    "id": "orca-freq-block-needs-a-switch-on",
+    "path": "src/chemrefine/engines/orca/inspect.py",
+    "old": "_FREQ_SWITCH_RE = re.compile(r\"\\b(?:num|an)freq\\s+true\\b\", re.IGNORECASE)",
+    "new": "_FREQ_SWITCH_RE = re.compile(r\"\\b(?:num|an)freq\\b\", re.IGNORECASE)",
+    "tests": "tests/test_engines_orca_inspect.py",
+    "breaks": "a %freq block that switches the Hessian off counts as a frequency request, so an nms: true step that computes none runs and ledgers every structure unresolved"
+  },
+  {
+    "id": "orca-extopt-is-read-off-the-keywords",
+    "path": "src/chemrefine/engines/orca/inspect.py",
+    "old": "        has_extopt=\"extopt\" in keywords,",
+    "new": "        has_extopt=True,",
+    "tests": "tests/test_engines_orca_inspect.py",
+    "breaks": "an ExtOpt step whose template does not name ExtOpt runs ORCA's own method under the backend's name, while its gradient server serves nothing"
   }
 ]

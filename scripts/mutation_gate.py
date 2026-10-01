@@ -136,6 +136,15 @@ _BUNDLED: tuple[Mutation, ...] = (
         "retry-best-frame's inversion, on the resolution side",
     ),
     Mutation(
+        id="nms-requires-frequencies",
+        path="src/chemrefine/nms.py",
+        old="    if not engine.nms_input_info(ctx).computes_frequencies:",
+        new="    if False:",
+        tests="tests/test_step.py",
+        breaks="an `nms: true` step whose input computes no frequencies runs to the end, and "
+        "every structure it paid for is ledgered unresolved",
+    ),
+    Mutation(
         id="resubmit-skips-unconverged",
         path="src/chemrefine/lifecycle.py",
         old=(

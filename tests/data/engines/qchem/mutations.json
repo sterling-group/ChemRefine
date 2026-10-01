@@ -1,0 +1,10 @@
+[
+  {
+    "id": "qchem-input-bohr-is-refused",
+    "path": "src/chemrefine/engines/qchem/input.py",
+    "old": "    if _INPUT_BOHR_RE.search(template.text):",
+    "new": "    if False:",
+    "tests": "tests/test_engines_qchem_input.py",
+    "breaks": "a template that sets input_bohr runs every structure on its Ångström geometry read as Bohr, a molecule scaled by 1/0.529"
+  }
+]
