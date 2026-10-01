@@ -684,6 +684,21 @@ def test_a_steps_engine_is_looked_up_as_the_config_folds_it():
     ]
 
 
+def test_the_executables_row_suggests_the_keys_the_engines_declare():
+    """Every key a registered engine reads, once each — the page keeps no list of its own."""
+    from chemrefine.introspect import schema_document
+
+    schema = schema_document()
+    out = _run_component_in_node(f"""
+      const b = builder();
+      b.schema = {json.dumps(schema)};
+      console.log(JSON.stringify(b.executableKeys));
+    """)
+    declared = {key for d in schema["engines"].values() for key in d["executable_keys"]}
+    assert json.loads(out) == sorted(declared)
+    assert {"orca", "qchem", "qc", "qcaux"} <= declared
+
+
 def test_a_new_step_takes_the_previous_steps_engine():
     """The first step starts with no engine — the form asks — and each later one takes the
     previous step's, never a name the page picked."""

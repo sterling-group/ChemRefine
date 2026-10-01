@@ -95,6 +95,15 @@ def test_operations_belong_to_the_family_that_interprets_them():
     assert by_name["qchem"].operations == tuple(sorted(qchem_operations()))
 
 
+def test_the_descriptor_carries_the_executables_keys_an_engine_reads():
+    """What the GUI's executables row suggests; empty for an engine that runs no program."""
+    by_name = _by_name()
+    assert by_name["orca"].executable_keys == ("orca",)
+    assert by_name["mlip-extopt"].executable_keys == ("orca",)
+    assert by_name["qchem"].executable_keys == ("qchem", "qc", "qcaux")
+    assert by_name["mlip"].executable_keys == ()
+
+
 def test_the_descriptor_carries_how_an_engine_asks_for_frequencies():
     """The sentence a sampling step's refusal quotes is a fact a consumer can show before
     the refusal happens; ``None`` for an engine that cannot sample."""

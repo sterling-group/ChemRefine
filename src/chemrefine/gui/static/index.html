@@ -116,7 +116,7 @@
         <h3>Executables</h3>
         <div class="fields execrows">
           <template x-for="(row, ei) in execRows" :key="'exec-' + ei">
-            <label title="Program name → binary path (e.g. orca, or Q-Chem's qc/qcaux)">
+            <label title="Program name → path, as the step's engine reads it">
               <input class="execname" type="text" :value="row.name" placeholder="orca"
                      list="exec-names" @input="setExecName(ei, $event.target.value)">
               <span class="pathrow">
@@ -131,9 +131,9 @@
         </div>
         <button type="button" class="mini" @click="addExec()">＋ executable</button>
         <datalist id="exec-names">
-          <option value="orca"></option>
-          <option value="qc"></option>
-          <option value="qcaux"></option>
+          <template x-for="key in executableKeys" :key="'exec-key-' + key">
+            <option :value="key"></option>
+          </template>
         </datalist>
       </div>
     </details>

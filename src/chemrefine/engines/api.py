@@ -48,8 +48,9 @@ One job, one product          :class:`CalculationEngine` +    ``prepare`` / ``su
   **auto-discovered** when :mod:`chemrefine.engines` loads (registration is a side effect), so
   nothing outside the new package changes. Legacy YAML spellings map to the canonical name in
   :func:`chemrefine.config_legacy.normalize`.
-* **Resources** — an external binary reads its path from ``ctx.executables.get("<name>")``; an
-  importable backend ships as a ``pip install chemrefine[<name>]`` extra (imported lazily).
+* **Resources** — an external binary reads its path from ``ctx.executables.get("<key>")``, a
+  key the engine declares (:class:`ExecutablesDeclaring`); an importable backend ships as a
+  ``pip install chemrefine[<name>]`` extra (imported lazily).
 * **Tests** go in ``tests/test_engines_<name>*.py``, and every engine ships a trimmed
   real-output contract fixture under ``tests/data/engines/<name>/`` (enforced by
   ``test_every_registered_engine_ships_a_contract_case``).
@@ -334,6 +335,23 @@ class OperationsDeclaring(Protocol):
     operations: ClassVar[tuple[str, ...]]
     """The ``operation:`` names this engine interprets, lower case with ``_``: the spelling
     the config folds every value to (:meth:`~chemrefine.config.StepConfig._fold_operation`)."""
+
+
+@runtime_checkable
+class ExecutablesDeclaring(Protocol):
+    """An engine that reads the paths of programs from the config's ``executables:`` map.
+
+    Declarations only, like :class:`OperationsDeclaring`. The map stays a free
+    ``dict[str, str]`` in the config, because it holds facts about the machine that every
+    step shares; this ClassVar is how an engine *publishes* the keys it reads, so the schema
+    document carries them to the GUI's executables row and the engine table lists them, with
+    no list of program names kept in core. A test holds every literal key an engine package
+    reads through ``executables.get`` to the keys its engines declare.
+    """
+
+    executable_keys: ClassVar[tuple[str, ...]]
+    """The ``executables:`` keys this engine reads: its program first, then any keys of
+    its own (an install root, say)."""
 
 
 @runtime_checkable

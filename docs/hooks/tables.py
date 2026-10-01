@@ -61,7 +61,8 @@ def _table(header: tuple[str, ...], rows: list[tuple[str, ...]]) -> str:
 
 
 def _engines_table() -> str:
-    """Every registered engine: its template, `operation:` vocabulary, NMS, backends."""
+    """Every registered engine: its template, `operation:` vocabulary, NMS, executables,
+    backends."""
     from chemrefine.introspect import describe_engines
 
     rows: list[tuple[str, ...]] = []
@@ -76,10 +77,13 @@ def _engines_table() -> str:
                 # engine that does not declare one treats `operation:` as a free label.
                 _code_list(d.operations, "any — treated as a label"),
                 "yes" if "nms" in d.capabilities else "—",
+                _code_list(d.executable_keys, "—"),
                 _code_list(d.backend_extras, "none needed"),
             )
         )
-    return _table(("Engine", "Step template", "`operation:`", "NMS", "Backend env"), rows)
+    return _table(
+        ("Engine", "Step template", "`operation:`", "NMS", "`executables:`", "Backend env"), rows
+    )
 
 
 def _releases(tasks: list[str]) -> str:

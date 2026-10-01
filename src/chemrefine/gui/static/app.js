@@ -472,6 +472,12 @@ function builder() {
       if (step.engine && !this.descriptorFor(step)) names.unshift(step.engine);
       return names;
     },
+    get executableKeys() {
+      // Every key a registered engine reads from `executables:`, for the name field's
+      // suggestions: what the engines declare, not a list of program names kept here.
+      const keys = Object.values(this.schema.engines ?? {}).flatMap((d) => d.executable_keys);
+      return [...new Set(keys)].sort();
+    },
     operationsFor(step) {
       // The engine's own declared vocabulary; an engine that declares none treats the
       // field as a label. The step's current value is offered too, so a select never

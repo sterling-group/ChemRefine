@@ -24,12 +24,14 @@ from pathlib import Path
 import pytest
 from ase import Atoms
 
+import chemrefine
 from chemrefine import slurm
 from chemrefine.config import StepConfig, reject_shell_unsafe
 from chemrefine.engines._job import JobEngine
 from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.api import (
     ENGINES,
+    ExecutablesDeclaring,
     FrequencyOutputParsing,
     JobExecutable,
     NmsCapableEngine,
@@ -1028,6 +1030,44 @@ def test_an_output_whose_step_inferred_nothing_refuses_its_template_by_name(
     output.write_text("anything\n", encoding="utf-8")
     with pytest.raises(ConfigError, match="template not found"):
         engine.parse_one(output, "0", built)
+
+
+def _owning_package(path: Path) -> str:
+    """``engines/<plugin>`` for a module inside a plugin package, else ``core``."""
+    parts = path.resolve().relative_to(Path(chemrefine.__file__).resolve().parent).parts
+    if len(parts) > 2 and parts[0] == "engines" and not parts[1].startswith("_"):
+        return f"engines/{parts[1]}"
+    return "core"
+
+
+def test_every_executables_key_read_is_one_its_engines_declare():
+    """A key read through ``executables.get`` is a key some engine of that package declares,
+    and each declared key is read there — so the GUI's suggestions and the engine table,
+    which read the declarations, offer exactly what the engines read. Core reads none."""
+    root = Path(chemrefine.__file__).resolve().parent
+    read: dict[str, set[str]] = {}
+    for path in root.rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "get"
+                and isinstance(node.func.value, ast.Attribute)
+                and node.func.value.attr == "executables"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+            ):
+                read.setdefault(_owning_package(path), set()).add(node.args[0].value)
+    declared: dict[str, set[str]] = {}
+    for name in sorted(ENGINES):
+        if not isinstance(get_engine(name), ExecutablesDeclaring):
+            continue
+        owner = next(c for c in ENGINES[name].__mro__ if "executable_keys" in vars(c))
+        package = _owning_package(Path(inspect.getfile(owner)))
+        declared.setdefault(package, set()).update(owner.executable_keys)
+    assert declared, "no engine declares an executables key — has the capability been renamed?"
+    assert read == declared
 
 
 # ---------------------------------------------------------------------------

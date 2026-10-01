@@ -90,7 +90,8 @@ for those and the full map.
   forwarding setup written once keeps working; kernel-assigned when that port is
   taken) — click-through forms
   rendered from the live schema on the left, the `input.yaml` on the right, emitted
-  and parsed server-side only. Validate anchors findings to fields; Save…/scaffold/
+  and parsed server-side only; the executables row suggests the keys the registered
+  engines read. Validate anchors findings to fields; Save…/scaffold/
   inline template editing; a run dashboard (start/resume/rerun-errors behind
   confirmations, polling status, paginated `steps.csv` results); and, with the
   `[agent]` extra, an agent chat panel whose mutating tool calls arrive as allow/deny

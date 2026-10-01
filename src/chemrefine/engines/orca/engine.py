@@ -48,6 +48,9 @@ class OrcaEngine(JobEngine):
     """The ``operation:`` vocabulary this family interprets — the parser dispatch's own
     set (see :class:`~chemrefine.engines.api.OperationsDeclaring`), inherited by the
     ExtOpt engines, which are ORCA-driven and parse the same outputs."""
+    executable_keys: ClassVar[tuple[str, ...]] = ("orca",)
+    """Satisfies :class:`~chemrefine.engines.api.ExecutablesDeclaring`: the ORCA binary,
+    which the ExtOpt engines run too."""
     frequency_request: ClassVar[str] = (
         "`Freq`, `NumFreq` or `AnFreq` among the keywords, or `NumFreq true` / "
         "`AnFreq true` in a %freq block"

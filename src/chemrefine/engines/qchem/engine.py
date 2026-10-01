@@ -89,6 +89,9 @@ class QchemEngine(JobEngine):
     set (see :class:`~chemrefine.engines.api.OperationsDeclaring`), derived rather than
     restated so the dropdown, the schema document and the t=0 check cannot disagree with
     what :func:`~chemrefine.engines.qchem.output.parse_output` accepts."""
+    executable_keys: ClassVar[tuple[str, ...]] = ("qchem", "qc", "qcaux")
+    """Satisfies :class:`~chemrefine.engines.api.ExecutablesDeclaring`: the launcher, then
+    the two install roots the run block exports as ``QC`` and ``QCAUX``."""
     frequency_request: ClassVar[str] = (
         "`jobtype freq`, alone or chained after another job with @@@, or "
         "`final_vibrational_analysis true` in the $geom_opt block"

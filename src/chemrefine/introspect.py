@@ -29,6 +29,7 @@ from chemrefine.engines.api import (
     ENGINES,
     ArtifactEngine,
     CalculationEngine,
+    ExecutablesDeclaring,
     NmsCapableEngine,
     OperationsDeclaring,
     OptionsDeclaring,
@@ -80,6 +81,10 @@ class EngineDescriptor:
     :class:`~chemrefine.engines.api.PreflightChecking` and
     :class:`~chemrefine.engines.api.TemplateChecking`); ``None`` for an engine with neither
     hook."""
+    executable_keys: tuple[str, ...]
+    """The ``executables:`` keys this engine reads (see
+    :class:`~chemrefine.engines.api.ExecutablesDeclaring`) — empty for an engine that runs no
+    external program; the GUI's executables row offers exactly these."""
     frequency_request: str | None
     """How the engine's input asks for the frequencies normal-mode sampling needs, as the
     refusal of an ``nms: true`` step without them quotes it (see
@@ -126,6 +131,9 @@ def _describe(name: str, engine: CalculationEngine) -> EngineDescriptor:
             engine.preflight_refuses
             if isinstance(engine, (PreflightChecking, TemplateChecking))
             else None
+        ),
+        executable_keys=(
+            engine.executable_keys if isinstance(engine, ExecutablesDeclaring) else ()
         ),
         frequency_request=(
             engine.frequency_request if isinstance(engine, NmsCapableEngine) else None
