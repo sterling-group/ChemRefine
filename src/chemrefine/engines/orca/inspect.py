@@ -122,6 +122,8 @@ class OrcaInputInfo:
     marks a run that optimises a transition state — ``OptTS``, ``ScanTS``, ``NEB-TS`` —
     (drives the NMS ``ts`` target); ``has_freq`` marks a frequency calc, requested by a
     ``…Freq`` keyword or by a ``%freq`` block that switches a Hessian on (gates NMS);
+    ``has_extopt`` marks a template whose energies and gradients come from an external
+    program (``ExtOpt`` on the ``!`` line, its only spelling — ORCA 6.1.1 manual §4.1.10);
     ``pal`` is the declared core count (``1`` if none); ``maxcore`` is the declared
     per-core memory in MB (``None`` if the template names none — absence means "the
     header's memory policy stands", so it is not defaulted).
@@ -130,6 +132,7 @@ class OrcaInputInfo:
     operation: str
     is_ts: bool
     has_freq: bool
+    has_extopt: bool
     pal: int
     maxcore: int | None = None
 
@@ -239,6 +242,7 @@ def inspect_template(template_text: str) -> OrcaInputInfo:
         is_ts="optts" in keywords or ts_run,
         has_freq=any(_FREQ_TOKEN_RE.fullmatch(token) for token in keywords)
         or _has_freq_block(decommented),
+        has_extopt="extopt" in keywords,
         pal=_read_pal(decommented),
         maxcore=int(maxcore.group(1)) if maxcore else None,
     )

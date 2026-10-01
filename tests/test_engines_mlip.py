@@ -348,7 +348,7 @@ def test_a_model_selection_that_would_run_as_bash_is_refused(knob: str):
 def _mlip_extopt_ctx(tmp_path: Path, **option_overrides) -> StepContext:
     template_dir = tmp_path / "templates"
     template_dir.mkdir(parents=True, exist_ok=True)
-    (template_dir / "step1.inp").write_text("! B3LYP def2-SVP\n", encoding="utf-8")
+    (template_dir / "step1.inp").write_text("! ExtOpt Opt\n", encoding="utf-8")
     (template_dir / "cpu.slurm.header").write_text(
         "#!/bin/bash\n#SBATCH --partition=normal\n",
         encoding="utf-8",

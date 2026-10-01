@@ -111,8 +111,8 @@ stays a DFT step, as it ran.
 
 The template is what makes the step run the model: `! ExtOpt` hands ORCA's gradients to
 the server. A v1.3.1 template without it ran ORCA's own method under the MLFF label while
-the server idled — add `ExtOpt` to run the model the step names, or write
-`engine: orca` to keep what v1.3.1 computed.
+the server idled, and 2.0 refuses such a template when the run starts — add `ExtOpt` to run
+the model the step names, or write `engine: orca` to keep what v1.3.1 computed.
 
 A v1.3.1 `engine: MLIP` step with an `mlip:` block is translated the same way, to
 `mlip-extopt`: v1.3.1 read that block with `mlff`'s keys and defaults but never started the

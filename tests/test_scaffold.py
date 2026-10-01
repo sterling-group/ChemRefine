@@ -272,7 +272,7 @@ def test_the_template_driven_starters_render_the_real_geometry(tmp_path: Path):
     assert "! ExtOpt Opt" in rendered
     assert f"* xyzfile 0 1 {xyz}" in rendered
     assert inspect.inspect_template(ExtOptOrcaEngine.template_starter) == inspect.OrcaInputInfo(
-        operation="opt_sp", is_ts=False, has_freq=False, pal=4, maxcore=None
+        operation="opt_sp", is_ts=False, has_freq=False, has_extopt=True, pal=4, maxcore=None
     )
 
 

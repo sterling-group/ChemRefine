@@ -68,10 +68,12 @@ def _ctx(
 ) -> StepContext:
     """A minimal context for asking an engine about one step's options.
 
-    The template file really exists, with a ``%pal`` line for the ORCA-family engines:
-    the ExtOpt engines read their pal from it inside ``run_block`` (the server's thread
-    budget), so a context whose template is only a path would fail exactly the invariants
-    this module exists to hold. The operation is resolved as the run resolves it.
+    The template file really exists, with ``ExtOpt`` and a ``%pal`` line for the
+    ORCA-family engines: the ExtOpt engines refuse a template that does not name ``ExtOpt``
+    and read their pal from it inside ``run_block`` (the server's thread budget), so a
+    context whose template is only a path would fail exactly the invariants this module
+    exists to hold. Plain ORCA reads the keyword as any other. The operation is resolved
+    as the run resolves it.
     """
     step_cfg = StepConfig(
         step=1,
@@ -83,7 +85,7 @@ def _ctx(
     template = tmp_path / f"step1.{suffix}"
     if not template.exists():
         template.write_text(
-            "! Opt\n%pal nprocs 2 end\n" if suffix == "inp" else "", encoding="utf-8"
+            "! ExtOpt Opt\n%pal nprocs 2 end\n" if suffix == "inp" else "", encoding="utf-8"
         )
     return StepContext(
         step_cfg=step_cfg,
@@ -945,7 +947,6 @@ def test_artifact_paths_resolves_to_the_input_that_was_written(tmp_path: Path):
             _ctx(root, name, {}),
             prev_state=PipelineState(structures=(Structure(id="0", atoms=Atoms("H")),)),
         )
-        (root / f"step1.{engine.template_suffix}").write_text("", encoding="utf-8")
         engine.prepare(ctx)
 
         claimed_input, claimed_output = engine.artifact_paths(ctx, "0")

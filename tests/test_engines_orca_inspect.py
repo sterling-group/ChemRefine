@@ -173,6 +173,22 @@ def test_a_freq_block_that_switches_a_hessian_on_requests_frequencies(
     assert inspect_template(template).has_freq is has_freq
 
 
+@pytest.mark.parametrize(
+    ("template", "has_extopt"),
+    [
+        ("! ExtOpt Opt\n", True),
+        ("! extopt opt\n", True),
+        ("! B3LYP def2-SVP Opt\n", False),
+        ("# ! ExtOpt Opt\n! B3LYP Opt\n", False),
+        ('! Opt\n%method ProgExt "/w.sh" end\n', False),
+    ],
+    ids=["keyword", "any-case", "absent", "commented-out", "progext-alone"],
+)
+def test_extopt_is_read_off_the_keywords(template: str, has_extopt: bool):
+    """``ExtOpt`` has no block spelling: a ``ProgExt`` path alone runs ORCA's own method."""
+    assert inspect_template(template).has_extopt is has_extopt
+
+
 def test_inspect_detects_numfreq():
     assert inspect_template("! PBE def2-SVP NumFreq\n").has_freq is True
 

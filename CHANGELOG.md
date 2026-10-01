@@ -259,7 +259,9 @@ for those and the full map.
   one actionable line to its `--log-file`, the file the job's failure path
   tails. Both ExtOpt engines read their options strictly, the NMS knobs beside
   the server's own, so a misspelled key is refused before anything is
-  submitted, where v1.3.1's `mlff` block ignored a key it did not read.
+  submitted, where v1.3.1's `mlff` block ignored a key it did not read. A
+  template whose `!` line does not name `ExtOpt` is refused when the run starts,
+  where v1.3.1 ran ORCA's own method under the MLFF label while its server idled.
 - PySCF engines: `pyscf` runs each structure through the step's own rendered
   Python script, and `pyscf-extopt` serves gradients to ORCA through the
   ExtOpt server. Both engines require the level of theory to be named —

@@ -36,7 +36,7 @@ class PyscfExtOptEngine(PyscfBackend, ExtOptOrcaEngine):
     preflight_refuses: ClassVar[str] = (
         "`save_tensors` on an open-shell step (the tensor transform is restricted-only and "
         "would fail inside the server after the SCF and gradient succeeded), on top of the "
-        "strict server-knob read every ExtOpt engine makes"
+        "strict server-knob read and the `ExtOpt` template check every ExtOpt engine makes"
     )
 
     def _opts(self, ctx: StepContext) -> PyscfExtOptOptions:

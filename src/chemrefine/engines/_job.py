@@ -27,7 +27,13 @@ from ase import Atoms
 from ase.data import atomic_numbers
 
 from chemrefine.engines import _execution
-from chemrefine.engines.api import CompletionSink, OptionsDeclaring, ParsedResult, RunBlock
+from chemrefine.engines.api import (
+    CompletionSink,
+    OptionsDeclaring,
+    ParsedResult,
+    RunBlock,
+    TemplateChecking,
+)
 from chemrefine.errors import OutputParseError
 from chemrefine.ids import (
     StepTemplate,
@@ -170,9 +176,18 @@ class JobEngine(abc.ABC):
         )
 
     def prepare(self, ctx: StepContext) -> StepInputs:
-        """Write one input geometry (``_inp.xyz``) + one input file per seed structure."""
-        ctx.step_dir.mkdir(parents=True, exist_ok=True)
+        """Write one input geometry (``_inp.xyz``) + one input file per seed structure.
+
+        The template is read once and, for an engine with rules of its own
+        (:class:`~chemrefine.engines.api.TemplateChecking`), held to them before anything is
+        written, so a refused template leaves nothing on disk. The walk asked the same rules
+        when the run started; they are asked again here because the template is read again
+        at the step's turn, and an edit made since meets the same rule.
+        """
         template = require_template(ctx.template, label=self.label)
+        if isinstance(self, TemplateChecking):
+            self.check_template(ctx, template)
+        ctx.step_dir.mkdir(parents=True, exist_ok=True)
         step = ctx.step_cfg.step
         files: list[JobTriple] = []
         for struct in ctx.prev_state.structures:

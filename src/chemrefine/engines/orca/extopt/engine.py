@@ -25,8 +25,11 @@ from chemrefine.engines import _provision
 from chemrefine.engines._backend_server.base import SERVER_URL_FILENAME, ComputeBackend
 from chemrefine.engines._options import ExtOptOptions
 from chemrefine.engines.orca import input as orca_input
+from chemrefine.engines.orca import inspect
 from chemrefine.engines.orca.engine import OrcaEngine
 from chemrefine.engines.orca.extopt import protocol, run_block
+from chemrefine.errors import ConfigError
+from chemrefine.ids import StepTemplate
 from chemrefine.state import RunBlock, StepContext, StepInputs
 
 
@@ -50,8 +53,10 @@ class ExtOptOrcaEngine(OrcaEngine):
     options_cls: ClassVar[type[ExtOptOptions]]
     calculator_cls: ClassVar[type[ComputeBackend]]
     preflight_refuses: ClassVar[str] = (
-        "a typoed or missing server knob: these options configure a gradient server, so the "
-        "strict read the run block makes is made up front, before earlier steps are paid for"
+        "a typoed or missing server knob — these options configure a gradient server, so the "
+        "strict read the run block makes is made up front, before earlier steps are paid "
+        "for — and a template that does not name `ExtOpt`, whose step ORCA would compute "
+        "itself while the server sat idle"
     )
     template_starter: ClassVar[str] = (
         "# ORCA ExtOpt starter: `! ExtOpt` has ORCA take every energy and gradient from the\n"
@@ -124,6 +129,24 @@ class ExtOptOrcaEngine(OrcaEngine):
         refused here.
         """
         self.options_cls.from_raw(step_cfg.engine_options())
+
+    def check_template(self, ctx: StepContext, template: StepTemplate) -> None:
+        """Refuse a template whose ``!`` line does not name ``ExtOpt``.
+
+        Without it ORCA computes the step with its own method — whatever else the keywords
+        name — while the server this engine starts serves nothing, and the results would be
+        recorded as this backend's. Satisfies
+        :class:`~chemrefine.engines.api.TemplateChecking`, so the run's t=0 walk and
+        ``chemrefine validate`` refuse it before anything runs, and ``prepare`` asks again of
+        its own read of the template.
+        """
+        if not inspect.inspect_template(template.text).has_extopt:
+            raise ConfigError(
+                f"step {ctx.step_cfg.step}: the template's `!` line does not name `ExtOpt`, so "
+                f"ORCA would compute the step with its own method while the {self.backend} "
+                f"server served nothing. Add it (e.g. `! ExtOpt Opt`), or run the step with "
+                f"`engine: orca` if ORCA's own method is what you want."
+            )
 
     def _extra_blocks(self, ctx: StepContext) -> str:
         """Emit the ``%method ProgExt "<wrapper>"`` block tying ORCA to this step's wrapper.

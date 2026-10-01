@@ -325,7 +325,8 @@ can do NMS. They *are* ORCA runs — ORCA drives the optimiser, the geometry ste
 frequency analysis — with one substitution: where ORCA would call its own SCF for energies
 and gradients, it calls the backend instead. Their template's `!` line carries `ExtOpt`, the
 keyword that has ORCA take every energy and gradient from the backend; without it ORCA
-computes the step itself. `chemrefine scaffold` writes `! ExtOpt Opt`.
+would compute the step itself, so such a template is refused when the run starts, and by
+`chemrefine validate`. `chemrefine scaffold` writes `! ExtOpt Opt`.
 
 ```
 ORCA (%method ProgExt)  →  extopt bridge  →  local HTTP server  →  MACE / UMA / PySCF

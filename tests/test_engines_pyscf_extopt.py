@@ -44,7 +44,7 @@ def test_pyscf_extopt_engine_is_nms_capable():
 def _pyscf_ctx(tmp_path: Path, **option_overrides) -> StepContext:
     template_dir = tmp_path / "templates"
     template_dir.mkdir(parents=True, exist_ok=True)
-    (template_dir / "step1.inp").write_text("! HF def2-SVP\n", encoding="utf-8")
+    (template_dir / "step1.inp").write_text("! ExtOpt Opt\n", encoding="utf-8")
     (template_dir / "cpu.slurm.header").write_text(
         "#!/bin/bash\n#SBATCH --partition=normal\n", encoding="utf-8"
     )
@@ -390,3 +390,25 @@ def test_the_gradient_timeout_reaches_the_pyscf_wrapper(tmp_path: Path):
     engine.prepare(ctx)
     assert "--timeout 1800 " in engine._wrapper_path(ctx).read_text(encoding="utf-8")
     assert engine.options_cls.from_raw(ctx.step_cfg.options).gradient_timeout_seconds == 1800
+
+
+def test_a_template_that_does_not_name_extopt_is_refused_before_anything_is_written(
+    tmp_path: Path,
+):
+    """Without ``ExtOpt`` ORCA computes the step itself and the server serves nothing. The
+    walk refuses it when the run starts, and ``prepare`` again, on its own read, before it
+    writes a file."""
+    from chemrefine.config import Config
+    from chemrefine.step import preflight_batches
+
+    ctx = _pyscf_ctx(tmp_path)
+    assert ctx.template is not None
+    ctx.template.write_text("! B3LYP def2-SVP Opt\n", encoding="utf-8")
+    cfg = Config(
+        template_dir=ctx.template_dir, output_dir=tmp_path / "outputs", steps=[ctx.step_cfg]
+    )
+    with pytest.raises(ConfigError, match="does not name `ExtOpt`"):
+        preflight_batches(cfg, cfg.steps, local=True)
+    with pytest.raises(ConfigError, match="the pyscf server served nothing"):
+        get_engine("pyscf-extopt").prepare(ctx)
+    assert not ctx.step_dir.exists()
