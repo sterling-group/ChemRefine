@@ -9,7 +9,6 @@ scheduler, and recording what came out. The library-specific half is
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -128,7 +127,7 @@ def test_a_step_that_names_no_task_is_refused_with_the_trainable_list(tmp_path: 
     ctx = _ctx(tmp_path)
     ctx.step_cfg.options.pop("task_name")
     with pytest.raises(ConfigError, match="must name a `task_name`"):
-        MlipTrainEngine().prepare(ctx)
+        MlipTrainEngine().check_step(ctx.step_cfg, charge=0, multiplicity=1)
 
 
 def test_a_step_that_names_no_device_is_refused(tmp_path: Path):
@@ -136,16 +135,16 @@ def test_a_step_that_names_no_device_is_refused(tmp_path: Path):
     ctx = _ctx(tmp_path)
     ctx.step_cfg.options.pop("device")
     with pytest.raises(ConfigError, match="must name a device"):
-        MlipTrainEngine().prepare(ctx)
+        MlipTrainEngine().check_step(ctx.step_cfg, charge=0, multiplicity=1)
 
 
 @pytest.mark.parametrize("policy", ["skip", "best"])
 def test_an_on_failure_policy_with_nothing_to_act_on_is_refused(policy: str, tmp_path: Path):
     """`skip` and `best` are per-structure policies; a training step has no such failures."""
     ctx = _ctx(tmp_path)
-    ctx = replace(ctx, step_cfg=ctx.step_cfg.model_copy(update={"on_failure": policy}))
+    step_cfg = ctx.step_cfg.model_copy(update={"on_failure": policy})
     with pytest.raises(ConfigError, match="nothing to act on"):
-        MlipTrainEngine().prepare(ctx)
+        MlipTrainEngine().check_step(step_cfg, charge=0, multiplicity=1)
 
 
 def test_a_negative_seed_is_refused_before_any_label_is_computed(tmp_path: Path):

@@ -21,7 +21,7 @@ from chemrefine.engines.pyscf.backend import PyscfBackend
 from chemrefine.engines.pyscf.extopt_calc import PyscfExtOptCalculator
 from chemrefine.engines.pyscf.options import PyscfExtOptOptions
 from chemrefine.errors import ConfigError
-from chemrefine.state import StepContext, StepInputs
+from chemrefine.state import StepContext
 
 
 @register("pyscf-extopt")
@@ -58,8 +58,7 @@ class PyscfExtOptEngine(PyscfBackend, ExtOptOrcaEngine):
         the gradient succeeded — inside the server, as a 500 whose actionable half lands in
         the server log rather than in the user's ledger. The refusal needs only the config
         and the step's effective multiplicity, so it belongs on the preflight hook: the
-        run's t=0 walk and ``chemrefine validate`` both make it before anything is spent,
-        and :meth:`prepare` repeats it for the paths that skip the preflight.
+        run's t=0 walk and ``chemrefine validate`` both make it before anything is spent.
         """
         super().check_step(step_cfg, charge=charge, multiplicity=multiplicity)
         opts = self.options_cls.from_raw(step_cfg.engine_options())
@@ -70,16 +69,6 @@ class PyscfExtOptEngine(PyscfBackend, ExtOptOrcaEngine):
                 f"{multiplicity}. Drop `save_tensors: true`, or run the step as a "
                 f"closed-shell system."
             )
-
-    def prepare(self, ctx: StepContext) -> StepInputs:
-        """Re-make the preflight refusals, then write the inputs.
-
-        :meth:`check_step` already ran at the run's preflight walk; repeating it here
-        covers the recovery paths that reach ``prepare`` without one, for the price of
-        one cheap validation.
-        """
-        self.check_step(ctx.step_cfg, charge=ctx.charge, multiplicity=ctx.multiplicity)
-        return super().prepare(ctx)
 
     def output_dirs(self, ctx: StepContext) -> tuple[str, ...]:
         """Copy the ``save_tensors`` output directory back into the structure dir.

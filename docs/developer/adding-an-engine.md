@@ -76,10 +76,13 @@ one; see [`TemplateDriven`](../api/engines_api.md)), and — only if the engine 
 `preflight_refuses`, one sentence naming what the hooks refuse
 ([`PreflightChecking`](../api/engines_api.md), [`TemplateChecking`](../api/engines_api.md);
 the invariants hold the sentence unrepeated across engines). The run's t=0 walk asks both
-before any step runs, and `chemrefine validate` reports their refusals. `register` refuses an
-engine that declares part of a capability — a template engine without its starter, a hook
-without its sentence — because a capability taken in part is not detected at all. There is no `supports_nms` flag — NMS is a *capability* (below),
-detected via `isinstance`.
+before any step runs, and `chemrefine validate` reports their refusals. Every action that may
+submit runs that walk first, so `prepare` does not ask `check_step` again; it asks
+`check_template` again on its own read of the template, so an edit made after the run started
+meets the same rule. `register` refuses an engine that declares part of a capability — a
+template engine without its starter, a hook without its sentence — because a capability taken
+in part is not detected at all. There is no `supports_nms` flag — NMS is a *capability*
+(below), detected via `isinstance`.
 
 ## Validate the YAML knobs
 

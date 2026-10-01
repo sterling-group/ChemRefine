@@ -667,8 +667,9 @@ class PreflightChecking(Protocol):
     computed and paid for. This hook is the sanctioned earlier moment:
     :func:`preflight_steps` calls it for every submittable step before anything runs
     (the walk that already checks backend envs), and ``chemrefine validate`` reports
-    the same refusals without running anything. An engine keeps making its own checks
-    in ``prepare`` too — the recovery paths that skip the preflight still deserve them.
+    the same refusals without running anything. Every action that may submit runs that
+    walk before any step (:func:`chemrefine.pipeline.run`), so the hook is asked once,
+    there, and ``prepare`` does not ask it again.
 
     A capability detected via ``isinstance`` like every other one here, and an opt-in
     deliberately, never a generic strict pass over every options model: the direct
@@ -710,9 +711,9 @@ class TemplateChecking(Protocol):
     applied only in ``prepare`` fires at the step's own turn, after every earlier step has
     been computed and paid for. The run's t=0 walk (:func:`chemrefine.step.preflight_batches`)
     reads each step's template once (:func:`chemrefine.ids.require_template`) and hands it
-    here, and ``chemrefine validate`` reports the same refusal on the template's row. An
-    engine keeps asking its rules in ``prepare`` too, for the recovery paths that skip the
-    walk.
+    here, and ``chemrefine validate`` reports the same refusal on the template's row.
+    ``prepare`` reads the template again at the step's turn and asks ``check_template`` on
+    that read, so an edit made after the run started meets the same rule.
 
     Shares :attr:`PreflightChecking.preflight_refuses` with that capability, so an engine
     names what it refuses before the run in one sentence, whichever hook refuses it.

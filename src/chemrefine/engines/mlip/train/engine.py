@@ -307,7 +307,8 @@ class MlipTrainEngine(MlipBackend):
         The trainer's own rules (:meth:`TrainerBase.require_placeholders`) against the plan
         this step runs — on the :class:`~chemrefine.engines.api.TemplateChecking` capability,
         so the run's t=0 walk and ``chemrefine validate`` make the refusal before the steps
-        that label the data have run, and :meth:`prepare` again for the recovery paths.
+        that label the data have run, and :meth:`prepare` asks again of its own read of the
+        template, so an edit made after the run started meets the same rule.
         """
         self._trainer(ctx).require_placeholders(self._plan(ctx), template)
 
@@ -319,13 +320,9 @@ class MlipTrainEngine(MlipBackend):
         manifest records what this step was asked to do, and a resume can prove the product on
         disk belongs to this configuration.
 
-        :meth:`check_step` runs again here, not only at preflight: the recovery paths
-        (``rerun-errors``, a resumed step) reach ``prepare`` without the preflight walk,
-        and the checks are cheap and idempotent. The template is read once and held to
-        :meth:`check_template` before the dataset is written, so a refused template leaves
-        nothing on disk.
+        The template is read once and held to :meth:`check_template` before the dataset is
+        written, so a refused template leaves nothing on disk.
         """
-        self.check_step(ctx.step_cfg, charge=ctx.charge, multiplicity=ctx.multiplicity)
         template = ids.require_template(ctx.template, label=self.label)
         self.check_template(ctx, template)
         opts = self._opts(ctx)

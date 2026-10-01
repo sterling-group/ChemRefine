@@ -10,7 +10,6 @@ lifecycle end-to-end.
 
 from __future__ import annotations
 
-import dataclasses
 import json
 import shlex
 import sys
@@ -132,20 +131,18 @@ def test_prepare_renders_one_py_and_xyz_per_structure(tmp_path: Path):
         assert f'with open(\'{output_json.name}\', "w", encoding="utf-8")' in rendered
 
 
-def test_prepare_refuses_a_step_with_no_level_of_theory(tmp_path: Path):
+def test_the_walk_refuses_a_step_with_no_level_of_theory():
     """The direct engine requires ``basis`` — no silent level of theory.
 
     ORCA's level of theory lives in the template's ``!`` line and Q-Chem's in
     ``$rem``; a direct pyscf step omitting ``basis`` used to render the model
-    default into ``$BASIS``, computing at a level the user never chose.
-    ``prepare`` repeats the preflight refusal so the recovery paths that skip
-    the t=0 walk get it too.
+    default into ``$BASIS``, computing at a level the user never chose. Refused by
+    the walk every action that may submit runs before anything does.
     """
-    engine = get_engine("pyscf")
-    ctx = _ctx(tmp_path, structures=(_seed(),))
-    bare = dataclasses.replace(ctx, step_cfg=ctx.step_cfg.model_copy(update={"options": {}}))
+    from chemrefine.engines.api import preflight_steps
+
     with pytest.raises(ConfigError, match="'basis' is required"):
-        engine.prepare(bare)
+        preflight_steps([StepConfig(step=1, engine="pyscf")], charge=0, multiplicity=1)
 
 
 def test_check_step_requires_xc_exactly_when_dft_reads_it():

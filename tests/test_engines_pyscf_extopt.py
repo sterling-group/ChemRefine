@@ -172,36 +172,23 @@ def test_pyscf_extopt_output_dirs_copies_relative_tensor_folder(tmp_path: Path):
     assert engine.output_dirs(_pyscf_ctx(tmp_path, save_tensors=False)) == ()
 
 
-def test_save_tensors_on_an_open_shell_step_is_refused_before_submission(tmp_path: Path):
-    """``save_tensors`` + multiplicity > 1 fails at prepare, naming the knob and the spin.
-
-    The tensor transform is restricted-only. Left to run, the SCF and the gradient both
-    *succeed* and the dump then dies inside the server — a 500 whose actionable half lands
-    in the server log, while the ledger says only "backend calculation failed". At prepare
-    the effective multiplicity is in hand and nothing has been spent.
-    """
-    import dataclasses
-
-    engine = get_engine("pyscf-extopt")
-    ctx = dataclasses.replace(_pyscf_ctx(tmp_path, save_tensors=True), multiplicity=3)
-    with pytest.raises(ConfigError, match=r"closed-shell.*multiplicity is 3"):
-        engine.prepare(ctx)
-
-
 def test_save_tensors_on_a_closed_shell_step_prepares_normally(tmp_path: Path):
     """The guard refuses only the open-shell combination — the supported case is untouched."""
     engine = get_engine("pyscf-extopt")
-    inputs = engine.prepare(_pyscf_ctx(tmp_path, save_tensors=True))
-    assert len(inputs.files) == 1
+    ctx = _pyscf_ctx(tmp_path, save_tensors=True)
+    engine.check_step(ctx.step_cfg, charge=0, multiplicity=1)
+    assert len(engine.prepare(ctx).files) == 1
 
 
-def test_the_open_shell_refusal_also_fires_at_the_runs_preflight_walk():
-    """The same refusal, at t=0 — before any upstream step is paid for.
+def test_save_tensors_on_an_open_shell_step_is_refused_when_the_run_starts():
+    """``save_tensors`` + multiplicity > 1 is refused, naming the knob and the spin.
 
-    The prepare-time test above holds the recovery paths; this one holds the
-    ``PreflightChecking`` route ``pipeline.run`` walks before anything submits. The
-    step's own ``multiplicity: 3`` override is applied over the config default passed
-    to the walk, so the hook judges the species the step would actually run.
+    The tensor transform is restricted-only. Left to run, the SCF and the gradient both
+    *succeed* and the dump then dies inside the server — a 500 whose actionable half lands
+    in the server log, while the ledger says only "backend calculation failed". The walk
+    ``pipeline.run`` makes before anything submits refuses it instead, before any upstream
+    step is paid for. The step's own ``multiplicity: 3`` override is applied over the config
+    default passed to the walk, so the hook judges the species the step would actually run.
     """
     from chemrefine.engines.api import preflight_steps
 

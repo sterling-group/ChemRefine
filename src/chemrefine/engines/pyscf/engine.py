@@ -18,7 +18,6 @@ from chemrefine.engines._script import ScriptEngine
 from chemrefine.engines.api import register
 from chemrefine.engines.pyscf.backend import PyscfBackend
 from chemrefine.engines.pyscf.options import PyscfOptions
-from chemrefine.state import StepContext, StepInputs
 
 
 @register("pyscf")
@@ -75,13 +74,3 @@ class PyscfEngine(PyscfBackend, ScriptEngine[PyscfOptions]):
         the signature is the capability's.
         """
         self.options_cls.require_level_of_theory(step_cfg.options)
-
-    def prepare(self, ctx: StepContext) -> StepInputs:
-        """Re-make the preflight refusal, then render the inputs.
-
-        :meth:`check_step` already ran at the run's preflight walk; repeating it here
-        covers the recovery paths that reach ``prepare`` without one — the same
-        discipline as the ExtOpt and training engines, for the same price.
-        """
-        self.check_step(ctx.step_cfg, charge=ctx.charge, multiplicity=ctx.multiplicity)
-        return super().prepare(ctx)

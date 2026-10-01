@@ -71,6 +71,45 @@ def test_resolve_target_missing_raises(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
+def test_no_action_reaches_prepare_for_a_step_its_preflight_refuses(tmp_path: Path):
+    """``check_step`` is asked once, by the walk every action that may submit runs before any
+    step does, so ``prepare`` never needs to ask it again; an action that may not submit
+    never reaches ``prepare`` at all. Held over every action, so a new one is held too."""
+    from typing import ClassVar
+
+    from fake_engine import FakeEngine
+
+    from chemrefine.engines.api import ENGINES, register
+
+    prepared: list[int] = []
+
+    @register("fake-refusing")
+    class _Refusing(FakeEngine):
+        name: ClassVar[str] = "fake-refusing"
+        preflight_refuses: ClassVar[str] = "every step, to show where the refusal lands"
+
+        def check_step(self, step_cfg, *, charge, multiplicity):
+            raise ConfigError(f"step {step_cfg.step}: refused by the walk")
+
+        def prepare(self, ctx):
+            prepared.append(ctx.step_cfg.step)
+            return super().prepare(ctx)
+
+    try:
+        cfg = _seeded_config(
+            tmp_path, [StepConfig(step=1, engine="fake-refusing", operation="opt_sp")]
+        )
+        refusals: dict[Action, str] = {}
+        for action in Action:
+            with pytest.raises(ChemRefineError) as refused:
+                execute(cfg, action, target=1 if action.takes_target else None)
+            refusals[action] = str(refused.value)
+        assert prepared == []
+        assert "refused by the walk" in refusals[Action.RUN]
+    finally:
+        ENGINES.pop("fake-refusing", None)
+
+
 def test_execute_run_invalidates_and_re_executes(tmp_path: Path):
     """``run`` recomputes both steps: every cache document and output is rewritten.
 

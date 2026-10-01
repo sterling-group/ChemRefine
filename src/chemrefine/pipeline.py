@@ -647,7 +647,7 @@ def run(config: Config, plan: RunPlan | None = None) -> list[StepOutcome]:
         # leaves the wall standing on all the others, and a two-step MLIP config still cannot
         # be rebuilt off-cluster. Nothing is weakened by the wider exemption: a step that
         # cannot submit reaches `ChemRefineError` from `run_step` if its cache is unusable,
-        # never the engine — and its own `prepare` repeats the preflight checks anyway.
+        # never the engine, so it never reaches the `prepare` this walk stands before.
         submittable = [cfg for cfg in config.steps if plan.for_step(cfg.step).may_submit()]
         preflight_backends(submittable)
         preflight_steps(submittable, charge=config.charge, multiplicity=config.multiplicity)
