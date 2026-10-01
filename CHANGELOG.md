@@ -313,12 +313,6 @@ for the full map.
 - **A batch reads its SLURM header once.** Every job script of a step's batch is built from
   the header as the batch read it when it started, where the queue path re-read the file
   for each job; an edit reaches the step's next batch or the next run.
-- **A FAIRChem step loads its model uncompiled.** From fairchem-core 2.22, FAIRChem's
-  `"default"` inference preset compiles the model on its first prediction, which on CPU was
-  25 to 72 s of a UMA single point, paid again by every job, since each runs in a process of
-  its own. Both loaders now take `InferenceSettings()`, the defaults at every release from
-  the 2.18 floor: uncompiled, with the experts unmerged, so one predictor serves any
-  composition, charge and spin.
 - **An ORB model with a stress output fine-tunes with stress off.** It was refused, which
   left out the default loader and most of ORB's releases. ChemRefine's labels are molecular,
   so the trainer switches the model's stress output off and the job warns. `mlip-orb` now
@@ -477,11 +471,6 @@ for the full map.
 
 ### Fixed
 
-- **The ExtOpt engines scaffold an ExtOpt starter.** `mlip-extopt` and `pyscf-extopt` were
-  scaffolded ORCA's own starter, whose `! B3LYP D4 def2-SVP Opt` has ORCA compute the step
-  itself: ORCA takes its energies and gradients from an external program only under the
-  `ExtOpt` keyword, and the input writer never adds it, so a scaffolded step started its
-  gradient server and never called it. They now scaffold `! ExtOpt Opt`.
 - **A template or SLURM header that cannot be read is refused before the run starts.**
   `chemrefine validate` and the run's t=0 checks tested only that a step's template and
   its SLURM header existed, so a latin-1 `Å` in a comment, or a file another account
@@ -491,13 +480,6 @@ for the full map.
   by the one reader every user file goes through: `validate` reports a missing,
   unreadable or undecodable file as an issue on its own row, and the run refuses it
   before anything runs.
-- **A FAIRChem fine-tune can continue from a local checkpoint.** A training step with
-  `model_path` rendered the checkpoint's path into FAIRChem's release-name lookup, so the
-  job died with `KeyError: Model '…' not found` once the steps that labelled its data had
-  run. A FAIRChem template now takes its start as `starting_checkpoint:
-  $STARTING_CHECKPOINT`, which renders the name lookup for a release and the checkpoint
-  itself for `model_path`. `$FOUNDATION_MODEL` inside the lookup still carries a release
-  start, and a `model_path` start through it is refused before the job is submitted.
 - **A MACE model is a release of the family its step names, or is refused before the run.**
   MACE's `run_train` reads a Materials Project name as MACE-MP and loads any other unknown
   name as a file, so a `mace_omol` training step naming `medium` — MACE-OMOL's one release
@@ -507,27 +489,6 @@ for the full map.
   `model_name` is now one of the family's releases, and anything else (a checkpoint
   belongs in `model_path`) is refused when the run starts and by `chemrefine validate`,
   naming the releases, for inference and training alike; the backend table lists them.
-- **An ORB template may name its step's loader in any of orb's spellings.** orb-models
-  registers one loader under its key, the key with underscores, and the function's own
-  name, and a step resolves all three, but the training job compared a template's
-  `base_model` with the step's loader as written. A template naming the default loader by
-  its registry key was refused as another model once the labelling steps had run. The two
-  are now compared by the loader each names, and a name orb-models does not know, in
-  either, is refused as an unknown model rather than as a disagreement.
-- **An ORB model is found by the name orb-models registers it under.** A step named its
-  loader by function name only, so the names orb-models documents for its aliases
-  (`orbmol_v1_direct`, `orbmol_v1_conservative`) were unknown models. A `model_name` now
-  resolves by orb's registry key too, with hyphens or underscores. One of orb-models'
-  deprecated v1 models (`orb_v1`, `orb_d3_v1`, …) is refused by name as deprecated, where
-  it failed inside the job with a `TypeError` about `compile`.
-- **A training step records the release an unset `model_name` starts from.** CHGNet's
-  trainer fine-tuned its default release, `0.3.0`, while the runlog said
-  `started_from: scratch` and `trained_model.json` said nothing. FAIRChem's fine-tuning
-  template resolves its starting checkpoint by name, and it rendered empty, so the job
-  failed. ORB's trainer refused the step. Each trainer now declares where an unset
-  `model_name` starts, the release its builder runs unset or from scratch, and the plan
-  names it, so the argv, the runlog and `trained_model.json` agree. The backend table in
-  the docs lists each library's start.
 - **A training template carries the start its step names.** A template naming its start
   literally trained from that start while the runlog and `trained_model.json` named the
   step's — SevenNet's own `fine_tune` preset writes `SevenNet-0_11July2024` as its
@@ -540,10 +501,6 @@ for the full map.
   its library must be handed was refused at its step's `prepare`, after the steps that label
   its data had run. The run's t=0 walk now holds every training step's template to its
   trainer's rules, and `chemrefine validate` reports a refusal on the template's row.
-- **`Config.with_overrides` takes any field.** Overriding a field that declares no
-  constraint, such as `template_dir`, raised a bare `TypeError` instead of copying the
-  value in. Every field is now validated by its own declaration, and the copy carries the
-  validated value, so a path given as text lands as a `Path`, as it does from YAML.
 - **A linear molecule keeps its lowest vibration.** ORCA's frequency reader treated six
   modes as translations and rotations for every molecule, but a linear one has five, which
   ORCA says in its own output ("The molecule is recognized as being linear"). So every
@@ -554,22 +511,6 @@ for the full map.
   A tree whose `random` NMS step ran on a linear molecule before draws that molecule's
   children differently: `resume` computes the new ones, and `rebuild-cache` ledgers the
   parent unresolved until the step is re-run.
-- **The interpreter a step names is not part of its cache key.** `backend_python` rode
-  into every provisioned step's row key, so a tree whose steps named their interpreter
-  recomputed on `resume` wherever that interpreter lived elsewhere, and `rebuild-cache`
-  refused the tree as another configuration's. It chooses where a job runs, not what it
-  computes, and is no longer keyed. The key of every MLIP, PySCF and ExtOpt step moves
-  once: a tree cached before recomputes those steps on `resume`, and `rebuild-cache`
-  refuses it; `rerun N` is the migration.
-- **A MACE fine-tune starts from the family its step names.** MACE's `run_train` reads a
-  bare size as a Materials Project model, and the step handed it the bare `model_name`, so
-  a `mace_off` step naming `small` fine-tuned MACE-MP-0 small while its runlog said it
-  started from `small`. The trainer now spells the release as `run_train` names it in the
-  step's family (`small_off`, `mace_omol`), and the runlog shows that spelling, the value
-  the template's `$FOUNDATION_MODEL` carries. The `mlip_training` tutorial's step 4
-  (`mace_off`, `medium`) fine-tuned MACE-MP-0 medium, with MACE's Materials Project replay
-  head; it now starts from MACE-OFF medium, which MACE fine-tunes without a replay head
-  unless the template names a pretraining file (`pt_train_file`).
 - **An ORB step builds its calculator.** `task_name: orb` failed before its first
   structure: the builder dropped the atoms adapter the pretrained loader returns, which
   orb-models' calculator requires. The builder now passes it, and loads the model
@@ -578,31 +519,12 @@ for the full map.
   80 s single point of water, and made a one-epoch fit take 67 s. A `model_name` is now
   resolved through orb-models' own registry of loaders, so a name that is not a loader is
   refused as an unknown model rather than failing as a `TypeError`.
-- **`trained_model.json` names its model relative to itself.** The record a training step
-  writes beside its model gave the model's absolute path, and gave a starting checkpoint by
-  the path the loader resolved, so a tree copied elsewhere cited locations on the machine
-  it came from. The model is now named relative to the record's directory, and a starting
-  checkpoint by its file name (the spelling the cache key uses), under
-  `trained_model_format` 2.
 - **A `%docker` or `%solvator` block infers its run kind.** ORCA runs a docking or a
   solvation from the `%docker` / `%solvator` block alone. A step that omitted `operation:`
   inferred only from the `!` keyword line, read such a run as a single point, and kept one
   structure of the ensemble ORCA wrote. The block now infers `docker` / `solvator` exactly
   as the `! DOCKER` / `! SOLVATOR` keyword does. A keyword still wins over a block, and a
   `%solvator` block over a `%docker` one, which a solvation reads as its docking settings.
-- **A step's cache key follows the operation its outputs are read as and the NMS target it
-  resolves to.** A step that left out `operation:` keyed the omission, not the reader its
-  template selects. A change in what the template infers therefore moved no key, and
-  `resume` kept serving results read by the previous reader, while writing out the
-  `operation:` the template already implied re-keyed every row and recomputed the step.
-  Likewise, an NMS step on an `OptTS` template with no `target` keyed the default `minimum`
-  while it resolved `ts`. The key now holds the operation the engine resolves (declared or
-  inferred, in any legal spelling) and the target the step resolves to, so spelling either
-  out is a free edit. Two keys move once. Every ORCA and Q-Chem step that omits
-  `operation:`: a tree cached before recomputes it on `resume`, and `rebuild-cache`
-  refuses it as another configuration's; `rerun N` is the migration. An NMS step on an
-  `OptTS` template with no `target`: `resume` re-runs its resolution once, as after any
-  criterion change, without resubmitting a round-1 job.
 - **A failed ExtOpt gradient call reports its reason, not a traceback.** When the bridge
   ORCA runs for each gradient failed in a way ChemRefine classifies (no reply within
   `gradient_timeout_seconds`, a server that cannot be reached or refuses the request, a
@@ -631,41 +553,6 @@ for the full map.
   converged unless the last SCF or the last optimiser verdict failed. Apart from that
   Hessian, a finished run that converged reads as before. A gradient or coordinate block cut off by a kill is also read
   in linear time, where a few dozen atoms never finished parsing.
-- **Ctrl-D or Ctrl-C at `chemrefine agent`'s allow prompt declines the call.** It failed
-  the whole turn instead, reported as "model endpoint failed: " with no reason, for what
-  was only you answering no; the model now reads it as a declined call and goes on.
-- **The builder's chat keeps a paused turn when another tab moves past it.** Verdicts
-  that did not answer exactly the calls waiting — stale cards in a second tab — reached
-  the run, which refused them only after the paused turn had been taken, losing it and
-  the message that raised it; they are now refused first, the calls still wait, and the
-  panel shows the ones actually waiting. A message sent while calls waited continued
-  from the conversation before that turn, dropping it; it now continues from the paused
-  turn, with its calls recorded as never run.
-- **A chat turn that fails keeps what it did.** In `chemrefine agent` and the builder's
-  chat panel, a turn that failed part-way — the model endpoint dropping after an allowed
-  call ran — was dropped whole: the next turn's model saw neither your message nor the
-  changes that ran, and could propose the same change again. The conversation now keeps
-  your message and every change the turn made before it failed, with what each returned,
-  and a config saved on such a turn is loaded into the builder as on any other. Allowed
-  changes run one at a time, so a call that crashes beside one can no longer discard the
-  record of a change that went through.
-- **An ExtOpt gradient call cut off by a connection reset fails the job by name.** A reset
-  after the server took the request escaped the bridge as a traceback in the runlog, where
-  every other server fault is the classified failure ORCA's step records. Every HTTP fetch
-  ChemRefine makes now goes through one function, and every one catches the same set of
-  endpoint failures.
-- **The builder reads every request field by its declared type.** The chat panel's
-  `reset` was read by truthiness, so `{"reset": "false"}` wiped the conversation and any
-  pending approvals, where `overwrite` and the approval verdicts were already typed. Each
-  endpoint's body is now declared once, field by field, and a value of the wrong JSON type
-  is the usual 400 naming the field. A count too long for Python's integer conversion is
-  that 400 too, rather than a 500.
-- **A CHGNet or ORB training template cannot name a different start point than the step.**
-  The driver refused a template `device` or `seed` that disagreed with the step, but not
-  the two keys training actually starts from: a template `weights_path` for a step with
-  no `model_path` trained from that checkpoint while the runlog and `trained_model.json`
-  said "scratch", and a template `foundation` lost silently to the step's `model_name`.
-  Every plan fact is now checked the same way, as the entry under *Changed* describes.
 - **A step the scheduler would refuse stops the run before anything runs.** A layout over
   `max_cores` (a Q-Chem `nprocs` x `cores` step), a CUDA step against `max_gpus: 0`,
   several GPUs under `dispatch: local`, or a missing step template or SLURM header was
@@ -673,78 +560,19 @@ for the full map.
   run. The run now builds every step's batch plan at its start, beside the engines' own
   preflight, and `chemrefine validate` warns about the budget cases against the budget the
   config states (a warning, since `--maxcores` and `--maxgpus` can raise it for the run).
-- **A chat turn that fails after your verdicts never offers them again.** In the
-  builder's chat panel the allowed calls run before the model is asked anything, so a turn
-  that then failed — the model endpoint dropping — had already made its changes, yet the
-  allow/deny cards came back with your verdicts filled in, and one click ran the same
-  calls a second time. The suspended run is now taken when the verdicts are applied, and
-  the cards return only when the turn failed before reaching it.
-- **A tool's refusal reaches the embedded agent's model, as it did over MCP.** In
-  `chemrefine agent` and the builder's chat panel, a tool refusing — an unknown action, a
-  template not written yet, a run lock held — ended the turn: the terminal printed the
-  error and the panel answered 400, and the model never read the sentence that says what
-  to change. The refusal is now the tool's answer to the model, by class and message
-  (`ConfigError: …`) — a failed result the model reads and adapts from, the same in both
-  harnesses and over MCP, whose error text gains the class. The `agent` extra now needs
-  `pydantic-ai-slim` 2.16 or newer for that channel.
 - **An ExtOpt step's wrapper is never seen half-written.** Every job of an
   `mlip-extopt` / `pyscf-extopt` step executes one wrapper script, and a convergence retry
   rewrote it in place while its siblings ran — an ORCA that executed it in that window ran
   an empty script and got no gradient. It is now replaced in one rename, executable from
   its first appearance, and not rewritten when it already holds the same bytes and mode.
-- **An `on_failure: best` step stores its structures in their parents' order.** The
-  backfilled failures were appended after the survivors in the order they failed, which
-  differs between a resume and a `rebuild-cache` of the same step, so the steps after it
-  were re-keyed with no result changed — and an `mlip-train` step retrained on a new
-  split. A `best` cache that holds failures re-orders the next time that step is finalized
-  (a `rebuild-cache` of it, say), and the steps after it re-parse once (an `mlip-train`
-  step retrains once).
-- **Agent chat turns close what they open, on every supported Python.** The terminal
-  chat and the builder's chat panel ran each turn on an event loop left installed on the
-  thread, and an HTTP error answer from a model endpoint, the ExtOpt server or PubChem was
-  never closed; on Python 3.14 both are warnings. Each turn now runs on a loop of its own
-  and closes it, and every error answer is closed where it is caught.
-- **An API key holding a character HTTP headers cannot carry is refused by name.** A
-  curly quote or an em dash pasted into the key made `chemrefine agent --check` blame the
-  endpoint ("the reply is not a model listing") for a request it never sent; the key is
-  refused where it is resolved, as a newline in it already was.
-- **Every read the agent tools and the GUI make answers in the documented shape.** A
-  template, `steps.csv` or run log this account cannot read is the tools' `ConfigError`
-  naming the file, where it was a 500 with a traceback in the GUI and a generic tool
-  failure over MCP; a GET without its query argument is the same `{error, exit_code}`
-  refusal the POST endpoints give, not an HTML page the page cannot read; and a run the
-  OS refuses to spawn leaves no empty log behind for `run_status` to serve as the newest.
-- **A relaxed scan is read inside the `%geom` block that declares it.** The detector
-  accepted the word `scan` anywhere after a `%geom` block, so an `Opt Freq` template whose
-  `%pointcharges` path, `%base` name or coordinate file contained it was read by the scan
-  parser: the final energy survived, the frequency table did not, and NMS refused the step
-  for a reason that was not true. The keyword now counts only inside the block's own body.
 - **A legacy key that holds a mapping refuses a scalar by name, from both loaders.**
   `executables` behind `orca_executable`, `normal_mode_sampling_parameters` and
   `sample_type.parameters` given a number raised a bare `TypeError` — a traceback out of
   `load_config` and a 500 out of `validate`, whose contract is never to raise. Each is now
   the same field error `options: 3` already was, naming the key.
-- **An agent approval is a JSON boolean, never a truthy value.** The GUI's chat endpoint
-  read each verdict with `bool()`, so the string `"false"` approved a suspended
-  `save_config`, `write_template`, `scaffold_templates` or `start_run`. A verdict that is
-  not a JSON boolean is refused in the documented error shape, with nothing run.
-- **The developer tooling fails where it used to lie.** The docs viewer hook names the
-  mode file when its header is missing or not a count, instead of a bare traceback from
-  `mkdocs build --strict`; the mutation gate stops on an entry that would change nothing
-  and puts its scratch copy *ahead of* an existing `PYTHONPATH` rather than in its place;
-  the logo checker's resemblance gate skips only when numpy or Pillow is missing, not on
-  any error inside it; and the logo generator writes the hand-authored SVGs after every
-  inkscape step has succeeded, bounds each render with a timeout, and refuses an empty
-  glyph query. The security page now says what the cache rule never covered: a model
-  checkpoint is unpickled by its library, so it is code.
 - **An output tree on a filesystem without hard links is refused by the run lock, with its
   exit code.** The lock is a fail-if-exists `os.link`, and a mount that refuses the call
   (vfat/exfat, some FUSE and SMB shares) escaped as a traceback from inside the claim.
-- **A structure's cache digest no longer depends on the Python type of its energy.** The
-  digest hashed `repr(energy)`, and a numpy scalar spells itself differently from the
-  float it becomes after a cache round trip — a parser handing the driver one would have
-  re-keyed every downstream row on every resume. Today's parsers hand over plain floats,
-  so no existing key moves.
 - **Four engine contracts brought back into line.** An ORCA `Opt` output no longer
   carries forces: its last gradient block is printed inside the last optimisation cycle
   and describes the geometry *before* the converged one, so the forces stored beside the
@@ -790,24 +618,6 @@ for the full map.
   step's successes; it is now refused where the structure is assembled, for every engine,
   as an unparseable output naming the symbol. A non-finite component in an ORCA normal-mode
   table withholds the tensor instead of displacing every NMS child along it.
-- **A step's cached survivor order no longer depends on how its structures converged.**
-  A `resume` or `rerun-errors` that retried a convergence failure cached the retried
-  structure *last*, and an NMS re-attempt cached the re-run parents after the kept ones,
-  while a fresh run and `rebuild-cache` keep manifest order. That order is part of the
-  next step's cache key, so the same results cached under different histories keyed the
-  tail differently: after such a resume, `rebuild-cache N` flipped the order back,
-  refused `rebuild-cache N+1` as "a different configuration" and left `resume` to
-  recompute a tail nothing had changed. Survivors are now put in their parents' order at
-  the one point every path ends, so no history can move them — including a fan-out frame
-  retried mid-queue, which used to land after its siblings. A tree that already holds a
-  retry-ordered cache recomputes its tail once more on its next `rebuild-cache`, which is
-  the state it is in today.
-- **A run started with a numeric step target launches.** `start_run` — and so the GUI's
-  Run panel over `/api/run` — accepted a step number as an integer (the same selector
-  `/api/results` takes) but appended it to the child's argv unrendered, so `Popen`
-  raised after the run log had been created: a 500 for the request and an empty
-  `agent_runs/*.log` that `run_status` then reported as the newest run. The target is
-  rendered as text like the two budgets are.
 - **A managed backend environment runs the ChemRefine that drives it.** An editable
   orchestrator (`pip install -e .`) got a *snapshot* of its checkout in every managed
   environment, frozen at provisioning: the direct MLIP scripts and the ExtOpt server
@@ -819,11 +629,6 @@ for the full map.
   refusing up front with `chemrefine backends install <extra>` (which installs into the
   environment that is there) where it does not. Environments built before this change
   are refused once, until that command is run.
-- **`chemrefine backends install` accepts a conda-made env for what it is.** conda
-  writes a `lib/python3.1 -> python3.12` alias symlink into the envs it creates; read
-  first, it made the env "built on Python 3.1", which no backend supports, so installing
-  into an existing conda env (a `pyscf-gpu` on top of `pyscf`, a refresh of any env) was
-  refused with advice to delete it. The env's one real `lib/` directory is now the answer.
 - **An unknown step target exits 2 from every entry point, `--dry-run` included.** The
   same mistake — `rerun cfg.yaml ghost` when no step is called `ghost` — exited 0 under
   `--dry-run` (the target was echoed as though it would run, after the dry run had
@@ -852,73 +657,6 @@ for the full map.
   become ready" — the wrong diagnosis for a missing binary. The probe is now a stdlib
   `urllib` one-liner under the interpreter that hosts the server, which the job resolves
   anyway.
-- **A step naming a `model_path` keeps its cache when the tree moves.** The loader
-  resolves `model_path` to an absolute path so the job can open it, and that string rode
-  into the step's cache row key — so the same config over the same model bytes derived a
-  different key at every directory it ran from. A tree copied off a cluster recomputed
-  the step that runs the model on `resume`, and `rebuild-cache` refused it as a different
-  configuration. The key now carries the option by its basename; the model's bytes were
-  always pinned separately, so retraining still re-runs the consumer. The cache key of
-  every step naming `model_path` moves once with this change — a tree cached before it
-  recomputes those steps on `resume`, and `rebuild-cache` refuses such a tree as foreign:
-  `rerun N` is the migration.
-- **A script template's `converged` must be a boolean.** The flag had no shape guard, and
-  the lifecycle's verdict reads only a literal `false` as a failure — so a `stepN.py`
-  assigning `converged = 0` or `"false"` ranked its structure as a converged survivor
-  instead of the NOT_CONVERGED retry the field exists to trigger. Anything but `True`,
-  `False` or unassigned is now refused at the parse boundary, naming the field, and lands
-  in the ledger as that structure's UNPARSEABLE failure. The shipped starters already
-  assign a bool (`bool(mf.converged)`, `mlip.last_converged`); a template writing `0`/`1`
-  fails loudly from here on.
-- **A GUI string field of the wrong JSON type is a 400, not a traceback.** A number,
-  list or object sent where an endpoint reads a string — `yaml_text`, `path`,
-  `config_path`, `text`, `name`, `base_dir`, a chat `model` or `base_url` — went straight
-  into `yaml.safe_load`, `Path()` or `.encode` and raised the stdlib's `TypeError` out of
-  the handler as a logged-traceback 500, at fifteen sites, while the counts and step
-  selectors beside them answered 400. Every field read now carries the type contract the
-  wire-number guard always had, and the refusal names the field and the shape; the agent
-  preflight answers such a value as a finding, like every other unusable setting.
-- **A GUI request missing a field it needs is a 400 that names the field.** Every
-  `payload["…"]` read in the web app raised `KeyError`, re-raised as a logged-traceback
-  500 — a rule one test pinned as deliberate while the newer endpoints on the same app
-  answered the same class of input with the documented 400 (`/api/structure-file` with an
-  empty body, the wire-number guard). One helper now serves every endpoint: a missing key,
-  or a body that is not a JSON object at all, is refused as `{error, exit_code}`; a
-  genuine bug inside a tool still surfaces as itself.
-- **A step selector that is neither a number nor a name is refused, not crashed on.**
-  `/api/results`, `/api/failures` and the agent's `get_results`/`get_failures` handed
-  their `step` straight to the lookup, so a JSON float, list or mapping raised a bare
-  `AttributeError` — a logged-traceback 500 from the GUI — and a JSON `true`, an `int`
-  to `isinstance`, quietly selected step 1. `Config.find_step`, the one funnel every
-  wire selector passes through, now refuses such a value as a `ConfigError`, so every
-  caller answers the documented 400 / exit 2.
-- **`rerun-errors` on an NMS step re-runs every round-1 job that left no usable result.**
-  The NMS re-attempt resubmitted only the parents with *no* output and re-parsed
-  everyone else's round-1 file, so a parent whose output a walltime kill had truncated,
-  or whose program had died, failed the same way on every `resume` and `rerun-errors` —
-  the command the exit-6 advice names as the repair. It now applies the rule the non-NMS
-  resume applies: missing, unreadable and not-terminated round-1 jobs are sealed into
-  `attemptK/` and re-run from a regenerated input, unconverged ones are still retried
-  from their best geometry, and unresolved parents still keep their round-1 frequency
-  output and re-run only round 2.
-- **`mlip-extopt` refuses `extra`, as documented.** The engine read the direct `mlip`
-  model, whose `extra` mapping is legitimate, and its server command emits only the flags
-  it knows — so an `extra:` on an `mlip-extopt` step was accepted and read by nothing,
-  the silent no-op the declared-key rule exists to catch. It now reads its own model,
-  which refuses the mapping the way `mlip-train` and `pyscf-extopt` already do.
-- **A `~name` the host cannot resolve is a refusal at every path a user types.**
-  `expanduser` raises `RuntimeError` for an unknown account — neither an `OSError` nor a
-  ChemRefine error — and the guard for it had landed on one GUI endpoint of five sites:
-  the GUI's browse and save boxes answered a logged-traceback 500, and the
-  `read_structure_file` and `save_config` tools the generic crash text. One helper
-  (`agent_tools.expand_user_path`) now answers for all of them with the documented 400
-  and a typed tool refusal.
-- **A traceback that escapes a run starts at the error, not at the run lock.** The
-  reentrant acquisition of the run lock (`recovery.execute` holds it, `pipeline.run` takes
-  it again) yielded from inside its `except FileExistsError`, so every error raised under
-  it was chained to that exception and every escaping traceback opened with "During
-  handling of the above exception (FileExistsError: … run.lock)". It yields after the
-  handler now.
 - **An unreadable or unwritable `_cache/` document is the cache's own error, exit 7.**
   `read_json` refused malformed JSON as a `CacheError` but let a `PermissionError` (a
   mode-000 document, another account's tree) or a `UnicodeDecodeError` (bytes that are
@@ -963,12 +701,6 @@ for the full map.
   same sentence at its start (a warning, not a refusal: the lenient script-engine read
   is the documented design), and the sentence names the readers instead of hedging on a
   placeholder path that never existed.
-- **Parsing a step is linear in its parent count.** The driver parses one job at a time,
-  and every parse rebuilt the parent index from the whole previous state — the assembler
-  once per job, a script engine once per structure — so a step over eight thousand
-  parents spent seconds indexing per parse and a three-step `rebuild-cache` of such a
-  tree tens of seconds on nothing. The state now indexes its structures once
-  (`PipelineState.by_id`) and every reader shares it.
 - **A v1 `energy_window` value keeps its hartree meaning across migration.** v1 read
   `energy` as hartree unless `unit: kcal/mol` was explicit; the translation layer
   carried the bare number into `window_kcalmol` — kcal/mol by definition — so a config
@@ -1027,12 +759,6 @@ for the full map.
   is created 0600 and the rename preserved it, so the cache, manifest and failure
   ledger were owner-only beside world-readable outputs; they now honour the umask like
   any other written file (the server's token sidecar stays 0600 on purpose).
-- **An ExtOpt gradient server runs on the step's own core budget.** The server — the
-  compute half of an `mlip-extopt` / `pyscf-extopt` job — inherited an uncapped thread
-  environment, so torch/MKL took every core the allocation allowed while the scheduler
-  charged the job its `%pal`. The job script now exports the pal thread count before
-  launching the server, and `1` for ORCA alone, which in ExtOpt mode is only the
-  stepper.
 - **The training dataset is readable by the trainer.** v1 wrote `DFT_energy` /
   `DFT_Forces` while MACE's defaults are `REF_energy` / `REF_forces`, and the shipped
   template declared a third pair — MACE refuses a file in which it finds none of its
@@ -1070,10 +796,6 @@ for the full map.
   slots freed by early finishers idled until the last one landed. Picking each
   winner still happens once, after the queue drains, so survivors come back in
   manifest order and downstream fingerprints do not move.
-- A calculation that diverges to a non-finite energy is refused at the parse
-  boundary and ledgered, instead of poisoning the step's energy ranking (every
-  comparison against `nan` is false). Gradients are held to the same rule, since
-  a non-finite force is what an `mlip-train` step would go on to fit.
 - A malformed gradient row in an ORCA output is reported as a parse error for
   that structure instead of being silently mis-read — v1 skipped the row and
   produced a wrong-shaped array. The opt-keyword surface ChemRefine recognises
