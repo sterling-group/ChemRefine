@@ -52,7 +52,7 @@ def _build_kwargs(tmp_path: Path, **overrides):
     base = {
         "job_name": "step1_structure_0",
         "ntasks": 1,
-        "template_path": _write_header(tmp_path),
+        "slurm_header": slurm.read_header(_write_header(tmp_path)),
         "script_path": tmp_path / "out" / "step1_structure_0.slurm",
         "input_path": tmp_path / "in" / "step1_structure_0.inp",
         "output_dir": tmp_path / "out",
@@ -107,7 +107,7 @@ def test_a_builder_refuses_a_resolved_path_it_would_interpolate(tmp_path: Path, 
         slurm.build_array_script(
             step_label="step1_refine",
             ntasks=1,
-            template_path=_write_header(tmp_path),
+            slurm_header=slurm.read_header(_write_header(tmp_path)),
             script_path=tmp_path / "out" / "step1_array.slurm",
             output_dir=tmp_path / "out" if field != "output_dir" else hostile,
             scratch_dir=tmp_path / "scratch" if field != "scratch_dir" else hostile,
@@ -170,7 +170,9 @@ def test_a_shared_sbatch_line_keeps_its_unowned_directives(tmp_path: Path):
         "#SBATCH --ntasks=1 --cpus-per-task=4\n",  # only owned options — the line goes
         encoding="utf-8",
     )
-    script = slurm.build_script(**_build_kwargs(tmp_path, template_path=header, ntasks=2))
+    script = slurm.build_script(
+        **_build_kwargs(tmp_path, slurm_header=slurm.read_header(header), ntasks=2)
+    )
     text = script.read_text(encoding="utf-8")
     assert "--time=24:00:00" in text
     assert "--output=old.log" not in text
@@ -193,7 +195,9 @@ def test_a_shared_mem_line_keeps_its_unowned_directives(tmp_path: Path):
         "#!/bin/bash\n#SBATCH --mem=1 --qos=high\n",
         encoding="utf-8",
     )
-    script = slurm.build_script(**_build_kwargs(tmp_path, template_path=header, memory_mb=4000))
+    script = slurm.build_script(
+        **_build_kwargs(tmp_path, slurm_header=slurm.read_header(header), memory_mb=4000)
+    )
     text = script.read_text(encoding="utf-8")
     assert "--qos=high" in text
     assert "--mem=1" not in text
@@ -229,7 +233,7 @@ def _write_header_with(tmp_path: Path, *directives: str) -> Path:
 def test_no_memory_declaration_leaves_the_header_alone(tmp_path: Path):
     """Engines that declare nothing get exactly the header's memory policy, untouched."""
     header = _write_header_with(tmp_path, "--mem-per-cpu=1000")
-    script = slurm.build_script(**_build_kwargs(tmp_path, template_path=header))
+    script = slurm.build_script(**_build_kwargs(tmp_path, slurm_header=slurm.read_header(header)))
     text = script.read_text(encoding="utf-8")
     assert "#SBATCH --mem-per-cpu=1000" in text
     assert text.count("--mem-per-cpu") == 1
@@ -259,16 +263,16 @@ def test_a_single_node_job_pins_the_node_and_a_headers_own_count_yields(tmp_path
     """
     header = _write_header_with(tmp_path, "--nodes=4 --time=01:00:00", "-N 2")
     pinned = slurm.build_script(
-        **_build_kwargs(tmp_path, template_path=header, single_node=True)
+        **_build_kwargs(tmp_path, slurm_header=slurm.read_header(header), single_node=True)
     ).read_text(encoding="utf-8")
     assert "#SBATCH --nodes=1" in pinned
     assert "--nodes=4" not in pinned and "-N 2" not in pinned
     assert "#SBATCH --time=01:00:00" in pinned
     assert pinned.count("--nodes") == 1
 
-    left_alone = slurm.build_script(**_build_kwargs(tmp_path, template_path=header)).read_text(
-        encoding="utf-8"
-    )
+    left_alone = slurm.build_script(
+        **_build_kwargs(tmp_path, slurm_header=slurm.read_header(header))
+    ).read_text(encoding="utf-8")
     assert "#SBATCH --nodes=4 --time=01:00:00" in left_alone
     assert "--nodes=1" not in left_alone
 
@@ -277,7 +281,13 @@ def test_a_sufficient_header_memory_allocation_stands(tmp_path: Path):
     """The cluster's own policy wins whenever it covers the input's requirement."""
     header = _write_header_with(tmp_path, "--mem-per-cpu=4000")
     script = slurm.build_script(
-        **_build_kwargs(tmp_path, template_path=header, ntasks=1, cpus_per_task=8, memory_mb=16000)
+        **_build_kwargs(
+            tmp_path,
+            slurm_header=slurm.read_header(header),
+            ntasks=1,
+            cpus_per_task=8,
+            memory_mb=16000,
+        )
     )
     text = script.read_text(encoding="utf-8")
     assert "#SBATCH --mem-per-cpu=4000" in text  # 8 cpus x 4000 = 32000 >= 16000
@@ -288,7 +298,13 @@ def test_a_sufficient_total_memory_header_counts_its_units(tmp_path: Path):
     """A ``--mem=64G`` grant is read as 65536 MB, not compared as the bare number 64."""
     header = _write_header_with(tmp_path, "--mem=64G")
     script = slurm.build_script(
-        **_build_kwargs(tmp_path, template_path=header, ntasks=1, cpus_per_task=8, memory_mb=60000)
+        **_build_kwargs(
+            tmp_path,
+            slurm_header=slurm.read_header(header),
+            ntasks=1,
+            cpus_per_task=8,
+            memory_mb=60000,
+        )
     )
     text = script.read_text(encoding="utf-8")
     assert "#SBATCH --mem=64G" in text
@@ -307,7 +323,11 @@ def test_a_short_header_memory_allocation_is_extended(
     with caplog.at_level("INFO"):
         script = slurm.build_script(
             **_build_kwargs(
-                tmp_path, template_path=header, ntasks=1, cpus_per_task=8, memory_mb=32000
+                tmp_path,
+                slurm_header=slurm.read_header(header),
+                ntasks=1,
+                cpus_per_task=8,
+                memory_mb=32000,
             )
         )
     text = script.read_text(encoding="utf-8")
@@ -326,7 +346,9 @@ def test_an_absent_header_memory_grant_is_requested(tmp_path: Path):
 def test_a_kilobyte_header_grant_is_floored_to_mb(tmp_path: Path):
     """``2048K`` reads as 2 MB — flooring understates the grant, which only ever extends."""
     header = _write_header_with(tmp_path, "--mem-per-cpu=2048K")
-    script = slurm.build_script(**_build_kwargs(tmp_path, template_path=header, memory_mb=2))
+    script = slurm.build_script(
+        **_build_kwargs(tmp_path, slurm_header=slurm.read_header(header), memory_mb=2)
+    )
     text = script.read_text(encoding="utf-8")
     assert "#SBATCH --mem-per-cpu=2048K" in text  # 2 MB covers the 2 MB requirement
     assert text.count("--mem-per-cpu") == 1
@@ -341,7 +363,9 @@ def test_a_kilobyte_header_grant_is_not_read_as_megabytes(tmp_path: Path):
     and the job would OOM. This side can only pass when K genuinely reads as 2 MB.
     """
     header = _write_header_with(tmp_path, "--mem-per-cpu=2048K")
-    script = slurm.build_script(**_build_kwargs(tmp_path, template_path=header, memory_mb=3))
+    script = slurm.build_script(
+        **_build_kwargs(tmp_path, slurm_header=slurm.read_header(header), memory_mb=3)
+    )
     text = script.read_text(encoding="utf-8")
     assert "2048K" not in text, "a 2 MB grant cannot cover 3 MB and must be replaced"
     assert "#SBATCH --mem-per-cpu=3" in text  # ceil(3 / (1 task x 1 cpu))
@@ -350,7 +374,9 @@ def test_a_kilobyte_header_grant_is_not_read_as_megabytes(tmp_path: Path):
 def test_a_whole_node_grant_satisfies_any_requirement(tmp_path: Path):
     """``--mem=0`` is SLURM's "all the node's memory" — never extended, whatever is asked."""
     header = _write_header_with(tmp_path, "--mem=0")
-    script = slurm.build_script(**_build_kwargs(tmp_path, template_path=header, memory_mb=999999))
+    script = slurm.build_script(
+        **_build_kwargs(tmp_path, slurm_header=slurm.read_header(header), memory_mb=999999)
+    )
     text = script.read_text(encoding="utf-8")
     assert "#SBATCH --mem=0" in text
     assert "--mem-per-cpu" not in text
@@ -371,7 +397,9 @@ def test_build_script_keeps_ntasks_per_node_directive(tmp_path: Path):
         "#SBATCH --output=old.log\n",
         encoding="utf-8",
     )
-    script = slurm.build_script(**_build_kwargs(tmp_path, template_path=header, ntasks=8))
+    script = slurm.build_script(
+        **_build_kwargs(tmp_path, slurm_header=slurm.read_header(header), ntasks=8)
+    )
     text = script.read_text(encoding="utf-8")
     assert "#SBATCH --ntasks-per-node=16" in text
     assert "#SBATCH --ntasks-per-core=1" in text
@@ -457,9 +485,38 @@ def test_build_script_copies_output_dirs_back(tmp_path: Path):
     assert 'cp -r "tensors" "$OUTPUT_DIR/" 2>/dev/null || true' in text
 
 
-def test_build_script_missing_template_raises(tmp_path: Path):
-    with pytest.raises(ConfigError):
-        slurm.build_script(**_build_kwargs(tmp_path, template_path=tmp_path / "missing.header"))
+def test_a_missing_header_is_refused_where_it_is_read(tmp_path: Path):
+    with pytest.raises(ConfigError, match="SLURM header template not found"):
+        slurm.read_header(tmp_path / "missing.header")
+
+
+def test_a_header_is_parsed_into_what_every_script_of_a_batch_shares(tmp_path: Path):
+    """The owned options leave; the rest stays, in order, as tuples no script can extend."""
+    assert slurm.read_header(_write_header(tmp_path)) == slurm.SlurmHeader(
+        sbatch=("#SBATCH --partition=normal", "#SBATCH --time=24:00:00"),
+        body=("#!/bin/bash", "module load orca/6.0"),
+    )
+
+
+def test_scripts_built_from_one_parse_carry_only_their_own_directives(tmp_path: Path):
+    """One parse serves a whole batch, so no script may carry another's job name or memory."""
+    header = slurm.read_header(_write_header(tmp_path))
+    texts = [
+        slurm.build_script(
+            **_build_kwargs(
+                tmp_path,
+                slurm_header=header,
+                memory_mb=4000,
+                job_name=f"step1_structure_{i}",
+                script_path=tmp_path / "out" / f"step1_structure_{i}.slurm",
+            )
+        ).read_text(encoding="utf-8")
+        for i in (0, 1)
+    ]
+    for text in texts:
+        assert text.count("#SBATCH --job-name=") == 1
+        assert text.count("--mem-per-cpu") == 1
+    assert "#SBATCH --job-name=step1_structure_1" in texts[1]
 
 
 def test_build_script_uses_caller_supplied_output_globs(tmp_path: Path):
@@ -949,7 +1006,7 @@ def test_build_array_script_resolves_task_from_manifest(tmp_path: Path):
     script = slurm.build_array_script(
         step_label="step2_refine",
         ntasks=8,
-        template_path=_write_header(tmp_path),
+        slurm_header=slurm.read_header(_write_header(tmp_path)),
         script_path=tmp_path / "out" / "step2_refine_array.slurm",
         output_dir=tmp_path / "out",
         scratch_dir=tmp_path / "scratch",

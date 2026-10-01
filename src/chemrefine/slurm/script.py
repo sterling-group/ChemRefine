@@ -19,6 +19,7 @@ import logging
 import re
 import sys
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from chemrefine import io, job_log
@@ -85,8 +86,22 @@ def _compute_work_dir_expr(output_dir: Path | str, scratch_dir: Path | None) -> 
     return f"{scratch_dir}/ChemRefine_{suffix}"
 
 
-def read_header(template_path: Path) -> tuple[list[str], list[str]]:
-    """Split a SLURM header template into ``(#SBATCH lines we keep, body lines)``.
+@dataclass(frozen=True)
+class SlurmHeader:
+    """A SLURM header template as every job script of one batch uses it.
+
+    ``sbatch`` holds the header's ``#SBATCH`` lines less the options the builders set
+    themselves, and ``body`` every other line, in order. Tuples, because one parse serves
+    every script a batch builds: each builder extends a copy, so no script carries
+    another's directives.
+    """
+
+    sbatch: tuple[str, ...]
+    body: tuple[str, ...]
+
+
+def read_header(template_path: Path) -> SlurmHeader:
+    """Parse a SLURM header template into the :class:`SlurmHeader` a batch's scripts share.
 
     Drops any ``#SBATCH`` *option* we override later (``--ntasks`` /
     ``--cpus-per-task`` / ``--job-name`` / ``--output`` / ``--error``) so PAL and
@@ -94,8 +109,8 @@ def read_header(template_path: Path) -> tuple[list[str], list[str]]:
     Longer flags that merely share a prefix (``--ntasks-per-node``) are kept.
 
     The option, not its line: sbatch accepts several options on one ``#SBATCH`` line,
-    and dropping the whole line whenever one of ours appeared on it silently discarded
-    the co-resident directives — a ``#SBATCH --time=24:00:00 --output=x.log`` lost its
+    and dropping the whole line whenever one of ours appears on it would discard the
+    co-resident directives — a ``#SBATCH --time=24:00:00 --output=x.log`` would lose its
     time limit with nothing said. Owned options are stripped in place and the line kept
     whenever any other directive survives on it.
     """
@@ -109,7 +124,7 @@ def read_header(template_path: Path) -> tuple[list[str], list[str]]:
                 sbatch_lines.append(kept)
         else:
             body_lines.append(raw.rstrip())
-    return sbatch_lines, body_lines
+    return SlurmHeader(tuple(sbatch_lines), tuple(body_lines))
 
 
 _SCRATCH_CLEANUP = 'scratch_kept=false; cd "$OUTPUT_DIR" && rm -rf "$WORK_DIR"'
@@ -151,7 +166,7 @@ def _directive_mb(value: int, unit: str) -> int:
     return value * {"": 1, "M": 1, "G": 1024, "T": 1024 * 1024}[unit]
 
 
-def _header_memory_mb(sbatch_lines: list[str], *, ntasks: int, cpus_per_task: int) -> int | None:
+def _header_memory_mb(sbatch: Sequence[str], *, ntasks: int, cpus_per_task: int) -> int | None:
     """Per-job MB the header's own memory directives grant; ``None`` when it has none.
 
     ``--mem-per-cpu`` multiplies by the layout; ``--mem`` is the per-node total, which for
@@ -161,7 +176,7 @@ def _header_memory_mb(sbatch_lines: list[str], *, ntasks: int, cpus_per_task: in
     for a sufficiency test that only decides whether to extend.
     """
     granted: int | None = None
-    for line in sbatch_lines:
+    for line in sbatch:
         m = _MEM_DIRECTIVE_RE.search(line)
         if not m:
             continue
@@ -177,13 +192,13 @@ def _header_memory_mb(sbatch_lines: list[str], *, ntasks: int, cpus_per_task: in
 
 
 def _apply_memory(
-    sbatch_lines: list[str],
+    sbatch: tuple[str, ...],
     memory_mb: int | None,
     *,
     ntasks: int,
     cpus_per_task: int,
     job_name: str,
-) -> list[str]:
+) -> tuple[str, ...]:
     """Honour a header allocation that covers ``memory_mb``; extend one that falls short.
 
     ``None`` — the engine declares nothing — leaves the header byte-untouched, which is
@@ -194,10 +209,10 @@ def _apply_memory(
     happens silently.
     """
     if memory_mb is None:
-        return sbatch_lines
-    granted = _header_memory_mb(sbatch_lines, ntasks=ntasks, cpus_per_task=cpus_per_task)
+        return sbatch
+    granted = _header_memory_mb(sbatch, ntasks=ntasks, cpus_per_task=cpus_per_task)
     if granted is not None and granted >= memory_mb:
-        return sbatch_lines
+        return sbatch
     per_cpu = -(-memory_mb // (ntasks * cpus_per_task))  # ceil
     logger.info(
         "%s: the input declares %d MB; the header grants %s — requesting --mem-per-cpu=%d",
@@ -210,14 +225,14 @@ def _apply_memory(
     # (`#SBATCH --mem=2G --time=…`) must lose only the memory half — the `read_header`
     # rule, applied to the one directive this function replaces.
     kept = []
-    for line in sbatch_lines:
+    for line in sbatch:
         if not _MEM_DIRECTIVE_RE.search(line):
             kept.append(line)
             continue
         remainder = _MEM_STRIP_RE.sub("", line)
         if remainder.strip() != "#SBATCH":
             kept.append(remainder)
-    return [*kept, f"#SBATCH --mem-per-cpu={per_cpu}"]
+    return (*kept, f"#SBATCH --mem-per-cpu={per_cpu}")
 
 
 # A header's own node count, in either spelling, for stripping the directive (not its
@@ -226,7 +241,7 @@ def _apply_memory(
 _NODES_STRIP_RE = re.compile(r"[ \t]*(?:--nodes|-N)(?:=|[ \t]+)\S+(?=\s|$)")
 
 
-def _apply_single_node(sbatch_lines: list[str], single_node: bool) -> list[str]:
+def _apply_single_node(sbatch: tuple[str, ...], single_node: bool) -> tuple[str, ...]:
     """Pin the job to one node when the engine says its processes must share one.
 
     ``False`` leaves the header byte-untouched, which is what every job gets whose shape
@@ -239,13 +254,13 @@ def _apply_single_node(sbatch_lines: list[str], single_node: bool) -> list[str]:
     header's own ``--nodes`` is stripped in place so the two cannot disagree.
     """
     if not single_node:
-        return sbatch_lines
+        return sbatch
     kept = []
-    for line in sbatch_lines:
+    for line in sbatch:
         remainder = _NODES_STRIP_RE.sub("", line)
         if remainder.strip() != "#SBATCH":
             kept.append(remainder)
-    return [*kept, "#SBATCH --nodes=1"]
+    return (*kept, "#SBATCH --nodes=1")
 
 
 def _run_body_lines(
@@ -341,7 +356,7 @@ def build_script(
     cpus_per_task: int = 1,
     memory_mb: int | None = None,
     single_node: bool = False,
-    template_path: Path,
+    slurm_header: SlurmHeader,
     script_path: Path,
     input_path: Path,
     output_dir: Path,
@@ -356,14 +371,14 @@ def build_script(
     output_dirs: Sequence[str] = (),
     extra_header_fields: Sequence[tuple[str, object]] = (),
 ) -> Path:
-    """Assemble a SLURM script at ``script_path`` from a header template + a run block.
+    """Assemble a SLURM script at ``script_path`` from a header + a run block.
 
-    Reads ``template_path`` (a cluster header), strips any ``#SBATCH``
-    directives we own (``--ntasks``/``--cpus-per-task``/``--job-name``/
-    ``--output``/``--error``) and re-adds them so the core layout + log paths stay
-    consistent, then appends a scratch-setup + on-exit trap that runs the
-    engine's ``run_block`` in a fresh ``$WORK_DIR`` and copies ``output_globs``
-    back to ``output_dir``. Notable args:
+    ``slurm_header`` is :func:`read_header`'s parse of the cluster header, one per batch,
+    already stripped of the ``#SBATCH`` directives we own (``--ntasks``/
+    ``--cpus-per-task``/``--job-name``/``--output``/``--error``); this re-adds them so the
+    core layout + log paths stay consistent, then appends a scratch-setup + on-exit trap
+    that runs the engine's ``run_block`` in a fresh ``$WORK_DIR`` and copies
+    ``output_globs`` back to ``output_dir``. Notable args:
 
     * ``ntasks`` / ``cpus_per_task`` → the SBATCH pair, straight through. The pair is the
       engine's :meth:`~chemrefine.engines.api.JobExecutable.slurm_layout`: MPI ranks are
@@ -388,20 +403,18 @@ def build_script(
     _refuse_shell_unsafe(
         ("output_dir", output_dir), ("input_path", input_path), ("scratch_dir", scratch_dir)
     )
-    sbatch_lines, body_lines = read_header(template_path)
-    sbatch_lines = _apply_memory(
-        sbatch_lines, memory_mb, ntasks=ntasks, cpus_per_task=cpus_per_task, job_name=job_name
+    sbatch = _apply_single_node(
+        _apply_memory(
+            slurm_header.sbatch,
+            memory_mb,
+            ntasks=ntasks,
+            cpus_per_task=cpus_per_task,
+            job_name=job_name,
+        ),
+        single_node,
     )
-    sbatch_lines = _apply_single_node(sbatch_lines, single_node)
     runlog_path = output_dir / f"{job_name}.runlog"
     err_path = output_dir / f"{job_name}.err"
-    sbatch_lines += [
-        f"#SBATCH --job-name={job_name}",
-        f'#SBATCH --output="{runlog_path}"',
-        f'#SBATCH --error="{err_path}"',
-        f"#SBATCH --ntasks={ntasks}",
-        f"#SBATCH --cpus-per-task={cpus_per_task}",
-    ]
 
     header = job_log.bash_header(
         engine=engine,
@@ -418,9 +431,14 @@ def build_script(
     script_lines = [
         "#!/bin/bash",
         "",
-        *sbatch_lines,
+        *sbatch,
+        f"#SBATCH --job-name={job_name}",
+        f'#SBATCH --output="{runlog_path}"',
+        f'#SBATCH --error="{err_path}"',
+        f"#SBATCH --ntasks={ntasks}",
+        f"#SBATCH --cpus-per-task={cpus_per_task}",
         "",
-        *body_lines,
+        *slurm_header.body,
         "",
         *_run_body_lines(
             work_dir_expr=_compute_work_dir_expr(output_dir, scratch_dir),
@@ -483,7 +501,7 @@ def build_array_script(
     cpus_per_task: int = 1,
     memory_mb: int | None = None,
     single_node: bool = False,
-    template_path: Path,
+    slurm_header: SlurmHeader,
     script_path: Path,
     output_dir: Path,
     scratch_dir: Path | None,
@@ -518,23 +536,17 @@ def build_array_script(
     manifest that did not exist. The argument channel has no such character.
     """
     _refuse_shell_unsafe(("output_dir", output_dir), ("scratch_dir", scratch_dir))
-    sbatch_lines, body_lines = read_header(template_path)
-    sbatch_lines = _apply_memory(
-        sbatch_lines,
-        memory_mb,
-        ntasks=ntasks,
-        cpus_per_task=cpus_per_task,
-        job_name=f"{step_label}_array",
+    sbatch = _apply_single_node(
+        _apply_memory(
+            slurm_header.sbatch,
+            memory_mb,
+            ntasks=ntasks,
+            cpus_per_task=cpus_per_task,
+            job_name=f"{step_label}_array",
+        ),
+        single_node,
     )
-    sbatch_lines = _apply_single_node(sbatch_lines, single_node)
     fallback_log = output_dir / "array_%A_%a.log"
-    sbatch_lines += [
-        f"#SBATCH --job-name={step_label}_array",
-        f'#SBATCH --output="{fallback_log}"',
-        f'#SBATCH --error="{fallback_log}"',
-        f"#SBATCH --ntasks={ntasks}",
-        f"#SBATCH --cpus-per-task={cpus_per_task}",
-    ]
     # ``$SID`` expands inside the runlog heredoc at runtime, like $(hostname).
     header = job_log.bash_header(
         engine=engine,
@@ -566,13 +578,18 @@ def build_array_script(
     script_lines = [
         "#!/bin/bash",
         "",
-        *sbatch_lines,
+        *sbatch,
+        f"#SBATCH --job-name={step_label}_array",
+        f'#SBATCH --output="{fallback_log}"',
+        f'#SBATCH --error="{fallback_log}"',
+        f"#SBATCH --ntasks={ntasks}",
+        f"#SBATCH --cpus-per-task={cpus_per_task}",
         "",
         "# Array manifest (generated by ChemRefine): the first argument, taken before",
         "# the template body can touch the positional parameters.",
         'CR_MANIFEST="${1:?array manifest path missing}"',
         "",
-        *body_lines,
+        *slurm_header.body,
         "",
         *resolution,
         *_run_body_lines(

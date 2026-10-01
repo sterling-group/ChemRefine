@@ -300,6 +300,9 @@ for the full map.
 
 ### Changed
 
+- **A batch reads its SLURM header once.** Every job script of a step's batch is built from
+  the header as the batch read it when it started, where the queue path re-read the file
+  for each job; an edit reaches the step's next batch or the next run.
 - **A FAIRChem step loads its model uncompiled.** From fairchem-core 2.22, FAIRChem's
   `"default"` inference preset compiles the model on its first prediction, which on CPU was
   25 to 72 s of a UMA single point, paid again by every job, since each runs in a process of

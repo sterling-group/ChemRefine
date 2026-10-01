@@ -30,7 +30,9 @@ ChemRefine does not run anything through it:
 A cluster whose users live in `zsh`, `fish`, or anything else is fine. The one
 requirement: **`bash` must exist on the compute nodes** (universal on Linux clusters).
 Your SLURM header files (`*.slurm.header`) contribute `#SBATCH` directives and
-environment lines; they do not need their own shebang.
+environment lines; they do not need their own shebang. A batch reads its header once,
+when it starts: every job script of the batch carries that reading, and an edit reaches
+the step's next batch or the next run.
 
 ## Provision on a login node, run anywhere
 

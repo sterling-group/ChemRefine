@@ -524,9 +524,11 @@ bash substitutes *inside* double quotes
                                 :mod:`chemrefine.ids` under the validated ``output_dir``),
                                 or the ``_NAME_RE``-checked step label plus a literal
                                 ``_array`` suffix
-    ``template_path`` /         safe by construction — the header resolves under the
-    ``script_path`` (script)    validated ``template_dir``; the script is minted beside
-                                the validated input path
+    ``slurm_header``            safe by construction — the user's own cluster header,
+                                read from under the validated ``template_dir`` and copied
+                                line for line, never interpolated
+    ``script_path`` (script)    safe by construction — minted beside the validated input
+                                path
     ==========================  ===============================================================
 
     Public, not underscored, because the engine option models import it: a knob that reaches

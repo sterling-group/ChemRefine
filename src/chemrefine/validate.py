@@ -493,7 +493,7 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
                 )
             )
             continue
-        # Read as the job script reads it, which the run's t=0 walk does too.
+        # Read as a batch reads it, which the run's t=0 walk does too.
         try:
             slurm.read_header(path)
         except ConfigError as e:

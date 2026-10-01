@@ -143,7 +143,7 @@ def _assemble(engine_name: str, tmp_path: Path, *, array: bool = False) -> tuple
 
     common = {
         "ntasks": 1,
-        "template_path": header,
+        "slurm_header": slurm.read_header(header),
         "output_dir": out_dir,
         "scratch_dir": None,
         "engine": engine_name,
@@ -712,8 +712,8 @@ _BASH_PARAM_SAFETY: dict[str, str] = {
     "cpus_per_task": "an integer",
     "memory_mb": "an integer or None",
     "single_node": "a boolean that selects a literal directive; never interpolated",
-    "template_path": "a path that is read, never interpolated — its lines become the "
-    "cluster header the user already owns",
+    "slurm_header": "the user's own cluster header, parsed; its lines are copied into the "
+    "script, never interpolated",
     "script_path": "the write destination; never part of the script's text",
     "output_globs": "engine-declared constants (a ClassVar, or a property over trainer "
     "declarations); never config",

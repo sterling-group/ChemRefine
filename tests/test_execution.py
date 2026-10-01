@@ -392,6 +392,41 @@ def test_the_ledger_holds_the_jobs_in_flight_not_the_whole_batch(submit, _finish
     assert seen == [[], ["j0"], ["j1"]]
 
 
+@patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
+@patch.object(slurm, "submit")
+def test_a_header_edited_mid_batch_reaches_the_next_batch_not_the_running_one(
+    submit, _finished, tmp_path: Path
+):
+    """A batch is built from the header it read when it started.
+
+    Every script of a running batch carries the reading its plan was checked with; an
+    edit lands with the step's next batch.
+    """
+    engine = _FakeJobEngine()
+    ctx = _ctx(tmp_path, ids=("0", "1"))
+    header = ctx.template_dir / "cpu.slurm.header"
+    header.write_text("#!/bin/bash\n#SBATCH --partition=first\n", encoding="utf-8")
+
+    def _submit(script_path: Path, **_: object) -> str:
+        header.write_text("#!/bin/bash\n#SBATCH --partition=second\n", encoding="utf-8")
+        return f"j-{script_path.stem}"
+
+    submit.side_effect = _submit
+    _execution.run_batch(engine, engine.prepare(ctx), ctx)
+    scripts = sorted(ctx.step_dir.rglob("*.slurm"))
+    assert len(scripts) == 2
+    for script in scripts:
+        text = script.read_text(encoding="utf-8")
+        assert "#SBATCH --partition=first" in text
+        assert "--partition=second" not in text
+
+    _execution.run_batch(engine, engine.prepare(ctx), ctx)
+    assert all(
+        "#SBATCH --partition=second" in script.read_text(encoding="utf-8")
+        for script in sorted(ctx.step_dir.rglob("*.slurm"))
+    )
+
+
 def test_a_failed_ledger_write_leaves_its_job_in_the_unwinds_sweep(tmp_path: Path):
     """Registered before it is leased, so the unwind terminates the job it was recording."""
     engine = _FakeJobEngine()

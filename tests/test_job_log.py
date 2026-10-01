@@ -169,7 +169,7 @@ def test_the_documented_runlog_path_and_glob_are_both_real(tmp_path: Path):
         job_name=inp.stem,
         ntasks=1,
         cpus_per_task=1,
-        template_path=header,
+        slurm_header=slurm.read_header(header),
         script_path=inp.with_suffix(".slurm"),
         input_path=inp,
         output_dir=out.parent,

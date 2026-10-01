@@ -42,20 +42,6 @@ def _header_name(engine: JobExecutable, ctx: StepContext) -> str:
     )
 
 
-def _header_path(engine: JobExecutable, ctx: StepContext) -> Path:
-    """Resolve + validate the SLURM header template path for this step.
-
-    The header is read as the job script reads it (:func:`chemrefine.slurm.read_header`),
-    so one that script would refuse — missing, which a GPU step can be without ever naming
-    ``cuda.slurm.header`` itself, unreadable, or not UTF-8 text — is refused here as a
-    :class:`~chemrefine.errors.ConfigError`, which the run's t=0 walk reaches before
-    anything runs.
-    """
-    header_path = ctx.template_dir / _header_name(engine, ctx)
-    slurm.read_header(header_path)
-    return header_path
-
-
 class BatchShape(NamedTuple):
     """One job's shape as the scheduler charges it: SLURM tasks x cores each, and GPUs."""
 
@@ -133,7 +119,10 @@ class BatchPlan:
     them to be read from.
     """
 
-    header_path: Path
+    header: slurm.SlurmHeader
+    """The step's SLURM header, parsed once for the batch. Every job script of it is built
+    from this parse, so the header the plan was checked with is the one each script
+    carries, and an edit reaches the step's next batch."""
     shape: BatchShape
     memory_mb: int | None
     single_node: bool
@@ -154,13 +143,14 @@ class BatchPlan:
         Built before the array/queue fork, so a step is judged by its configuration and not
         by the path it takes — and by the run at t=0 for every step that may submit
         (:func:`chemrefine.step.preflight_batches`), so a plan the scheduler refuses stops
-        the run before any step has computed. The header resolves first, so a missing one
-        reports itself before anything about cores or GPUs.
+        the run before any step has computed. The header is read first, so one that is
+        missing — which a GPU step can be without ever naming its header — unreadable or not
+        UTF-8 text reports itself before anything about cores or GPUs.
         """
-        header_path = _header_path(engine, ctx)
+        header = slurm.read_header(ctx.template_dir / _header_name(engine, ctx))
         shape = check_batch(engine, ctx, local=local, gpu_budget=gpu_budget.count)
         return cls(
-            header_path=header_path,
+            header=header,
             shape=shape,
             memory_mb=engine.memory_mb(ctx),
             single_node=engine.single_node(ctx),
@@ -252,7 +242,7 @@ def _submit_one(
         cpus_per_task=plan.shape.cpus_per_task,
         memory_mb=plan.memory_mb,
         single_node=plan.single_node,
-        template_path=plan.header_path,
+        slurm_header=plan.header,
         script_path=script_path,
         input_path=inp,
         output_dir=out.parent,
@@ -388,7 +378,7 @@ def _run_array(
         cpus_per_task=plan.shape.cpus_per_task,
         memory_mb=plan.memory_mb,
         single_node=plan.single_node,
-        template_path=plan.header_path,
+        slurm_header=plan.header,
         script_path=script_path,
         output_dir=output_dir,
         scratch_dir=ctx.scratch_dir,

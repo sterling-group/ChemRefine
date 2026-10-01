@@ -45,6 +45,7 @@ from chemrefine.slurm.dispatch import (
     wait_for_jobs,
 )
 from chemrefine.slurm.script import (
+    SlurmHeader,
     build_array_script,
     build_script,
     read_header,
@@ -56,6 +57,7 @@ __all__ = [
     "CUDA_HEADER",
     "JobLease",
     "QueueState",
+    "SlurmHeader",
     "build_array_script",
     "build_script",
     "current_user",
