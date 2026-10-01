@@ -60,6 +60,10 @@ _OPT_TOKEN_RE = re.compile(
 )
 _FREQ_TOKEN_RE = re.compile(r"(?:num|an)?freq", re.IGNORECASE)
 
+# GOAT and its variants (ORCA 6.1.1 manual, Table 4.9), each a whole token: every one of them
+# writes the same ``<base>.finalensemble.xyz``, so all six are one run kind to the reader.
+_GOAT_TOKEN_RE = re.compile(r"goat(?:-explore|-react|-entropy|-diversity|-coarse)?", re.IGNORECASE)
+
 # The run kinds whose product is many geometries rather than one. Whole-token spellings
 # again: the nudged-elastic-band family is one keyword with optional prefixes (the ``Fast``
 # and ``Zoom`` variants, a convergence level) and suffixes (``-CI`` climbing image, ``-TS``
@@ -151,7 +155,8 @@ def _has_geom_scan(decommented: str) -> bool:
 def inspect_template(template_text: str) -> OrcaInputInfo:
     """Infer run type + PAL from an ORCA template's text.
 
-    Ensemble runs are simple keywords (``! GOAT`` / ``! DOCKER`` / ``! SOLVATOR``) or the
+    Ensemble runs are simple keywords (``! GOAT`` and its ``GOAT-…`` variants /
+    ``! DOCKER`` / ``! SOLVATOR``) or the
     ``%docker`` / ``%solvator`` block ORCA accepts in their place (a keyword wins over a block,
     and ``%solvator`` over ``%docker`` — see :data:`_DOCKER_BLOCK_RE`); a relaxed scan is a
     ``%geom … Scan … end`` block; a reaction path (``! IRC``), a band of images
@@ -177,7 +182,7 @@ def inspect_template(template_text: str) -> OrcaInputInfo:
         if line.lstrip().startswith("!")
         for token in line.lstrip().lstrip("!").split()
     }
-    if "goat" in keywords:
+    if any(_GOAT_TOKEN_RE.fullmatch(token) for token in keywords):
         operation = "goat"
     elif "docker" in keywords:
         operation = "docker"

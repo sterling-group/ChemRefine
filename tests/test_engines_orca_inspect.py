@@ -41,7 +41,18 @@ def test_a_keyword_that_merely_contains_a_run_kind_does_not_name_it():
     """Whole tokens only, as for ``opt`` and ``freq``: ``NEBULA`` is not a band, ``MDCI`` no MD."""
     assert inspect_template("! NEBULA def2-SVP\n").operation == "sp"
     assert inspect_template("! MDCI def2-SVP\n").operation == "sp"
+    assert inspect_template("! XTB GOATS\n").operation == "sp"
+    assert inspect_template("! XTB GOAT-WALK\n").operation == "sp"
     assert inspect_template("# ! IRC later\n! HF def2-SVP\n").operation == "sp"
+
+
+@pytest.mark.parametrize(
+    "keyword",
+    ["GOAT", "GOAT-ENTROPY", "goat-explore", "GOAT-React", "GOAT-DIVERSITY", "Goat-Coarse"],
+)
+def test_every_goat_keyword_infers_a_goat_run(keyword: str):
+    """ORCA runs GOAT from six keywords, and each writes the same ensemble sidecar."""
+    assert inspect_template(f"! XTB {keyword}\n").operation == "goat"
 
 
 def test_inspect_is_case_insensitive():

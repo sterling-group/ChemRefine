@@ -40,7 +40,7 @@ keyword lines and run-kind blocks decide, case-insensitively, with `#` comments 
 
 | Template | infers `operation:` |
 | --- | --- |
-| `! GOAT`; `! DOCKER` or a `%docker … end` block; `! SOLVATOR` or a `%solvator … end` block | `goat`, `docker`, `solvator` — an ensemble |
+| `! GOAT` or a `GOAT-EXPLORE` / `-REACT` / `-ENTROPY` / `-DIVERSITY` / `-COARSE` variant; `! DOCKER` or a `%docker … end` block; `! SOLVATOR` or a `%solvator … end` block | `goat`, `docker`, `solvator` — an ensemble |
 | a `%geom … Scan … end` block | `pes` — one structure per scan point |
 | `! IRC` | `irc` — the intrinsic reaction coordinate |
 | `! NEB`, `! NEB-TS`, `! NEB-CI`, `! ZOOM-NEB…`, `! FAST-NEB-TS` | `neb` — a band of images |
