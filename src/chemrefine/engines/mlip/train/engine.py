@@ -30,7 +30,6 @@ import json
 import logging
 from collections.abc import Mapping
 from dataclasses import replace
-from functools import partial
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -311,30 +310,31 @@ class MlipTrainEngine(MlipBackend):
 
         :meth:`check_step` runs again here, not only at preflight: the recovery paths
         (``rerun-errors``, a resumed step) reach ``prepare`` without the preflight walk,
-        and the checks are cheap and idempotent.
+        and the checks are cheap and idempotent. The template is read once and held to the
+        trainer's rules (:meth:`TrainerBase.require_placeholders`) before the dataset is
+        written, so a refused template leaves nothing on disk.
         """
         self.check_step(ctx.step_cfg, charge=ctx.charge, multiplicity=ctx.multiplicity)
         opts = self._opts(ctx)
         trainer = self._trainer(ctx)
         plan = self._plan(ctx)
+        template = ids.require_template(ctx.template, label=self.label)
+        trainer.require_placeholders(plan, template)
         split = split_structures(
             ctx.prev_state.structures,
             valid_fraction=opts.valid_fraction,
             test_fraction=opts.test_fraction,
             seed=opts.seed,
         )
-        plan.run_dir.mkdir(parents=True, exist_ok=True)
         data = trainer.write_dataset(
             plan, _as_fitted_by(backend_spec(opts.task_name).library, split)
         )
         config = render_config(
-            ctx.template,
+            template,
             placeholders_for(trainer, plan, data),
-            required=trainer.required_placeholders,
             dest=ids.structure_artifact_path(
                 ctx.step_dir, ctx.step_cfg.step, ids.TRAINING_ID, self.template_suffix
             ),
-            check=partial(trainer.check_template, plan),
         )
         logger.info(
             "step %d: training %s on %s",
@@ -490,8 +490,9 @@ class MlipTrainEngine(MlipBackend):
 
         ``gpus`` is here because chemrefine does not write ``--gres`` — the allocation comes
         from the user's own header — so the runlog is where the two can be compared.
-        ``started_from`` is the plan's own display (:attr:`TrainingPlan.start_from`), the
-        value the template's ``$FOUNDATION_MODEL`` carries, in the library's spelling.
+        ``started_from`` is the plan's own display (:attr:`TrainingPlan.start_from`), in the
+        library's spelling: the start the template is held to carrying
+        (:meth:`TrainerBase.require_placeholders`).
         """
         return (
             ("trainer", self._opts(ctx).task_name),

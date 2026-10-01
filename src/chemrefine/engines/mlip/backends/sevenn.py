@@ -17,6 +17,7 @@ validation metric improves — so the job runs them up in ``$WORK_DIR`` and the 
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -81,10 +82,18 @@ class SevennTrainer(TrainerBase):
     train on hardware the scheduler never booked — the silent wrong-hardware class the
     driver-run trainers close over their argv; for a CLI trainer the template gate is
     that closure. No run-dir or run-name knob, unlike MACE and FAIRChem:
-    ``checkpoint_best.pth`` is a fixed name wherever the run happened. ``$VALID_SET`` and
-    ``$FOUNDATION_MODEL`` (→ ``train.continue.checkpoint``) are supplied too; a template
-    is free to use them. No ``$SEED`` requirement — SevenNet's config declares a
-    ``random_seed`` key its trainer does not read, so there is no seed fact to lose."""
+    ``checkpoint_best.pth`` is a fixed name wherever the run happened. ``$VALID_SET`` is
+    supplied too, and the start has a placeholder of its own (:attr:`start_placeholders`).
+    No ``$SEED`` requirement — SevenNet's config declares a ``random_seed`` key its trainer
+    does not read, so there is no seed fact to lose."""
+
+    start_placeholders: ClassVar[Mapping[str, frozenset[str]]] = {
+        "weights_path": frozenset({"FOUNDATION_MODEL"}),
+        "foundation": frozenset({"FOUNDATION_MODEL"}),
+    }
+    """``train.continue.checkpoint`` takes a checkpoint or a pretrained name alike, so the
+    shared ``$FOUNDATION_MODEL`` carries either start, in the key where
+    ``sevenn preset fine_tune`` writes a literal checkpoint name."""
 
     output_globs: ClassVar[tuple[str, ...]] = ("checkpoint_*.pth", "log.sevenn", "*.csv")
     """The main path, not a safety net: SevenNet writes checkpoints and its log into the

@@ -428,6 +428,13 @@ def _build_my_mlip(spec: CalculatorSpec):
 class MyTrainer(TrainerBase): ...  # or ApiTrainerBase, for API-driven libraries
 ```
 
+A trainer run through its library's own CLI (`TrainerBase`) also declares
+`start_placeholders`: for each start a step can name (`weights_path` for a `model_path`
+checkpoint, `foundation` for a release), the placeholders its config can carry it through.
+A step starting from a model is then refused a template that references none of them, and
+the registry refuses a `TrainerBase` that declares no mapping. An `ApiTrainerBase` inherits
+an empty one, because its start rides the shared driver's command line.
+
 A library whose loaders take a fixed set of named models declares them as
 `MlipLibrary(..., releases={"my_task": {"small": "small"}})`, by `task_name`: each maps the
 name a step writes as `model_name` to the one the library's trainer reads it by. Every MLIP

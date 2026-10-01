@@ -535,9 +535,15 @@ for the full map.
   failed. ORB's trainer refused the step. Each trainer now declares where an unset
   `model_name` starts, the release its builder runs unset or from scratch, and the plan
   names it, so the argv, the runlog and `trained_model.json` agree. The backend table in
-  the docs lists each library's start. A FAIRChem template must take its start from a
-  placeholder, `$STARTING_CHECKPOINT` or `$FOUNDATION_MODEL`: one naming its checkpoint
-  literally fine-tuned that checkpoint while both records named the step's.
+  the docs lists each library's start.
+- **A training template carries the start its step names.** A template naming its start
+  literally trained from that start while the runlog and `trained_model.json` named the
+  step's — SevenNet's own `fine_tune` preset writes `SevenNet-0_11July2024` as its
+  checkpoint — and only FAIRChem's templates were held to it. A library trained through its
+  own CLI now refuses a template that cannot carry the step's start, before the dataset is
+  written: MACE and SevenNet through `$FOUNDATION_MODEL`, FAIRChem through
+  `$STARTING_CHECKPOINT`, or `$FOUNDATION_MODEL` inside its name lookup for a release. A
+  step training from scratch needs neither.
 - **`Config.with_overrides` takes any field.** Overriding a field that declares no
   constraint, such as `template_dir`, raised a bare `TypeError` instead of copying the
   value in. Every field is now validated by its own declaration, and the copy carries the

@@ -301,6 +301,58 @@ def test_a_template_that_never_names_the_dataset_fails_before_any_job(tmp_path: 
     ctx = _ctx(tmp_path, template="max_num_epochs: 2\n")
     with pytest.raises(ConfigError, match="never references"):
         MlipTrainEngine().prepare(ctx)
+    assert not (ctx.step_dir / "train").exists(), "refused before the dataset is written"
+
+
+def test_a_step_without_its_template_names_the_file_to_create(tmp_path: Path):
+    ctx = _ctx(tmp_path)
+    (ctx.template_dir / "step1.yaml").unlink()
+    with pytest.raises(ConfigError, match="MLIP training template not found"):
+        MlipTrainEngine().prepare(ctx)
+    assert not (ctx.step_dir / "train").exists()
+
+
+def test_a_template_must_carry_the_start_the_step_names(tmp_path: Path):
+    """A start named literally trains from the literal while both records name the step's."""
+    ctx = _ctx(tmp_path, template=_TEMPLATE.replace("$FOUNDATION_MODEL", "medium_off"))
+    refusal = (
+        r"never references \$FOUNDATION_MODEL, through which MACE is handed the step's `model_name`"
+    )
+    with pytest.raises(ConfigError, match=refusal):
+        MlipTrainEngine().prepare(ctx)
+    assert not (ctx.step_dir / "train").exists()
+
+
+def test_a_sevenn_preset_naming_its_checkpoint_is_refused_a_model_path_start(tmp_path: Path):
+    """``sevenn preset fine_tune`` writes a literal ``continue.checkpoint``; the step's must win."""
+    preset = (
+        "train:\n"
+        "  device: $DEVICE\n"
+        "  continue:\n"
+        "    checkpoint: SevenNet-0_11July2024\n"
+        "data:\n"
+        "  load_trainset_path: $TRAIN_SET\n"
+        "  load_validset_path: $VALID_SET\n"
+    )
+    ctx = _ctx(
+        tmp_path,
+        template=preset,
+        task_name="sevenn",
+        model_name="",
+        model_path="/prev/checkpoint_best.pth",
+    )
+    refusal = (
+        r"never references \$FOUNDATION_MODEL, through which SevenNet is handed .*`model_path`"
+    )
+    with pytest.raises(ConfigError, match=refusal):
+        MlipTrainEngine().prepare(ctx)
+
+
+def test_a_step_that_trains_from_scratch_needs_no_start_placeholder(tmp_path: Path):
+    """No start, nothing to carry: the template may leave the start out entirely."""
+    template = _TEMPLATE.replace("foundation_model: $FOUNDATION_MODEL\n", "")
+    ctx = _ctx(tmp_path, template=template, model_name="")
+    assert len(MlipTrainEngine().prepare(ctx).files) == 1
 
 
 def test_the_split_honours_the_steps_own_fractions(tmp_path: Path):
@@ -545,7 +597,10 @@ def test_a_fairchem_checkpoint_start_cannot_go_through_the_release_name(tmp_path
         model_name="",
         model_path="/prev/checkpoints/final/inference_ckpt.pt",
     )
-    with pytest.raises(ConfigError, match=r"needs `starting_checkpoint: \$STARTING_CHECKPOINT`"):
+    refusal = (
+        r"never references \$STARTING_CHECKPOINT, through which FAIRChem is handed .*`model_path`"
+    )
+    with pytest.raises(ConfigError, match=refusal):
         MlipTrainEngine().prepare(ctx)
 
 

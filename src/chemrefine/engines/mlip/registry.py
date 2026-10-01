@@ -275,7 +275,7 @@ class MlipLibrary:
             # Function-level import: the registry cannot import ``train.base`` at module
             # top — ``train/__init__`` pulls in ``train.engine``, which imports this
             # module back while it is still initialising.
-            from chemrefine.engines.mlip.train.base import ApiTrainerBase, TrainerBase
+            from chemrefine.engines.mlip.train.base import PLAN_FACTS, ApiTrainerBase, TrainerBase
 
             names = ", ".join(map(repr, task_names))
             if not (isinstance(cls, type) and issubclass(cls, TrainerBase)):
@@ -289,7 +289,7 @@ class MlipLibrary:
                     f"{self.extra}: trainer {cls.__name__} leaves {abstract} abstract — "
                     f"every hook must be implemented before registration"
                 )
-            required = ["label", "output_globs"]
+            required = ["label", "output_globs", "start_placeholders"]
             if issubclass(cls, ApiTrainerBase):
                 required += ["driver_task", "missing_config_hint", "artifact_filename"]
             missing = [name for name in required if not hasattr(cls, name)]
@@ -299,6 +299,12 @@ class MlipLibrary:
                 raise TypeError(
                     f"{self.extra}: trainer {cls.__name__} is missing declaration(s) "
                     f"{missing} — the machinery reads them; see TrainerBase"
+                )
+            starts = {fact.key for fact in PLAN_FACTS if fact.start}
+            if stray := sorted(set(cls.start_placeholders) - starts):
+                raise TypeError(
+                    f"{self.extra}: trainer {cls.__name__} keys start_placeholders by "
+                    f"{stray}, which are not start facts — the keys are {sorted(starts)}"
                 )
             for name in task_names:
                 _put(name, self, trainer=cls)

@@ -18,6 +18,7 @@ ion against the wrong species with nothing said in any log.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -168,6 +169,13 @@ class MaceTrainer(TrainerBase):
     from their argv: a template that does not reference them would run a ``device: cuda``
     step on CPU with the GPU booked, and seed torch differently from the ``seed`` the
     step's cache fingerprint records."""
+
+    start_placeholders: ClassVar[Mapping[str, frozenset[str]]] = {
+        "weights_path": frozenset({"FOUNDATION_MODEL"}),
+        "foundation": frozenset({"FOUNDATION_MODEL"}),
+    }
+    """``foundation_model:`` takes a checkpoint or a release alike, so the shared
+    ``$FOUNDATION_MODEL`` carries either start."""
 
     output_globs: ClassVar[tuple[str, ...]] = ("*.model", "*.log")
     output_dirs: ClassVar[tuple[str, ...]] = ("logs", "checkpoints", "results")

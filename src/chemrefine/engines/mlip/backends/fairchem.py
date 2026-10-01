@@ -12,7 +12,7 @@ a hardcoded ``omol``.
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -20,7 +20,6 @@ import numpy as np
 
 from chemrefine.engines.mlip.registry import CalculatorSpec, MlipLibrary
 from chemrefine.engines.mlip.train.base import DatasetFiles, TrainerBase, TrainingPlan
-from chemrefine.errors import ConfigError
 from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import Structure
 
@@ -204,10 +203,15 @@ class FairchemTrainer(TrainerBase):
     trainer the template is the only channel the library reads, so requiring the
     placeholders is the closure the driver-run trainers get from their argv: unset, the
     device falls to FAIRChem's own default and torch seeds diverge from the ``seed`` the
-    step's cache fingerprint records.
+    step's cache fingerprint records."""
 
-    The start is not among them, because which placeholder can carry it depends on the
-    plan; :meth:`check_template` holds it."""
+    start_placeholders: ClassVar[Mapping[str, frozenset[str]]] = {
+        "weights_path": frozenset({"STARTING_CHECKPOINT"}),
+        "foundation": frozenset({"STARTING_CHECKPOINT", "FOUNDATION_MODEL"}),
+    }
+    """``$STARTING_CHECKPOINT`` carries either start; ``$FOUNDATION_MODEL`` is a release name
+    for FAIRChem's name lookup, so it carries a release and never a checkpoint path
+    (:meth:`placeholders`)."""
 
     output_globs: ClassVar[tuple[str, ...]] = ("*.pt", "*.yaml", "*.log")
     output_dirs: ClassVar[tuple[str, ...]] = ()
@@ -285,30 +289,6 @@ class FairchemTrainer(TrainerBase):
                 else f"{{_target_: {_NAME_LOOKUP}, model_name: {json.dumps(plan.foundation)}}}"
             ),
         }
-
-    def check_template(self, plan: TrainingPlan, identifiers: frozenset[str]) -> None:
-        """The start must reach FAIRChem through a placeholder that can carry it.
-
-        ``$STARTING_CHECKPOINT`` carries either start (:meth:`placeholders`).
-        ``$FOUNDATION_MODEL`` is a release name for the lookup, so a ``model_path`` start
-        through it would reach FAIRChem as a name it does not know, inside the job. A
-        template with neither names its start literally, and would fine-tune that one while
-        the runlog and the sidecar named the step's.
-        """
-        if "STARTING_CHECKPOINT" in identifiers:
-            return
-        if plan.weights is not None:
-            raise ConfigError(
-                "FAIRChem training from `model_path` needs `starting_checkpoint: "
-                "$STARTING_CHECKPOINT` in its template: $FOUNDATION_MODEL is a release name "
-                "for FAIRChem's name lookup, and a checkpoint path is not one"
-            )
-        if "FOUNDATION_MODEL" not in identifiers:
-            raise ConfigError(
-                "FAIRChem training template never references $STARTING_CHECKPOINT (or "
-                "$FOUNDATION_MODEL inside its name lookup), so it would fine-tune whatever it "
-                "names while the runlog and the sidecar named the step's start"
-            )
 
     def command(self, plan: TrainingPlan, config: Path) -> str:
         """``fairchem -c <config>`` from the backend environment's own ``bin/``.

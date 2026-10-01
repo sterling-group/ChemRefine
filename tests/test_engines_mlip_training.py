@@ -34,6 +34,7 @@ from chemrefine.engines.mlip.train.base import (
     split_structures,
 )
 from chemrefine.errors import ConfigError
+from chemrefine.ids import StepTemplate
 from chemrefine.state import Structure
 
 
@@ -146,21 +147,15 @@ def test_counts_reads_as_a_sentence():
 
 
 # ---------------------------------------------------------------------------
-# render_config
+# render_config, and the template rules asked before it
 # ---------------------------------------------------------------------------
 
 
 def test_rendering_substitutes_the_placeholders(tmp_path: Path):
-    template = tmp_path / "step1.yaml"
-    template.write_text("train_file: $TRAIN_SET\nname: $RUN_NAME\n", encoding="utf-8")
+    template = StepTemplate(tmp_path / "step1.yaml", "train_file: $TRAIN_SET\nname: $RUN_NAME\n")
     dest = tmp_path / "out" / "rendered.yaml"
 
-    render_config(
-        template,
-        {"TRAIN_SET": "/data/train.xyz", "RUN_NAME": "train"},
-        required=frozenset({"TRAIN_SET"}),
-        dest=dest,
-    )
+    render_config(template, {"TRAIN_SET": "/data/train.xyz", "RUN_NAME": "train"}, dest=dest)
 
     assert dest.read_text(encoding="utf-8") == "train_file: /data/train.xyz\nname: train\n"
 
@@ -171,11 +166,12 @@ def test_rendering_leaves_a_placeholder_it_does_not_supply(tmp_path: Path):
     Substituting strictly would fail on every one of them, so an unknown name survives
     untouched rather than becoming an error or an empty string.
     """
-    template = tmp_path / "step1.yaml"
-    template.write_text("src: $TRAIN_SET\nlr: ${data.lr}\nbatch: $UNKNOWN\n", encoding="utf-8")
+    template = StepTemplate(
+        tmp_path / "step1.yaml", "src: $TRAIN_SET\nlr: ${data.lr}\nbatch: $UNKNOWN\n"
+    )
     dest = tmp_path / "rendered.yaml"
 
-    render_config(template, {"TRAIN_SET": "/d/t.db"}, required=frozenset({"TRAIN_SET"}), dest=dest)
+    render_config(template, {"TRAIN_SET": "/d/t.db"}, dest=dest)
 
     text = dest.read_text(encoding="utf-8")
     assert "${data.lr}" in text
@@ -184,24 +180,21 @@ def test_rendering_leaves_a_placeholder_it_does_not_supply(tmp_path: Path):
 
 def test_a_template_that_never_names_the_dataset_is_refused_before_submitting(tmp_path: Path):
     """The price of rendering instead of patching, charged up front rather than an hour in."""
-    template = tmp_path / "step1.yaml"
-    template.write_text("max_num_epochs: 20\n", encoding="utf-8")
+    template = StepTemplate(tmp_path / "step1.yaml", "max_num_epochs: 20\n")
 
     with pytest.raises(ConfigError, match=r"never references \$RUN_NAME, \$TRAIN_SET") as refused:
-        render_config(
-            template,
-            {},
-            required=frozenset({"TRAIN_SET", "RUN_NAME"}),
-            dest=tmp_path / "rendered.yaml",
-        )
-    assert str(refused.value).startswith(f"MLIP training template {template} never references")
+        trainer_for("orb")().require_placeholders(_plan(tmp_path), template)
+    assert str(refused.value).startswith(f"MLIP training template {template.path} never references")
 
 
-def test_a_missing_template_reports_itself_as_a_config_error(tmp_path: Path):
-    with pytest.raises(ConfigError, match="MLIP training template not found"):
-        render_config(
-            tmp_path / "absent.yaml", {}, required=frozenset(), dest=tmp_path / "rendered.yaml"
-        )
+@pytest.mark.parametrize("task", sorted(registered_trainers()))
+def test_every_trainer_supplies_the_placeholders_that_carry_its_start(tmp_path: Path, task: str):
+    """A carrier the render never fills would pass the rule and hand the library nothing."""
+    trainer = trainer_for(task)()
+    plan = _plan(tmp_path, foundation="a-release")
+    provided = set(placeholders_for(trainer, plan, trainer.write_dataset(plan, _full_split())))
+    for fact, carriers in trainer.start_placeholders.items():
+        assert carriers <= provided, f"{task} carries {fact} through {sorted(carriers - provided)}"
 
 
 # ---------------------------------------------------------------------------
@@ -476,7 +469,7 @@ def test_every_trainer_writes_its_dataset_in_the_orchestrators_process(tmp_path:
 def test_every_trainer_covers_its_required_placeholders(tmp_path: Path, task: str):
     """What a trainer *requires* of a template, it must also *supply* to the render.
 
-    ``render_config`` refuses a template that references none of ``required_placeholders``;
+    ``require_placeholders`` refuses a template missing any of ``required_placeholders``;
     a required name the merged mapping never provides would make every template for that
     trainer unrenderable — a combination no caller can fix from the YAML.
     """

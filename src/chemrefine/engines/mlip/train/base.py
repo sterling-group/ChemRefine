@@ -7,9 +7,10 @@ beside that library's calculator, sharing its one environment declaration. Which
 step selects is :mod:`chemrefine.engines.mlip.registry`.
 
 Generic and never written twice: the train/valid/test split (:func:`split_structures`), the
-placeholders every config may use (:func:`base_placeholders`), the rendering with its
-validation (:func:`render_config`), and the calculator-labelled extxyz writer
-(:func:`write_labelled_extxyz`) for the libraries that read labels off ``atoms.calc``.
+placeholders every config may use (:func:`base_placeholders`), the template's rules
+(:meth:`TrainerBase.require_placeholders`), the rendering (:func:`render_config`), and the
+calculator-labelled extxyz writer (:func:`write_labelled_extxyz`) for the libraries that read
+labels off ``atoms.calc``.
 Library-specific, and so a :class:`TrainerBase` hook:
 
 ===================  ==========================================================
@@ -44,9 +45,10 @@ for anything else. No schema-aware patcher can serve both. Substitution serves a
 including formats nobody has written a trainer for yet, and it leaves unknown ``$NAME``
 untouched so FAIRChem's own ``${…}`` interpolations survive it (:func:`render_config`).
 
-The price is that a template must *say* where its dataset goes, and the price is paid
-up front: each trainer declares ``required_placeholders`` and a template that references none
-of them fails in ``prepare``, before a job is submitted, naming the placeholder to add.
+The price is that a template must *say* where its dataset goes, and where the run starts,
+and the price is paid up front: each trainer declares ``required_placeholders`` and the
+``start_placeholders`` that can carry a start, and a template missing one fails in
+``prepare``, before the dataset is written, naming the placeholder to add.
 """
 
 from __future__ import annotations
@@ -178,12 +180,20 @@ class TrainingPlan:
     def start_from(self) -> str | None:
         """The one-string display of what training starts from; ``None`` = from scratch.
 
-        For the consumers that genuinely want one string — ``$FOUNDATION_MODEL`` for the
-        CLI-trainer templates (MACE and SevenNet take either spelling in the same config
-        key), and the runlog/sidecar rows. Never for dispatch: a hook that needs to *act*
-        on the value reads the typed fields. The rule is :func:`starting_point`'s.
+        For the consumers that want one string — the shared ``$FOUNDATION_MODEL``, for a
+        config whose one key takes a checkpoint or a release alike, and the runlog and
+        sidecar rows. Never for dispatch: a hook that needs to *act* on the value reads the
+        typed fields. The rule is :func:`starting_point`'s.
         """
         return starting_point(dict(self.facts()))
+
+    @property
+    def start_fact(self) -> PlanFact | None:
+        """The :data:`PLAN_FACTS` entry this run starts from; ``None`` from scratch.
+
+        The fact :attr:`start_from` displays, by the same rule: the first start fact set.
+        """
+        return next((f for f in PLAN_FACTS if f.start and f.of(self) is not None), None)
 
     launcher: Path
     """The interpreter of the backend's environment, from ``_provision.launcher_for``."""
@@ -269,12 +279,13 @@ class TrainerBase(ABC):
 
     A backend declares what the parent needs — a label for messages, whether its library
     demands a validation set (and why), whether its dataset carries charge and spin, the
-    placeholders its template must reference, what to copy home — and writes only the
-    three hooks that are genuinely a library fact: how one split is written
-    (:meth:`write_split`), what command trains (:meth:`command`), and where the product
-    lands (:meth:`artifact`). Everything a trainer would otherwise write for itself — the
-    validation refusal, the charge/spin warning, the split loop, the placeholder triple,
-    the launcher quoting — is concrete here, written once.
+    placeholders its template must reference and those that can carry a start, what to
+    copy home — and writes only the three hooks that are genuinely a library fact: how one
+    split is written (:meth:`write_split`), what command trains (:meth:`command`), and
+    where the product lands (:meth:`artifact`). Everything a trainer would otherwise write
+    for itself — the template rules, the validation refusal, the charge/spin warning, the
+    split loop, the placeholder triple, the launcher quoting — is concrete here, written
+    once.
 
     An ``ABC``, not a ``Protocol``: a registry — an explicit declaration channel —
     already exists here, so a missing abstract hook fails at instantiation naming the
@@ -313,10 +324,22 @@ class TrainerBase(ABC):
     required_placeholders: ClassVar[frozenset[str]] = frozenset({"TRAIN_SET"})
     """Placeholders this backend's template must reference, or the step is misconfigured.
 
-    Checked before submission (:func:`render_config`). A config that never names the
-    dataset chemrefine just wrote is not a config that trains on it — most libraries
-    would either read some previous run's data or fail an hour later with a message
-    about a path the user never typed."""
+    Checked before the dataset is written (:meth:`require_placeholders`). A config that
+    never names the dataset chemrefine just wrote is not a config that trains on it — most
+    libraries would either read some previous run's data or fail an hour later with a
+    message about a path the user never typed."""
+
+    start_placeholders: ClassVar[Mapping[str, frozenset[str]]]
+    """By start fact, the placeholders that can carry it into this library's config.
+
+    Keyed by the :data:`PLAN_FACTS` keys that say where training starts (``weights_path``,
+    ``foundation``). A step that starts from one must reference at least one of its
+    placeholders (:meth:`require_placeholders`): a template naming its start literally
+    trains from that literal while the runlog and the sidecar name the step's. A start
+    fact left out reaches the library another way and is not the template's to carry —
+    :class:`ApiTrainerBase` declares none, because its start rides the driver's argv.
+    Declared by every trainer, so leaving a CLI trainer's start unchecked is a decision
+    written down rather than a default."""
 
     output_globs: ClassVar[tuple[str, ...]]
     """Loose files to copy back out of the job's scratch directory."""
@@ -363,17 +386,36 @@ class TrainerBase(ABC):
         moments the answer matters most.
         """
 
-    def check_template(self, plan: TrainingPlan, identifiers: frozenset[str]) -> None:
-        """Refuse a template whose placeholders cannot carry this plan; none by default.
-
-        :attr:`required_placeholders` is what every run of this library needs. A rule that
-        depends on the plan — which placeholder can carry a checkpoint as well as a release —
-        is the trainer's to state here, and :func:`render_config` asks it, with the
-        placeholders the template references, before the config is written.
-        """
-        return
-
     # -- the machinery: written once, driven by the declarations -----------------------
+
+    def require_placeholders(self, plan: TrainingPlan, template: ids.StepTemplate) -> None:
+        """Refuse a template that cannot hand this library what the step decided.
+
+        Every :attr:`required_placeholders` name, and for a step that starts from a model
+        one of the :attr:`start_placeholders` that can carry its start. Asked before the
+        dataset is written, so a refused template leaves nothing on disk.
+        """
+        identifiers = frozenset(Template(template.text).get_identifiers())
+        if missing := self.required_placeholders - identifiers:
+            wanted = ", ".join(f"${name}" for name in sorted(missing))
+            raise ConfigError(
+                f"MLIP training template {template.path} never references {wanted}: "
+                f"{self.label} reads each from the config this template becomes, so without "
+                f"it the run would use a value the step did not choose. Add each where your "
+                f"config sets that value."
+            )
+        fact = plan.start_fact
+        if fact is None:
+            return
+        carriers = self.start_placeholders.get(fact.key, frozenset())
+        if carriers and not carriers & identifiers:
+            raise ConfigError(
+                f"MLIP training template {template.path} never references "
+                f"{' or '.join(f'${name}' for name in sorted(carriers))}, through which "
+                f"{self.label} is handed the step's `{fact.option}`: it would train from "
+                f"whatever start the template names while the runlog and the sidecar name "
+                f"the step's."
+            )
 
     def write_dataset(self, plan: TrainingPlan, split: DatasetSplit) -> DatasetFiles:
         """Refuse, warn, and write each non-empty split through :meth:`write_split`.
@@ -455,6 +497,9 @@ class ApiTrainerBase(TrainerBase):
 
     driver_task: ClassVar[str]
     """The word the driver re-resolves in the backend env — the library's task key."""
+
+    start_placeholders: ClassVar[Mapping[str, frozenset[str]]] = {}
+    """No placeholder: the start rides the driver's argv (:meth:`command`), not the template."""
 
     required_config_keys: ClassVar[tuple[str, ...]] = ("train_set", "run_name")
     """The template's keys :meth:`run_training` refuses to proceed without (non-null).
@@ -650,40 +695,18 @@ def placeholders_for(
 
 
 def render_config(
-    template: Path | None,
-    placeholders: Mapping[str, str],
-    *,
-    required: frozenset[str],
-    dest: Path,
-    check: Callable[[frozenset[str]], None] | None = None,
+    template: ids.StepTemplate, placeholders: Mapping[str, str], *, dest: Path
 ) -> Path:
     """Substitute ``placeholders`` into the trainer template; write it to ``dest``.
 
     ``safe_substitute`` rather than ``substitute``: a placeholder chemrefine does not supply
     must survive untouched, because FAIRChem's configs are full of OmegaConf ``${…}``
     interpolations that its own loader resolves later. Substituting strictly would fail on
-    every one of them.
-
-    A template that references none of ``required`` is refused **here**, before the step
-    submits anything, rather than an hour later inside a library complaining about a path the
-    user never wrote. The message names the placeholder to add. ``check`` then receives the
-    placeholders the template references, for a rule that depends on the run rather than
-    the library (:meth:`TrainerBase.check_template`).
+    every one of them. What the template must reference is the trainer's rule, asked before
+    this renders (:meth:`TrainerBase.require_placeholders`).
     """
-    source = ids.require_template(template, label="MLIP training")
-    identifiers = frozenset(Template(source.text).get_identifiers())
-    missing = required - identifiers
-    if missing:
-        wanted = ", ".join(f"${name}" for name in sorted(missing))
-        raise ConfigError(
-            f"MLIP training template {source.path} never references {wanted}, so the rendered "
-            f"config would not point at the dataset chemrefine writes for it. Add it where "
-            f"your trainer expects the dataset — e.g. `train_file: $TRAIN_SET`."
-        )
-    if check is not None:
-        check(identifiers)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(Template(source.text).safe_substitute(placeholders), encoding="utf-8")
+    dest.write_text(Template(template.text).safe_substitute(placeholders), encoding="utf-8")
     return dest
 
 

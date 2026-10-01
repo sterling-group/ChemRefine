@@ -185,8 +185,8 @@ The step's template is the **trainer's own config** (`stepN.yaml`), rendered rat
 patched: ChemRefine substitutes `$TRAIN_SET`, `$VALID_SET`, `$TEST_SET`, `$RUN_DIR`,
 `$RUN_NAME`, `$DEVICE`, `$SEED`, `$NGPUS`, `$CORES`, `$FOUNDATION_MODEL`, `$CHARGE` and
 `$MULTIPLICITY`, and leaves everything else — including a config's own `${...}`
-interpolations — untouched. A template that never references the dataset placeholder its
-backend needs is rejected before anything is submitted.
+interpolations — untouched. A template that never references a placeholder its backend
+needs is rejected before the dataset is written.
 
 The device, the seed and the foundation weights are **plan facts**: the step's options
 are their source of truth — the scheduler charges by them and the cache fingerprint
@@ -199,7 +199,9 @@ unset — is refused by name. A library run through its own
 CLI reads only the config the template becomes, so there each plan fact the library
 reads from its config is a **required placeholder** — a template that never references
 it is rejected before anything is submitted, instead of the library's own fallback
-quietly overriding the step.
+quietly overriding the step. So is the start, when the step has one (`model_name`,
+`model_path`, or the library's default release): a template naming a model literally
+would train from it while the runlog and `trained_model.json` named the step's.
 
 The trained model lands under `<step dir>/train/` at a name fixed per library — MACE's
 `train[_stagetwo].model`, FAIRChem's `train/checkpoints/final/inference_ckpt.pt`,
@@ -232,9 +234,10 @@ each trainer refuses a template missing its own required placeholders before any
 submits:
 
 - **MACE** — MACE's own training YAML with `$TRAIN_SET`, `$RUN_NAME`, `$RUN_DIR`,
-  `device: $DEVICE` and `seed: $SEED` where those values go; the dataset is written with
-  MACE's own `REF_*` label keys, so no `energy_key`/`forces_key` line is needed. The
-  [MLIP training tutorial](../tutorials/mlip_training.md) walks a complete one.
+  `device: $DEVICE` and `seed: $SEED` where those values go, and
+  `foundation_model: $FOUNDATION_MODEL` when the step starts from a model; the dataset is
+  written with MACE's own `REF_*` label keys, so no `energy_key`/`forces_key` line is
+  needed. The [MLIP training tutorial](../tutorials/mlip_training.md) walks a complete one.
 - **FAIRChem** — fairchem's hydra config per the note above; requires `$TRAIN_SET`,
   `$VAL_SET`, `$RUN_DIR`, `$RUN_NAME`, `device_type: $DEVICE`, the `seed: $SEED` keys the
   shipped example threads through `job` and the dataset stanzas, and the start as
@@ -243,10 +246,11 @@ submits:
   `model_name` carries a release start only; with `model_path` set it is refused.
 - **SevenNet** — SevenNet's own `input.yaml` (start from `sevenn preset fine_tune >
   step{N}.yaml`), with `$TRAIN_SET` in `data.load_trainset_path` and `device: $DEVICE`
-  (absent, SevenNet takes cuda whenever torch sees one — the step's own device must win);
-  `$VALID_SET` / `$FOUNDATION_MODEL` → `train.continue.checkpoint` as wanted. A
-  validation split is required: `checkpoint_best.pth`, the model the step adopts, is
-  written when the validation metric improves.
+  (absent, SevenNet takes cuda whenever torch sees one — the step's own device must win),
+  `$VALID_SET` as wanted, and `train.continue.checkpoint: $FOUNDATION_MODEL` when the step
+  starts from a model, in place of the checkpoint the preset names. A validation split is
+  required: `checkpoint_best.pth`, the model the step adopts, is written when the
+  validation metric improves.
 - **CHGNet** — chemrefine's own small schema (CHGNet has no config format): `train_set:
   $TRAIN_SET`, `valid_set: $VALID_SET`, `run_name: $RUN_NAME`, plus the `Trainer` knobs
   (`epochs`, `learning_rate`, `batch_size`, `targets`). The step runs chemrefine's shared
