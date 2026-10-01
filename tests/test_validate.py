@@ -796,6 +796,52 @@ def test_a_training_template_its_trainer_refuses_is_an_issue_on_its_row(tmp_path
     assert "never references $TRAIN_SET" in issue.message
 
 
+def test_an_inferred_operation_without_a_reader_is_a_warning_on_the_operation(tmp_path: Path):
+    """The run reads such a step's outputs as their final structure, and says so when it
+    starts; validate says the same, on the field that would change it."""
+    (tmp_path / "templates").mkdir()
+    (tmp_path / "templates" / "step1.inp").write_text("! B3LYP def2-SVP IRC\n", encoding="utf-8")
+    report = _validate(tmp_path, steps=[{"step": 1, "engine": "orca"}])
+    [notice] = [w for w in report.warnings if w.kind == "operation"]
+    assert notice.loc == ("steps", 0, "operation") and "'irc'" in notice.message
+
+
+def test_a_template_that_cannot_be_read_does_not_hide_the_budget_row(tmp_path: Path):
+    """The template's refusal is one row; the layout reads the options, not the template, so
+    it is judged too."""
+    (tmp_path / "templates").mkdir()
+    (tmp_path / "templates" / "step1.yaml").write_bytes("# \u00c5\n".encode("latin-1"))
+    options = {"task_name": "mace_off", "device": "cuda", "gpus": 2}
+    report = _validate(
+        tmp_path,
+        dispatch="local",
+        steps=[{"step": 1, "engine": "mlip-train", "options": options}],
+    )
+    assert _kinds(report) == ["template"] and "is not UTF-8 text" in report.issues[0].message
+    assert any("local dispatch pins one device" in message for message in _budget(report))
+
+
+def test_every_kind_validate_files_is_named_where_the_kinds_are_listed():
+    """``ValidationIssue`` lists the kinds a GUI or an agent can switch on; the list is held
+    to the kinds the module files, read off its source."""
+    import ast
+
+    from chemrefine import validate
+
+    kinds: set[str] = set()
+    for node in ast.walk(ast.parse(Path(validate.__file__).read_text(encoding="utf-8"))):
+        if isinstance(node, ast.keyword) and node.arg == "kind":
+            value = node.value
+        elif isinstance(node, ast.Call) and getattr(node.func, "id", None) == "_failed":
+            value = node.args[0]
+        else:
+            continue
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            kinds.add(value.value)
+    assert {"template", "operation", "budget"} <= kinds
+    assert sorted(k for k in kinds if f"``{k}``" not in (ValidationIssue.__doc__ or "")) == []
+
+
 def test_a_complete_training_template_validates_clean(tmp_path: Path):
     template = f"{_TRAINING_FACTS}train_file: $TRAIN_SET\nfoundation_model: $FOUNDATION_MODEL\n"
     options = {"task_name": "mace_off", "model_name": "small", "device": "cpu"}

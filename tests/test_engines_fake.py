@@ -21,6 +21,7 @@ def _ctx_with_seeds(tmp_path: Path, ids: list[str]) -> StepContext:
         step_dir=tmp_path / "step1",
         template_dir=tmp_path / "templates",
         template=None,
+        operation=step_cfg.operation,
         scratch_dir=tmp_path / "scratch",
         prev_state=PipelineState(structures=seeds),
         charge=0,

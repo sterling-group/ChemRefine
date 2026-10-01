@@ -62,6 +62,7 @@ def _pyscf_ctx(tmp_path: Path, **option_overrides) -> StepContext:
         step_dir=tmp_path / "outputs" / "step1",
         template_dir=template_dir,
         template=template_dir / "step1.inp",
+        operation=step_cfg.operation,
         scratch_dir=tmp_path / "scratch",
         prev_state=PipelineState(structures=(seed,)),
         charge=0,

@@ -16,7 +16,6 @@ backend gradients).
 
 from __future__ import annotations
 
-import logging
 import shlex
 from pathlib import Path
 from typing import ClassVar
@@ -27,8 +26,6 @@ from chemrefine.engines.orca import input as orca_input
 from chemrefine.engines.orca import inspect, output
 from chemrefine.ids import StepTemplate, require_template, step_relative
 from chemrefine.state import StepContext
-
-logger = logging.getLogger(__name__)
 
 
 @register("orca")
@@ -181,19 +178,11 @@ class OrcaEngine(JobEngine):
 
     # -- parse -------------------------------------------------------------
 
-    def resolve_operation(self, ctx: StepContext) -> str:
-        """The operation the step's outputs are read as: the declared one, else the template's.
-
-        An explicit ``operation`` wins, as the step reads it (the config folds its
-        spelling, and the run's t=0 walk holds it to :attr:`operations`); omitted, the
-        template's ORCA keywords (:mod:`engines.orca.inspect`) pick it. The cache keys this
-        value (:class:`~chemrefine.engines.api.OperationInferring`).
-        """
-        if ctx.step_cfg.operation is not None:
-            return ctx.step_cfg.operation
-        return inspect.inspect_template(
-            require_template(ctx.template, label=self.label).text
-        ).operation
+    def infer_operation(self, template: StepTemplate) -> str:
+        """Satisfies :class:`~chemrefine.engines.api.OperationInferring`: the run kind the
+        template's keywords and blocks name (:mod:`engines.orca.inspect`). Inherited by the
+        ExtOpt engines, whose templates are the same grammar."""
+        return inspect.inspect_template(template.text).operation
 
     def parse_one(
         self, output_path: Path, structure_id: str, ctx: StepContext
@@ -204,31 +193,31 @@ class OrcaEngine(JobEngine):
         ``normal_modes``) ride on the returned ``ParsedResult`` (and thus on the ``Structure``),
         so NMS never re-parses the file.
 
-        An *inferred* operation the parser dispatch has no reader for yet — a reaction path's
-        ``irc``, a band's ``neb``, a trajectory's ``md`` — is read as its final structure, and
-        the log says so: a run kind runs and yields something usable the day it appears in a
-        template, and fans out into its geometries the day its reader joins the dispatch,
-        with no edit here. An explicit ``operation:`` is held to :attr:`operations` at the
-        run's t=0 walk (:func:`~chemrefine.engines.api.check_operation`), so only an
-        inferred one takes this path. The final-structure read finds what a
-        single-structure ``.out`` carries; a run that writes its geometries elsewhere (a
-        trajectory) leaves it nothing, and the structure is ledgered unparseable under the
-        run kind's own name, with the warning.
+        The output is read as the step's operation (:attr:`~chemrefine.state.StepContext.
+        operation`), resolved once with its context and keyed by every row, so no output
+        re-reads the template. One the parser dispatch has no reader for yet — a reaction
+        path's ``irc``, a band's ``neb``, a trajectory's ``md`` — is read as its final
+        structure, as the run said when it started
+        (:func:`~chemrefine.engines.api.operation_notice`): a run kind runs and yields
+        something usable the day it appears in a template, and fans out into its geometries
+        the day its reader joins the dispatch, with no edit here. An explicit ``operation:``
+        is held to :attr:`operations` at the run's t=0 walk
+        (:func:`~chemrefine.engines.api.check_operation`), so only an inferred one is read this
+        way. The final-structure read finds what a single-structure ``.out`` carries; a run
+        that writes its geometries elsewhere (a trajectory) leaves it nothing, and the
+        structure is ledgered unparseable. A context built while its template could not be
+        read carries no operation; the output then reads the template itself, through the
+        reader that refuses it by name.
 
         A reason for an output it cannot use names that output relative to the step
         (:func:`~chemrefine.ids.step_relative`), so it still points at the file once the
         tree is copied or moved.
         """
-        operation = self.resolve_operation(ctx)
+        operation = ctx.operation
+        if operation is None:
+            operation = self.infer_operation(require_template(ctx.template, label=self.label))
         src = step_relative(output_path, ctx.step_dir)
-        inferred = ctx.step_cfg.operation is None
-        if inferred and operation not in output.known_operations():
-            logger.warning(
-                "%s: the template's keywords infer operation %r, which has no reader of its "
-                "own yet — reading the final structure only",
-                output_path.name,
-                operation,
-            )
+        if ctx.step_cfg.operation is None and operation not in output.known_operations():
             return output.parse_dft(output_path, src=src)
         return output.parse_output(output_path, operation, src=src)
 

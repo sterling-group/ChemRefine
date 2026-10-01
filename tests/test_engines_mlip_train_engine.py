@@ -82,6 +82,7 @@ def _ctx(
         step_dir=tmp_path / "outputs" / "step1",
         template_dir=template_dir,
         template=path,
+        operation=None,
         scratch_dir=None,
         prev_state=PipelineState(structures=structures),
         charge=-1,

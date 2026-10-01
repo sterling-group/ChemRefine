@@ -25,8 +25,7 @@ string, a trajectory — infers ChemRefine's engine-neutral word for that kind o
 (:data:`_MULTI_GEOMETRY_OPERATIONS`) rather than ``sp``, so a config means the same thing
 whichever engine runs it, and the output fans out into its geometries once the parser
 dispatch has a reader for the word. A job type not listed there infers ``sp`` and runs:
-nothing here refuses a template for naming a feature the program has. Every ``jobtype``
-the chain names is reported too, for the log line that says which one inferred the word.
+nothing here refuses a template for naming a feature the program has.
 """
 
 from __future__ import annotations
@@ -84,15 +83,13 @@ class QchemInputInfo:
     ``jobtype freq`` anywhere in the chain or a ``$geom_opt`` block asking for
     ``final_vibrational_analysis`` (gates NMS); ``mem_total_mb`` is the largest
     declared ``mem_total`` (``None`` if none is declared — absence means the header's
-    memory policy stands, so it is not defaulted); ``jobtypes`` is every ``jobtype`` the
-    chain names, lower-cased, for the log line that says which one inferred the operation.
+    memory policy stands, so it is not defaulted).
     """
 
     operation: str
     is_ts: bool
     has_freq: bool
     mem_total_mb: int | None
-    jobtypes: frozenset[str]
 
 
 def _strip_comments(text: str) -> str:
@@ -132,5 +129,4 @@ def inspect_template(template_text: str) -> QchemInputInfo:
         is_ts="ts" in jobtypes,
         has_freq="freq" in jobtypes or final_vib,
         mem_total_mb=max(mem_totals) if mem_totals else None,
-        jobtypes=frozenset(jobtypes),
     )

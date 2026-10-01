@@ -31,6 +31,7 @@ def _ctx(tmp_path: Path, template_body: str, *, step: int = 1) -> StepContext:
         step_dir=tmp_path / "outputs" / f"step{step}",
         template_dir=template_dir,
         template=template_dir / f"step{step}.inp",
+        operation=step_cfg.operation,
         scratch_dir=tmp_path / "scratch",
         prev_state=PipelineState(structures=(seed,)),
         charge=0,

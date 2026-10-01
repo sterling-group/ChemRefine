@@ -75,11 +75,12 @@ from chemrefine.engines.api import (
     WhitespacePathIntolerant,
     check_operation,
     get_engine,
+    operation_notice,
 )
 from chemrefine.errors import ChemRefineError, ConfigError
-from chemrefine.ids import require_template, step_template_path
+from chemrefine.ids import StepTemplate, require_template, step_template_path
 from chemrefine.nms import NmsOptions
-from chemrefine.state import PipelineState
+from chemrefine.state import PipelineState, StepContext
 from chemrefine.step import build_context
 
 
@@ -90,9 +91,11 @@ class ValidationIssue:
     ``loc`` follows pydantic's convention — a path of keys/indices into the YAML
     (``("steps", 1, "options")``) — so a GUI walks it to the field to highlight and an
     agent quotes it verbatim. ``kind`` is a short machine-checkable class of finding
-    (``yaml`` / ``legacy`` / a pydantic error type / ``engine`` / ``options`` /
-    ``backend`` / ``preflight`` / ``nms`` / ``template`` / ``slurm-header`` /
-    ``budget`` / ``input``); the message alone is for humans.
+    (``yaml`` / ``io`` / ``legacy`` / a pydantic error type / ``deprecated`` /
+    ``shell-unsafe`` / ``executable`` / ``input`` / ``engine`` / ``options`` /
+    ``backend`` / ``preflight`` / ``operation`` / ``nms`` / ``template`` /
+    ``whitespace-path`` / ``budget`` / ``slurm-header``); the message alone is for
+    humans.
     """
 
     loc: tuple[str | int, ...]
@@ -417,6 +420,7 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
             warnings.append(
                 ValidationIssue(loc=("steps", index, "options"), kind="options", message=silent)
             )
+        read: StepTemplate | None = None
         if isinstance(engine, TemplateDriven):
             template = step_template_path(
                 config.template_dir,
@@ -436,16 +440,30 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
                     )
                 )
             else:
-                # The run's own check of the file, which reads it as every consumer does —
-                # a template that is there but is not UTF-8 text is refused before the run
-                # starts, so it is an issue here, not a row the run contradicts — and then
-                # the engine's own rules for what it says, as the t=0 walk asks them.
+                # The run's own read of the file, as every consumer reads it — a template
+                # that is there but is not UTF-8 text is refused before the run starts, so it
+                # is an issue here, not a row the run contradicts.
                 try:
                     read = require_template(template, label=engine.label)
-                    if plan_ok and isinstance(engine, TemplateChecking):
-                        engine.check_template(
-                            build_context(config, step, PipelineState(), engine), read
+                except ConfigError as e:
+                    issues.append(
+                        ValidationIssue(
+                            loc=("steps", index, "template"), kind="template", message=str(e)
                         )
+                    )
+        # The step's context as the run builds it, once, for every check below.
+        ctx = build_context(config, step, PipelineState(), engine)
+        if read is not None:
+            if (notice := operation_notice(engine, step, read)) is not None:
+                warnings.append(
+                    ValidationIssue(
+                        loc=("steps", index, "operation"), kind="operation", message=notice
+                    )
+                )
+            if plan_ok and isinstance(engine, TemplateChecking):
+                # The engine's own rules for what the template says, as the t=0 walk asks them.
+                try:
+                    engine.check_template(ctx, read)
                 except ConfigError as e:
                     issues.append(
                         ValidationIssue(
@@ -500,7 +518,7 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
             headers.setdefault(effective_header(config, step, engine), []).append(step.step)
         # After the options read clean: the layout reads the same options, and would only
         # repeat that row in the scheduler's words.
-        if options_ok and (over := _over_budget(config, step, engine)):
+        if options_ok and (over := _over_budget(config, engine, ctx)):
             warnings.append(
                 ValidationIssue(loc=("steps", index, "options"), kind="budget", message=over)
             )
@@ -538,7 +556,7 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
     return issues, warnings
 
 
-def _over_budget(config: Config, step: StepConfig, engine: CalculationEngine) -> str | None:
+def _over_budget(config: Config, engine: CalculationEngine, ctx: StepContext) -> str | None:
     """Why the run would refuse this step's jobs against the budget the config states.
 
     :func:`~chemrefine.engines.check_batch` — the check the run applies at t=0 and again
@@ -555,7 +573,6 @@ def _over_budget(config: Config, step: StepConfig, engine: CalculationEngine) ->
     """
     if not isinstance(engine, JobExecutable):
         return None
-    ctx = build_context(config, step, PipelineState(), engine)
     try:
         engine.slurm_layout(ctx)
     except ChemRefineError:

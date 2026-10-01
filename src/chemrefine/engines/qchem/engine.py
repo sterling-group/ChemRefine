@@ -31,7 +31,6 @@ contract).
 
 from __future__ import annotations
 
-import logging
 import shlex
 from pathlib import Path
 from typing import ClassVar
@@ -45,8 +44,6 @@ from chemrefine.engines.qchem.options import QchemOptions
 from chemrefine.errors import ConfigError
 from chemrefine.ids import StepTemplate, require_template, step_relative
 from chemrefine.state import StepContext
-
-logger = logging.getLogger(__name__)
 
 
 @register("qchem")
@@ -286,52 +283,39 @@ class QchemEngine(JobEngine):
 
     # -- parse -------------------------------------------------------------
 
-    def resolve_operation(self, ctx: StepContext) -> str:
-        """The operation the step's outputs are read as: the declared one, else the template's.
-
-        An explicit ``operation`` wins, as the step reads it (the config folds its
-        spelling, and the run's t=0 walk holds it to :attr:`operations`); omitted, the
-        template's ``JOBTYPE`` facts pick it, through the one reader
-        :mod:`~chemrefine.engines.qchem.inspect` already is. The cache keys this value
-        (:class:`~chemrefine.engines.api.OperationInferring`).
-        """
-        if ctx.step_cfg.operation is not None:
-            return ctx.step_cfg.operation
-        return inspect.inspect_template(
-            require_template(ctx.template, label=self.label).text
-        ).operation
+    def infer_operation(self, template: StepTemplate) -> str:
+        """Satisfies :class:`~chemrefine.engines.api.OperationInferring`: the run type the
+        template's ``JOBTYPE`` facts name, through the one reader
+        :mod:`~chemrefine.engines.qchem.inspect` already is."""
+        return inspect.inspect_template(template.text).operation
 
     def parse_one(
         self, output_path: Path, structure_id: str, ctx: StepContext
     ) -> list[ParsedResult]:
         """Parse one Q-Chem output — energy, final geometry, and the NMS frequency feed.
 
-        An *inferred* operation the parser dispatch has no reader for yet — a scan's
+        The output is read as the step's operation (:attr:`~chemrefine.state.StepContext.
+        operation`), resolved once with its context and keyed by every row, so no output
+        re-reads the template. One the parser dispatch has no reader for yet — a scan's
         ``pes``, a reaction path's ``irc``, a trajectory's ``md`` — is read as its final
-        structure, and the log says so: a job type runs and yields something usable the
-        day it appears in a template, and fans out into its geometries the day its reader
-        joins the dispatch, with no edit here. An explicit ``operation:`` is held to
-        :attr:`operations` at the run's t=0 walk
-        (:func:`~chemrefine.engines.api.check_operation`), so only an inferred one takes
-        this path.
+        structure, as the run said when it started
+        (:func:`~chemrefine.engines.api.operation_notice`): a job type runs and yields
+        something usable the day it appears in a template, and fans out into its geometries
+        the day its reader joins the dispatch, with no edit here. An explicit ``operation:``
+        is held to :attr:`operations` at the run's t=0 walk
+        (:func:`~chemrefine.engines.api.check_operation`), so only an inferred one is read this
+        way. A context built while its template could not be read carries no operation; the
+        output then reads the template itself, through the reader that refuses it by name.
 
         A reason for an output it cannot use names that output relative to the step
         (:func:`~chemrefine.ids.step_relative`), so it still points at the file once the
         tree is copied or moved.
         """
-        operation = self.resolve_operation(ctx)
+        operation = ctx.operation
+        if operation is None:
+            operation = self.infer_operation(require_template(ctx.template, label=self.label))
         src = step_relative(output_path, ctx.step_dir)
-        inferred = ctx.step_cfg.operation is None
-        if inferred and operation not in output.known_operations():
-            template = require_template(ctx.template, label=self.label)
-            jobtypes = ", ".join(sorted(inspect.inspect_template(template.text).jobtypes))
-            logger.warning(
-                "%s: JOBTYPE %s infers operation %r, which has no reader of its own yet — "
-                "reading the final structure only",
-                output_path.name,
-                jobtypes,
-                operation,
-            )
+        if ctx.step_cfg.operation is None and operation not in output.known_operations():
             return output.parse_qchem(output_path, src=src)
         return output.parse_output(output_path, operation, src=src)
 

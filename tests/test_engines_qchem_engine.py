@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import shutil
 from pathlib import Path
 
@@ -11,8 +10,15 @@ from ase import Atoms
 
 from chemrefine import pipeline
 from chemrefine.config import Config, StepConfig
-from chemrefine.engines.api import NmsCapableEngine, get_engine, preflight_steps
+from chemrefine.engines.api import (
+    NmsCapableEngine,
+    get_engine,
+    operation_notice,
+    preflight_steps,
+    resolve_operation,
+)
 from chemrefine.errors import ConfigError
+from chemrefine.ids import require_template
 from chemrefine.io import write_single_xyz
 from chemrefine.state import PipelineState, StepContext, Structure
 
@@ -29,15 +35,20 @@ def _ctx(
     max_cores: int = 8,
     template: str = _SP_TEMPLATE,
 ) -> StepContext:
-    """A StepContext with a real template on disk, shaped like the ORCA test helper's."""
+    """A StepContext with a real template on disk, shaped like the ORCA test helper's.
+
+    The operation is resolved as the run resolves it, from the step and this template.
+    """
     template_dir = tmp_path / "templates"
     template_dir.mkdir(parents=True, exist_ok=True)
     (template_dir / "step1.in").write_text(template, encoding="utf-8")
+    step_cfg = StepConfig(step=1, engine="qchem", options=options or {})
     return StepContext(
-        step_cfg=StepConfig(step=1, engine="qchem", options=options or {}),
+        step_cfg=step_cfg,
         step_dir=tmp_path / "outputs" / "step1",
         template_dir=template_dir,
         template=template_dir / "step1.in",
+        operation=resolve_operation(get_engine("qchem"), step_cfg, template_dir / "step1.in"),
         scratch_dir=None,
         prev_state=PipelineState(
             structures=(Structure(id="0", atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])),)
@@ -194,33 +205,35 @@ def test_the_engine_is_nms_capable(tmp_path: Path):
 
 
 def test_an_inferred_operation_without_a_reader_still_runs_and_reads_the_final_structure(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """A scan runs today, read as its final structure with a warning; it fans out once
-    the dispatch has a reader for ``pes`` — with no edit to the engine.
+    """A scan runs today, read as its final structure, and the run says so once when it
+    starts; it fans out once the dispatch has a reader for ``pes`` — with no edit to the
+    engine.
 
     A job type is never refused for want of a reader: the template names a feature the
-    program has, and the step has to run. The inferred ``operation`` used to fall through
-    to ``sp`` for any job type the inspector did not know, so nothing said the output was
-    a scan; now the word is inferred, the log says the final structure is all that was
-    read, and the same step fans out the day the reader joins the dispatch.
+    program has, and the step has to run. The word is inferred, the notice the run's t=0
+    walk logs says the final structure is all that will be read, and the same step fans out
+    the day the reader joins the dispatch.
     """
     from chemrefine.engines.qchem.output import coordinator
 
     engine = get_engine("qchem")
     ctx = _ctx(tmp_path, template="$rem\n  jobtype pes_scan\n$end\n")
+    assert ctx.operation == "pes" and ctx.template is not None
     assert len(engine.prepare(ctx).files) == 1  # not refused
     out = tmp_path / "step1_0.out"
     shutil.copy(DATA / "sp" / "step1_0.out", out)
-    with caplog.at_level(logging.WARNING, logger="chemrefine.engines.qchem.engine"):
-        parsed = engine.parse_one(out, "0", ctx)
+    parsed = engine.parse_one(out, "0", ctx)
     assert len(parsed) == 1 and parsed[0].energy_hartree == -721.7792413729
-    assert "pes_scan" in caplog.text and "'pes'" in caplog.text and "final structure" in caplog.text
-    caplog.clear()
+    template = require_template(ctx.template, label="Q-Chem")
+    notice = operation_notice(engine, ctx.step_cfg, template)
+    assert notice is not None and "'pes'" in notice and "final structure" in notice
+
     monkeypatch.setattr(coordinator, "_QCHEM_OPERATIONS", coordinator._QCHEM_OPERATIONS | {"pes"})
-    with caplog.at_level(logging.WARNING, logger="chemrefine.engines.qchem.engine"):
-        assert len(engine.parse_one(out, "0", ctx)) == 1
-    assert "final structure" not in caplog.text
+    monkeypatch.setattr(type(engine), "operations", (*engine.operations, "pes"))
+    assert len(engine.parse_one(out, "0", ctx)) == 1
+    assert operation_notice(engine, ctx.step_cfg, template) is None
 
 
 def test_a_failure_reason_names_its_output_relative_to_its_step(tmp_path: Path):
@@ -450,23 +463,3 @@ def test_known_and_absent_operations_pass_preflight():
     for operation in (None, "sp", "opt_sp", "OPT+SP", "freq"):
         step_cfg = StepConfig(step=1, engine="qchem", operation=operation)
         preflight_steps([step_cfg], charge=0, multiplicity=1)
-
-
-def test_an_explicit_operation_beats_the_template(tmp_path: Path):
-    """``operation:`` wins over inspection — explicit beats inferred, always."""
-    engine = get_engine("qchem")
-    ctx = _ctx(tmp_path, template="$rem\n  jobtype opt\n$end\n")
-    assert engine.resolve_operation(ctx) == "opt_sp"  # inspected: opt -> opt_sp
-    explicit = StepContext(
-        step_cfg=StepConfig(step=1, engine="qchem", operation="sp"),
-        step_dir=ctx.step_dir,
-        template_dir=ctx.template_dir,
-        template=ctx.template,
-        scratch_dir=None,
-        prev_state=ctx.prev_state,
-        charge=0,
-        multiplicity=1,
-        max_cores=8,
-        slurm_template="cpu.slurm.header",
-    )
-    assert engine.resolve_operation(explicit) == "sp"

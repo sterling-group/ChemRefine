@@ -1144,6 +1144,7 @@ def _branch_ctx(
         step_dir=tmp_path / "outputs" / "step1",
         template_dir=tmp_path / "templates",
         template=None,
+        operation=step_cfg.operation,
         scratch_dir=None,
         prev_state=PipelineState(structures=()),
         charge=0,
@@ -2540,6 +2541,103 @@ def test_the_walk_holds_a_training_template_to_its_trainers_rules(
     )
     with pytest.raises(ConfigError, match=refusal):
         preflight_batches(_config(tmp_path), [train], local=True)
+
+
+@pytest.mark.parametrize(
+    ("engine", "template", "operation", "resolved"),
+    [
+        ("orca", {"step1.inp": b"! GOAT XTB\n"}, None, "goat"),
+        ("orca", {"step1.inp": b"! GOAT XTB\n"}, "OPT+SP", "opt_sp"),
+        ("qchem", {"step1.in": b"$rem\n  jobtype opt\n$end\n"}, None, "opt_sp"),
+        ("qchem", {"step1.in": b"$rem\n  jobtype opt\n$end\n"}, "sp", "sp"),
+        ("orca", {}, None, None),
+        ("orca", {"step1.inp": b"! Opt # \xc5\n"}, None, None),
+        ("fake", {}, "opt_sp", "opt_sp"),
+    ],
+    ids=[
+        "inferred",
+        "declared-wins",
+        "qchem-inferred",
+        "qchem-declared",
+        "missing",
+        "not-utf8",
+        "a-label",
+    ],
+)
+def test_a_context_carries_the_operation_its_outputs_are_read_as(
+    tmp_path: Path,
+    engine: str,
+    template: dict[str, bytes],
+    operation: str | None,
+    resolved: str | None,
+):
+    """Declared wins; omitted, the template decides; a template that cannot be read infers
+    nothing; an engine that infers nothing reads the field as a label."""
+    _templates(tmp_path)
+    for name, content in template.items():
+        (tmp_path / "templates" / name).write_bytes(content)
+    cfg = _config(tmp_path, engine=engine, operation=operation)
+    ctx = build_context(cfg, cfg.steps[0], PipelineState(), get_engine(engine))
+    assert ctx.operation == resolved
+
+
+def test_a_context_reads_its_template_only_to_infer_its_operation(
+    tmp_path: Path, text_reads: list[Path]
+):
+    """A declared operation leaves the template unread; an omitted one reads it once."""
+    _templates(tmp_path)
+    (tmp_path / "templates" / "step1.inp").write_text("! GOAT XTB\n", encoding="utf-8")
+    declared = _config(tmp_path, engine="orca", operation="goat")
+    ctx = build_context(declared, declared.steps[0], PipelineState(), get_engine("orca"))
+    assert ctx.template not in text_reads
+    omitted = _config(tmp_path, engine="orca", operation=None)
+    ctx = build_context(omitted, omitted.steps[0], PipelineState(), get_engine("orca"))
+    assert text_reads.count(ctx.template) == 1
+
+
+def test_the_key_holds_the_operation_the_context_carries(tmp_path: Path):
+    """The key reads the context's operation, the value every parse of the step reads."""
+    from dataclasses import replace
+
+    from chemrefine.step import derive_step_key
+
+    _templates(tmp_path)
+    (tmp_path / "templates" / "step1.inp").write_text("! Opt XTB2\n", encoding="utf-8")
+    cfg = _config(tmp_path, engine="orca", operation=None)
+    engine = get_engine("orca")
+    ctx = build_context(cfg, cfg.steps[0], _seed_state(["0"]), engine)
+    assert ctx.operation == "opt_sp"
+    rows = derive_step_key(ctx, cfg.steps[0], engine).manifest_rows()
+    goat = derive_step_key(replace(ctx, operation="goat"), cfg.steps[0], engine).manifest_rows()
+    assert rows["0"][0] != goat["0"][0]
+
+
+def test_the_walk_refuses_a_template_its_operation_could_not_be_inferred_from(tmp_path: Path):
+    """The context builds over a template that is not UTF-8 text; the walk's own read of it
+    refuses it by name, before anything runs."""
+    from chemrefine.step import preflight_batches
+
+    _templates(tmp_path, "cpu.slurm.header")
+    (tmp_path / "templates" / "step1.inp").write_bytes("! Opt # \u00c5\n".encode("latin-1"))
+    cfg = _config(tmp_path, engine="orca", operation=None)
+    with pytest.raises(ConfigError, match=r"step1\.inp is not UTF-8 text"):
+        preflight_batches(cfg, cfg.steps, local=True)
+
+
+def test_the_walk_names_an_inferred_operation_without_a_reader_once(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    """Said once, when the run starts, rather than once per output the step reads."""
+    import logging
+
+    from chemrefine.step import preflight_batches
+
+    _templates(tmp_path, "cpu.slurm.header")
+    (tmp_path / "templates" / "step1.inp").write_text("! B3LYP def2-SVP IRC\n", encoding="utf-8")
+    cfg = _config(tmp_path, engine="orca", operation=None)
+    with caplog.at_level(logging.WARNING, logger="chemrefine.step"):
+        preflight_batches(cfg, cfg.steps, local=True)
+    assert caplog.text.count("final structure") == 1 and "'irc'" in caplog.text
 
 
 def test_a_gpu_step_meets_the_budget_the_run_resolves(tmp_path: Path):

@@ -52,11 +52,13 @@ keyword lines and run-kind blocks decide, case-insensitively, with `#` comments 
 A many-geometry kind wins over an optimisation keyword beside it (`! OptTS Freq IRC` is an
 `irc` run: the path is the product), and a run that ends in a TS optimisation is that
 optimisation — a `ScanTS` scan or a `NEB-TS` band is the stage before the saddle it
-refines, so the step reads the saddle and normal-mode sampling targets `ts`. A keyword wins over a block, and a `%solvator` block
-over a `%docker` one, which a solvation reads as the settings of its own docking. An explicit `operation:` always wins — set it when
-inspection cannot decide. A word whose output has no reader of its own yet (`irc`, `neb`,
-`md`) still runs: the output is read as its final structure and the run log says so, and the
-step fans out into its geometries the day a reader for it joins the dispatch.
+refines, so the step reads the saddle and normal-mode sampling targets `ts`. A keyword wins
+over a block, and a `%solvator` block over a `%docker` one, which a solvation reads as the
+settings of its own docking. An explicit `operation:` always wins — set it when inspection
+cannot decide. A word whose output has no reader of its own yet (`irc`, `neb`, `md`) still
+runs: each output is read as its final structure — the run says so when it starts, and so
+does `chemrefine validate` — and the step fans out into its geometries the day a reader for
+it joins the dispatch.
 
 `executables: { orca: /path/to/orca }` names the binary; an absolute path is required for
 ORCA's own MPI launcher to work.

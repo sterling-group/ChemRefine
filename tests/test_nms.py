@@ -545,6 +545,7 @@ def _ctx(tmp_path: Path, structures: tuple[Structure, ...], **over) -> StepConte
         step_dir=(tmp_path / "o" / "step1").resolve(),
         template_dir=cfg.template_dir,
         template=cfg.template_dir / "step1.inp",
+        operation=cfg.steps[0].operation,
         scratch_dir=cfg.scratch_dir,
         prev_state=PipelineState(structures=structures),
         charge=0,

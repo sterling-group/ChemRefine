@@ -98,6 +98,7 @@ def _ctx(step_dir: Path, structures: tuple[Structure, ...]) -> StepContext:
         step_dir=step_dir,
         template_dir=step_dir / "templates",
         template=None,
+        operation="opt_sp",
         scratch_dir=None,
         prev_state=PipelineState(structures=structures),
         charge=0,

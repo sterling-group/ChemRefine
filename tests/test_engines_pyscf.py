@@ -79,6 +79,7 @@ def _ctx(
         template=step_template_path(
             tmp_path, step_cfg.step, template=step_cfg.template, suffix="py"
         ),
+        operation=step_cfg.operation,
         scratch_dir=None,
         prev_state=PipelineState(structures=structures),
         charge=overrides.pop("charge", 0),

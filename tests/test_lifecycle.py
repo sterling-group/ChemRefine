@@ -50,6 +50,7 @@ def _ctx(tmp_path: Path) -> StepContext:
         step_dir=tmp_path,
         template_dir=tmp_path,
         template=None,
+        operation="opt_sp",
         scratch_dir=None,
         prev_state=PipelineState(structures=()),
         charge=0,

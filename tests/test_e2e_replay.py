@@ -1611,6 +1611,7 @@ def test_an_artifact_steps_product_is_stubbed_only_where_it_is_missing(tmp_path:
         step_dir=tmp_path / "step2",
         template_dir=tmp_path,
         template=None,
+        operation=None,
         scratch_dir=None,
         prev_state=PipelineState(structures=(Structure(id="0", atoms=Atoms("H")),)),
         charge=0,

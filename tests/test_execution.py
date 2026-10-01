@@ -75,6 +75,7 @@ def _ctx(
         step_dir=tmp_path / "outputs" / "step1",
         template_dir=template_dir,
         template=template_dir / "step1.inp",
+        operation="opt_sp",
         scratch_dir=tmp_path / "scratch",
         prev_state=PipelineState(structures=seeds),
         charge=0,

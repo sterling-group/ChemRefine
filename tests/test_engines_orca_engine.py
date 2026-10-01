@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import re
 import shutil
 from collections.abc import Collection
@@ -16,9 +15,15 @@ from ase import Atoms
 from chemrefine import cache, lifecycle, slurm
 from chemrefine.config import StepConfig
 from chemrefine.engines import _execution as submit
-from chemrefine.engines.api import NmsCapableEngine, get_engine, preflight_steps
+from chemrefine.engines.api import (
+    NmsCapableEngine,
+    get_engine,
+    operation_notice,
+    preflight_steps,
+    resolve_operation,
+)
 from chemrefine.errors import ConfigError
-from chemrefine.ids import step_template_path
+from chemrefine.ids import require_template, step_template_path
 from chemrefine.slurm import dispatch
 from chemrefine.state import (
     FailureKind,
@@ -41,26 +46,30 @@ def _ctx(
     tmp_path: Path,
     structures: tuple[Structure, ...],
     step_cfg: StepConfig | None = None,
+    template: str = "! B3LYP def2-SVP\n%pal\n  nprocs 2\nend\n",
 ) -> StepContext:
-    """Build a StepContext with a usable template + SLURM header on disk."""
+    """Build a StepContext with a usable template + SLURM header on disk.
+
+    The operation is resolved as the run resolves it, from the step and this template.
+    """
     template_dir = tmp_path / "templates"
     template_dir.mkdir(parents=True, exist_ok=True)
-    (template_dir / "step1.inp").write_text(
-        "! B3LYP def2-SVP\n%pal\n  nprocs 2\nend\n", encoding="utf-8"
-    )
+    (template_dir / "step1.inp").write_text(template, encoding="utf-8")
     (template_dir / "cpu.slurm.header").write_text(
         "#!/bin/bash\n#SBATCH --partition=normal\n#SBATCH --time=24:00:00\nmodule load orca/6.0\n",
         encoding="utf-8",
     )
     step_cfg = step_cfg or StepConfig(step=1, engine="orca", operation="opt_sp")
     step_dir = tmp_path / "outputs" / step_cfg.dir_name()
+    template_path = step_template_path(
+        template_dir, step_cfg.step, template=step_cfg.template, suffix="inp"
+    )
     return StepContext(
         step_cfg=step_cfg,
         step_dir=step_dir,
         template_dir=template_dir,
-        template=step_template_path(
-            template_dir, step_cfg.step, template=step_cfg.template, suffix="inp"
-        ),
+        template=template_path,
+        operation=resolve_operation(get_engine("orca"), step_cfg, template_path),
         scratch_dir=tmp_path / "scratch",
         prev_state=PipelineState(structures=structures),
         charge=0,
@@ -112,6 +121,7 @@ def test_prepare_input_contains_charge_and_multiplicity(tmp_path: Path):
         step_dir=ctx.step_dir,
         template_dir=ctx.template_dir,
         template=ctx.template,
+        operation=ctx.operation,
         scratch_dir=ctx.scratch_dir,
         prev_state=ctx.prev_state,
         charge=-2,
@@ -378,43 +388,47 @@ def test_parse_unknown_operation_raises(tmp_path: Path):
 
 
 def test_an_inferred_operation_without_a_reader_still_runs_and_reads_the_final_structure(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """A reaction path runs today, read as its final structure with a warning; it fans out
-    once the dispatch has a reader for ``irc`` — with no edit to the engine.
+    """A reaction path runs today, read as its final structure, and the run says so once
+    when it starts; it fans out once the dispatch has a reader for ``irc`` — with no edit
+    to the engine.
 
     A run kind is never refused for want of a reader: the template names a feature the
-    program has, and the step has to run. The inferred ``operation`` used to fall through
-    to ``sp`` for every run kind the inspector did not know, so nothing said the output was
-    a path; now the word is inferred, the log says the final structure is all that was
-    read, and the same step fans out the day the reader joins the dispatch. An explicit
-    ``operation:`` is still held to the readers' vocabulary.
+    program has, and the step has to run. The word is inferred, the notice the run's t=0
+    walk logs says the final structure is all that will be read, and the same step fans out
+    the day the reader joins the dispatch. An explicit ``operation:`` is still held to the
+    readers' vocabulary.
     """
     from chemrefine.engines.orca.output import coordinator
 
     engine = get_engine("orca")
     inferred = StepConfig(step=1, engine="orca")
-    ctx = _ctx(tmp_path, structures=(_seed_structure(),), step_cfg=inferred)
-    assert ctx.template is not None
-    ctx.template.write_text("! B3LYP def2-SVP IRC\n%pal\n  nprocs 2\nend\n", encoding="utf-8")
+    ctx = _ctx(
+        tmp_path,
+        structures=(_seed_structure(),),
+        step_cfg=inferred,
+        template="! B3LYP def2-SVP IRC\n%pal\n  nprocs 2\nend\n",
+    )
+    assert ctx.operation == "irc" and ctx.template is not None
     inputs = engine.prepare(ctx)  # not refused
     out = inputs.files[0][1]
     shutil.copy(FIXTURE, out)
 
-    with caplog.at_level(logging.WARNING, logger="chemrefine.engines.orca.engine"):
-        parsed = engine.parse_one(out, "0", ctx)
+    parsed = engine.parse_one(out, "0", ctx)
     assert len(parsed) == 1 and parsed[0].positions.shape == (77, 3)
-    assert "'irc'" in caplog.text and "final structure" in caplog.text
+    template = require_template(ctx.template, label="ORCA")
+    notice = operation_notice(engine, inferred, template)
+    assert notice is not None and "'irc'" in notice and "final structure" in notice
 
     explicit = StepConfig(step=1, engine="orca", operation="irc")
     with pytest.raises(ConfigError, match=re.escape("unknown operation 'irc' for engine 'orca'")):
         preflight_steps([explicit], charge=0, multiplicity=1)  # explicit: held to the vocabulary
 
-    caplog.clear()
     monkeypatch.setattr(coordinator, "_DFT_OPERATIONS", coordinator._DFT_OPERATIONS | {"irc"})
-    with caplog.at_level(logging.WARNING, logger="chemrefine.engines.orca.engine"):
-        assert len(engine.parse_one(out, "0", ctx)) == 1
-    assert "final structure" not in caplog.text
+    monkeypatch.setattr(type(engine), "operations", (*engine.operations, "irc"))
+    assert len(engine.parse_one(out, "0", ctx)) == 1
+    assert operation_notice(engine, inferred, template) is None
 
 
 # ---------------------------------------------------------------------------
@@ -467,33 +481,24 @@ def test_parse_without_operation_infers_parser_from_template(tmp_path: Path):
     inputs = engine.prepare(ctx)
     shutil.copy(FIXTURE, inputs.files[0][1])
     # The default template (`! B3LYP def2-SVP`, no Opt) inspects to sp → parse_dft.
-    assert engine.resolve_operation(ctx) == "sp"
+    assert ctx.operation == "sp"
     results = engine.parse(inputs, ctx)
     assert results.structures[0].energy_hartree == pytest.approx(-6044.555726221861)
 
 
-def test_effective_operation_explicit_wins_over_template(tmp_path: Path):
-    """An explicit ``operation`` overrides what the template would imply."""
+def test_outputs_are_read_as_the_operation_the_step_resolved(tmp_path: Path):
+    """A template edited while its step runs does not change how the step's outputs are read:
+    each is read as the operation its row was keyed by."""
     engine = get_engine("orca")
     ctx = _ctx(
-        tmp_path / "explicit",
-        structures=(_seed_structure(),),
-        step_cfg=StepConfig(step=1, engine="orca", operation="opt_sp"),
+        tmp_path, structures=(_seed_structure(),), step_cfg=StepConfig(step=1, engine="orca")
     )
-    (ctx.template_dir / "step1.inp").write_text("! GOAT XTB\n", encoding="utf-8")
-    assert engine.resolve_operation(ctx) == "opt_sp"
-
-
-def test_effective_operation_falls_back_to_inspection(tmp_path: Path):
-    """Without ``operation``, the template's keywords decide the run type."""
-    engine = get_engine("orca")
-    ctx = _ctx(
-        tmp_path / "infer",
-        structures=(_seed_structure(),),
-        step_cfg=StepConfig(step=1, engine="orca"),  # operation omitted
-    )
-    (ctx.template_dir / "step1.inp").write_text("! GOAT XTB\n", encoding="utf-8")
-    assert engine.resolve_operation(ctx) == "goat"
+    assert ctx.operation == "sp" and ctx.template is not None
+    inputs = engine.prepare(ctx)
+    shutil.copy(FIXTURE, inputs.files[0][1])
+    ctx.template.write_text("! GOAT XTB\n", encoding="utf-8")
+    [parsed] = engine.parse_one(inputs.files[0][1], "0", ctx)
+    assert parsed.energy_hartree == pytest.approx(-6044.555726221861)
 
 
 def test_template_digest_tracks_template_contents(tmp_path: Path):

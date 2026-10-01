@@ -33,6 +33,7 @@ from chemrefine.engines.api import (
     FrequencyOutputParsing,
     JobExecutable,
     NmsCapableEngine,
+    OperationInferring,
     OperationsDeclaring,
     OptionsDeclaring,
     PreflightChecking,
@@ -41,6 +42,7 @@ from chemrefine.engines.api import (
     TemplateDriven,
     get_engine,
     preflight_steps,
+    resolve_operation,
 )
 from chemrefine.engines.mlip.registry import requirement_from_options
 from chemrefine.errors import ConfigError
@@ -58,18 +60,23 @@ _REQUIRED_OPTIONS: dict[str, dict[str, object]] = {
 }
 
 
-def _ctx(tmp_path: Path, engine_name: str, options: dict[str, object]) -> StepContext:
+def _ctx(
+    tmp_path: Path,
+    engine_name: str,
+    options: dict[str, object],
+    operation: str | None = "opt_sp",
+) -> StepContext:
     """A minimal context for asking an engine about one step's options.
 
     The template file really exists, with a ``%pal`` line for the ORCA-family engines:
     the ExtOpt engines read their pal from it inside ``run_block`` (the server's thread
     budget), so a context whose template is only a path would fail exactly the invariants
-    this module exists to hold.
+    this module exists to hold. The operation is resolved as the run resolves it.
     """
     step_cfg = StepConfig(
         step=1,
         engine=engine_name,
-        operation="opt_sp",
+        operation=operation,
         options={**_REQUIRED_OPTIONS.get(engine_name, {}), **options},
     )
     suffix = get_engine(engine_name).template_suffix
@@ -83,6 +90,7 @@ def _ctx(tmp_path: Path, engine_name: str, options: dict[str, object]) -> StepCo
         step_dir=tmp_path,
         template_dir=tmp_path,
         template=template,
+        operation=resolve_operation(get_engine(engine_name), step_cfg, template),
         scratch_dir=None,
         prev_state=PipelineState(),
         charge=0,
@@ -912,6 +920,59 @@ def test_prepare_reads_the_template_once_whatever_the_structure_count(
     )
     assert len(get_engine(engine_name).prepare(ctx).files) == 3
     assert text_reads.count(ctx.template) == 1
+
+
+@pytest.mark.parametrize("engine_name", _job_engines())
+def test_parse_reads_no_template_whatever_the_output_count(
+    engine_name: str, tmp_path: Path, text_reads: list[Path]
+):
+    """A step's outputs are read as the operation its context carries, never re-inferred.
+
+    Inferred per output, a step of N structures would read its template N more times, and an
+    edit landing mid-step would read some outputs one way and the rest another, while every
+    row was keyed by the first. The operation is left to the template wherever the engine
+    infers one, which is the case a per-output read would be for.
+    """
+    from chemrefine import lifecycle
+
+    engine = get_engine(engine_name)
+    inferred = None if isinstance(engine, OperationInferring) else "opt_sp"
+    ctx = replace(
+        _ctx(tmp_path, engine_name, {}, operation=inferred),
+        prev_state=PipelineState(
+            structures=tuple(Structure(id=str(i), atoms=Atoms("H")) for i in range(3))
+        ),
+    )
+    inputs = engine.prepare(ctx)
+    for _, output, _ in inputs.files:
+        output.write_text("no program wrote this\n", encoding="utf-8")
+    text_reads.clear()
+    _, failures = lifecycle.parse_with_failures(engine, inputs, ctx)
+    assert len(failures) == 3
+    assert ctx.template not in text_reads
+
+
+def _operation_inferring() -> list[str]:
+    """Every engine whose template names the operation its outputs are read as."""
+    return [name for name in sorted(ENGINES) if isinstance(get_engine(name), OperationInferring)]
+
+
+@pytest.mark.parametrize("engine_name", _operation_inferring())
+def test_an_output_whose_step_inferred_nothing_refuses_its_template_by_name(
+    engine_name: str, tmp_path: Path
+):
+    """A context built while its template could not be read carries no operation; an output
+    read on it then reads the template itself, through the reader that refuses it by name."""
+    engine = get_engine(engine_name)
+    ctx = _ctx(tmp_path, engine_name, {}, operation=None)
+    assert ctx.template is not None and ctx.operation is not None
+    ctx.template.unlink()
+    built = replace(ctx, operation=resolve_operation(engine, ctx.step_cfg, ctx.template))
+    assert built.operation is None
+    output = tmp_path / "step1_0.out"
+    output.write_text("anything\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="template not found"):
+        engine.parse_one(output, "0", built)
 
 
 # ---------------------------------------------------------------------------

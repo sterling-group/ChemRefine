@@ -68,7 +68,7 @@ from numpy.typing import NDArray
 from chemrefine.config import StepConfig, fold_engine_name
 from chemrefine.engines._options import EngineOptions
 from chemrefine.errors import ConfigError, EngineNotFoundError
-from chemrefine.ids import StepTemplate
+from chemrefine.ids import StepTemplate, require_template
 from chemrefine.state import JobBatch, StepContext, StepInputs, StepResults
 
 # Part of the contract this module publishes, not an implementation detail of it: an engine
@@ -337,20 +337,21 @@ class OperationsDeclaring(Protocol):
 
 
 @runtime_checkable
-class OperationInferring(Protocol):
-    """An engine that names the operation it reads a step's outputs as, before any job runs.
+class OperationInferring(TemplateDriven, Protocol):
+    """An engine whose template names the operation it reads a step's outputs as.
 
-    The declared ``operation:`` when the step sets one, else the one the engine's own
-    input infers. This is the value
-    that selects the reader, so it is what the cache keys
-    (:func:`chemrefine.step.derive_step_key`) rather than the field's spelling: writing out
-    the operation the input already implies moves no key, and a change in what the input
-    infers does. An engine that treats ``operation:`` as a label does not implement this,
-    and the field is keyed as written.
+    The declared ``operation:`` wins; omitted, the engine's own template decides.
+    :func:`resolve_operation` applies that rule once per step, over the template as read,
+    and :func:`chemrefine.step.build_context` puts the answer on the context
+    (:attr:`~chemrefine.state.StepContext.operation`), where the cache key and every parse
+    of the step read it: spelling out what the template implies moves no key, a change in
+    what it infers does, and each output is read by the reader its row is keyed by. An
+    engine that treats ``operation:`` as a label does not implement this, and the field is
+    keyed and read as written.
     """
 
-    def resolve_operation(self, ctx: StepContext) -> str:
-        """The operation this engine reads ``ctx``'s step outputs as."""
+    def infer_operation(self, template: StepTemplate) -> str:
+        """The operation ``template`` implies for this engine's outputs."""
         ...
 
 
@@ -874,6 +875,53 @@ def check_operation(engine: CalculationEngine, step_cfg: StepConfig) -> None:
             f"{step_cfg.engine!r}, which reads {', '.join(sorted(engine.operations))}. "
             f"Correct it, or omit `operation:`."
         )
+
+
+def resolve_operation(
+    engine: CalculationEngine, step_cfg: StepConfig, template: Path | None
+) -> str | None:
+    """The operation a step's outputs are read as: the declared one, else its template's.
+
+    The rule :class:`OperationInferring` names, applied once per step by
+    :func:`chemrefine.step.build_context`. An engine that infers nothing reads
+    ``operation:`` as a label, and the label is the answer. A template that cannot be read
+    — not there, not UTF-8 text, another account's — infers nothing (``None``), so the
+    context still builds and its key still derives, as they do for a missing template
+    (:func:`chemrefine.cache.template_digest`); :func:`chemrefine.ids.require_template`
+    refuses it by name wherever its text is needed — the run's t=0 walk, ``prepare``, a
+    parse of the step's outputs.
+    """
+    if step_cfg.operation is not None or not isinstance(engine, OperationInferring):
+        return step_cfg.operation
+    try:
+        read = require_template(template, label=engine.label)
+    except ConfigError:
+        return None
+    return engine.infer_operation(read)
+
+
+def operation_notice(
+    engine: CalculationEngine, step_cfg: StepConfig, template: StepTemplate
+) -> str | None:
+    """What the run should say, once, about the operation a step's outputs are read as.
+
+    An operation the template infers that the engine has no reader of its own for — a
+    reaction path, a band, a trajectory — runs, and each output is read as its final
+    structure until a reader joins the engine's dispatch. That is said when the run starts
+    (:func:`chemrefine.step.preflight_batches`) and by ``chemrefine validate``, once per
+    step, rather than once per output. ``None`` when there is nothing to say: the step
+    declares its operation, its engine infers none or declares no vocabulary, or a reader
+    of its own reads what the template infers.
+    """
+    if step_cfg.operation is not None or not isinstance(engine, OperationInferring):
+        return None
+    inferred = engine.infer_operation(template)
+    if not isinstance(engine, OperationsDeclaring) or inferred in engine.operations:
+        return None
+    return (
+        f"step {step_cfg.step}: the {engine.label} template infers operation {inferred!r}, "
+        f"which has no reader of its own yet — each output is read as its final structure"
+    )
 
 
 def preflight_steps(steps: Sequence[StepConfig], *, charge: int, multiplicity: int) -> None:

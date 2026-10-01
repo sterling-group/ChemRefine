@@ -83,12 +83,6 @@ def test_run_type_inference_is_opt_sp_or_sp():
     assert inspect_template(chain).operation == "opt_sp"
 
 
-def test_every_jobtype_in_the_chain_is_reported_lower_cased():
-    """The raw vocabulary travels on the info, so a refusal can say what inferred what."""
-    chain = "$rem\n  JOBTYPE = OPT\n$end\n\n@@@\n\n$rem\n  jobtype Freq\n$end\n"
-    assert inspect_template(chain).jobtypes == frozenset({"opt", "freq"})
-
-
 @pytest.mark.parametrize(
     ("jobtype", "operation"),
     [
@@ -109,7 +103,7 @@ def test_a_multi_geometry_jobtype_infers_an_engine_neutral_operation(jobtype: st
     runs — the inspector never refuses a template for naming a feature the program has.
     """
     info = inspect_template(f"$rem\n  jobtype {jobtype}\n$end\n")
-    assert info.operation == operation and info.jobtypes == frozenset({jobtype.lower()})
+    assert info.operation == operation
 
 
 def test_a_scan_after_an_optimisation_is_still_a_scan():

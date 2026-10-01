@@ -189,12 +189,14 @@ scattered through the parser:
   file through `require_template` and hands the inspector its text; nothing else re-derives
   facts from the template.
 - **An explicit `operation:` wins; otherwise the inspection decides** (ORCA:
-  `OrcaEngine.resolve_operation`). Declare it as `OperationInferring` and the cache keys the
-  operation the outputs are read as, not its spelling. If the vocabulary is real, declare
-  `OperationsDeclaring`, its names lower case with `_` — the run's t=0 walk and `chemrefine
-  validate` then refuse an explicit operation outside it, with no `check_step` of the
-  engine's own, and the schema document and agent guide serve the vocabulary with no
-  further wiring.
+  `OrcaEngine.infer_operation`). Declare it as `OperationInferring` and the step resolves
+  its operation once, onto `StepContext.operation`: the cache keys the operation the outputs
+  are read as, not its spelling, and `parse_one` reads it off the context instead of the
+  template. If the vocabulary is real, declare `OperationsDeclaring`, its names lower case
+  with `_` — the run's t=0 walk and `chemrefine validate` then refuse an explicit operation
+  outside it, with no `check_step` of the engine's own, and the schema document and agent
+  guide serve the vocabulary with no further wiring. An inferred operation outside it still
+  runs, each output read as its final structure, and the run says so once, when it starts.
 - **A read-once coordinator hands shared text to per-section extractors** (see
   `orca/output/`: coordinator / energy / geometry / frequencies / status) — the file is read
   once, and each section owns its own block grammar.

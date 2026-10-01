@@ -1462,6 +1462,7 @@ def test_an_nms_child_names_the_progext_wrapper_in_its_own_attempt(
         step_dir=(tmp_path / "outputs" / "step1").resolve(),
         template_dir=template.parent,
         template=template,
+        operation=None,
         scratch_dir=None,
         prev_state=PipelineState(structures=(parent,)),
         charge=0,

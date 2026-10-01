@@ -182,17 +182,28 @@ class StepContext:
 
     Part of the step's *specification* — change the template and the step must re-run — so it
     belongs on the bundle that carries the specification, resolved once by
-    :func:`chemrefine.step.build_context`. An ORCA step alone has five readers (``prepare``,
-    ``pal``, run-type detection, the NMS probe, the cache), and the field saves each
-    re-resolving the path; each reads the file once, through
-    :func:`chemrefine.ids.require_template`, and ``prepare`` renders every structure from one
-    read.
+    :func:`chemrefine.step.build_context`. A template-driven step has several readers —
+    ``prepare``, the job's core count, the NMS probe, the cache, the operation its outputs
+    are read as (:attr:`operation`) — and the field saves each re-resolving the path; each
+    reads the file once, through :func:`chemrefine.ids.require_template`, and ``prepare``
+    renders every structure from one read.
 
     ``None`` and "a path that is not there" are different states and stay distinguishable:
     ``None`` means the engine is not :class:`~chemrefine.engines.api.TemplateDriven`, while a
     missing file means one was named and is absent. :func:`chemrefine.cache.template_digest`
     treats both as "contributes no digest"; :func:`chemrefine.ids.require_template` refuses
     both, naming the path when there is one.
+    """
+    operation: str | None
+    """The operation this step's outputs are read as — the declared ``operation:``, else
+    what the engine infers from its template.
+
+    Resolved once with the context (:func:`chemrefine.engines.api.resolve_operation`, by
+    :func:`chemrefine.step.build_context`), like :attr:`template` and the effective
+    :attr:`charge`: the cache keys this value and every parse of the step reads it, so each
+    output is read by the reader its row is keyed by and none re-reads the template.
+    ``None`` when nothing is declared and nothing was inferred: an engine that reads the
+    field as a label, or a template that could not be read when the step was built.
     """
     scratch_dir: Path | None
     """``None`` means the SLURM script auto-derives a per-calc work dir under ``step_dir``."""

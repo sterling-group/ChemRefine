@@ -43,11 +43,12 @@ from chemrefine.engines.api import (
     CalculationEngine,
     JobExecutable,
     NmsCapableEngine,
-    OperationInferring,
     OptionsDeclaring,
     TemplateChecking,
     TemplateDriven,
     get_engine,
+    operation_notice,
+    resolve_operation,
 )
 from chemrefine.errors import (
     CacheError,
@@ -105,14 +106,22 @@ def build_context(
 
     Takes the engine because the step's template is part of its specification and only the
     engine knows the extension to look for. Resolving it **here, once** is the point: every
-    later reader — ``prepare``, ORCA's ``pal`` and run-type detection, the NMS input probe,
-    the cache — takes it off the context instead of re-deriving and re-reading the file.
+    later reader — ``prepare``, an engine's core count, the NMS input probe, the cache —
+    takes it off the context instead of re-deriving it.
+
+    The operation the step's outputs are read as is resolved here too, once
+    (:func:`~chemrefine.engines.api.resolve_operation`): the cache key and every parse take
+    it off the context, so no output re-reads the template to learn it. A template that
+    cannot be read infers nothing, so the context still builds; the template is refused by
+    name where its text is needed.
     """
+    template = _template_for(config, step_cfg, engine)
     return StepContext(
         step_cfg=step_cfg,
         step_dir=step_dir_for(config, step_cfg),
         template_dir=config.template_dir.resolve(),
-        template=_template_for(config, step_cfg, engine),
+        template=template,
+        operation=resolve_operation(engine, step_cfg, template),
         scratch_dir=config.scratch_dir.resolve() if config.scratch_dir is not None else None,
         prev_state=prev_state,
         charge=step_cfg.effective_charge(config.charge),
@@ -133,7 +142,9 @@ def preflight_batches(config: Config, steps: Iterable[StepConfig], *, local: boo
     For every step in ``steps``, on the context the step will run with, less the structures
     neither check reads: its input template, read as its ``prepare`` reads it
     (:func:`chemrefine.ids.require_template`) and held to the engine's own template rules
-    (:class:`~chemrefine.engines.api.TemplateChecking`); then, for a step the scheduler runs,
+    (:class:`~chemrefine.engines.api.TemplateChecking`), with what the run should say about
+    the operation the step's outputs are read as said once, here
+    (:func:`~chemrefine.engines.api.operation_notice`); then, for a step the scheduler runs,
     its whole batch plan — SLURM header, job shape, GPU budget
     (:meth:`chemrefine.engines.BatchPlan.of`) — under this run's ``max_cores``, dispatch and
     resolved GPU budget.
@@ -146,6 +157,8 @@ def preflight_batches(config: Config, steps: Iterable[StepConfig], *, local: boo
             template = ids.require_template(ctx.template, label=engine.label)
             if isinstance(engine, TemplateChecking):
                 engine.check_template(ctx, template)
+            if (notice := operation_notice(engine, step_cfg, template)) is not None:
+                logger.warning("%s", notice)
         if isinstance(engine, JobExecutable):
             BatchPlan.of(engine, ctx, local=local, gpu_budget=budget)
 
@@ -358,13 +371,13 @@ def derive_step_key(
     keys values it does not interpret.
 
     The operation and the NMS target are keyed **as the step resolves them**, not as the
-    config spells them: the operation the engine reads the outputs as
-    (:class:`~chemrefine.engines.api.OperationInferring`), and the target
-    :func:`chemrefine.nms.resolved_options` resolves by. That is what selects the reader
-    and decides a child resolved, so spelling out what the template implies moves no key,
-    and a change in what it infers does. A template that is not there infers nothing: its
-    digest is ``""`` (:func:`chemrefine.cache.template_digest`), so the step misses its
-    cache anyway, and the actionable error arrives at rendering.
+    config spells them: the operation off the context
+    (:attr:`~chemrefine.state.StepContext.operation`) — the value every parse of the step
+    reads — and the target :func:`chemrefine.nms.resolved_options` resolves by. That is what
+    selects the reader and decides a child resolved, so spelling out what the template
+    implies moves no key, and a change in what it infers does. A template that is not there
+    infers nothing: its digest is ``""`` (:func:`chemrefine.cache.template_digest`), so
+    the step misses its cache anyway, and the actionable error arrives at rendering.
 
     A path-valued option (:data:`chemrefine.config.STEP_OPTION_PATHS`) is keyed by its
     **basename**. The loader resolves it to an absolute path so the job can find the file;
@@ -390,12 +403,9 @@ def derive_step_key(
     aux_files: Mapping[str, Path] = {}
     if isinstance(engine, AuxFileConsuming) and ctx.template is not None:
         aux_files = engine.template_aux_files(ctx.template)
-    readable = ctx.template is None or ctx.template.is_file()
-    operation = step_cfg.operation
-    if readable and isinstance(engine, OperationInferring):
-        operation = engine.resolve_operation(ctx)
     resolution = None
     if step_cfg.nms and isinstance(engine, NmsCapableEngine):
+        readable = ctx.template is None or ctx.template.is_file()
         try:
             options = (
                 nms.resolved_options(engine, ctx)
@@ -409,7 +419,7 @@ def derive_step_key(
         step_cfg,
         ctx.prev_state.structures,
         ctx.template,
-        operation=operation,
+        operation=ctx.operation,
         charge=ctx.charge,
         multiplicity=ctx.multiplicity,
         engine_options=engine_options,
