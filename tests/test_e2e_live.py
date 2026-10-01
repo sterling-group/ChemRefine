@@ -22,6 +22,7 @@ import shutil
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import NoReturn
 
 import numpy as np
 import pytest
@@ -94,9 +95,17 @@ def _skip_unless_runnable(config: Config) -> None:
         preflight_backends(config.steps)
     except ConfigError as e:
         missing.append(str(e))
-    if not missing:
-        return
-    message = f"live case needs {'; '.join(missing)}"
+    if missing:
+        skip_unless_required(f"live case needs {'; '.join(missing)}")
+
+
+def skip_unless_required(message: str) -> NoReturn:
+    """Skip with ``message``, or fail with it when ``CHEMREFINE_REQUIRE_LIVE`` is set.
+
+    The rule for every test that reaches a real stack, not only the live cases: the
+    release gate sets the variable for its whole live tier, so a stack it lacks fails
+    there by name instead of passing as a skip.
+    """
     if os.environ.get("CHEMREFINE_REQUIRE_LIVE"):
         pytest.fail(f"{message} — CHEMREFINE_REQUIRE_LIVE is set, so this may not be skipped")
     pytest.skip(message)

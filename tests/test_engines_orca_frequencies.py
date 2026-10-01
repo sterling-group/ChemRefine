@@ -113,6 +113,9 @@ def test_the_imaginary_modes_are_a_subset_of_the_table():
     rotation = _TS_BLOCK.replace(
         "     5:       0.00 cm**-1", "     5:     -35.10 cm**-1  ***imaginary mode***"
     )
+    # The replace landed: otherwise the block is _TS_BLOCK again, and the subset below
+    # would hold without ever reaching an imaginary mode inside the trivial window.
+    assert parse_imaginary_frequencies_from_text(rotation) == {5: -35.1, 6: -1425.82}
     for block in (_SYNTH_BLOCK, _TS_BLOCK, rotation):
         assert parse_imaginary_frequencies_from_text(block).items() <= (
             parse_mode_table_from_text(block).items()
@@ -128,6 +131,7 @@ def test_every_selector_reads_the_same_block_when_a_ts_reprints_the_table():
     had on the way there.
     """
     stale = _TS_BLOCK.replace("-1425.82", "-1999.99").replace("2000.59", "111.11")
+    assert stale != _TS_BLOCK, "the replace found nothing, so no stale table precedes"
     both = stale + _TS_BLOCK
     assert parse_mode_table_from_text(both) == parse_mode_table_from_text(_TS_BLOCK)
     assert parse_imaginary_frequencies_from_text(both) == {6: -1425.82}

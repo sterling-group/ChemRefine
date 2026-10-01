@@ -78,10 +78,16 @@ def _backend_python(task_name: str) -> str | None:
 
 
 def _require_backend_python(task_name: str) -> str:
-    """Skip the calling test when no interpreter — local or managed — has the backend."""
+    """The interpreter, local or managed, that has the backend.
+
+    With none, the calling test skips, or fails under ``CHEMREFINE_REQUIRE_LIVE``: the
+    release gate's live tier runs these tests, and a stack it lacks must fail there by name.
+    """
+    from test_e2e_live import skip_unless_required
+
     python = _backend_python(task_name)
     if python is None:
-        pytest.skip(f"no {task_name} stack — neither importable here nor in a managed env")
+        skip_unless_required(f"no {task_name} stack — neither importable here nor in a managed env")
     return python
 
 

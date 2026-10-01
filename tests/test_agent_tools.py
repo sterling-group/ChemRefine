@@ -730,13 +730,13 @@ def test_a_tail_request_is_granted_up_to_the_ceiling_and_the_answer_says_so(tmp_
     """
     path = _reported_tree(tmp_path)
     log = next((tmp_path / "outputs" / "agent_runs").glob("*.log"))
-    total = agent_tools._MAX_TAIL_LINES + 5
+    total = 2000 + 5
     log.write_text("".join(f"line {i:06d}\n" for i in range(total)), encoding="utf-8")
 
     status = agent_tools.run_status(str(path), log_tail_lines=10**9)
-    assert len(status["log_tail"]) == agent_tools._MAX_TAIL_LINES
+    assert len(status["log_tail"]) == 2000
     assert status["log_tail"][-1] == f"line {total - 1:06d}"
-    assert status["log_tail_lines"] == agent_tools._MAX_TAIL_LINES
+    assert status["log_tail_lines"] == 2000
     assert agent_tools.run_status(str(path), log_tail_lines=2)["log_tail_lines"] == 2
 
 
@@ -860,7 +860,7 @@ def test_a_huge_limit_is_capped_and_says_so(tmp_path: Path):
     """
     path = _reported_tree(tmp_path)
     page = agent_tools.get_results(str(path), limit=10**9)
-    assert page["limit"] == agent_tools._MAX_ROWS
+    assert page["limit"] == 200
     assert page["total"] == 3  # three rows here, so the cap does not bite the result
     assert len(page["rows"]) == 3
     # A limit under the ceiling is passed through untouched.
