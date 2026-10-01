@@ -501,6 +501,37 @@ def test_outputs_are_read_as_the_operation_the_step_resolved(tmp_path: Path):
     assert parsed.energy_hartree == pytest.approx(-6044.555726221861)
 
 
+@pytest.mark.parametrize(
+    ("declared", "template", "said"),
+    [
+        ("opt_sp", "! GOAT XTB\n", "'goat' run"),
+        ("goat", "! B3LYP def2-SVP Opt\n", "'opt_sp' run"),
+        ("pes", "! XTB Opt\n%geom Scan B 0 1 = 1.0, 2.0, 5 end end\n", None),
+        ("sp", "! B3LYP def2-SVP Opt Freq\n", None),
+        ("goat", "! GOAT-EXPLORE XTB\n", None),
+        ("opt_sp", "! B3LYP def2-SVP IRC\n", None),
+    ],
+    ids=["one-off-an-ensemble", "an-ensemble-off-one", "pes", "final-structure", "goat", "irc"],
+)
+def test_a_declared_operation_is_said_only_when_it_reads_unlike_the_template(
+    tmp_path: Path, declared: str, template: str, said: str | None
+):
+    """The run reads the outputs as declared either way; it says so only when that is not
+    how the template's run would be read."""
+    engine = get_engine("orca")
+    ctx = _ctx(
+        tmp_path,
+        structures=(_seed_structure(),),
+        step_cfg=StepConfig(step=1, engine="orca", operation=declared),
+        template=template,
+    )
+    notice = operation_notice(engine, ctx.step_cfg, require_template(ctx.template, label="ORCA"))
+    if said is None:
+        assert notice is None
+    else:
+        assert notice is not None and said in notice and "omit `operation:`" in notice
+
+
 def test_template_digest_tracks_template_contents(tmp_path: Path):
     """The template-content digest changes on edit and is empty when missing.
 

@@ -119,7 +119,10 @@ for those and the full map.
   (`irc` / `neb` / `md`) and read as its final structure until a reader of its own joins,
   while a run that ends in a TS optimisation — `OptTS`, `ScanTS`, `NEB-TS` — is read as
   that saddle and targets `ts` for normal-mode sampling;
-  a Q-Chem step reads its `JOBTYPE`. An explicit `operation:` always wins.
+  a Q-Chem step reads its `JOBTYPE`. An explicit `operation:` always wins; one that
+  reads the outputs unlike what the template runs (`opt_sp` over a `! GOAT` template reads
+  one structure, never the ensemble) draws a warning when the run starts and from
+  `chemrefine validate`.
 - **Q-Chem engine** (`engine: qchem`): per-structure Q-Chem jobs from a `stepN.in`
   template, with the geometry generated into job 1's `$molecule` block (only job 1 of a
   multi-job `@@@` chain is edited — a later `$molecule read $end` survives untouched —

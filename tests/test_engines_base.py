@@ -263,10 +263,21 @@ def test_the_derived_contract_members_match_the_interpreters_own():
     and annotations instead. Where the interpreter offers the real thing, the two must agree —
     otherwise the gate enforces a contract subtly different from the declared one.
     """
-    truth = getattr(CalculationEngine, "__protocol_attrs__", None)
-    if truth is None:  # pragma: no cover - only on 3.11, which CI also runs
+    if not hasattr(CalculationEngine, "__protocol_attrs__"):  # pragma: no cover - 3.11 only
         pytest.skip("__protocol_attrs__ is a 3.12 addition")
-    assert contract_members(CalculationEngine) == frozenset(truth)
+    from chemrefine.engines import api
+
+    protocols = [
+        value
+        for value in vars(api).values()
+        if isinstance(value, type)
+        and getattr(value, "_is_protocol", False)
+        and value.__module__ == api.__name__
+    ]
+    assert CalculationEngine in protocols and api.OperationInferring in protocols
+    for protocol in protocols:
+        truth = frozenset(getattr(protocol, "__protocol_attrs__", ()))
+        assert contract_members(protocol) == truth, protocol.__name__
 
 
 def test_register_refuses_a_class_that_does_not_satisfy_the_contract():
@@ -344,6 +355,11 @@ def test_register_refuses_a_template_engine_without_its_starter():
             "check_template",
             "declares ['check_template'] of TemplateChecking but not ['preflight_refuses']",
         ),
+        (
+            "infer_operation",
+            "declares ['infer_operation'] of OperationInferring but not "
+            "['label', 'reads_alike', 'template_starter', 'template_suffix']",
+        ),
     ],
 )
 def test_register_refuses_a_claim_without_its_capability(member: str, refusal: str):
@@ -359,6 +375,7 @@ def test_the_capabilities_register_holds_whole_have_these_members():
     member every engine taking it must now declare, so it lands here as a decision."""
     from chemrefine.engines.api import (
         CalculationEngine,
+        OperationInferring,
         PreflightChecking,
         TemplateChecking,
         TemplateDriven,
@@ -370,8 +387,36 @@ def test_the_capabilities_register_holds_whole_have_these_members():
         "template_starter",
         "template_suffix",
     }
+    assert contract_members(OperationInferring) - contract_members(TemplateDriven) == {
+        "infer_operation",
+        "reads_alike",
+    }
     assert contract_members(PreflightChecking) == {"check_step", "preflight_refuses"}
     assert contract_members(TemplateChecking) == {"check_template", "preflight_refuses"}
+
+
+def test_register_refuses_an_inference_hook_that_cannot_say_what_reads_alike():
+    """Without ``reads_alike`` the class would silently not be ``OperationInferring``: its
+    ``operation:`` keyed and read as written, its template never asked."""
+    partial = type(
+        "Partial",
+        (),
+        {
+            "name": "gate-probe",
+            "label": "Gate",
+            "template_suffix": "toml",
+            "template_starter": "",
+            "infer_operation": lambda self, template: "sp",
+            **_RUNNABLE,
+        },
+    )
+    refusal = (
+        "declares ['infer_operation', 'label', 'template_starter', 'template_suffix'] of "
+        "OperationInferring but not ['reads_alike']"
+    )
+    with pytest.raises(TypeError, match=re.escape(refusal)):
+        register("gate-probe")(partial)
+    assert "gate-probe" not in ENGINES
 
 
 def test_a_template_rule_alone_is_a_whole_capability():

@@ -192,7 +192,10 @@ scattered through the parser:
   `OrcaEngine.infer_operation`). Declare it as `OperationInferring` and the step resolves
   its operation once, onto `StepContext.operation`: the cache keys the operation the outputs
   are read as, not its spelling, and `parse_one` reads it off the context instead of the
-  template. If the vocabulary is real, declare `OperationsDeclaring`, its names lower case
+  template. Its `reads_alike` says which operations your parser dispatch reads the same
+  way, so a declared operation is warned about only when it reads the outputs unlike what
+  the template runs; a contract-fixture test holds it to real parses. If the vocabulary is
+  real, declare `OperationsDeclaring`, its names lower case
   with `_` — the run's t=0 walk and `chemrefine validate` then refuse an explicit operation
   outside it, with no `check_step` of the engine's own, and the schema document and agent
   guide serve the vocabulary with no further wiring. An inferred operation outside it still

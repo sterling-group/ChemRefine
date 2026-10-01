@@ -289,6 +289,12 @@ class QchemEngine(JobEngine):
         :mod:`~chemrefine.engines.qchem.inspect` already is."""
         return inspect.inspect_template(template.text).operation
 
+    def reads_alike(self, first: str, second: str) -> bool:
+        """Satisfies :class:`~chemrefine.engines.api.OperationInferring`: always, because one
+        assembler (:mod:`~chemrefine.engines.qchem.output`) reads every operation's output,
+        and a job type with no reader of its own yet, as its final structure."""
+        return True
+
     def parse_one(
         self, output_path: Path, structure_id: str, ctx: StepContext
     ) -> list[ParsedResult]:

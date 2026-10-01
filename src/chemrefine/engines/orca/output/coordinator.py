@@ -160,6 +160,17 @@ def known_operations() -> frozenset[str]:
     return _DFT_OPERATIONS | {_PES_OPERATION} | frozenset(_ENSEMBLE_OPERATIONS)
 
 
+def multi_structure_operations() -> frozenset[str]:
+    """The operations whose output is read as more than one structure.
+
+    Every operation the dispatch knows but the single-structure reads, which share one
+    reader (:func:`parse_dft`) with each other and with a run kind that has no reader of
+    its own yet. Derived like :func:`known_operations`, so a reader that joins the dispatch
+    is in the answer the moment it exists.
+    """
+    return known_operations() - _DFT_OPERATIONS
+
+
 _ERROR_TERMINATION_RE = re.compile(r"^ORCA finished by error termination in .*$", re.MULTILINE)
 """ORCA's own verdict when it aborts, naming the module it died in."""
 

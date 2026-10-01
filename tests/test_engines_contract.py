@@ -14,7 +14,9 @@ git diff — the same harness writes and checks, so they cannot drift apart.
 
 from __future__ import annotations
 
+import itertools
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +24,14 @@ import pytest
 
 from chemrefine import cache
 from chemrefine.config import StepConfig
-from chemrefine.engines.api import ENGINES, get_engine
+from chemrefine.engines.api import (
+    ENGINES,
+    CalculationEngine,
+    OperationInferring,
+    OperationsDeclaring,
+    get_engine,
+)
+from chemrefine.errors import ChemRefineError
 from chemrefine.io import read_xyz_frames
 from chemrefine.state import PipelineState, StepContext, StepInputs, Structure
 
@@ -85,6 +94,45 @@ def test_contract_case(case_dir: Path, request: pytest.FixtureRequest) -> None:
     golden = json.loads(golden_path.read_text(encoding="utf-8"))
     assert document["result_format"] == golden["result_format"]
     assert document["structures"] == golden["structures"]
+
+
+INFERRING_CASES = [
+    path for path in CASES if isinstance(get_engine(path.parent.name), OperationInferring)
+]
+
+
+def _read_as(engine: CalculationEngine, out: Path, ctx: StepContext) -> object:
+    """What one read of ``out`` on ``ctx`` yields: its records, or the refusal it raises."""
+    try:
+        results = engine.parse(StepInputs(files=((out, out, "0"),)), ctx)
+    except ChemRefineError as e:
+        return (type(e).__name__, str(e))
+    return [cache.structure_record(s) for s in results.structures]
+
+
+@pytest.mark.parametrize(
+    "case_dir", INFERRING_CASES, ids=[f"{p.parent.name}-{p.name}" for p in INFERRING_CASES]
+)
+def test_operations_said_to_read_alike_read_a_real_output_alike(case_dir: Path) -> None:
+    """``reads_alike`` decides whether a declared operation draws a warning, so it is held to
+    the dispatch: two operations it calls alike read the same real output into the same
+    records, or into the same refusal.
+
+    Each operation is read as an inferred one, which is the read a template's run gets — a
+    run kind with no reader of its own (``irc``) included.
+    """
+    engine = get_engine(case_dir.parent.name)
+    assert isinstance(engine, OperationInferring) and isinstance(engine, OperationsDeclaring)
+    meta = json.loads((case_dir / "case.json").read_text(encoding="utf-8"))
+    out = _native_output(case_dir)
+    base = _context(case_dir, meta)
+    inferred = replace(base, step_cfg=base.step_cfg.model_copy(update={"operation": None}))
+    words = sorted({*engine.operations, "irc"})
+    read = {word: _read_as(engine, out, replace(inferred, operation=word)) for word in words}
+    alike = [(a, b) for a, b in itertools.combinations(words, 2) if engine.reads_alike(a, b)]
+    assert alike, "no two operations read alike — has the dispatch lost its shared reader?"
+    for first, second in alike:
+        assert read[first] == read[second], f"{first!r} and {second!r} read {out} differently"
 
 
 def test_every_registered_engine_ships_a_contract_case() -> None:

@@ -55,7 +55,10 @@ optimisation — a `ScanTS` scan or a `NEB-TS` band is the stage before the sadd
 refines, so the step reads the saddle and normal-mode sampling targets `ts`. A keyword wins
 over a block, and a `%solvator` block over a `%docker` one, which a solvation reads as the
 settings of its own docking. An explicit `operation:` always wins — set it when inspection
-cannot decide. A word whose output has no reader of its own yet (`irc`, `neb`, `md`) still
+cannot decide. One that reads the outputs unlike what the template runs (`opt_sp` over a
+`! GOAT` template reads one structure, never the ensemble) is read as declared, and the run
+says so when it starts, as does `chemrefine validate`. A word whose output has no reader of
+its own yet (`irc`, `neb`, `md`) still
 runs: each output is read as its final structure — the run says so when it starts, and so
 does `chemrefine validate` — and the step fans out into its geometries the day a reader for
 it joins the dispatch.

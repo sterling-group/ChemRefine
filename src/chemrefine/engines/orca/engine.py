@@ -184,6 +184,14 @@ class OrcaEngine(JobEngine):
         ExtOpt engines, whose templates are the same grammar."""
         return inspect.inspect_template(template.text).operation
 
+    def reads_alike(self, first: str, second: str) -> bool:
+        """Satisfies :class:`~chemrefine.engines.api.OperationInferring`: the same operation,
+        or two that both read the output as its final structure — every operation but those
+        that fan it out into several
+        (:func:`~chemrefine.engines.orca.output.multi_structure_operations`)."""
+        multi = output.multi_structure_operations()
+        return first == second or (first not in multi and second not in multi)
+
     def parse_one(
         self, output_path: Path, structure_id: str, ctx: StepContext
     ) -> list[ParsedResult]:

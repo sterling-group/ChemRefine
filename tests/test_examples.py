@@ -27,9 +27,16 @@ from chemrefine.config import (
     load_config,
 )
 from chemrefine.engines._options import EngineOptions
-from chemrefine.engines.api import ENGINES, OptionsDeclaring, get_engine
+from chemrefine.engines.api import (
+    ENGINES,
+    OptionsDeclaring,
+    TemplateDriven,
+    get_engine,
+    operation_notice,
+)
 from chemrefine.engines.orca.engine import OrcaEngine
 from chemrefine.engines.orca.inspect import inspect_template
+from chemrefine.ids import require_template
 from chemrefine.io import read_xyz_frames
 from chemrefine.nms import NmsOptions
 
@@ -124,49 +131,28 @@ def test_example_step_templates_resolve(yml: Path) -> None:
         )
 
 
-_DFT_TEXT_OPERATIONS = frozenset({"opt_sp", "sp", "freq"})
-"""The operations the ORCA family parses from the ``.out`` text via one shared assembler.
-
-Mirrors ``coordinator._DFT_OPERATIONS``: within this set a declared/inferred mismatch still
-reads the same output the same way, so only a mismatch that crosses out of it selects the
-wrong parser."""
-
-
-def _parse_route(operation: str) -> str:
-    """Which parser an operation selects — the sidecar/scan ones by name, the text family as one."""
-    return "dft-text" if operation in _DFT_TEXT_OPERATIONS else operation
-
-
 @pytest.mark.parametrize("yml", EXAMPLES, ids=IDS)
-def test_example_operations_match_their_templates(yml: Path) -> None:
-    """An explicit ``operation:`` must select the parser the template's run type needs.
+def test_no_example_step_draws_an_operation_notice(yml: Path) -> None:
+    """Every shipped step's outputs are read as what its template runs, by a reader of their
+    own.
 
-    ``operation`` never changes the generated input — it only picks the parser — and an
-    explicit value beats template inspection. So ``opt_sp`` over a ``!GOAT`` template
-    runs the conformer search and then never reads its ensemble sidecar: the step yields
-    a single structure (or an UNPARSEABLE ledger row), and a filter built for an
-    ensemble has nothing to select from. Two shipped tutorials did exactly that, and
-    every schema gate passed them: ``opt_sp`` is inside the vocabulary, so only a
-    template-vs-operation comparison can see the mismatch.
-
-    Two-sided: the inspector reads a run kind from the ``!`` keywords and from the ``%``
-    blocks ORCA accepts in their place, so a declared operation that selects another
-    parser than the template's run needs is the defect this gate exists for, whichever
-    of the two says so.
+    ``operation`` never changes the generated input — it only picks the reader — and an
+    explicit value beats template inspection. So ``opt_sp`` over a ``!GOAT`` template runs
+    the conformer search and then never reads its ensemble: the step yields a single
+    structure (or an UNPARSEABLE ledger row), and a filter built for an ensemble has nothing
+    to select from. Two shipped tutorials did exactly that, and every schema gate passed
+    them: ``opt_sp`` is inside the vocabulary, so only the comparison the run makes when it
+    starts (:func:`~chemrefine.engines.api.operation_notice`) can see the mismatch. A
+    shipped step names no run kind its engine has no reader for, either.
     """
     cfg = load_config(yml)
     for step in cfg.steps:
-        if step.operation is None or step.engine not in _ORCA_FAMILY:
+        engine = get_engine(step.engine)
+        if not isinstance(engine, TemplateDriven):
             continue
-        template = _resolved_template(cfg, step)
-        assert template is not None
-        inferred = inspect_template(template.read_text(encoding="utf-8")).operation
-        declared = step.operation  # already folded by the config: one spelling
-        assert _parse_route(declared) == _parse_route(inferred), (
-            f"step {step.step}: operation {step.operation!r} selects the "
-            f"{_parse_route(declared)!r} parser, but template {template.name} runs "
-            f"{inferred!r} — the step would never read the output its run produces"
-        )
+        template = require_template(_resolved_template(cfg, step), label=engine.label)
+        notice = operation_notice(engine, step, template)
+        assert notice is None, notice
 
 
 @pytest.mark.parametrize("yml", EXAMPLES, ids=IDS)

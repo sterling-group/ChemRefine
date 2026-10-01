@@ -345,13 +345,24 @@ class OperationInferring(TemplateDriven, Protocol):
     and :func:`chemrefine.step.build_context` puts the answer on the context
     (:attr:`~chemrefine.state.StepContext.operation`), where the cache key and every parse
     of the step read it: spelling out what the template implies moves no key, a change in
-    what it infers does, and each output is read by the reader its row is keyed by. An
-    engine that treats ``operation:`` as a label does not implement this, and the field is
-    keyed and read as written.
+    what it infers does, and each output is read by the reader its row is keyed by. A
+    declared operation that reads the outputs unlike what the template runs is said once,
+    when the run starts (:func:`operation_notice`) — a warning, since the value declared is
+    the user's to give. An engine that treats ``operation:`` as a label does not implement
+    this, and the field is keyed and read as written.
     """
 
     def infer_operation(self, template: StepTemplate) -> str:
         """The operation ``template`` implies for this engine's outputs."""
+        ...
+
+    def reads_alike(self, first: str, second: str) -> bool:
+        """Whether an output is read the same way as operation ``first`` and as ``second``:
+        by the same reader, into the same structures.
+
+        True to the engine's own parser dispatch, where an operation with no reader of its
+        own yet is read as the output's final structure.
+        """
         ...
 
 
@@ -725,15 +736,18 @@ vocabulary — before any lookup, so the registry stays alias-free.
 
 
 def contract_members(protocol: type) -> frozenset[str]:
-    """Every member a Protocol declares — its methods plus its annotated attributes.
+    """Every member a Protocol declares — its methods plus its annotated attributes, its
+    own and those of every Protocol it extends.
 
     Derived rather than restated, so the gate below cannot come to disagree with the contract
     it enforces. Written out by hand instead of read from ``__protocol_attrs__`` because that
-    is a 3.12 addition and ``requires-python`` is ``>=3.11``; the two are asserted equal by
-    ``test_engines_base.py`` wherever the interpreter offers both.
+    is a 3.12 addition and ``requires-python`` is ``>=3.11``; the two are asserted equal, for
+    every Protocol here, by ``test_engines_base.py`` wherever the interpreter offers both.
+    ``dir`` finds the inherited methods; a class's ``__annotations__`` holds only its own,
+    so the annotated attributes are gathered along the MRO.
     """
     return frozenset(n for n in dir(protocol) if not n.startswith("_")) | frozenset(
-        getattr(protocol, "__annotations__", {})
+        name for base in protocol.__mro__ for name in getattr(base, "__annotations__", {})
     )
 
 
@@ -741,7 +755,7 @@ _CONTRACT_MEMBERS = contract_members(CalculationEngine)
 
 _CAPABILITIES: tuple[tuple[type, frozenset[str]], ...] = tuple(
     (capability, contract_members(capability) - _CONTRACT_MEMBERS)
-    for capability in (TemplateDriven, PreflightChecking, TemplateChecking)
+    for capability in (TemplateDriven, OperationInferring, PreflightChecking, TemplateChecking)
 )
 """The capabilities an engine takes by declaring members, each with the members that take it.
 
@@ -778,11 +792,13 @@ def register(name: str) -> Callable[[type[CalculationEngine]], type[CalculationE
       worse: the engine simply stops satisfying :class:`TemplateDriven`, and the user is told
       their template does not exist while it sits on disk.
     * **It takes a capability in part.** :class:`TemplateDriven`,
-      :class:`PreflightChecking` and :class:`TemplateChecking` are taken by declaring their
-      members, and ``isinstance`` answers no to a class that declares only some — so a
-      template engine without its starter would silently read no template, and a
-      ``check_step`` or ``check_template`` without the sentence that says what it refuses
-      would silently drop out of the walk it meant to join. Every member a class declares
+      :class:`OperationInferring`, :class:`PreflightChecking` and :class:`TemplateChecking`
+      are taken by declaring their members, and ``isinstance`` answers no to a class that
+      declares only some — so a template engine without its starter would silently read no
+      template, an ``infer_operation`` without ``reads_alike`` would silently key and read
+      ``operation:`` as written, and a ``check_step`` or ``check_template`` without the
+      sentence that says what it refuses would silently drop out of the walk it meant to
+      join. Every member a class declares
       must belong to a capability it declares whole (:data:`_CAPABILITIES`); the sentence two
       capabilities share is held by either one declared whole.
 
@@ -905,17 +921,28 @@ def operation_notice(
 ) -> str | None:
     """What the run should say, once, about the operation a step's outputs are read as.
 
-    An operation the template infers that the engine has no reader of its own for — a
-    reaction path, a band, a trajectory — runs, and each output is read as its final
-    structure until a reader joins the engine's dispatch. That is said when the run starts
-    (:func:`chemrefine.step.preflight_batches`) and by ``chemrefine validate``, once per
-    step, rather than once per output. ``None`` when there is nothing to say: the step
-    declares its operation, its engine infers none or declares no vocabulary, or a reader
-    of its own reads what the template infers.
+    Said when the run starts (:func:`chemrefine.step.preflight_batches`) and by
+    ``chemrefine validate``, once per step rather than once per output, and never a
+    refusal. A declared operation that reads the outputs unlike what the template runs
+    (:meth:`OperationInferring.reads_alike`) — one structure read off a conformer search,
+    whose product is the ensemble — is read as declared, and said. An operation the
+    template infers that the engine has no reader of its own for — a reaction path, a band,
+    a trajectory — runs, and each output is read as its final structure until a reader
+    joins the engine's dispatch. ``None`` when there is nothing to say: the engine infers
+    nothing, the declared operation reads like the template's, or a reader of the engine's
+    own reads what the template infers.
     """
-    if step_cfg.operation is not None or not isinstance(engine, OperationInferring):
+    if not isinstance(engine, OperationInferring):
         return None
     inferred = engine.infer_operation(template)
+    if step_cfg.operation is not None:
+        if engine.reads_alike(step_cfg.operation, inferred):
+            return None
+        return (
+            f"step {step_cfg.step}: operation {step_cfg.operation!r} reads each output unlike "
+            f"the {inferred!r} run its {engine.label} template names — omit `operation:` to "
+            f"read what the template runs"
+        )
     if not isinstance(engine, OperationsDeclaring) or inferred in engine.operations:
         return None
     return (

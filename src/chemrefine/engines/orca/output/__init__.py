@@ -10,6 +10,7 @@ points, so ``from chemrefine.engines.orca import output`` then ``output.parse_ou
 
 from chemrefine.engines.orca.output.coordinator import (
     known_operations,
+    multi_structure_operations,
     parse_dft,
     parse_dft_from_text,
     parse_output,
@@ -17,6 +18,7 @@ from chemrefine.engines.orca.output.coordinator import (
 
 __all__ = [
     "known_operations",
+    "multi_structure_operations",
     "parse_dft",
     "parse_dft_from_text",
     "parse_output",
