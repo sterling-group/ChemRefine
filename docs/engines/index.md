@@ -186,7 +186,7 @@ patched: ChemRefine substitutes `$TRAIN_SET`, `$VALID_SET`, `$TEST_SET`, `$RUN_D
 `$RUN_NAME`, `$DEVICE`, `$SEED`, `$NGPUS`, `$CORES`, `$FOUNDATION_MODEL`, `$CHARGE` and
 `$MULTIPLICITY`, and leaves everything else — including a config's own `${...}`
 interpolations — untouched. A template that never references a placeholder its backend
-needs is rejected before the dataset is written.
+needs is refused when the run starts (and by `chemrefine validate`).
 
 The device, the seed and the foundation weights are **plan facts**: the step's options
 are their source of truth — the scheduler charges by them and the cache fingerprint
@@ -198,8 +198,8 @@ the step's options do not state — a different one, or one for a fact the step 
 unset — is refused by name. A library run through its own
 CLI reads only the config the template becomes, so there each plan fact the library
 reads from its config is a **required placeholder** — a template that never references
-it is rejected before anything is submitted, instead of the library's own fallback
-quietly overriding the step. So is the start, when the step has one (`model_name`,
+it is refused when the run starts (and by `chemrefine validate`), instead of the
+library's own fallback quietly overriding the step. So is the start, when the step has one (`model_name`,
 `model_path`, or the library's default release): a template naming a model literally
 would train from it while the runlog and `trained_model.json` named the step's.
 
@@ -230,8 +230,8 @@ step's cache key, so it re-runs rather than serving a result computed with the o
 ### MLIP training templates, per backend
 
 The template is always the *trainer's* config; what that means differs per library, and
-each trainer refuses a template missing its own required placeholders before anything
-submits:
+each trainer refuses a template missing its own required placeholders when the run starts
+(and `chemrefine validate` reports it):
 
 - **MACE** — MACE's own training YAML with `$TRAIN_SET`, `$RUN_NAME`, `$RUN_DIR`,
   `device: $DEVICE` and `seed: $SEED` where those values go, and

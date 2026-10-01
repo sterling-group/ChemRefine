@@ -29,6 +29,9 @@ become issues or warnings up front:
   ``chemrefine scaffold`` creates starters; the header is resolved the way dispatch
   resolves it, per-step override first, cuda header when the step's validated options
   request a GPU),
+* a template that is there but that its engine's own rules refuse — one the trainer
+  could not hand what the step decided — on the template's row, the check the run's t=0
+  walk makes (:class:`~chemrefine.engines.api.TemplateChecking`),
 * a step whose jobs the scheduler would refuse against the budget the config states —
   more cores than ``max_cores``, more GPUs than an explicit ``max_gpus`` — through the
   run's own :func:`~chemrefine.engines.check_batch` (warnings, because ``--maxcores``
@@ -67,6 +70,7 @@ from chemrefine.engines.api import (
     OptionsDeclaring,
     PreflightChecking,
     ProvisionableEngine,
+    TemplateChecking,
     TemplateDriven,
     WhitespacePathIntolerant,
     check_operation,
@@ -353,6 +357,10 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
                 issues.append(
                     ValidationIssue(loc=("steps", index, "options"), kind="options", message=str(e))
                 )
+        # Whether the step's plan can be built from here: the template rules below read
+        # it, and the plan reads the options and the backend selection, so a row on either
+        # would come back a second time through the template's.
+        plan_ok = options_ok
         if options_ok and isinstance(engine, PreflightChecking):
             # The engine's own preflight refusals — the same hook the run's t=0 walk
             # calls (`preflight_steps`), so `chemrefine validate` and the run cannot
@@ -365,6 +373,7 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
                     multiplicity=step.effective_multiplicity(config.multiplicity),
                 )
             except ConfigError as e:
+                plan_ok = False
                 issues.append(
                     ValidationIssue(
                         loc=("steps", index, "options"), kind="preflight", message=str(e)
@@ -383,6 +392,7 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
             try:
                 engine.backend_requirement(step.options)
             except ConfigError as e:
+                plan_ok = False
                 issues.append(
                     ValidationIssue(loc=("steps", index, "options"), kind="backend", message=str(e))
                 )
@@ -429,11 +439,16 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
                     )
                 )
             else:
-                # The run's own check of the file, which reads it as every consumer does:
+                # The run's own check of the file, which reads it as every consumer does —
                 # a template that is there but is not UTF-8 text is refused before the run
-                # starts, so it is an issue here, not a row the run contradicts.
+                # starts, so it is an issue here, not a row the run contradicts — and then
+                # the engine's own rules for what it says, as the t=0 walk asks them.
                 try:
-                    require_template(template, label=engine.label)
+                    read = require_template(template, label=engine.label)
+                    if plan_ok and isinstance(engine, TemplateChecking):
+                        engine.check_template(
+                            build_context(config, step, PipelineState(), engine), read
+                        )
                 except ConfigError as e:
                     issues.append(
                         ValidationIssue(

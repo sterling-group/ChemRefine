@@ -68,6 +68,7 @@ from numpy.typing import NDArray
 from chemrefine.config import StepConfig
 from chemrefine.engines._options import EngineOptions
 from chemrefine.errors import ConfigError, EngineNotFoundError
+from chemrefine.ids import StepTemplate
 from chemrefine.state import JobBatch, StepContext, StepInputs, StepResults
 
 # Part of the contract this module publishes, not an implementation detail of it: an engine
@@ -662,14 +663,17 @@ class PreflightChecking(Protocol):
     """
 
     preflight_refuses: ClassVar[str]
-    """One sentence naming the config-decidable mistake ``check_step`` refuses.
+    """One sentence naming what the engine refuses before the run starts.
 
-    The claim that the hook is a *targeted* refusal and not boilerplate, carried by the
-    engine itself — in the declarations-only style of :class:`WhitespacePathIntolerant` —
-    rather than by a list of engine names pinned in a test. :func:`register` refuses a member
-    declared without the rest of its capability, because a Protocol member left unset would
-    not fail loudly: ``isinstance`` would answer no and the engine would silently leave the
-    preflight walk. The invariants hold it non-empty and unrepeated across engines, and
+    What ``check_step`` refuses and, for an engine that is also
+    :class:`TemplateChecking`, what ``check_template`` refuses: one sentence per engine,
+    whichever hook makes the refusal. The claim that a hook is a *targeted* refusal and not
+    boilerplate, carried by the engine itself — in the declarations-only style of
+    :class:`WhitespacePathIntolerant` — rather than by a list of engine names pinned in a
+    test. :func:`register` refuses a member declared without the rest of its capability,
+    because a Protocol member left unset would not fail loudly: ``isinstance`` would answer
+    no and the engine would silently leave the preflight walk. The invariants hold it
+    non-empty and unrepeated across engines, and
     :func:`chemrefine.introspect.describe_engines` exposes it."""
 
     def check_step(self, step_cfg: StepConfig, *, charge: int, multiplicity: int) -> None:
@@ -679,6 +683,33 @@ class PreflightChecking(Protocol):
         config defaults with any per-step override applied — because a refusal may
         hinge on them: an open-shell step asking for a closed-shell-only extraction is
         decidable from the config alone, but only from the resolved species.
+        """
+        ...
+
+
+@runtime_checkable
+class TemplateChecking(Protocol):
+    """An engine that can vet a step's template, as read, before the run starts.
+
+    A rule about what a template must say — a placeholder its backend must be handed —
+    applied only in ``prepare`` fires at the step's own turn, after every earlier step has
+    been computed and paid for. The run's t=0 walk (:func:`chemrefine.step.preflight_batches`)
+    reads each step's template once (:func:`chemrefine.ids.require_template`) and hands it
+    here, and ``chemrefine validate`` reports the same refusal on the template's row. An
+    engine keeps asking its rules in ``prepare`` too, for the recovery paths that skip the
+    walk.
+
+    Shares :attr:`PreflightChecking.preflight_refuses` with that capability, so an engine
+    names what it refuses before the run in one sentence, whichever hook refuses it.
+    """
+
+    preflight_refuses: ClassVar[str]
+
+    def check_template(self, ctx: StepContext, template: StepTemplate) -> None:
+        """Raise :class:`~chemrefine.errors.ConfigError` if ``template`` cannot serve this step.
+
+        ``ctx`` is the context the step will run with, less the structures no template rule
+        reads; ``template`` is its template as :func:`~chemrefine.ids.require_template` read it.
         """
         ...
 
@@ -710,7 +741,7 @@ _CONTRACT_MEMBERS = contract_members(CalculationEngine)
 
 _CAPABILITIES: tuple[tuple[type, frozenset[str]], ...] = tuple(
     (capability, contract_members(capability) - _CONTRACT_MEMBERS)
-    for capability in (TemplateDriven, PreflightChecking)
+    for capability in (TemplateDriven, PreflightChecking, TemplateChecking)
 )
 """The capabilities an engine takes by declaring members, each with the members that take it.
 
@@ -746,13 +777,14 @@ def register(name: str) -> Callable[[type[CalculationEngine]], type[CalculationE
       surfaces as a bare ``AttributeError`` inside ``prepare``, and ``template_suffix`` is
       worse: the engine simply stops satisfying :class:`TemplateDriven`, and the user is told
       their template does not exist while it sits on disk.
-    * **It takes a capability in part.** :class:`TemplateDriven` and
-      :class:`PreflightChecking` are taken by declaring their members, and ``isinstance``
-      answers no to a class that declares only some — so a template engine without its
-      starter would silently read no template, and a ``check_step`` without the sentence
-      that says what it refuses would silently drop out of the preflight walk it meant to
-      join. Every member a class declares must belong to a capability it declares whole
-      (:data:`_CAPABILITIES`).
+    * **It takes a capability in part.** :class:`TemplateDriven`,
+      :class:`PreflightChecking` and :class:`TemplateChecking` are taken by declaring their
+      members, and ``isinstance`` answers no to a class that declares only some — so a
+      template engine without its starter would silently read no template, and a
+      ``check_step`` or ``check_template`` without the sentence that says what it refuses
+      would silently drop out of the walk it meant to join. Every member a class declares
+      must belong to a capability it declares whole (:data:`_CAPABILITIES`); the sentence two
+      capabilities share is held by either one declared whole.
 
     The check runs on the class, never on an instance: constructing one to interrogate it would
     make an engine's ``__init__`` run at import of the package that defines it.

@@ -119,8 +119,9 @@ class MlipTrainEngine(MlipBackend):
 
     options_cls: ClassVar[type[MlipTrainOptions]] = MlipTrainOptions
     preflight_refuses: ClassVar[str] = (
-        "a training step with no device, no task, or a policy with nothing to act on: "
-        "decidable from the config, and usually sitting after days of label computation"
+        "a training step with no device, no task, a policy with nothing to act on, or a "
+        "template that never references what its library must be handed: decidable before "
+        "the run, and usually sitting after days of label computation"
     )
     template_starter: ClassVar[str] = (
         "# mlip-train starter — NOT runnable as written. A trainer template is the\n"
@@ -300,6 +301,16 @@ class MlipTrainEngine(MlipBackend):
                 f"has no per-structure failures to skip or backfill. Remove it."
             )
 
+    def check_template(self, ctx: StepContext, template: ids.StepTemplate) -> None:
+        """Refuse a template that cannot hand the trainer what this step decided.
+
+        The trainer's own rules (:meth:`TrainerBase.require_placeholders`) against the plan
+        this step runs — on the :class:`~chemrefine.engines.api.TemplateChecking` capability,
+        so the run's t=0 walk and ``chemrefine validate`` make the refusal before the steps
+        that label the data have run, and :meth:`prepare` again for the recovery paths.
+        """
+        self._trainer(ctx).require_placeholders(self._plan(ctx), template)
+
     def prepare(self, ctx: StepContext) -> StepInputs:
         """Write the dataset and render the trainer config; return the one job.
 
@@ -310,16 +321,16 @@ class MlipTrainEngine(MlipBackend):
 
         :meth:`check_step` runs again here, not only at preflight: the recovery paths
         (``rerun-errors``, a resumed step) reach ``prepare`` without the preflight walk,
-        and the checks are cheap and idempotent. The template is read once and held to the
-        trainer's rules (:meth:`TrainerBase.require_placeholders`) before the dataset is
-        written, so a refused template leaves nothing on disk.
+        and the checks are cheap and idempotent. The template is read once and held to
+        :meth:`check_template` before the dataset is written, so a refused template leaves
+        nothing on disk.
         """
         self.check_step(ctx.step_cfg, charge=ctx.charge, multiplicity=ctx.multiplicity)
+        template = ids.require_template(ctx.template, label=self.label)
+        self.check_template(ctx, template)
         opts = self._opts(ctx)
         trainer = self._trainer(ctx)
         plan = self._plan(ctx)
-        template = ids.require_template(ctx.template, label=self.label)
-        trainer.require_placeholders(plan, template)
         split = split_structures(
             ctx.prev_state.structures,
             valid_fraction=opts.valid_fraction,

@@ -45,6 +45,7 @@ from chemrefine.engines.api import (
     NmsCapableEngine,
     OperationInferring,
     OptionsDeclaring,
+    TemplateChecking,
     TemplateDriven,
     get_engine,
 )
@@ -129,19 +130,23 @@ def build_context(
 def preflight_batches(config: Config, steps: Iterable[StepConfig], *, local: bool) -> None:
     """Everything that would stop each step's jobs before they run, checked before any step.
 
-    For every step in ``steps`` the scheduler runs: its input template, as its ``prepare``
-    requires it (:func:`chemrefine.ids.require_template`), then its whole batch plan —
-    SLURM header, job shape, GPU budget (:meth:`chemrefine.engines.BatchPlan.of`) — on the
-    context the step will run with, less the structures no layout reads, under this run's
-    ``max_cores``, dispatch and resolved GPU budget.
+    For every step in ``steps``, on the context the step will run with, less the structures
+    neither check reads: its input template, read as its ``prepare`` reads it
+    (:func:`chemrefine.ids.require_template`) and held to the engine's own template rules
+    (:class:`~chemrefine.engines.api.TemplateChecking`); then, for a step the scheduler runs,
+    its whole batch plan — SLURM header, job shape, GPU budget
+    (:meth:`chemrefine.engines.BatchPlan.of`) — under this run's ``max_cores``, dispatch and
+    resolved GPU budget.
     """
     budget = slurm.resolve_gpu_budget(config.max_gpus, local=local)
     for step_cfg in steps:
         engine = get_engine(step_cfg.engine)
+        ctx = build_context(config, step_cfg, PipelineState(), engine)
+        if isinstance(engine, TemplateDriven):
+            template = ids.require_template(ctx.template, label=engine.label)
+            if isinstance(engine, TemplateChecking):
+                engine.check_template(ctx, template)
         if isinstance(engine, JobExecutable):
-            ctx = build_context(config, step_cfg, PipelineState(), engine)
-            if isinstance(engine, TemplateDriven):
-                ids.require_template(ctx.template, label=engine.label)
             BatchPlan.of(engine, ctx, local=local, gpu_budget=budget)
 
 

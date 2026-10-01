@@ -750,6 +750,58 @@ def test_a_preflight_refusal_does_not_hide_the_budget_row(tmp_path: Path):
     assert any("local dispatch pins one device" in message for message in _budget(report))
 
 
+_TRAINING_FACTS = "name: $RUN_NAME\nwork_dir: $RUN_DIR\ndevice: $DEVICE\nseed: $SEED\n"
+"""A MACE training template carrying the plan facts and not the dataset."""
+
+
+def _training(
+    tmp_path: Path, template: str, options: dict[str, object], **config: object
+) -> ValidationReport:
+    """Validate one ``mlip-train`` step with ``options``, whose template is ``template``."""
+    (tmp_path / "templates").mkdir(exist_ok=True)
+    (tmp_path / "templates" / "step1.yaml").write_text(template, encoding="utf-8")
+    return _validate(
+        tmp_path, steps=[{"step": 1, "engine": "mlip-train", "options": options}], **config
+    )
+
+
+def test_a_training_template_its_trainer_refuses_is_an_issue_on_its_row(tmp_path: Path):
+    """The run's t=0 walk refuses it, so validate reports it, on the template it is about."""
+    report = _training(tmp_path, _TRAINING_FACTS, {"task_name": "mace_off", "device": "cpu"})
+    [issue] = report.issues
+    assert (issue.loc, issue.kind) == (("steps", 0, "template"), "template")
+    assert "never references $TRAIN_SET" in issue.message
+
+
+def test_a_complete_training_template_validates_clean(tmp_path: Path):
+    template = f"{_TRAINING_FACTS}train_file: $TRAIN_SET\nfoundation_model: $FOUNDATION_MODEL\n"
+    options = {"task_name": "mace_off", "model_name": "small", "device": "cpu"}
+    assert _training(tmp_path, template, options).issues == ()
+
+
+@pytest.mark.parametrize(
+    ("options", "kinds"),
+    [
+        ({"task_name": "mace_off"}, ["preflight"]),
+        ({"task_name": "mace_omol", "model_name": "medium", "device": "cpu"}, ["backend"]),
+    ],
+    ids=["preflight", "backend"],
+)
+def test_a_step_whose_plan_another_row_refuses_gets_no_template_row(
+    tmp_path: Path, options: dict[str, object], kinds: list[str]
+):
+    """The template rules read the step's plan, so a plan refused is that row's, once."""
+    assert _kinds(_training(tmp_path, _TRAINING_FACTS, options)) == kinds
+
+
+def test_a_template_refusal_does_not_hide_the_budget_row(tmp_path: Path):
+    """Every finding at once: the rules leave the layout computable, so it is judged too."""
+    options = {"task_name": "mace_off", "device": "cuda", "gpus": 2}
+    report = _training(tmp_path, _TRAINING_FACTS, options, dispatch="local")
+    assert _kinds(report) == ["template"]
+    assert any("local dispatch pins one device" in message for message in _budget(report))
+
+
 def test_a_layout_its_options_cannot_give_is_left_to_their_row(tmp_path: Path):
     """A typoed knob is one finding, on the preflight row, and never again as a budget row.
 

@@ -2450,6 +2450,39 @@ def test_the_walk_refuses_a_template_or_header_this_account_cannot_read(
         target.chmod(0o644)
 
 
+_TRAINING_FACTS = "name: $RUN_NAME\nwork_dir: $RUN_DIR\ndevice: $DEVICE\nseed: $SEED\n"
+"""A MACE training template carrying the plan facts, and neither the dataset nor the start."""
+
+
+@pytest.mark.parametrize(
+    ("template", "refusal"),
+    [
+        (_TRAINING_FACTS, r"never references \$TRAIN_SET"),
+        (
+            f"{_TRAINING_FACTS}train_file: $TRAIN_SET\nfoundation_model: small_off\n",
+            r"never references \$FOUNDATION_MODEL",
+        ),
+    ],
+    ids=["dataset", "start"],
+)
+def test_the_walk_holds_a_training_template_to_its_trainers_rules(
+    tmp_path: Path, template: str, refusal: str
+):
+    """Refused at t=0, not at the step's ``prepare`` after the labelling steps have run."""
+    from chemrefine.errors import ConfigError
+    from chemrefine.step import preflight_batches
+
+    _templates(tmp_path, "cpu.slurm.header")
+    (tmp_path / "templates" / "step2.yaml").write_text(template, encoding="utf-8")
+    train = StepConfig(
+        step=2,
+        engine="mlip-train",
+        options={"task_name": "mace_off", "model_name": "small", "device": "cpu"},
+    )
+    with pytest.raises(ConfigError, match=refusal):
+        preflight_batches(_config(tmp_path), [train], local=True)
+
+
 def test_a_gpu_step_meets_the_budget_the_run_resolves(tmp_path: Path):
     from chemrefine.errors import ConfigError
     from chemrefine.step import preflight_batches

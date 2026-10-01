@@ -329,6 +329,10 @@ def test_register_refuses_a_template_engine_without_its_starter():
             "preflight_refuses",
             "declares ['preflight_refuses'] of PreflightChecking but not ['check_step']",
         ),
+        (
+            "check_template",
+            "declares ['check_template'] of TemplateChecking but not ['preflight_refuses']",
+        ),
     ],
 )
 def test_register_refuses_a_claim_without_its_capability(member: str, refusal: str):
@@ -345,6 +349,7 @@ def test_the_capabilities_register_holds_whole_have_these_members():
     from chemrefine.engines.api import (
         CalculationEngine,
         PreflightChecking,
+        TemplateChecking,
         TemplateDriven,
         contract_members,
     )
@@ -355,6 +360,31 @@ def test_the_capabilities_register_holds_whole_have_these_members():
         "template_suffix",
     }
     assert contract_members(PreflightChecking) == {"check_step", "preflight_refuses"}
+    assert contract_members(TemplateChecking) == {"check_template", "preflight_refuses"}
+
+
+def test_a_template_rule_alone_is_a_whole_capability():
+    """The sentence two capabilities share is held by either one declared whole.
+
+    An engine whose only refusal before the run is about its template takes
+    ``check_template`` and the sentence, and owes no ``check_step``.
+    """
+    from chemrefine.engines.api import PreflightChecking, TemplateChecking
+
+    ruled = type(
+        "Ruled",
+        (),
+        {
+            "name": "gate-probe",
+            "preflight_refuses": "a template that names nothing",
+            "check_template": lambda self, ctx, template: None,
+            **_RUNNABLE,
+        },
+    )
+    register("gate-probe")(ruled)
+    engine = get_engine("gate-probe")
+    assert isinstance(engine, TemplateChecking)
+    assert not isinstance(engine, PreflightChecking)
 
 
 def test_register_refuses_a_class_that_inherits_the_protocol():

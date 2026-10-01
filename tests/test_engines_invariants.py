@@ -37,6 +37,7 @@ from chemrefine.engines.api import (
     OptionsDeclaring,
     PreflightChecking,
     StructureArtifacts,
+    TemplateChecking,
     TemplateDriven,
     get_engine,
     preflight_steps,
@@ -351,7 +352,7 @@ def test_options_capability_matches_the_getattr_consumers():
 
 
 def test_the_preflight_capability_stays_a_claim_not_boilerplate():
-    """Every engine that takes ``check_step`` says, in its own words, what it refuses.
+    """Every engine that takes ``check_step`` or ``check_template`` says what it refuses.
 
     The hook is a *targeted* refusal, not a strict read: the script engines' lenient reads
     over templates that may carry knobs of their own remain the documented design, which is
@@ -368,7 +369,7 @@ def test_the_preflight_capability_stays_a_claim_not_boilerplate():
     claims = {
         name: engine.preflight_refuses
         for name in sorted(ENGINES)
-        if isinstance(engine := get_engine(name), PreflightChecking)
+        if isinstance(engine := get_engine(name), (PreflightChecking, TemplateChecking))
     }
     assert {"mlip-train", "pyscf", "qchem"} <= set(claims)
     assert {"mlip", "fake"}.isdisjoint(claims), "a lenient script engine took the hook"

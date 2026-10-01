@@ -70,11 +70,13 @@ step, not an engine-specific feature.
 with the engine rather than with any central list: `template_starter`, the text
 `chemrefine scaffold` writes for a missing template (every template-driven engine declares
 one; see [`TemplateDriven`](../api/engines_api.md)), and — only if the engine takes the
-`check_step` hook — `preflight_refuses`, one sentence naming what the hook refuses
-([`PreflightChecking`](../api/engines_api.md); the invariants hold the sentence unrepeated
-across engines). `register` refuses an engine that declares part of a capability — a template
-engine without its starter, a hook without its sentence — because a capability taken in part
-is not detected at all. There is no `supports_nms` flag — NMS is a *capability* (below),
+`check_step` hook, or the `check_template` hook for rules about what its template says —
+`preflight_refuses`, one sentence naming what the hooks refuse
+([`PreflightChecking`](../api/engines_api.md), [`TemplateChecking`](../api/engines_api.md);
+the invariants hold the sentence unrepeated across engines). The run's t=0 walk asks both
+before any step runs, and `chemrefine validate` reports their refusals. `register` refuses an
+engine that declares part of a capability — a template engine without its starter, a hook
+without its sentence — because a capability taken in part is not detected at all. There is no `supports_nms` flag — NMS is a *capability* (below),
 detected via `isinstance`.
 
 ## Validate the YAML knobs

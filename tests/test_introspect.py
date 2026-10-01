@@ -101,6 +101,7 @@ def test_the_descriptor_carries_the_preflight_claim():
     assert by_name["pyscf"].preflight_refuses is not None
     assert "level of theory" in by_name["pyscf"].preflight_refuses
     assert by_name["mlip"].preflight_refuses is None
+    assert "never references" in (by_name["mlip-train"].preflight_refuses or "")
 
 
 def test_schema_document_serializes_whole_and_carries_the_config_schema():

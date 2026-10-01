@@ -540,10 +540,14 @@ for the full map.
   literally trained from that start while the runlog and `trained_model.json` named the
   step's — SevenNet's own `fine_tune` preset writes `SevenNet-0_11July2024` as its
   checkpoint — and only FAIRChem's templates were held to it. A library trained through its
-  own CLI now refuses a template that cannot carry the step's start, before the dataset is
-  written: MACE and SevenNet through `$FOUNDATION_MODEL`, FAIRChem through
-  `$STARTING_CHECKPOINT`, or `$FOUNDATION_MODEL` inside its name lookup for a release. A
-  step training from scratch needs neither.
+  own CLI now refuses a template that cannot carry the step's start, when the run starts:
+  MACE and SevenNet through `$FOUNDATION_MODEL`, FAIRChem through `$STARTING_CHECKPOINT`, or
+  `$FOUNDATION_MODEL` inside its name lookup for a release. A step training from scratch
+  needs neither.
+- **A training template is checked when the run starts.** A template missing a placeholder
+  its library must be handed was refused at its step's `prepare`, after the steps that label
+  its data had run. The run's t=0 walk now holds every training step's template to its
+  trainer's rules, and `chemrefine validate` reports a refusal on the template's row.
 - **`Config.with_overrides` takes any field.** Overriding a field that declares no
   constraint, such as `template_dir`, raised a bare `TypeError` instead of copying the
   value in. Every field is now validated by its own declaration, and the copy carries the

@@ -35,6 +35,7 @@ from chemrefine.engines.api import (
     PreflightChecking,
     ProvisionableEngine,
     StreamingSubmit,
+    TemplateChecking,
     TemplateDriven,
     get_engine,
 )
@@ -75,9 +76,10 @@ class EngineDescriptor:
     :class:`~chemrefine.engines.api.OperationsDeclaring`); the GUI's dropdown offers
     exactly this."""
     preflight_refuses: str | None
-    """What the engine's preflight refuses before a run starts, in its own words (see
-    :class:`~chemrefine.engines.api.PreflightChecking`); ``None`` for an engine without
-    the hook."""
+    """What the engine refuses before a run starts, in its own words (see
+    :class:`~chemrefine.engines.api.PreflightChecking` and
+    :class:`~chemrefine.engines.api.TemplateChecking`); ``None`` for an engine with neither
+    hook."""
 
 
 def _describe(name: str, engine: CalculationEngine) -> EngineDescriptor:
@@ -116,7 +118,9 @@ def _describe(name: str, engine: CalculationEngine) -> EngineDescriptor:
             tuple(sorted(engine.operations)) if isinstance(engine, OperationsDeclaring) else ()
         ),
         preflight_refuses=(
-            engine.preflight_refuses if isinstance(engine, PreflightChecking) else None
+            engine.preflight_refuses
+            if isinstance(engine, (PreflightChecking, TemplateChecking))
+            else None
         ),
     )
 
