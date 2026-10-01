@@ -1313,8 +1313,13 @@ def test_rebuild_cache_step_nms_branch(tmp_path: Path):
         encoding="utf-8",
     )
     inp.write_text("! Opt Freq\n", encoding="utf-8")
+    # Unstamped, as a tree that predates provenance is: rebuild-cache adopts it explicitly.
     cache.save_manifest(
-        StepInputs(files=((inp, out, "0"),)), step_dir, operation="freq", engine="orca"
+        StepInputs(files=((inp, out, "0"),)),
+        step_dir,
+        operation="freq",
+        engine="orca",
+        stamp=cache.ManifestStamp(fingerprint="", criterion_key="", search_key="", rows={}),
     )
     seed = Structure(id="0", atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]))
     outcome = step.rebuild_cache_step(cfg, step_cfg, PipelineState(structures=(seed,)))
@@ -1367,7 +1372,7 @@ def _nms_rebuild_tree(tmp_path: Path, **options) -> tuple[Config, Path, cache.St
         step_dir,
         operation="freq",
         engine="orca",
-        **key.manifest_stamp(),
+        stamp=key.manifest_stamp(),
     )
     return cfg, step_dir, key
 
@@ -1469,8 +1474,8 @@ def test_the_resolution_stamp_waits_for_the_resolution(tmp_path: Path):
     real = cache.save_manifest
 
     def _spying(inputs, sd, **kwargs):
-        if kwargs.get("rows"):
-            stamps.append({k: kwargs[k] for k in ("criterion_key", "search_key")})
+        if kwargs["stamp"]["rows"]:
+            stamps.append({k: kwargs["stamp"][k] for k in ("criterion_key", "search_key")})
         return real(inputs, sd, **kwargs)
 
     with patch.object(cache, "save_manifest", _spying):
@@ -1733,7 +1738,7 @@ def test_the_manifest_is_stamped_only_after_condemned_outputs_are_archived(tmp_p
     def _spying(inputs, sd, **kwargs):
         # The first stamp is the one under test; the resolution stamp after finalize
         # lands once the condemned row has been recomputed at canonical.
-        if kwargs.get("rows") and not at_stamp:
+        if kwargs["stamp"]["rows"] and not at_stamp:
             at_stamp["canonical"] = stale_out.is_file()
             at_stamp["archived"] = any((step_dir / "2").glob("attempt*/step1_2.out"))
         return real(inputs, sd, **kwargs)

@@ -21,6 +21,7 @@ from chemrefine import cache
 from chemrefine.cache import (
     CACHE_FORMAT_VERSION,
     RESULT_FORMAT_VERSION,
+    ManifestStamp,
     ResolutionSpec,
     StepKey,
     invalidate,
@@ -83,6 +84,11 @@ def _key(
         resolution=resolution,
         aux_files=aux_files,
     )
+
+
+def _stamp(*ids: str) -> ManifestStamp:
+    """The stamp a step over these parents writes into its manifest."""
+    return _key(*ids).manifest_stamp()
 
 
 def _resolution(
@@ -219,7 +225,7 @@ def test_manifest_provenance_round_trips(tmp_path: Path):
             (tmp_path / "1.inp", tmp_path / "1.out", "1"),
         )
     )
-    save_manifest(inputs, tmp_path, operation="opt_sp", engine="fake", **key.manifest_stamp())
+    save_manifest(inputs, tmp_path, operation="opt_sp", engine="fake", stamp=key.manifest_stamp())
     provenance = load_manifest_provenance(tmp_path)
     assert provenance.fingerprint == key.fingerprint
     assert provenance.criterion_key == key.criterion_key
@@ -229,27 +235,27 @@ def test_manifest_provenance_round_trips(tmp_path: Path):
     assert load_manifest(tmp_path) == inputs
 
 
-def test_the_stamp_fills_every_provenance_slot_save_manifest_has():
-    """The drift class, pinned in the direction it fired.
+def test_every_provenance_slot_is_filled_from_the_key_and_written(tmp_path: Path):
+    """The stamp is required whole, so no slot can be forgotten at a call site.
 
-    ``save_manifest`` defaults every stamp field to ``""`` — unprovable, adoptable — so a
-    slot added to it and not to :meth:`StepKey.manifest_stamp` (``search_key`` was, once,
-    at every call site at once) would silently disarm the refusals built on it. The
-    projection and the signature must name the same slots, and the projection must
-    fill them from the key rather than with the default.
+    What is left to hold is the projection and the writer: each slot filled from the key
+    rather than left empty (an empty one reads as unprovable and disarms the refusals
+    built on it), and each recorded in the manifest as it was stamped.
     """
-    import inspect
-
     key = _key("0", "1", resolution=_resolution())
     stamp = key.manifest_stamp()
-    slots = set(inspect.signature(save_manifest).parameters) - {
-        "inputs",
-        "step_dir",
-        "operation",
-        "engine",
-    }
-    assert set(stamp) == slots
-    assert all(stamp.values()), "a stamped slot must never carry the default"
+    assert all(stamp.values()), "a stamped slot must never be empty"
+    inputs = StepInputs(
+        files=tuple((tmp_path / f"{i}.inp", tmp_path / f"{i}.out", i) for i in ("0", "1"))
+    )
+    save_manifest(inputs, tmp_path, operation="opt_sp", engine="fake", stamp=stamp)
+    written = cache.load_manifest_provenance(tmp_path)
+    assert written.fingerprint == stamp["fingerprint"]
+    assert (written.criterion_key, written.search_key) == (
+        stamp["criterion_key"],
+        stamp["search_key"],
+    )
+    assert written.rows == stamp["rows"]
 
 
 def test_the_manifest_spells_its_files_relative_to_the_step_directory(tmp_path: Path):
@@ -267,7 +273,7 @@ def test_the_manifest_spells_its_files_relative_to_the_step_directory(tmp_path: 
             (elsewhere, step_dir / "1" / "step1_1.out", "1"),
         )
     )
-    save_manifest(inputs, step_dir, operation="opt_sp", engine="fake")
+    save_manifest(inputs, step_dir, operation="opt_sp", engine="fake", stamp=_stamp("0", "1"))
     records = json.loads(cache.manifest_path(step_dir).read_text(encoding="utf-8"))["files"]
     assert [(r["input"], r["output"]) for r in records] == [
         ("0/step1_0.inp", "0/step1_0.out"),
@@ -283,7 +289,7 @@ def test_a_moved_tree_reads_its_own_manifest(tmp_path: Path):
 
     before = tmp_path / "here" / "step1"
     inputs = StepInputs(files=((before / "0" / "a.inp", before / "0" / "a.out", "0"),))
-    save_manifest(inputs, before, operation="opt_sp", engine="fake")
+    save_manifest(inputs, before, operation="opt_sp", engine="fake", stamp=_stamp("0"))
 
     after = tmp_path / "there" / "step1"
     shutil.move(str(before.parent), str(after.parent))
@@ -319,15 +325,20 @@ def test_a_manifest_with_absolute_paths_reads_them_verbatim(tmp_path: Path):
 
 
 def test_a_bare_manifest_reads_as_unprovenanced(tmp_path: Path):
-    """A manifest without row keys — every pre-provenance tree — is empty provenance."""
+    """A manifest without row keys, as a v1 adoption is written by hand, is empty provenance."""
     from chemrefine.cache import load_manifest_provenance
 
-    save_manifest(
-        StepInputs(files=((tmp_path / "0.inp", tmp_path / "0.out", "0"),)),
-        tmp_path,
-        operation="opt_sp",
-        engine="fake",
-        fingerprint="feedfacefeedface",
+    manifest_path(tmp_path).parent.mkdir(parents=True)
+    manifest_path(tmp_path).write_text(
+        json.dumps(
+            {
+                "operation": "opt_sp",
+                "engine": "fake",
+                "fingerprint": "feedfacefeedface",
+                "files": [{"input": "0.inp", "output": "0.out", "id": "0"}],
+            }
+        ),
+        encoding="utf-8",
     )
     provenance = load_manifest_provenance(tmp_path)
     assert provenance.rows == {}
@@ -1315,7 +1326,9 @@ def _manifest_inputs(tmp_path: Path) -> StepInputs:
 
 def test_manifest_save_writes_under_cache(tmp_path: Path):
     inputs = _manifest_inputs(tmp_path)
-    path = save_manifest(inputs, tmp_path / "step1", operation="opt_sp", engine="fake")
+    path = save_manifest(
+        inputs, tmp_path / "step1", operation="opt_sp", engine="fake", stamp=_stamp("0", "1")
+    )
     assert path == manifest_path(tmp_path / "step1")
     assert path.is_file()
     assert path.parent.name == "_cache"
@@ -1323,7 +1336,9 @@ def test_manifest_save_writes_under_cache(tmp_path: Path):
 
 def test_manifest_save_and_load_round_trip(tmp_path: Path):
     inputs = _manifest_inputs(tmp_path)
-    save_manifest(inputs, tmp_path / "step1", operation="opt_sp", engine="fake")
+    save_manifest(
+        inputs, tmp_path / "step1", operation="opt_sp", engine="fake", stamp=_stamp("0", "1")
+    )
     loaded = load_manifest(tmp_path / "step1")
     assert loaded is not None
     assert loaded.files == inputs.files
@@ -1337,7 +1352,9 @@ def test_manifest_save_records_operation_and_engine(tmp_path: Path):
     import json
 
     inputs = _manifest_inputs(tmp_path)
-    path = save_manifest(inputs, tmp_path / "step1", operation="goat", engine="orca")
+    path = save_manifest(
+        inputs, tmp_path / "step1", operation="goat", engine="orca", stamp=_stamp("0", "1")
+    )
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data["operation"] == "goat"
     assert data["engine"] == "orca"

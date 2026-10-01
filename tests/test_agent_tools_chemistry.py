@@ -32,6 +32,11 @@ from chemrefine.state import StepInputs, StepResults, Structure
 _FREQ_OUT = Path(__file__).resolve().parent / "data" / "engines" / "orca" / "freq" / "step1_0.out"
 
 
+#: analyze_mode reads which output belongs to which structure, never the provenance stamp,
+#: so the trees here are written unstamped.
+_UNSTAMPED = cache.ManifestStamp(fingerprint="", criterion_key="", search_key="", rows={})
+
+
 def _write_config(tmp_path: Path, *steps: dict[str, object]) -> Path:
     listed = list(steps) or [{"step": 1, "engine": "fake"}]
     path = tmp_path / "input.yaml"
@@ -371,6 +376,7 @@ def _freq_tree(tmp_path: Path) -> Path:
         step_dir,
         operation="freq",
         engine="orca",
+        stamp=_UNSTAMPED,
     )
     return path
 
@@ -625,6 +631,7 @@ def test_analyze_mode_speaks_qchem_too(tmp_path: Path):
         step_dir,
         operation="freq",
         engine="qchem",
+        stamp=_UNSTAMPED,
     )
     result = agent_tools.analyze_mode(str(path), 1, "0", mode_index=0)
     assert result["is_imaginary"] is False
@@ -966,6 +973,7 @@ def test_analyze_mode_refuses_a_non_frequency_output(tmp_path: Path):
         step_dir,
         operation="opt_sp",
         engine="orca",
+        stamp=_UNSTAMPED,
     )
     with pytest.raises(ConfigError, match="no normal-mode tensor"):
         agent_tools.analyze_mode(str(path), 1, "0", mode_index=0)
@@ -983,6 +991,7 @@ def test_analyze_mode_refuses_an_unsupported_engine(tmp_path: Path):
         step_dir,
         operation=None,
         engine="fake",
+        stamp=_UNSTAMPED,
     )
     with pytest.raises(ConfigError, match="not supported for engine 'fake'"):
         agent_tools.analyze_mode(str(path), 1, "0", mode_index=0)
@@ -1008,6 +1017,7 @@ def test_analyze_mode_names_the_registry_for_an_unregistered_engine(tmp_path: Pa
         step_dir,
         operation=None,
         engine="not-installed-here",
+        stamp=_UNSTAMPED,
     )
     with pytest.raises(EngineNotFoundError, match="not-installed-here"):
         agent_tools.analyze_mode(str(path), 1, "0", mode_index=0)

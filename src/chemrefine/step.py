@@ -649,7 +649,7 @@ def _prepare_stamped(
         ctx.step_dir,
         operation=step_cfg.operation,
         engine=step_cfg.engine,
-        **(stamp if stamp is not None else key.manifest_stamp()),
+        stamp=stamp if stamp is not None else key.manifest_stamp(),
     )
     return inputs
 
@@ -669,7 +669,7 @@ def _restamp(
         ctx.step_dir,
         operation=step_cfg.operation,
         engine=step_cfg.engine,
-        **key.manifest_stamp(),
+        stamp=key.manifest_stamp(),
     )
 
 

@@ -336,7 +336,7 @@ def test_a_manifest_with_no_jobs_is_not_a_step_to_continue(tmp_path: Path):
         ctx_dir,
         operation="opt_sp",
         engine="fake",
-        fingerprint=key.fingerprint,
+        stamp=key.manifest_stamp(),
     )
 
     with patch("chemrefine.step._resubmit_failed") as resubmit:
