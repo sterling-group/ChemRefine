@@ -1073,7 +1073,8 @@ def test_a_v1_trainer_block_moves_onto_a_current_trainer_name_in_any_case():
 
     step = {"step": 1, "engine": "MLIP-TRAIN", "operation": "mlip_train", "trainer": {"seed": 1}}
     out = _normalize_legacy({"steps": [step]}, report=_silent)["steps"][0]
-    assert out["options"] == {"seed": 1}
+    assert out["options"]["seed"] == 1
+    assert out["options"]["task_name"] == "mace_off"
 
 
 def test_a_step_written_in_v2s_terms_keeps_v2s_defaults():
@@ -1104,6 +1105,81 @@ def test_normalize_changes_nothing_it_is_handed():
     before = copy.deepcopy(raw)
     _normalize_legacy(raw, report=_silent)
     assert raw == before
+
+
+@pytest.mark.parametrize(
+    ("step", "options", "dropped"),
+    [
+        (
+            {"operation": "MLFF_TRAIN"},
+            {
+                "task_name": "mace_off",
+                "device": "cuda",
+                "test_fraction": 0.1,
+                "valid_fraction": 0,
+            },
+            None,
+        ),
+        (
+            {
+                "operation": "MLFF_TRAIN",
+                "trainer": {"valid_fraction": 0.2, "seed": 7, "device": "cpu"},
+            },
+            {
+                "test_fraction": 0.2,
+                "seed": 7,
+                "device": "cpu",
+                "task_name": "mace_off",
+                "valid_fraction": 0,
+            },
+            None,
+        ),
+        (
+            {"operation": "MLFF_TRAIN", "trainer": {"model_name": "medium"}},
+            {
+                "task_name": "mace_off",
+                "device": "cuda",
+                "test_fraction": 0.1,
+                "valid_fraction": 0,
+            },
+            "model_name",
+        ),
+    ],
+    ids=["no-trainer-block", "trainer-keys", "a-key-v1-never-read"],
+)
+def test_a_v1_training_step_keeps_the_split_v1_made(
+    step: dict[str, object], options: dict[str, object], dropped: str | None
+):
+    """v1.3.1 trained MACE, split off a *test* set and nothing else; each is written out.
+
+    ``trainer.valid_fraction`` was the test split, so it is ``test_fraction``; the
+    validation set stays the template's own, so ``valid_fraction`` is ``0``. A trainer key
+    v1.3.1 never read — the ``model_name`` its Examples config carried — is dropped, since
+    honouring it would turn a from-scratch fit into a fine-tune.
+    """
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    seen, sink = _collect()
+    out = _normalize_legacy({"steps": [{"step": 2, **step}]}, report=sink)["steps"][0]
+    assert out["engine"] == "mlip-train"
+    assert out["options"] == options
+    if dropped is not None:
+        assert "configured nothing" in dict(seen)[("steps", 0, "trainer", dropped)]
+
+
+def test_a_training_step_written_in_v2s_terms_keeps_v2s_split():
+    """Only a v1 spelling gets v1.3.1's training defaults written out."""
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    seen, sink = _collect()
+    step = {
+        "step": 2,
+        "engine": "mlip-train",
+        "operation": "mlip_train",
+        "options": {"valid_fraction": 0.2},
+    }
+    assert _normalize_legacy({"steps": [step]}, report=sink) == {"steps": [step]}
+    assert seen == []
 
 
 def test_legacy_train_operation_selects_trainer():

@@ -67,9 +67,16 @@ _LEGACY_BLOCKS: dict[str, tuple[str, str]] = {
     "trainer": ("mlip-train", "v1.3.1 used it only for a training step"),
 }
 
-#: The keys v1.3.1 read from a gradient-server block. Any other key in one configured
-#: nothing, so it is dropped rather than moved.
-_V1_SERVER_KEYS = frozenset({"model_name", "task_name", "bind", "device"})
+#: The keys v1.3.1 read from each block, by the engine that block configures. Any other key in
+#: one configured nothing, so it is dropped rather than moved.
+_V1_BLOCK_KEYS = {
+    "mlip-extopt": frozenset({"model_name", "task_name", "bind", "device"}),
+    "mlip-train": frozenset({"valid_fraction", "seed", "device"}),
+}
+
+#: A key of v1.3.1's that means another option now: its ``trainer.valid_fraction`` split off
+#: the *test* set, which is ``test_fraction``; ``valid_fraction`` is the validation set.
+_V1_TRAINER_RENAMES = {"valid_fraction": "test_fraction"}
 
 #: Option sub-keys that are auto-managed now and dropped from a moved block.
 _OBSOLETE_OPTION_KEYS = frozenset({"bind"})
@@ -221,9 +228,10 @@ def _move_blocks(s: dict[str, Any], loc: tuple[str | int, ...], sink: Deprecatio
     """Move each of v1.3.1's engine blocks into ``options`` on the step v1.3.1 used it on.
 
     Mutates ``s``. On any other step the block configured nothing in v1.3.1, so it is
-    dropped, reported. A gradient-server block moves the keys v1.3.1 read from it
-    (:data:`_V1_SERVER_KEYS`) and drops the rest, each reported — so a key v1.3.1 never read
-    cannot meet one it did as two spellings of the same option.
+    dropped, reported. A block moves the keys v1.3.1 read from it (:data:`_V1_BLOCK_KEYS`),
+    under the name each means now (:data:`_V1_TRAINER_RENAMES`), and drops the rest, each
+    reported — so a key v1.3.1 never read cannot meet one it did as two spellings of the
+    same option.
     """
     engine = _folded(s.get("engine"))
     for block, (owner, elsewhere) in _LEGACY_BLOCKS.items():
@@ -250,15 +258,57 @@ def _move_blocks(s: dict[str, Any], loc: tuple[str | int, ...], sink: Deprecatio
                     (*loc, block, key),
                     f"`{block}.{key}` is auto-managed now and was dropped from the moved block",
                 )
-            elif owner == "mlip-extopt" and key not in _V1_SERVER_KEYS:
+            elif key not in _V1_BLOCK_KEYS[owner]:
                 sink(
                     (*loc, block, key),
                     f"`{block}.{key}` configured nothing in v1.3.1, which read only "
-                    f"{', '.join(f'`{name}`' for name in sorted(_V1_SERVER_KEYS))}; dropped",
+                    f"{', '.join(f'`{name}`' for name in sorted(_V1_BLOCK_KEYS[owner]))}; "
+                    f"dropped",
                 )
+            elif (now := _V1_TRAINER_RENAMES.get(key)) is not None:
+                sink(
+                    (*loc, block, key),
+                    f"`{block}.{key}` was v1.3.1's test split; written as `{now}: {v}`",
+                )
+                options.setdefault(now, v)
             else:
                 options.setdefault(key, v)
         s["options"] = options
+
+
+def _write_out_v1_training(
+    s: dict[str, Any], loc: tuple[str | int, ...], sink: DeprecationSink
+) -> None:
+    """Write out what v1.3.1 trained a step with, one row per key.
+
+    v1.3.1 trained MACE alone, on the device its ``trainer.device`` named (``cuda`` unset),
+    and split off a *test* set of ``trainer.valid_fraction`` (``0.1`` unset) and nothing
+    else: validation was the MACE template's own ``valid_fraction``. v2 requires the
+    library and device, and carves a validation set of its own by default, so each is
+    written out — ``task_name: mace_off``, ``device: cuda``, ``test_fraction: 0.1`` and
+    ``valid_fraction: 0`` — where the step names none.
+    """
+    options = _mapping(
+        s.get("options"), what=f"steps[{loc[1]}].options", of="option names to values"
+    )
+    for key, value, why in (
+        ("task_name", "mace_off", "v1.3.1 trained MACE alone"),
+        ("device", "cuda", "v1.3.1 trained on `cuda` when `trainer.device` named none"),
+        (
+            "test_fraction",
+            0.1,
+            "v1.3.1 split off a 0.1 test set when `trainer.valid_fraction` named none",
+        ),
+        (
+            "valid_fraction",
+            0,
+            "v1.3.1 made no validation split of its own — the template's MACE `valid_fraction` did",
+        ),
+    ):
+        if key not in options:
+            options[key] = value
+            sink((*loc, "options", key), f"{why}; written out as `{key}: {value}`")
+    s["options"] = options
 
 
 def _names_a_file(value: object) -> bool:
@@ -410,14 +460,20 @@ def _normalize_step(step: Any, index: int, sink: DeprecationSink) -> Any:
             "(see docs/get-started/upgrading-from-v1.md)"
         )
 
-    # Whether v1.3.1 ran this step on its gradient server, read before anything is
-    # rewritten: it decides the defaults written out below.
+    # Whether v1.3.1 ran this step on its gradient server or as a training step, read
+    # before anything is rewritten: it decides the defaults written out below.
     v1_server = _v1_server_step(s)
-    if not _train_operation(s, loc, sink):
+    v1_training = "trainer" in s
+    if _train_operation(s, loc, sink):
+        v1_training = True
+    else:
         _rename_engine(s, loc, sink)
     _move_blocks(s, loc, sink)
-    if v1_server and _folded(s.get("engine")) == "mlip-extopt":
+    engine = _folded(s.get("engine"))
+    if v1_server and engine == "mlip-extopt":
         _write_out_v1_server(s, loc, sink)
+    elif v1_training and engine == "mlip-train":
+        _write_out_v1_training(s, loc, sink)
 
     _normalize_nms_keys(s, loc, sink)
 

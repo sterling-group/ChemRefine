@@ -426,9 +426,9 @@ for those and the full map.
   test set, where v1.3.1's `valid_fraction` sized the test set. The template is the
   trainer's own config `stepN.yaml`, **rendered** through `$PLACEHOLDERS`, where
   v1.3.1 read a MACE config from `stepN.inp` and patched dataset and output paths into
-  it. A v1.3.1 training step therefore needs a `task_name`, a `device` if its
-  `trainer:` block named none, and a `stepN.yaml` that references its trainer's
-  placeholders. The step's own facts — `device`, `seed`, and the foundation weights —
+  it. A v1.3.1 training step gets `task_name: mace_off` and its device written out,
+  and needs a `stepN.yaml` that references its trainer's placeholders. The step's own
+  facts — `device`, `seed`, and the foundation weights —
   are authoritative over the template: for the libraries trained through a Python API
   (CHGNet, ORB) chemrefine delivers them to the training process directly and refuses
   by name a template value that disagrees; for the libraries that read their own
@@ -515,7 +515,10 @@ for those and the full map.
   reported, so a translated step runs the model v1.3.1 ran; a block on a step v1.3.1
   never used it on is dropped, reported. v1.3.1's `engine: MLIP` with an `mlip:` block,
   whose server v1.3.1 never started, is translated the same way; a bare `mlip` names
-  v2's direct engine.
+  v2's direct engine. A v1.3.1 training step keeps its partition: `trainer.valid_fraction`,
+  v1.3.1's *test* split, is `test_fraction`, `valid_fraction: 0` leaves validation to the
+  template as before, and `task_name: mace_off` and `device: cuda` are written out where
+  the step names none.
 - `options.device` defaults to `cpu` on all four MLIP/PySCF engines (`mlip`,
   `mlip-extopt`, `pyscf`, `pyscf-extopt`). It is read by both the rendered
   script and the scheduler, so one setting drives the header and the run;

@@ -118,7 +118,25 @@ the library refuses a name it does not have when the job loads the model.
 ### Training steps
 
 `operation: MLFF_TRAIN` (or `MLIP_TRAIN`) becomes `engine: mlip-train` +
-`operation: mlip_train`. The template is the edit by hand: v1.3.1 read MACE's own
+`operation: mlip_train`, and the `trainer:` block becomes its `options:`. v1.3.1 trained
+MACE alone, read three keys from the block and split off a *test* set and nothing else —
+validation was the MACE template's own `valid_fraction` — so the translation keeps that
+partition and writes out what v1.3.1 used where the step names none:
+
+| v1.3.1 | meant | translated to |
+|--------|-------|---------------|
+| (always MACE) | the library | `task_name: mace_off` |
+| `trainer.device` (`cuda`) | the job's device | `device` (`cuda` when unset) |
+| `trainer.valid_fraction` (`0.1`) | the **test** split | `test_fraction` (`0.1` when unset) |
+| `trainer.seed` (`42`) | the split's seed | `seed` |
+| — | no validation split of its own | `valid_fraction: 0` |
+
+Any other key in the block configured nothing in v1.3.1 and is dropped, reported — a
+`trainer.model_name` included, which would otherwise turn a fit from scratch into a
+fine-tune. To have ChemRefine carve the validation set instead, set `valid_fraction` and
+hand it to the template as `valid_file: $VALID_SET`.
+
+The template is the edit by hand: v1.3.1 read MACE's own
 `run_train` YAML from `stepN.inp` and rewrote its file paths, while v2 renders
 `stepN.yaml` and hands it the dataset through placeholders — see [Training a
 potential](../engines/index.md#training-a-potential-mlip-train).
