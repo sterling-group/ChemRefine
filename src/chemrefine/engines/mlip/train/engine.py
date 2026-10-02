@@ -119,9 +119,10 @@ class MlipTrainEngine(MlipBackend):
 
     options_cls: ClassVar[type[MlipTrainOptions]] = MlipTrainOptions
     preflight_refuses: ClassVar[str] = (
-        "a training step with no device, no task, a policy with nothing to act on, or a "
-        "template that never references what its library must be handed: decidable before "
-        "the run, and usually sitting after days of label computation"
+        "a training step with no device, no task, a policy with nothing to act on, no "
+        "validation set for a library that needs one, or a template that never references "
+        "what its library must be handed: decidable before the run, and usually sitting "
+        "after days of label computation"
     )
     template_starter: ClassVar[str] = (
         "# mlip-train starter — NOT runnable as written. A trainer template is the\n"
