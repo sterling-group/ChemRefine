@@ -5,7 +5,7 @@
     "old": "        forces=np.asarray(struct.forces_ev_per_a, dtype=float),",
     "new": "        forces=-np.asarray(struct.forces_ev_per_a, dtype=float),",
     "tests": "tests/test_engines_mlip_trainers.py",
-    "breaks": "every fine-tune is fitted to the negated forces, and the trained model it hands on is wrong with nothing said in any log"
+    "breaks": "every fine-tune whose library reads its labels off the calculator is fitted to the negated forces, and the trained model it hands on is wrong with nothing said in any log"
   },
   {
     "id": "sha1-asked-for-a-fingerprint",
