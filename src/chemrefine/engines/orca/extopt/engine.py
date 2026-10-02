@@ -26,7 +26,7 @@ from chemrefine.config import StepConfig
 from chemrefine.engines import _provision
 from chemrefine.engines._backend_server.base import SERVER_URL_FILENAME, ComputeBackend
 from chemrefine.engines._options import UNKEYED, EngineOptions
-from chemrefine.engines.orca import input as orca_input
+from chemrefine.engines.api import require_whitespace_free
 from chemrefine.engines.orca import inspect
 from chemrefine.engines.orca.engine import OrcaEngine
 from chemrefine.engines.orca.extopt import protocol, run_block
@@ -185,7 +185,9 @@ class ExtOptOrcaEngine(OrcaEngine):
         that true if either path ever stops sharing a root.
         """
         wrapper = self._wrapper_path(ctx)
-        orca_input.require_whitespace_free(wrapper, what="the ExtOpt wrapper path")
+        require_whitespace_free(
+            wrapper, what="the ExtOpt wrapper path", reason=self.whitespace_path_reason
+        )
         return f'%method\n  ProgExt "{wrapper}"\nend'
 
     def _server_cmd(self, ctx: StepContext, interpreter: str | None = None) -> str:

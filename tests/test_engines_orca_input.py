@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pytest
 
-from chemrefine.engines.api import ENGINES
-from chemrefine.engines.orca.input import build_input, clamp_pal
+from chemrefine.engines.orca.input import WHITESPACE_PATH_REASON, build_input, clamp_pal
 from chemrefine.engines.orca.inspect import inspect_template
 from chemrefine.errors import ConfigError
 from chemrefine.ids import StepTemplate, require_template
@@ -95,11 +93,10 @@ def test_build_input_omits_base_directive(tmp_path: Path):
 def test_the_xyzfile_path_is_emitted_bare_which_is_why_whitespace_is_refused(tmp_path: Path):
     """The geometry path is the last, unquoted, whitespace-delimited token of the directive.
 
-    This is the *reason* `require_whitespace_free` exists, pinned where the emission
-    happens: ORCA reads `* xyzfile` by splitting on whitespace and does not treat the
-    filename as quotable, so a path with a space in it is truncated there (verified against
-    ORCA 6.1.1 — `CANNOT OPEN FILE`, naming the prefix — with and without quotes around the
-    value).
+    This is *why* ORCA declares a whitespace reason, pinned where the emission happens: ORCA
+    reads `* xyzfile` by splitting on whitespace and does not treat the filename as
+    quotable, so a path with a space in it is truncated there (verified against ORCA 6.1.1 —
+    `CANNOT OPEN FILE`, naming the prefix — with and without quotes around the value).
 
     The refusal and this line are one decision. If anyone ever changes the emission —
     quotes it, or moves to a directive that *is* quotable — this test fails and the refusal
@@ -118,19 +115,16 @@ def test_the_xyzfile_path_is_emitted_bare_which_is_why_whitespace_is_refused(tmp
     assert '"' not in directive
 
 
-def test_build_input_refuses_a_geometry_path_with_whitespace(tmp_path: Path):
-    """ORCA truncates `* xyzfile` at the first space, so the writer refuses before emitting.
+def test_build_input_asks_the_whitespace_rule_of_the_path_it_writes(tmp_path: Path):
+    """The writer asks the rule again of the geometry path, with ORCA's own reason.
 
-    Verified against ORCA 6.1.1 in both spellings: bare and quoted both produce
-    `CANNOT OPEN FILE` naming the truncated prefix. The refusal lives here, at the point of
-    use, rather than in the config: `step_dir_for` resolves symlinks, so the path that
-    reaches this function can contain whitespace even when the YAML contains none — and
-    holding it at config load made an mlip-only project under `~/My Drive` unloadable,
-    which is a tree that runs perfectly well.
+    The run asks it of the step's directory before any step runs; asked again here, at the
+    moment of writing, the same rule holds for any path this writer is handed — as a
+    template's rules are asked at run start and again at prepare.
     """
     spaced = tmp_path / "my outputs"
     spaced.mkdir()
-    with pytest.raises(ConfigError, match="whitespace"):
+    with pytest.raises(ConfigError) as refused:
         build_input(
             xyz_path=spaced / "step1_0_inp.xyz",
             template=_template(tmp_path, "! B3LYP\n"),
@@ -138,48 +132,9 @@ def test_build_input_refuses_a_geometry_path_with_whitespace(tmp_path: Path):
             charge=0,
             multiplicity=1,
         )
-
-
-def test_build_input_names_the_reason_and_who_is_unaffected(tmp_path: Path):
-    """The message has to be actionable: what ORCA does, and who is not affected — said by
-    what they do, so no other engine's name has to be kept true here."""
-    spaced = tmp_path / "my outputs"
-    spaced.mkdir()
-    with pytest.raises(ConfigError) as excinfo:
-        build_input(
-            xyz_path=spaced / "s.xyz",
-            template=_template(tmp_path, "! B3LYP\n"),
-            output_path=tmp_path / "o.inp",
-            charge=0,
-            multiplicity=1,
-        )
-    message = str(excinfo.value)
-    assert "xyzfile" in message and "quotable" in message
-    assert "output_dir" in message and "unaffected" in message
-    others = [name for name in ENGINES if name != "orca"]
-    assert not [name for name in others if re.search(rf"\b{re.escape(name)}\b", message)]
-
-
-@pytest.mark.parametrize("whitespace", [" ", "\t", "\v"])
-def test_the_refusal_covers_whitespace_not_just_the_space_character(
-    tmp_path: Path, whitespace: str
-):
-    """`* xyzfile` splits on whitespace, so the check does too.
-
-    A tab or vertical tab in a directory name is absurd and perfectly legal on POSIX, and
-    ORCA truncates on each of them identically — matching the stated reason
-    ("whitespace-delimited") rather than one character of it.
-    """
-    spaced = tmp_path / f"my{whitespace}outputs"
-    spaced.mkdir()
-    with pytest.raises(ConfigError, match="whitespace"):
-        build_input(
-            xyz_path=spaced / "s.xyz",
-            template=_template(tmp_path, "! B3LYP\n"),
-            output_path=tmp_path / "o.inp",
-            charge=0,
-            multiplicity=1,
-        )
+    message = str(refused.value)
+    assert message.startswith("the ORCA geometry path contains whitespace")
+    assert WHITESPACE_PATH_REASON in message
 
 
 # ---------------------------------------------------------------------------

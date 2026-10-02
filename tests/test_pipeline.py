@@ -1543,3 +1543,30 @@ def test_a_step_the_scheduler_would_refuse_stops_the_run_before_any_step_runs(tm
     with pytest.raises(ConfigError, match=r"16 cores, more than max_cores=8"):
         pipeline.run(cfg)
     assert not cfg.step_dir(cfg.steps[0]).exists()
+
+
+def test_a_step_that_cannot_run_from_its_directory_stops_the_run_before_any_step_runs(
+    tmp_path: Path,
+):
+    """A tree under a spaced directory is refused at t=0 for the engine that cannot express it.
+
+    The refusal lived only in the engine's input writer, so a step 2 whose input reads its
+    geometry through a whitespace-delimited field was refused after step 1 had run — paid
+    for, under a refusal the disk decided before anything started.
+    """
+    project = tmp_path / "my project"
+    io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=project)
+    (project / "templates").mkdir()
+    for name in ("step2.inp", "cpu.slurm.header"):  # everything but the directory is in order
+        (project / "templates" / name).write_text("! HF def2-SVP\n", encoding="utf-8")
+    cfg = _config(
+        project,
+        input=project / "step0_seed.xyz",
+        steps=[
+            StepConfig(step=1, engine="fake", operation="opt_sp"),
+            StepConfig(step=2, engine="orca", operation="sp"),
+        ],
+    )
+    with pytest.raises(ConfigError, match=r"^step 2's directory contains whitespace"):
+        pipeline.run(cfg)
+    assert not cfg.step_dir(cfg.steps[0]).exists()

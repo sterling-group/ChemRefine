@@ -1448,6 +1448,42 @@ def test_the_flag_collision_guard_can_actually_fail():
 
 
 # ---------------------------------------------------------------------------
+# The wrapper path is held to the whitespace rule where it is written
+# ---------------------------------------------------------------------------
+
+
+def test_a_wrapper_path_with_whitespace_is_refused_with_the_engines_reason(tmp_path: Path):
+    """ORCA hands the ``ProgExt`` wrapper to ``sh``, which splits a spaced path in two.
+
+    The writer asks the rule of the wrapper path it is about to emit, with the engine's own
+    reason — the rule the run asks of the step's directory before any step runs.
+    """
+    from chemrefine.config import StepConfig
+    from chemrefine.engines.api import get_engine
+    from chemrefine.errors import ConfigError
+    from chemrefine.state import PipelineState, StepContext
+
+    engine = get_engine("mlip-extopt")
+    ctx = StepContext(
+        step_cfg=StepConfig(step=1, engine="mlip-extopt", options={"task_name": "mace_off"}),
+        step_dir=(tmp_path / "my outputs" / "step1").resolve(),
+        template_dir=tmp_path,
+        template=None,
+        operation=None,
+        scratch_dir=None,
+        prev_state=PipelineState(),
+        charge=0,
+        multiplicity=1,
+        max_cores=2,
+        slurm_template="cpu.slurm.header",
+        executables={},
+    )
+    with pytest.raises(ConfigError, match=r"^the ExtOpt wrapper path contains whitespace") as e:
+        engine._extra_blocks(ctx)
+    assert engine.whitespace_path_reason in str(e.value)
+
+
+# ---------------------------------------------------------------------------
 # An NMS child runs its own ProgExt wrapper
 # ---------------------------------------------------------------------------
 

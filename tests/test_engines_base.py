@@ -17,6 +17,7 @@ from chemrefine.engines.api import (
     contract_members,
     get_engine,
     register,
+    require_whitespace_free,
 )
 from chemrefine.errors import ConfigError, EngineNotFoundError
 from chemrefine.state import RunBlock
@@ -217,6 +218,42 @@ def test_registry_holds_only_canonical_engine_names():
     assert {"orca", "mlip", "mlip-extopt", "mlip-train"} <= set(ENGINES)
     for legacy in ("mlff", "dft"):
         assert legacy not in ENGINES
+
+
+# --- the whitespace rule, as the engines that declare it ask it -------------
+
+
+@pytest.mark.parametrize("whitespace", [" ", "\t", "\v"])
+def test_the_whitespace_rule_refuses_any_whitespace_not_just_the_space(tmp_path, whitespace: str):
+    """A field split on whitespace splits on a tab too, so the rule does.
+
+    A tab or vertical tab in a directory name is absurd and perfectly legal on POSIX, and an
+    input that reads a path through a whitespace-delimited field truncates on each of them.
+    """
+    with pytest.raises(ConfigError, match="contains whitespace"):
+        require_whitespace_free(tmp_path / f"my{whitespace}outputs", what="it", reason="why")
+
+
+def test_the_whitespace_refusal_quotes_its_engines_reason_and_names_no_engine(tmp_path):
+    """Actionable and engine-neutral: the engine's own reason, what to change, and who need not.
+
+    Steps whose engine can take the path are named by that, not by engine — so no roster has
+    to be kept true here, and an engine that shares the capability is never called unaffected.
+    """
+    path = tmp_path / "my outputs"
+    reason = "this input reads a path through a whitespace-delimited field"
+    with pytest.raises(ConfigError) as refused:
+        require_whitespace_free(path, what="step 2's directory", reason=reason)
+    message = str(refused.value)
+    assert message.startswith(f"step 2's directory contains whitespace: {str(path)!r}. {reason}")
+    assert "`output_dir`" in message
+    assert message.endswith(
+        "Steps whose engine can take such a path are unaffected and need no change."
+    )
+    named = [
+        n for n in ENGINES if re.search(rf"\b{re.escape(n)}\b", message.replace(str(path), ""))
+    ]
+    assert not named, f"the core refusal names an engine: {named}"
 
 
 # --- base: the abstract SLURM hooks -----------------------------------------

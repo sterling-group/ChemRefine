@@ -83,9 +83,9 @@ class OrcaEngine(JobEngine):
 
     Declared here so the ExtOpt engines inherit it: they subclass this one and write the
     same ``* xyzfile`` directive, plus a ``ProgExt`` wrapper path with the same problem.
-    The refusal itself lives at the point of use
-    (:func:`chemrefine.engines.orca.input.require_whitespace_free`); this ClassVar is what
-    lets :mod:`chemrefine.validate` warn about it without importing a concrete engine."""
+    The rule is :func:`chemrefine.engines.api.require_whitespace_free`, asked of the step's
+    directory before the run starts and of each path these engines write; this ClassVar is
+    the reason it quotes, read without importing a concrete engine."""
 
     # -- input -------------------------------------------------------------
 
@@ -164,8 +164,8 @@ class OrcaEngine(JobEngine):
 
         Spaces are only safe *here*, in bash. The same directory reaches the ``.inp`` as the
         geometry path, where ORCA's own parser truncates it —
-        :func:`chemrefine.engines.orca.input.require_whitespace_free` is the refusal, and
-        quoting is no help there.
+        :func:`chemrefine.engines.api.require_whitespace_free` is the refusal, and quoting
+        is no help there.
 
         Shared rather than inlined per engine:
         :class:`~chemrefine.engines.orca.extopt.engine.ExtOptOrcaEngine` overrides

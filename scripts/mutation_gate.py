@@ -614,6 +614,15 @@ _BUNDLED: tuple[Mutation, ...] = (
         breaks="raising a step's core count to finish faster recomputes every row it already "
         "finished on `resume`, and `rebuild-cache` refuses the tree as another configuration's",
     ),
+    Mutation(
+        id="step-dir-refused-at-run-start",
+        path="src/chemrefine/step.py",
+        old="        check_step_dir(engine, ctx)\n",
+        new="        # check_step_dir(engine, ctx)\n",
+        tests="tests/test_pipeline.py",
+        breaks="a step whose engine cannot express a path with whitespace is refused only when "
+        "it writes its first input, after every step ahead of it has run and been paid for",
+    ),
 )
 
 #: What an engine files beside its contract fixture — ``tests/data/engines/<name>/`` — to

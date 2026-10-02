@@ -683,7 +683,7 @@ def shell_unsafe_after_resolution(config: Config) -> str | None:
     not after one runs.
 
     Unlike the whitespace rule (which belongs to the input formats that cannot quote a path,
-    and lives with the engines that declare it —
+    and is scoped to the engines that declare
     :class:`~chemrefine.engines.api.WhitespacePathIntolerant`), this one is
     engine-independent: every engine's job script exports these three paths, so there is
     nothing to scope it to.

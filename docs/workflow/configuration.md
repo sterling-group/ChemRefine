@@ -48,8 +48,9 @@ steps:
     **not** a quotable field — it truncates the path at the first space — and it runs an
     ExtOpt wrapper through `sh`, which splits on one. Both paths are derived from
     `output_dir`, so an `orca`, `mlip-extopt` or `pyscf-extopt` step whose `output_dir`
-    resolves under a directory with whitespace in it **refuses to prepare**, with an error
-    naming the cause. `chemrefine validate` warns about it before you run.
+    resolves under a directory with whitespace in it is **refused when the run starts**,
+    before any step runs, with an error naming the cause. `chemrefine validate` warns about
+    it before you run.
 
     A **relative** `output_dir` inherits the config file's own directory, so this can come
     from where the project lives — `~/My Drive/...` is the usual way to meet it. It can also

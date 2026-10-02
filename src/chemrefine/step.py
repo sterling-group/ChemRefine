@@ -44,8 +44,10 @@ from chemrefine.engines.api import (
     OptionsDeclaring,
     TemplateChecking,
     TemplateDriven,
+    WhitespacePathIntolerant,
     get_engine,
     operation_notice,
+    require_whitespace_free,
     resolve_operation,
 )
 from chemrefine.errors import (
@@ -133,11 +135,29 @@ def build_context(
     )
 
 
+def check_step_dir(engine: CalculationEngine, ctx: StepContext) -> None:
+    """Refuse a step whose engine cannot express the path its directory resolves to.
+
+    The rule of :class:`~chemrefine.engines.api.WhitespacePathIntolerant`
+    (:func:`~chemrefine.engines.api.require_whitespace_free`), asked of the *resolved*
+    directory every path such an engine writes into its input descends from — so a step
+    late in a run is refused before the steps ahead of it have run and been paid for, not
+    when it comes to write its first input. Any other engine takes any directory.
+    """
+    if isinstance(engine, WhitespacePathIntolerant):
+        require_whitespace_free(
+            ctx.step_dir,
+            what=f"step {ctx.step_cfg.step}'s directory",
+            reason=engine.whitespace_path_reason,
+        )
+
+
 def preflight_batches(config: Config, steps: Iterable[StepConfig], *, local: bool) -> None:
     """Everything that would stop each step's jobs before they run, checked before any step.
 
     For every step in ``steps``, on the context the step will run with, less the structures
-    neither check reads: its input template, read as its ``prepare`` reads it
+    neither check reads: the directory its inputs are written under, held to what its engine
+    can express (:func:`check_step_dir`); its input template, read as its ``prepare`` reads it
     (:func:`chemrefine.ids.require_template`) and held to the engine's own template rules
     (:class:`~chemrefine.engines.api.TemplateChecking`), with what the run should say about
     the operation the step's outputs are read as said once, here
@@ -152,6 +172,7 @@ def preflight_batches(config: Config, steps: Iterable[StepConfig], *, local: boo
     for step_cfg in steps:
         engine = get_engine(step_cfg.engine)
         ctx = build_context(config, step_cfg, PipelineState(), engine)
+        check_step_dir(engine, ctx)
         if isinstance(engine, TemplateDriven):
             template = ids.require_template(ctx.template, label=engine.label)
             if isinstance(engine, TemplateChecking):

@@ -59,6 +59,7 @@ developer guide lists each shipped one.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -250,17 +251,34 @@ class WhitespacePathIntolerant(Protocol):
     none of whose engines is affected, under ``~/My Drive`` — which runs perfectly well —
     would be refused, and this repository's own example suite would fail whenever the
     checkout path contains a space.
-    The engine that cannot express the path is the one that should refuse it, and it refuses
-    the *resolved* path it is about to write, which is also what closes the symlinked-parent
-    case that a check on the configured value cannot see.
-
-    :mod:`chemrefine.validate` detects this with ``isinstance`` to warn early — a warning,
-    not an error, because the config is well-formed and only this engine family cannot run
-    under that path.
+    The rule is :func:`require_whitespace_free`, asked of each such step's *resolved*
+    directory before any step runs (:func:`chemrefine.step.check_step_dir`) — resolved,
+    which closes the symlinked-parent case a check on the configured value cannot see — and
+    again by the engine of each path it writes, at the moment of writing.
+    :mod:`chemrefine.validate` reports the same refusal early, as a warning rather than an
+    error, because the config is well-formed and only this engine family cannot run under
+    that path.
     """
 
     whitespace_path_reason: ClassVar[str]
     """Why this engine cannot take a path with whitespace — quoted verbatim in the refusal."""
+
+
+def require_whitespace_free(path: Path, *, what: str, reason: str) -> None:
+    """Raise :class:`~chemrefine.errors.ConfigError` if ``path`` contains whitespace.
+
+    The one rule of :class:`WhitespacePathIntolerant`; ``reason`` is the engine's own
+    (:attr:`~WhitespacePathIntolerant.whitespace_path_reason`), quoted verbatim, and ``what``
+    names the path. Any whitespace counts, not the space alone: a field split on whitespace
+    splits on a tab too.
+    """
+    if re.search(r"\s", str(path)):
+        raise ConfigError(
+            f"{what} contains whitespace: {str(path)!r}. {reason} — so this step cannot run "
+            f"from here. Point `output_dir` at a path without whitespace (a relative one "
+            f"inherits the config file's own directory), or move the project. Steps whose "
+            f"engine can take such a path are unaffected and need no change."
+        )
 
 
 @runtime_checkable

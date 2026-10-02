@@ -46,7 +46,6 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
-import re
 from pathlib import Path
 from typing import Any
 
@@ -72,7 +71,6 @@ from chemrefine.engines.api import (
     ProvisionableEngine,
     TemplateChecking,
     TemplateDriven,
-    WhitespacePathIntolerant,
     check_operation,
     get_engine,
     operation_notice,
@@ -81,7 +79,7 @@ from chemrefine.errors import ChemRefineError, ConfigError
 from chemrefine.ids import StepTemplate, require_template, step_template_path
 from chemrefine.nms import NmsOptions, read_options, require_frequencies
 from chemrefine.state import PipelineState, StepContext
-from chemrefine.step import build_context
+from chemrefine.step import build_context, check_step_dir
 
 
 @dataclasses.dataclass(frozen=True)
@@ -505,25 +503,16 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
                         ),
                     )
                 )
-        if isinstance(engine, WhitespacePathIntolerant) and re.search(
-            r"\s", str(config.step_dir(step).resolve())
-        ):
-            # A warning, not an issue: the config is well-formed and every other engine runs
-            # fine from here, so this must not make validity depend on where a project sits
-            # on disk. The step itself refuses at `prepare`, before it submits anything —
-            # this is only the early word, for the GUI and an agent deciding what to fix.
-            # Resolved, because that is the path the engine will write: a directory
-            # symlinked through a spaced parent has no space anywhere in the YAML.
+        try:
+            check_step_dir(engine, ctx)
+        except ConfigError as e:
+            # The run's own refusal, before any step runs — reported as a warning, not an
+            # issue: the config is well-formed and every other engine runs fine from here,
+            # so validity must not depend on where a project sits on disk. This is the early
+            # word, for the GUI and an agent deciding what to fix.
             warnings.append(
                 ValidationIssue(
-                    loc=("steps", index, "engine"),
-                    kind="whitespace-path",
-                    message=(
-                        f"step {step.step} runs {step.engine!r} under "
-                        f"{config.step_dir(step).resolve()}, whose path contains whitespace; "
-                        f"{engine.whitespace_path_reason}, so this step will refuse to "
-                        f"prepare. Point `output_dir` somewhere without whitespace."
-                    ),
+                    loc=("steps", index, "engine"), kind="whitespace-path", message=str(e)
                 )
             )
         if isinstance(engine, JobExecutable):

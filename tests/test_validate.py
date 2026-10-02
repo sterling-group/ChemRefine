@@ -95,7 +95,8 @@ def test_an_orca_step_under_a_whitespace_path_warns_and_does_not_block(tmp_path:
     where a project sits on disk: a relative `output_dir` inherits the config file's own
     directory, so an mlip-only workflow under `~/My Drive` was refused although it runs
     perfectly, and this repository's own example suite went red from any checkout path
-    containing a space. The engine refuses at `prepare`; this is only the early word.
+    containing a space. The run refuses it before any step runs; this is the same refusal,
+    early.
     """
     project = tmp_path / "my project"
     (project / "templates").mkdir(parents=True)
@@ -110,7 +111,35 @@ def test_an_orca_step_under_a_whitespace_path_warns_and_does_not_block(tmp_path:
     assert "whitespace-path" in kinds
     warning = next(w for w in report.warnings if w.kind == "whitespace-path")
     assert warning.loc == ("steps", 0, "engine")
+    assert warning.message.startswith("step 1's directory contains whitespace")
     assert "whitespace-delimited" in warning.message
+
+
+def test_only_the_directory_a_step_writes_under_is_held_to_the_whitespace_rule(tmp_path: Path):
+    """A spaced template or scratch directory is no part of the rule; the step directory is.
+
+    An ORCA input names the paths ChemRefine composes under the step's directory, and reads
+    a template's own quoted ``%``-block paths fine — so the run and ``validate`` ask the rule
+    of that directory alone.
+    """
+    spaced, clean = tmp_path / "my tree", tmp_path / "tree"
+    (spaced / "templates").mkdir(parents=True)
+    (spaced / "templates" / "step1.inp").write_text("! HF\n", encoding="utf-8")
+    (spaced / "templates" / "cpu.slurm.header").write_text("#!/bin/bash\n", encoding="utf-8")
+    step = {"step": 1, "engine": "orca", "operation": "sp"}
+
+    def warned(output_dir: Path) -> bool:
+        config = {
+            "template_dir": str(spaced / "templates"),
+            "scratch_dir": str(spaced / "scratch"),
+            "output_dir": str(output_dir),
+            "steps": [step],
+        }
+        report = validate_config_text(yaml.safe_dump(config), base_dir=tmp_path)
+        return any(w.kind == "whitespace-path" for w in report.warnings)
+
+    assert not warned(clean / "outputs")
+    assert warned(spaced / "outputs")
 
 
 def test_an_engine_that_writes_no_orca_input_is_not_warned_about(tmp_path: Path):

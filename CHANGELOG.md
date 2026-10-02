@@ -635,10 +635,10 @@ for those and the full map.
   wrote the step directory unquoted into each job script and into ORCA's `* xyzfile`
   directive — a whitespace-delimited field ORCA does not treat as quotable — so every job
   of a step under an `output_dir` containing whitespace failed, naming a truncated path.
-  2.0 refuses an `orca`, `mlip-extopt` or `pyscf-extopt` step there before it writes an
-  input, `chemrefine validate` warns about the step beforehand, and both check the
-  **resolved** path, so a directory reached through a symlinked parent with a space in it
-  is caught too. `mlip`, `pyscf` and `qchem` steps run from such a tree, and so does a
+  2.0 refuses an `orca`, `mlip-extopt` or `pyscf-extopt` step there when the run starts,
+  before any step runs, `chemrefine validate` warns about the step beforehand, and both
+  check the **resolved** path, so a directory reached through a symlinked parent with a
+  space in it is caught too. `mlip`, `pyscf` and `qchem` steps run from such a tree, and so does a
   step whose `template_dir` or `scratch_dir` contains whitespace.
 - **A geometry, energy or gradient that is not a finite number fails its structure.**
   v1.3.1 kept the coordinates it read from an ORCA output as text and checked none of
