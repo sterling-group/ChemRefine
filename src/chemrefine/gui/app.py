@@ -79,18 +79,36 @@ class _Chat:
     history: list[Any] | None = None
     pending: _Suspended | None = None
 
-    @property
-    def cards(self) -> list[dict[str, Any]] | None:
-        """The cards still answerable — what a failed turn tells the page it may offer again.
+    def answer(self, **reply: Any) -> dict[str, Any]:
+        """``reply`` with the cards still answerable, which every chat reply carries.
 
-        Every chat error carries them, so the page offers cards again only while a suspended
-        run is there for them to answer.
+        A refusal, a failure and a run's own answer alike, so the page offers cards again
+        only while a suspended run is there for them to answer.
         """
-        return self.pending.cards if self.pending is not None else None
+        return {**reply, "pending": self.pending.cards if self.pending is not None else None}
 
-    def refusal(self, error: ChemRefineError) -> dict[str, Any]:
-        """A chat refusal in the documented shape, with the cards it leaves answerable."""
-        return {**_refusal(error), "pending": self.cards}
+    def ended(
+        self,
+        messages: list[Any],
+        started: Sequence[Any] | None,
+        *,
+        cards: list[dict[str, Any]] | None = None,
+        **reply: Any,
+    ) -> dict[str, Any]:
+        """Hold where a run ended, and answer with ``reply`` and the config it saved.
+
+        Every run that started ends here — answered, paused on ``cards``, or failed
+        part-way. A run paused anew is held for its verdicts; any other is the conversation
+        the next message continues (the paused run it continued was taken when it started).
+        Every answer carries the config the run saved (:func:`_config_written_by`): an
+        approved save and a fresh batch of cards arrive in the same turn, and a run that
+        failed may have saved before it did.
+        """
+        if cards is None:
+            self.history = messages
+        else:
+            self.pending = _Suspended(messages, cards)
+        return self.answer(**reply, wrote_config=_config_written_by(messages, started))
 
 
 def _body() -> dict[str, Any]:
@@ -742,11 +760,19 @@ def create_app(*, token: str, config_path: Path | None = None) -> Flask:
         turn takes seconds to a minute inside this worker thread); the reply is either
         text or a list of approval requests the frontend renders as allow/deny cards.
         Provider errors — an unreachable Ollama, a bad key — come back as a 502 with the
-        message, not a traceback: at the network boundary the failure is the answer.
+        message, not a traceback: at the network boundary the failure is the answer. A tool
+        that crashes is this server's failure, a 500 named for the tool, with its traceback
+        in the log rather than the reply.
         """
         from pydantic_ai import DeferredToolRequests, DeferredToolResults
 
-        from chemrefine.agent.harness import TurnFailed, answerable, build_web_agent, run_turn
+        from chemrefine.agent.harness import (
+            TurnFailed,
+            answerable,
+            build_web_agent,
+            endpoint_failure_text,
+            run_turn,
+        )
         from chemrefine.agent.providers import ProviderConfig
 
         try:
@@ -756,7 +782,7 @@ def create_app(*, token: str, config_path: Path | None = None) -> Flask:
             if body.reset:
                 chat.history = None
                 chat.pending = None
-                return jsonify({"reply": None, "pending": None, "reset": True})
+                return jsonify(chat.answer(reply=None, reset=True))
             # The conversation this turn continues, which is the suspended run's whenever
             # one is waiting: its verdicts resume it, and a message sent past it (from a
             # second tab, a reloaded page) closes its calls as never run — continuing from
@@ -783,7 +809,7 @@ def create_app(*, token: str, config_path: Path | None = None) -> Flask:
                 api_key=body.api_key,
             )
         except ChemRefineError as e:
-            return jsonify(chat.refusal(e)), 400
+            return jsonify(chat.answer(**_refusal(e))), 400
         try:
             # Inside the try, not above it: `Agent("gpt-5-mini")` raises `UserError` at
             # construction for a name PydanticAI cannot place, and that is neither an
@@ -814,31 +840,24 @@ def create_app(*, token: str, config_path: Path | None = None) -> Flask:
             # CHEMREFINE_LLM_TIMEOUT), in the documented shape — with what is still pending,
             # so the page offers only cards that can be answered. A tool's refusal never
             # lands here: it is the tool's answer to the model.
-            return jsonify(chat.refusal(e)), 400
+            return jsonify(chat.answer(**_refusal(e))), 400
         except TurnFailed as e:
             # The run failed part-way, and what it did first is the conversation now: the
-            # message, and every approved call that ran with its result. A config one of
-            # those calls saved is on disk, so the editor is told as on any other turn.
-            chat.history = e.messages
-            failed = {"error": f"model endpoint failed: {e}", "pending": chat.cards}
-            return jsonify({**failed, "wrote_config": _config_written_by(e.messages, started)}), 502
+            # message, and every approved call that ran with its result. A tool's crash is
+            # this server's own failure (logged with its traceback by the harness), the
+            # endpoint's the outside world's.
+            return jsonify(chat.ended(e.messages, started, error=str(e))), (
+                500 if e.crashed else 502
+            )
         except Exception as e:  # the model endpoint is the outside world
-            return jsonify({"error": f"model endpoint failed: {e}", "pending": chat.cards}), 502
-        # Computed once, before the branch, and reported on both: an approved write and a
-        # fresh batch of approval cards arrive in the *same* turn, so a signal attached
-        # only to the text branch would be silently dropped exactly when the agent is
-        # working steadily.
-        wrote_config = _config_written_by(result.all_messages(), started)
+            return jsonify(chat.answer(error=endpoint_failure_text(e))), 502
         if isinstance(result.output, DeferredToolRequests):
             cards = [
                 {"id": call.tool_call_id, "tool": call.tool_name, "args": call.args}
                 for call in result.output.approvals
             ]
-            chat.pending = _Suspended(result.all_messages(), cards)
-            return jsonify({"reply": None, "wrote_config": wrote_config, "pending": cards})
-        chat.history = result.all_messages()
-        chat.pending = None
-        return jsonify({"reply": result.output, "pending": None, "wrote_config": wrote_config})
+            return jsonify(chat.ended(result.all_messages(), started, cards=cards, reply=None))
+        return jsonify(chat.ended(result.all_messages(), started, reply=result.output))
 
     @app.post("/api/run")
     def run() -> Any:

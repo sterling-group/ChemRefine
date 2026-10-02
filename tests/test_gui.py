@@ -828,19 +828,43 @@ def test_a_turn_that_writes_the_config_says_so_on_both_branches(
     fresh batch of approval cards arrive in the *same* turn, so a signal attached only to
     the reply would be dropped exactly while the agent is working steadily.
     """
+    from pydantic_ai.messages import (
+        ModelMessage,
+        ModelResponse,
+        TextPart,
+        ToolCallPart,
+        ToolReturnPart,
+    )
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
     config = tmp_path / "input.yaml"
     runnable = yaml.safe_dump({"steps": [{"step": 1, "engine": "orca", "operation": "sp"}]})
-    _inject_model(chat_env, _saving_model(config, runnable))
 
-    suspended = _post(client, "/api/agent/chat", {"message": "save it"}).get_json()
-    assert suspended["wrote_config"] is None  # nothing has run yet — it is still asking
-    assert [card["tool"] for card in suspended["pending"]] == ["save_config"]
+    def save_then_scaffold(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        ran = [p.tool_name for m in messages for p in m.parts if isinstance(p, ToolReturnPart)]
+        if not ran:
+            save = {"path": str(config), "yaml_text": runnable}
+            return ModelResponse(parts=[ToolCallPart("save_config", save)])
+        if ran == ["save_config"]:
+            scaffold = {"config_path": str(config)}
+            return ModelResponse(parts=[ToolCallPart("scaffold_templates", scaffold)])
+        return ModelResponse(parts=[TextPart("done")])
+
+    _inject_model(chat_env, FunctionModel(save_then_scaffold))
+    asked = _post(client, "/api/agent/chat", {"message": "save and scaffold"}).get_json()
+    assert asked["wrote_config"] is None  # nothing has run yet — it is still asking
+    assert [card["tool"] for card in asked["pending"]] == ["save_config"]
     assert not config.exists()
 
-    approvals = {card["id"]: True for card in suspended["pending"]}
-    resumed = _post(client, "/api/agent/chat", {"approvals": approvals}).get_json()
-    assert resumed["wrote_config"] == str(config)
+    allow = {card["id"]: True for card in asked["pending"]}
+    saved = _post(client, "/api/agent/chat", {"approvals": allow}).get_json()
+    assert [card["tool"] for card in saved["pending"]] == ["scaffold_templates"]
+    assert saved["wrote_config"] == str(config)  # the save ran, and the next call asks
     assert config.is_file()
+
+    deny = {card["id"]: False for card in saved["pending"]}
+    done = _post(client, "/api/agent/chat", {"approvals": deny}).get_json()
+    assert (done["reply"], done["wrote_config"]) == ("done", None)
 
 
 def test_a_refused_or_unwritten_save_is_not_a_write(
@@ -932,8 +956,8 @@ def test_an_approved_save_beside_a_crashing_call_is_reported_and_remembered(
     """Two approved calls, one of which crashes: the save that went through is not lost.
 
     Run side by side, the crash cancelled the save and discarded its result while its
-    worker thread wrote the file anyway — a 502 with no ``wrote_config`` over a config on
-    disk, and a next turn told the save was interrupted.
+    worker thread wrote the file anyway — a failed turn with no ``wrote_config`` over a
+    config on disk, and a next turn told the save was interrupted.
     """
     from pydantic_ai.messages import (
         ModelMessage,
@@ -964,7 +988,11 @@ def test_an_approved_save_beside_a_crashing_call_is_reported_and_remembered(
     suspended = _post(client, "/api/agent/chat", {"message": "save and scaffold"}).get_json()
     approvals = {card["id"]: True for card in suspended["pending"]}
     failed = _post(client, "/api/agent/chat", {"approvals": approvals})
-    assert failed.status_code == 502
+    # The tool's crash is this server's failure, named for the tool — not the endpoint's.
+    assert failed.status_code == 500
+    assert failed.get_json()["error"] == (
+        "tool scaffold_templates crashed: RuntimeError: scaffold_templates crashed"
+    )
     assert failed.get_json()["wrote_config"] == str(config)
     assert _post(client, "/api/agent/chat", {"message": "what happened?"}).status_code == 200
     parts = [part for message in seen[-1] for part in message.parts]
@@ -1441,7 +1469,30 @@ def test_an_unplaceable_model_is_a_502_not_a_traceback(client: Any, chat_env: py
     """
     failed = _post(client, "/api/agent/chat", {"model": "not-a-real-model", "message": "hi"})
     assert failed.status_code == 502
-    assert "Unknown model" in failed.get_json()["error"]
+    assert failed.get_json()["error"].startswith("model endpoint failed: Unknown model")
+
+
+def test_a_resume_whose_model_cannot_be_built_keeps_its_cards(
+    client: Any, chat_env: pytest.MonkeyPatch, tmp_path: Path
+):
+    """Nothing ran, so the paused run still waits for its verdicts: the reply says so.
+
+    The model is built before the run takes the cards, and a build that fails runs no
+    call — the cards still answer the paused run, once the model box names one that loads.
+    """
+    from chemrefine.agent.providers import ProviderConfig
+
+    config = tmp_path / "input.yaml"
+    runnable = yaml.safe_dump({"steps": [{"step": 1, "engine": "orca", "operation": "sp"}]})
+    _inject_model(chat_env, _saving_model(config, runnable))
+    asked = _post(client, "/api/agent/chat", {"message": "save it"}).get_json()
+
+    chat_env.setattr(ProviderConfig, "build_model", lambda self: "not-a-real-model")
+    allow = {card["id"]: True for card in asked["pending"]}
+    failed = _post(client, "/api/agent/chat", {"approvals": allow})
+    assert failed.status_code == 502
+    assert failed.get_json()["pending"] == asked["pending"]
+    assert not config.exists()
 
 
 def test_chat_turns_thread_history(client: Any, chat_env: pytest.MonkeyPatch):
@@ -1774,7 +1825,9 @@ def test_chat_maps_endpoint_failures_to_502(client: Any, chat_env: pytest.Monkey
     _inject_model(chat_env, FunctionModel(explode))
     failed = _post(client, "/api/agent/chat", {"message": "hi"})
     assert failed.status_code == 502
-    assert "model endpoint failed" in failed.get_json()["error"]
+    assert failed.get_json()["error"] == (
+        "model endpoint failed: connection refused by nobody:11434"
+    )
 
 
 def test_chat_reset_forgets_the_conversation(client: Any, chat_env: pytest.MonkeyPatch):

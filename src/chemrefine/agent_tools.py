@@ -1287,6 +1287,19 @@ nothing, and a mutating tool renamed without this set would silently go ungated.
 holds the subset relation."""
 
 
+class ToolCrashed(Exception):
+    """A tool's crash, named for the tool: a bug to report, never an answer to the model.
+
+    Raised by :func:`answering` from whatever the tool raised, which is its ``__cause__``.
+    Its text is the report — the tool, then the exception's class and message, since a
+    ``KeyError`` says only the key — so a harness reporting the failed turn can say whose
+    crash it was rather than blame the model endpoint.
+    """
+
+    def __init__(self, tool: str, cause: Exception) -> None:
+        super().__init__(f"tool {tool} crashed: {type(cause).__name__}: {cause}")
+
+
 def answering(
     tool: Callable[..., Any], channel: Callable[[str], BaseException]
 ) -> Callable[..., Any]:
@@ -1297,8 +1310,10 @@ def answering(
     message says what to change, so it is re-raised as
     ``channel(`` :func:`~chemrefine.errors.refusal_text` ``)``: the framework's own
     documented way to report a tool's failure to the model, which the model reads and
-    adapts to. Anything else is a crash and propagates untouched, so no harness mistakes a
-    bug for an answer or shows the model a traceback.
+    adapts to. Anything else is a crash, re-raised as :class:`ToolCrashed` from the
+    original: never through the channel, so no harness mistakes a bug for an answer or
+    shows the model a traceback, and named for its tool, so the harness that reports the
+    failed turn can say which tool it was.
 
     The channel is passed in, not imported, because this module imports no agent
     framework: the MCP server passes its SDK's ``ToolError``, the embedded agent
@@ -1314,6 +1329,8 @@ def answering(
             return tool(*args, **kwargs)
         except ChemRefineError as exc:
             raise channel(refusal_text(exc)) from exc
+        except Exception as exc:
+            raise ToolCrashed(tool.__name__, exc) from exc
 
     return answered
 

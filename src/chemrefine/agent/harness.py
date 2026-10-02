@@ -37,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
+import logging
 from collections.abc import Callable, Sequence
 from typing import Any, TypeVar
 
@@ -55,10 +56,22 @@ from pydantic_ai.settings import ModelSettings
 from chemrefine import agent_tools
 from chemrefine.agent.providers import chat_timeout_seconds
 
+logger = logging.getLogger(__name__)
+
 ConfirmFn = Callable[[str, str], bool]
 """``(tool_name, rendered_args) -> allow?`` — the chat asks the human, tests script it."""
 
 OutputT = TypeVar("OutputT")
+
+
+def endpoint_failure_text(cause: Exception) -> str:
+    """A failure on the model's side as both chats report it, in the cause's own words.
+
+    The outside world a chat talks to: a model the provider cannot place, found when the
+    agent is built, or an endpoint that refuses or drops a turn. The other failure a turn
+    can meet is a tool's crash, which words itself (:class:`~chemrefine.agent_tools.ToolCrashed`).
+    """
+    return f"model endpoint failed: {cause}"
 
 
 class TurnFailed(Exception):
@@ -72,12 +85,15 @@ class TurnFailed(Exception):
     history in (its model client failing to open, say) recorded nothing, and ``messages``
     is then the history it was given, without the new message. Either way, calls left
     without an answer are closed as interrupted (:func:`answerable`). The failure itself is
-    ``__cause__``, and this exception's text is the cause's, so a harness reports the
-    failure in the cause's own words.
+    ``__cause__``. ``crashed`` says whether a tool crashed — a bug on this side — rather
+    than the endpoint failing, and this exception's text is the report every front end
+    prints: the crash's own (:class:`~chemrefine.agent_tools.ToolCrashed`), or the
+    endpoint's (:func:`endpoint_failure_text`).
     """
 
     def __init__(self, cause: Exception, messages: list[ModelMessage]) -> None:
-        super().__init__(str(cause))
+        self.crashed = isinstance(cause, agent_tools.ToolCrashed)
+        super().__init__(str(cause) if self.crashed else endpoint_failure_text(cause))
         self.messages = messages
 
 
@@ -253,7 +269,8 @@ async def _entered_run(
     ``capture_run_messages`` is PydanticAI's record of a run that raised: the whole
     conversation the run held, history included, up to the failure. A run that failed
     before it took the history in recorded nothing, and the history it was given is then
-    the conversation as far as it got.
+    the conversation as far as it got. A tool's crash is logged here with its traceback,
+    once for both harnesses: neither reply carries one, and a bug needs it.
     """
     with capture_run_messages() as recorded:
         try:
@@ -264,8 +281,10 @@ async def _entered_run(
                     deferred_tool_results=deferred_tool_results,
                 )
         except Exception as e:
-            reached = recorded or list(message_history or ())
-            raise TurnFailed(e, answerable(reached)) from e
+            failed = TurnFailed(e, answerable(recorded or list(message_history or ())))
+            if failed.crashed:
+                logger.exception("%s", failed)
+            raise failed from e
 
 
 def answerable(messages: list[ModelMessage]) -> list[ModelMessage]:

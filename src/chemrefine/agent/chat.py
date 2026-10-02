@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import typer
 
-from chemrefine.agent.harness import TurnFailed, build_agent, run_turn
+from chemrefine.agent.harness import TurnFailed, build_agent, endpoint_failure_text, run_turn
 from chemrefine.agent.providers import ProviderConfig
+from chemrefine.errors import ChemRefineError
 
 
 def _confirm(tool_name: str, rendered_args: str) -> bool:
@@ -33,9 +34,22 @@ def main(
     base_url: str | None = None,
     config_path: str | None = None,
 ) -> None:
-    """Run the chat until the user leaves; one agent, one growing history."""
+    """Run the chat until the user leaves; one agent, one growing history.
+
+    A model the provider cannot place is found while the agent is built, before any turn,
+    and is reported as the GUI panel reports it — the endpoint's failure, worded once
+    (:func:`~chemrefine.agent.harness.endpoint_failure_text`) — then exits 1, as
+    ``--check`` does for an endpoint it cannot use. The harness refusing its own settings
+    is a :class:`~chemrefine.errors.ChemRefineError`, left to the CLI's refusal path.
+    """
     resolved = ProviderConfig.resolve(provider, model=model, base_url=base_url)
-    agent = build_agent(resolved.build_model(), confirm=_confirm, config_path=config_path)
+    try:
+        agent = build_agent(resolved.build_model(), confirm=_confirm, config_path=config_path)
+    except ChemRefineError:
+        raise
+    except Exception as e:  # the model endpoint is the outside world
+        typer.echo(endpoint_failure_text(e), err=True)
+        raise typer.Exit(code=1) from e
     typer.echo(f"ChemRefine agent — model {resolved.model} (exit/quit to leave)")
     history = None
     while True:
@@ -53,7 +67,7 @@ def main(
         try:
             result = run_turn(agent, prompt, message_history=history)
         except TurnFailed as e:
-            typer.echo(f"model endpoint failed: {e}", err=True)
+            typer.echo(str(e), err=True)
             history = e.messages
             continue
         typer.echo(result.output)

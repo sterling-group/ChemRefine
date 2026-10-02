@@ -170,7 +170,9 @@ free-tier OpenAI-compatible endpoint works via `--base-url`.
 - **A failed turn is still part of the conversation.** When the model endpoint drops in
   the middle of a turn, the chat says so and carries on, and the next turn's model sees
   your message and every change that ran, with what it returned — so a change you allowed
-  is known to have happened, not proposed again.
+  is known to have happened, not proposed again. A tool that crashes is reported as that
+  tool's crash (`tool get_results crashed: KeyError: …`), not the endpoint's, with its
+  traceback in the log.
 - **Results are paginated** so a tool reply cannot flood a model's context window.
 - **Errors are structured.** Tool failures carry ChemRefine's documented
   [exit-code taxonomy](../running/when-a-run-fails.md#exit-codes), and `get_failures`

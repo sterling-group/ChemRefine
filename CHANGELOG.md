@@ -111,7 +111,10 @@ for those and the full map.
   every path (CLI flags, the `CHEMREFINE_LLM_*` variables, the GUI chat panel).
   `--check` verifies the configured endpoint and names the fix without downloading
   anything — model choice and site policy stay the user's (see the new
-  platforms/model-policy docs page).
+  platforms/model-policy docs page). A failed turn reads the same in the terminal and
+  the GUI panel — a tool's crash as that tool's, with its traceback in the log, anything
+  else as the model endpoint failing — and so does a model the provider cannot place,
+  found before the first turn.
 - **A step that omits `operation:` takes it from its template.** v1.3.1 required
   `operation:` on every step. An ORCA-family step reads its run kind from the template's
   `!` keywords and the blocks ORCA accepts in their place — a `%geom … Scan` is a relaxed

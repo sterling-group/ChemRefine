@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from pathlib import Path
 from typing import Any, Self
 
@@ -451,6 +452,38 @@ def test_cli_check_exits_by_verdict(monkeypatch: pytest.MonkeyPatch):
     assert "broken" in bad.stdout
 
 
+def test_a_model_the_terminal_cannot_place_reads_as_the_gui_reports_it():
+    """``Agent("not-a-real-model")`` raises at construction: worded once, exit 1, no traceback.
+
+    The panel answered it as the endpoint's failure while the terminal chat let PydanticAI's
+    ``UserError`` out as a traceback, for the same typo in the same setting.
+    """
+    from typer.testing import CliRunner
+
+    from chemrefine.cli import app
+
+    failed = CliRunner().invoke(app, ["agent", "--model", "not-a-real-model"])
+    assert failed.exit_code == 1
+    assert failed.stderr.startswith("model endpoint failed: Unknown model")
+    assert isinstance(failed.exception, SystemExit)  # an exit it chose, not a crash
+
+
+def test_a_setting_the_terminal_harness_refuses_keeps_its_exit_code(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    """The harness refusing its own settings is a refusal, not the endpoint's failure."""
+    from typer.testing import CliRunner
+
+    from chemrefine.agent.providers import CHAT_TIMEOUT_ENV
+    from chemrefine.cli import app
+
+    monkeypatch.setenv(CHAT_TIMEOUT_ENV, "soon")
+    refused = CliRunner().invoke(app, ["agent", "--model", "test"])
+    assert refused.exit_code == ConfigError.exit_code
+    assert "model endpoint failed" not in refused.stderr
+    assert any(CHAT_TIMEOUT_ENV in record.getMessage() for record in caplog.records)
+
+
 # ---------------------------------------------------------------------------
 # Harness: registration + instructions
 # ---------------------------------------------------------------------------
@@ -733,12 +766,15 @@ def _seen_by_the_next_turn(
     return _returns_and_prompts(seen[0])
 
 
-def test_a_failed_turn_carries_what_ran_into_the_next(tmp_path: Path):
+def test_a_failed_turn_carries_what_ran_into_the_next(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
     """The endpoint died after an allowed call ran; the next turn is told it ran.
 
     Kept only on success, the history lost the whole turn — the message, and the scaffold
     that had already written the templates — and the next turn's model, told nothing of
-    either, was free to propose the same change again.
+    either, was free to propose the same change again. A dropped connection is the outside
+    world's, not a bug: it is reported, never logged with a traceback.
     """
     config = _orca_config(tmp_path)
 
@@ -750,14 +786,74 @@ def test_a_failed_turn_carries_what_ran_into_the_next(tmp_path: Path):
         raise ConnectionError("the endpoint went away")
 
     agent = harness.build_agent(FunctionModel(dies_after_the_call), confirm=_allow)
-    with pytest.raises(harness.TurnFailed, match=r"^the endpoint went away$") as failed:
+    with (
+        caplog.at_level(logging.ERROR, logger="chemrefine.agent.harness"),
+        pytest.raises(
+            harness.TurnFailed, match=r"^model endpoint failed: the endpoint went away$"
+        ) as failed,
+    ):
         harness.run_turn(agent, "scaffold my templates")
     assert isinstance(failed.value.__cause__, ConnectionError)
+    assert not failed.value.crashed
+    assert not caplog.records
     assert (tmp_path / "templates" / "step1.inp").is_file()
     assert _seen_by_the_next_turn(failed.value.messages) == (
         [("scaffold_templates", "success")],
         ["scaffold my templates", "what happened?"],
     )
+
+
+def test_a_tool_that_crashes_is_reported_as_its_crash_and_logged(
+    tmp_path: Path, crashing_tool: Any, caplog: pytest.LogCaptureFixture
+):
+    """A crash is the tool's, not the endpoint's: named for the tool, its traceback logged.
+
+    Worded as "model endpoint failed", a tool's own bug sent the user to check their LLM
+    endpoint, and with the traceback in neither chat's reply there was nothing to report.
+    """
+    crashing_tool("scaffold_templates")
+    agent = harness.build_agent(_scripted_scaffold(_orca_config(tmp_path)), confirm=_allow)
+    with (
+        caplog.at_level(logging.ERROR, logger="chemrefine.agent.harness"),
+        pytest.raises(harness.TurnFailed) as failed,
+    ):
+        harness.run_turn(agent, "scaffold my templates")
+    assert str(failed.value) == (
+        "tool scaffold_templates crashed: RuntimeError: scaffold_templates crashed"
+    )
+    assert failed.value.crashed
+    [record] = caplog.records
+    assert record.exc_info is not None
+    assert isinstance(record.exc_info[1], agent_tools.ToolCrashed)
+    assert isinstance(record.exc_info[1].__cause__, RuntimeError)
+
+
+def test_a_read_only_tool_that_crashes_beside_another_call_is_its_crash(
+    tmp_path: Path, crashing_tool: Any
+):
+    """Read-only calls of one response run side by side; the crash keeps its tool's name.
+
+    The run re-raises what the crashing call raised rather than a group of failures, so
+    the mark survives the parallel path as it does the sequential one.
+    """
+    config = str(_orca_config(tmp_path))
+    crashing_tool("summarize_config")
+
+    def both_at_once(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart("validate_config_path", {"config_path": config}),
+                ToolCallPart("summarize_config", {"config_path": config}),
+            ]
+        )
+
+    agent = harness.build_agent(FunctionModel(both_at_once), confirm=_allow)
+    with pytest.raises(harness.TurnFailed) as failed:
+        harness.run_turn(agent, "look at my config")
+    assert str(failed.value) == (
+        "tool summarize_config crashed: RuntimeError: summarize_config crashed"
+    )
+    assert failed.value.crashed
 
 
 def test_a_turn_that_fails_inside_a_call_still_takes_a_new_prompt(
