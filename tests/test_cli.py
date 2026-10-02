@@ -461,7 +461,7 @@ def test_takes_target_matches_the_subcommand_signatures():
 def test_maxcores_zero_is_rejected_before_anything_runs(tmp_path: Path, caplog):
     """An override is held to the config model's own floor, as exit 2, before any input exists.
 
-    ``Config.with_overrides`` validates the value by the field's declared ``ge=1`` — the
+    ``Config.with_budgets`` validates the value by the field's declared ``ge=1`` — the
     flag carries no floor of its own to drift from it — so a ``0`` here is refused with
     the same code and wording a ``0`` in the YAML gets, never a raw Throttler
     ``ValueError`` mid-run.

@@ -130,20 +130,12 @@ def _load(config_path: Path, *, maxcores: int | None, maxgpus: int | None) -> Co
 
     The return annotation resolves under ``TYPE_CHECKING`` only — the
     pydantic/config import stays lazy (it loads only when a command actually
-    runs). Both flags beat the YAML, through :meth:`Config.with_overrides`, so
+    runs). Both flags beat the YAML, through :meth:`Config.with_budgets`, so
     each is held to its field's own floor rather than to a copy of it here.
     """
     from chemrefine.config import load_config
 
-    cfg = load_config(config_path)
-    updates: dict[str, int] = {}
-    if maxcores is not None:
-        updates["max_cores"] = maxcores
-    if maxgpus is not None:
-        updates["max_gpus"] = maxgpus
-    if updates:
-        cfg = cfg.with_overrides(**updates)
-    return cfg
+    return load_config(config_path).with_budgets(max_cores=maxcores, max_gpus=maxgpus)
 
 
 def _dispatch(
@@ -205,7 +197,7 @@ def _dispatch(
 
 ConfigArg = Annotated[Path, typer.Argument(..., exists=True, dir_okay=False, readable=True)]
 # No ``min=`` on either budget: the floor is the config model's (``max_cores: ge=1``,
-# ``max_gpus: ge=0``) and ``Config.with_overrides`` applies it to an override, so a ``0``
+# ``max_gpus: ge=0``) and ``Config.with_budgets`` applies it to an override, so a ``0``
 # here is the same exit-2 ``ConfigError`` a ``0`` in the YAML is — one rule, one wording.
 MaxCoresOpt = Annotated[
     int | None,
@@ -413,7 +405,7 @@ def agent(
             provider=provider,
             model=model,
             base_url=base_url,
-            config_path=str(config_path) if config_path is not None else None,
+            config_path=str(config_path.absolute()) if config_path is not None else None,
         )
     except ChemRefineError as e:
         logger.error("%s", refusal_text(e))
@@ -456,7 +448,11 @@ def gui(
         logger.error("the GUI needs flask/waitress: pip install 'chemrefine[gui]' (%s)", e)
         raise typer.Exit(code=1) from e
     try:
-        launch(config_path, port=port, open_browser=not no_browser)
+        launch(
+            config_path.absolute() if config_path is not None else None,
+            port=port,
+            open_browser=not no_browser,
+        )
     except OSError as e:
         # The one OSError a local bind realistically raises: --port names a taken port.
         # (The default path falls back to a kernel-assigned port on its own, so an

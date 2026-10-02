@@ -172,6 +172,18 @@ def test_pyscf_extopt_output_dirs_copies_relative_tensor_folder(tmp_path: Path):
     assert engine.output_dirs(_pyscf_ctx(tmp_path, save_tensors=False)) == ()
 
 
+def test_a_tensor_folder_under_home_persists_where_it_points(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """``~/…`` is the user's home, read as a shell reads it: an absolute folder, kept in place."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    engine = get_engine("pyscf-extopt")
+    ctx = _pyscf_ctx(tmp_path, save_tensors=True, tensor_folder="~/tensors")
+    assert engine.options_cls.from_raw(ctx.step_cfg.options).tensor_folder == str(home / "tensors")
+    assert engine.output_dirs(ctx) == ()
+
+
 def test_save_tensors_on_a_closed_shell_step_prepares_normally(tmp_path: Path):
     """The guard refuses only the open-shell combination — the supported case is untouched."""
     engine = get_engine("pyscf-extopt")

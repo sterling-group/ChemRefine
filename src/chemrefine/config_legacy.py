@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 from chemrefine.errors import ConfigError
@@ -377,7 +376,8 @@ def _write_out_v1_server(
       runs now — and under ``mace_omol``, whose loader ignored ``model_name`` altogether, a
       value the step names is dropped. Under those two families a ``model_name`` naming a
       checkpoint (:func:`_names_a_file`) is what their loader read as a file, so it moves to
-      ``model_path``, with a leading ``~`` expanded as the job's shell expanded it;
+      ``model_path`` as written — the config reads its leading ``~`` as a home, as the
+      job's shell did (:data:`chemrefine.config.STEP_OPTION_PATHS`);
     * ``device: cuda`` when the step names none.
 
     First, v1.3.1's SevenNet spelling: a ``model_name`` starting ``sevenn`` beside a
@@ -419,7 +419,7 @@ def _write_out_v1_server(
             )
         elif _names_a_file(name := options["model_name"]):
             del options["model_name"]
-            options["model_path"] = str(Path(name).expanduser())
+            options["model_path"] = name
             sink(
                 (*loc, "options", "model_path"),
                 f"`model_name: {name}` names a checkpoint file, which is `model_path` now; a "

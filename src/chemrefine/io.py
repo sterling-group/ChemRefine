@@ -169,6 +169,35 @@ def read_utf8(path: Path, *, what: str) -> str:
         raise ConfigError(f"cannot read {what} {path}: {e.strerror or e}") from e
 
 
+def expand_home(raw: str) -> str:
+    """``raw`` as a shell reads a path's start: a leading ``~`` is a home, all else as typed.
+
+    The one reading of a typed path's ``~``, decided on the text itself — ``~/runs`` is the
+    user's home, ``./~/runs`` a directory named ``~`` — and taken by every entry point: the
+    config model for each key that names a path (:data:`chemrefine.config.USER_PATH`), the
+    agent tools and the GUI through :func:`expand_user_path`. A ``~name`` the host knows no
+    home for, or cannot even look up (an embedded NUL), is the :class:`ConfigError` the CLI
+    maps, ``chemrefine validate`` reports, the GUI answers as a 400 and an MCP client
+    receives as a typed refusal.
+    """
+    if not raw.startswith("~"):
+        return raw
+    try:
+        return str(Path(raw).expanduser())
+    except (RuntimeError, ValueError) as e:
+        raise ConfigError(f"cannot resolve {raw!r}: {e}") from e
+
+
+def expand_user_path(raw: str) -> Path:
+    """The absolute path a typed path argument names: :func:`expand_home`, then the cwd.
+
+    Absolute, so the text a tool hands back means the same place to whatever reads it
+    next: a relative ``./~/seeds`` kept relative prints as ``~/seeds``, which every reader
+    of that text takes for the user's home.
+    """
+    return Path(expand_home(raw)).absolute()
+
+
 # ---------------------------------------------------------------------------
 # XYZ
 # ---------------------------------------------------------------------------

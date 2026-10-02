@@ -982,8 +982,9 @@ def test_a_bare_mlip_engine_is_the_direct_engine(step: dict[str, object], droppe
         ("mace_off", "medium", False),
         ("mace_off", "https://example.org/fine.model", False),
         ("omol", "esen/conserving", False),
+        ("mace_off", "~/models/fine.model", True),
     ],
-    ids=["relative", "absolute", "release", "url", "not-a-mace-loader"],
+    ids=["relative", "absolute", "release", "url", "not-a-mace-loader", "home"],
 )
 def test_a_v1_checkpoint_named_as_model_name_moves_to_model_path(
     task_name: str, model_name: str, moved: bool
@@ -1005,17 +1006,140 @@ def test_a_v1_checkpoint_named_as_model_name_moves_to_model_path(
 
 
 def test_a_v1_checkpoint_under_home_is_expanded_as_the_jobs_shell_did(
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """v1.3.1 put the name on its server's command line unquoted, so bash expanded ``~``."""
-    from chemrefine.config_legacy import normalize as _normalize_legacy
+    """v1.3.1 put the name on its server's command line unquoted, so bash expanded ``~``.
 
-    monkeypatch.setenv("HOME", "/home/someone")
+    The v1 layer only moves the name to ``model_path``; the config reads its ``~`` the way
+    it reads every path it names.
+    """
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
     block = {"task_name": "mace_off", "model_name": "~/models/fine.model"}
-    out = _normalize_legacy(
-        {"steps": [{"step": 1, "engine": "MLFF", "mlff": block}]}, report=_silent
-    )["steps"][0]
-    assert out["options"]["model_path"] == "/home/someone/models/fine.model"
+    data = {"steps": [{"step": 1, "engine": "MLFF", "operation": "opt_sp", "mlff": block}]}
+    (step,) = load_config(_write_yaml(tmp_path, data)).steps
+    assert step.options["model_path"] == str(home / "models" / "fine.model")
+
+
+def test_a_leading_tilde_is_home_in_every_path_a_config_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """``~/…`` is the user's home, as a shell reads it, in every key that names a path.
+
+    Anchored against the config file's directory instead, ``output_dir: ~/runs`` wrote a
+    run under ``<config dir>/~/runs``, and a ``~`` in ``executables`` reached the job
+    script inside double quotes, where bash does not expand it.
+    """
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    project = tmp_path / "project"
+    project.mkdir()
+    step = {
+        "step": 1,
+        "engine": "fake",
+        "operation": "opt_sp",
+        "template": "~/shared/opt.inp",
+        "slurm_template": "~/headers/gpu.header",
+        "options": {"model_path": "~/models/x.model"},
+    }
+    data = {
+        "template_dir": "~/templates",
+        "output_dir": "~/runs",
+        "scratch_dir": "~/scratch",
+        "input": "~/seeds/x.xyz",
+        "slurm_template": "~/headers/cpu.header",
+        "executables": {"orca": "~/orca/orca", "qchem": "qchem"},
+        "steps": [step],
+    }
+    config = load_config(_write_yaml(project, data))
+    assert config.template_dir == home / "templates"
+    assert config.output_dir == home / "runs"
+    assert config.scratch_dir == home / "scratch"
+    assert config.input == home / "seeds" / "x.xyz"
+    assert config.slurm_template == str(home / "headers" / "cpu.header")
+    assert config.executables == {"orca": str(home / "orca" / "orca"), "qchem": "qchem"}
+    (read,) = config.steps
+    assert read.template == str(home / "shared" / "opt.inp")
+    assert read.slurm_template == str(home / "headers" / "gpu.header")
+    assert read.options["model_path"] == str(home / "models" / "x.model")
+
+
+def test_a_tilde_after_a_dot_names_a_folder_called_tilde(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """``./~/runs`` is a directory named ``~`` beside the config, as a shell reads it.
+
+    Decided on the text as typed: read after it became a ``Path``, whose normalisation drops
+    the ``./``, it would be the user's home.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    step = {"step": 1, "engine": "fake", "operation": "opt_sp"}
+    step["options"] = {"model_path": "./~/m.model"}
+    config = load_config(
+        _write_yaml(tmp_path, _minimal_config(output_dir="./~/runs", steps=[step]))
+    )
+    assert config.output_dir == tmp_path / "~" / "runs"
+    assert config.steps[0].options["model_path"] == str(tmp_path / "~" / "m.model")
+
+
+def test_a_leading_tilde_is_read_without_a_base_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A home needs no base: ``validate`` reads ``~`` with no ``base_dir`` given too."""
+    from chemrefine.validate import validate_config_text
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    report = validate_config_text(yaml.safe_dump(_minimal_config(input="~/seeds/x.xyz")))
+    assert report.config is not None
+    assert report.config.input == home / "seeds" / "x.xyz"
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "loc"),
+    [
+        ("output_dir", "~nosuchuser1234/runs", ("output_dir",)),
+        ("input", "~a\x00b/x.xyz", ("input",)),
+        ("executables", {"orca": "~nosuchuser1234/orca"}, ("executables", "orca")),
+        (
+            "steps",
+            [{"step": 1, "engine": "fake", "options": {"model_path": "~nosuchuser1234/m"}}],
+            ("steps", 0, "options"),
+        ),
+    ],
+    ids=["unknown-account", "unreadable-name", "executable", "model-path"],
+)
+def test_a_tilde_naming_no_home_is_refused_at_its_key(
+    tmp_path: Path, key: str, value: object, loc: tuple[str, ...]
+):
+    """A ``~name`` the host knows no home for is refused where it is written, never raised.
+
+    A ``ConfigError`` from the loader that names the file and the key, and a row at that
+    key in ``validate`` — with or without a base directory — rather than a ``RuntimeError``
+    or ``ValueError`` escaping a function documented never to raise.
+    """
+    from chemrefine.validate import validate_config_text
+
+    data = _minimal_config(**{key: value})
+    with pytest.raises(ConfigError, match="invalid config") as refused:
+        load_config(_write_yaml(tmp_path, data))
+    assert loc[0] in str(refused.value) and "cannot resolve" in str(refused.value)
+    for base_dir in (tmp_path, None):
+        report = validate_config_text(yaml.safe_dump(data), base_dir=base_dir)
+        assert [issue.loc for issue in report.issues] == [loc]
+        assert "cannot resolve" in report.issues[0].message
+
+
+def test_a_v1_checkpoint_under_an_unknown_home_is_a_report_row_not_a_raise():
+    """The v1 move hands its ``model_name`` to the same reading, so ``validate`` stays total."""
+    from chemrefine.validate import validate_config_text
+
+    block = {"task_name": "mace_off", "model_name": "~nosuchuser1234/fine.model"}
+    data = {"steps": [{"step": 1, "engine": "MLFF", "operation": "opt_sp", "mlff": block}]}
+    report = validate_config_text(yaml.safe_dump(data))
+    assert [issue.loc for issue in report.issues] == [("steps", 0, "options")]
+    message = report.issues[0].message
+    assert "option 'model_path'" in message and "'~nosuchuser1234/fine.model'" in message
 
 
 @pytest.mark.parametrize(
@@ -1915,45 +2039,27 @@ def test_a_stored_policy_is_recognised_only_from_the_vocabulary():
 
 
 # ---------------------------------------------------------------------------
-# Overrides are held to the fields' own rules
+# Budgets are held to the fields' own rules
 # ---------------------------------------------------------------------------
 
 
-def test_an_override_is_validated_by_its_fields_own_rule():
-    """``with_overrides`` applies the declared constraint, in the model's wording.
+def test_a_budget_is_validated_by_its_fields_own_rule():
+    """``with_budgets`` applies the declared constraint, in the model's wording.
 
-    ``model_copy`` runs no validators, which is how the budget floors came to be restated
-    at every entry point that applies an override — a CLI flag's ``min=1`` beside the
-    model's ``ge=1``, an agent tool's ``< 1`` beside both. One rule now, read off the
-    field: a valid value lands, an invalid one is the same ``ConfigError`` a bad YAML
-    value is, and a name that is not a field is a programming error rather than a
-    silently copied-in attribute.
+    ``model_copy`` runs no validators, so without a rule read off the field each entry point
+    that applies a budget would restate its floor — a CLI flag's ``min=1`` beside the
+    model's ``ge=1``, an agent tool's ``< 1`` beside both. A valid value lands, an invalid
+    one is the same ``ConfigError`` a bad YAML value is, and ``None`` keeps the config's own.
     """
     config = Config.model_validate(_minimal_config())
-    assert config.with_overrides(max_cores=3).max_cores == 3
-    assert config.with_overrides(max_gpus=0).max_gpus == 0
+    assert config.with_budgets(max_cores=3).max_cores == 3
+    assert config.with_budgets(max_gpus=0).max_gpus == 0
+    assert config.with_budgets() is config
     with pytest.raises(
         ConfigError, match="max_cores 0: Input should be greater than or equal to 1"
     ):
-        config.with_overrides(max_cores=0)
+        config.with_budgets(max_cores=0)
     with pytest.raises(
         ConfigError, match="max_gpus -1: Input should be greater than or equal to 0"
     ):
-        config.with_overrides(max_gpus=-1)
-    with pytest.raises(ConfigError, match="'max_nodes' is not a config field"):
-        config.with_overrides(max_nodes=2)
-
-
-def test_an_unconstrained_field_is_overridden_with_its_validated_value():
-    """A field that declares no constraint takes an override too, as its field's type.
-
-    The rule is the field itself, so a field with no constraint (``template_dir``) still
-    has one to validate by, and the copy carries the value the rule returns, not the raw
-    one: a path given as text lands as a ``Path``, as it would from YAML.
-    """
-    config = Config.model_validate(_minimal_config())
-    moved = config.with_overrides(template_dir="elsewhere")
-    assert moved.template_dir == Path("elsewhere")
-    assert isinstance(moved.template_dir, Path)
-    with pytest.raises(ConfigError, match="charge 'a': Input should be a valid integer"):
-        config.with_overrides(charge="a")
+        config.with_budgets(max_gpus=-1)

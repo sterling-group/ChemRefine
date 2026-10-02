@@ -54,6 +54,7 @@ from chemrefine.errors import (
     fetch,
     refusal_text,
 )
+from chemrefine.io import expand_user_path
 from chemrefine.recovery import Action, resolve_target
 from chemrefine.state import Structure
 from chemrefine.validate import validate_config_file, validate_config_text
@@ -257,15 +258,9 @@ def start_run(
     path = _config_path(config_path)
     config = load_config(path)
     # The budgets are validated the way the child will apply them — by the config
-    # model's own floors, through `with_overrides` — so a refusal lands here, before a
+    # model's own floors, through `with_budgets` — so a refusal lands here, before a
     # pid is returned, rather than as exit 2 in a log nobody is watching yet.
-    budgets = {
-        name: value
-        for name, value in (("max_cores", max_cores), ("max_gpus", max_gpus))
-        if value is not None
-    }
-    if budgets:
-        config.with_overrides(**budgets)
+    config.with_budgets(max_cores=max_cores, max_gpus=max_gpus)
     if target is not None:
         resolve_target(config, target)
     status = pipeline.lock_status(config.output_dir)
@@ -827,22 +822,6 @@ def list_structures(config_path: str, step: int | str | None = None) -> dict[str
             for s in cached.results.structures
         ],
     }
-
-
-def expand_user_path(raw: str) -> Path:
-    """``Path(raw).expanduser()`` with a ``~name`` the host cannot resolve refused by contract.
-
-    ``expanduser`` raises ``RuntimeError`` for an account the host does not know — neither
-    an ``OSError`` nor a ``ChemRefineError``, so it would pass every guard: the GUI's
-    re-raising handler would make it a logged-traceback 500 and the MCP wrapper the generic
-    crash text. Every entry point that takes a user-typed path takes it here, so the
-    GUI answers its documented 400 and an MCP client a typed refusal, with no code at the
-    site.
-    """
-    try:
-        return Path(raw).expanduser()
-    except RuntimeError as e:
-        raise ConfigError(f"cannot resolve {raw!r}: {e}") from e
 
 
 def _config_path(raw: str) -> Path:

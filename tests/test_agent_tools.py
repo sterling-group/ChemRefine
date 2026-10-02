@@ -273,6 +273,22 @@ def test_build_structures_writes_under_the_expanded_out_dir(
     assert not (Path.cwd() / "~").exists()
 
 
+def test_a_folder_called_tilde_keeps_its_name_through_the_tools(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """``./~/seeds`` is a directory named ``~``, and every path a tool reports names it still.
+
+    Kept relative, it printed as ``~/seeds`` — text that every reader next door takes for
+    the user's home — so the files written and the files read back came apart.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.chdir(tmp_path)
+    built = agent_tools.build_structures("./~/seeds", xyz_text="2\n\nH 0 0 0\nH 0.74 0 0\n")
+    written = tmp_path / "~" / "seeds" / "structure_0.xyz"
+    assert built["written"] == [str(written)]
+    assert agent_tools.read_structure_file(built["written"][0])["path"] == str(written)
+
+
 def test_validate_config_resolves_against_the_expanded_base_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -536,7 +552,7 @@ def test_an_out_of_range_budget_is_refused_here_not_in_the_child(
     A ``0`` used to reach the child's argv, where the CLI flag exited 2 into a log nobody
     was watching yet, and ``run_status`` served that usage error as the newest log —
     after this call had already answered with a pid. The floor is the model's own
-    (``Config.with_overrides``), the one the child applies too, so the refusal here
+    (``Config.with_budgets``), the one the child applies too, so the refusal here
     carries the model's wording rather than a copy of it.
     """
     path = _write_config(tmp_path)

@@ -39,8 +39,9 @@ steps:
     `template_dir`, `output_dir`, `scratch_dir`, and `input` — when given as
     relative paths — resolve against the **directory containing the YAML file**,
     not the process working directory. So `chemrefine run proj/input.yaml` from
-    anywhere finds `proj/templates` and writes `proj/outputs`. Absolute paths are
-    used as-is.
+    anywhere finds `proj/templates` and writes `proj/outputs`. A leading `~` in any
+    path is your home directory, as in a shell (`./~` names a folder called `~`), and
+    absolute paths are used as-is.
 
 !!! warning "ORCA steps cannot run from a path containing whitespace"
     ORCA reads each geometry through `* xyzfile <path>`, which is whitespace-delimited and

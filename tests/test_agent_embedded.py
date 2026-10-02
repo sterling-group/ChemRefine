@@ -1097,6 +1097,26 @@ def test_cli_agent_hands_off_and_maps_config_errors(
     assert failed.exit_code == 2
 
 
+def test_cli_agent_hands_the_session_the_absolute_config_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """A relative argument is named absolutely before the agent holds it as text."""
+    from typer.testing import CliRunner
+
+    from chemrefine.agent import chat
+    from chemrefine.cli import app
+
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(chat, "main", lambda **kwargs: calls.append(kwargs))
+    monkeypatch.chdir(tmp_path)
+    config = tmp_path / "~" / "input.yaml"
+    config.parent.mkdir()
+    config.write_text("steps: []\n", encoding="utf-8")
+    result = CliRunner().invoke(app, ["agent", "./~/input.yaml", "--model", "openai:gpt-5-mini"])
+    assert result.exit_code == 0
+    assert calls[0]["config_path"] == str(config)
+
+
 def test_cli_agent_names_the_missing_extra(without_extra, caplog):
     """Without PydanticAI the command names the extra and exits 1 — not a traceback.
 

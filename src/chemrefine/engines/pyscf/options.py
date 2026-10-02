@@ -17,11 +17,11 @@ both directions.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import Field, field_validator, model_validator
 
-from chemrefine.config import reject_shell_unsafe
+from chemrefine.config import USER_PATH, reject_shell_unsafe
 from chemrefine.engines._options import EngineOptions, refuse_template_knobs
 from chemrefine.engines.orca.extopt.engine import ExtOptOptions
 from chemrefine.errors import ConfigError
@@ -176,7 +176,7 @@ class PyscfExtOptOptions(PyscfOptions, ExtOptOptions):
     localized: bool = False
     """Boys-localize occupied / virtual orbitals before tensor extraction."""
 
-    tensor_folder: str = Field("tensors", min_length=1)
+    tensor_folder: Annotated[str, USER_PATH] = Field("tensors", min_length=1)
     """Output directory for ``save_tensors`` ``.npz`` files.
 
     A **relative** path (the default ``tensors``) is fine: the calculator writes

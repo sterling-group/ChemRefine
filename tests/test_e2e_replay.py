@@ -1186,7 +1186,7 @@ def _pyscf(run: Replayed) -> None:
     (step,) = run.config.steps
     step_dir = run.config.step_dir(step).resolve()
 
-    fresh = run.config.with_overrides(template_dir=run.case.root / "starters")
+    fresh = run.config.model_copy(update={"template_dir": run.case.root / "starters"})
     (starter,) = [path for path in scaffold_templates(fresh) if path.name == "step1.py"]
     assert (run.config.template_dir / starter.name).read_text(encoding="utf-8") == (
         starter.read_text(encoding="utf-8")

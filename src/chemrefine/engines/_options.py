@@ -10,10 +10,11 @@ adds its own fields.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, ClassVar, Literal, Self
+from typing import Annotated, Any, ClassVar, Literal, Self
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
 
+from chemrefine.config import USER_PATH
 from chemrefine.errors import ConfigError
 
 
@@ -55,7 +56,7 @@ class EngineOptions(BaseModel):
     default schedules a CPU job whose script then asks for a device it wasn't given.
     """
 
-    backend_python: str | None = None
+    backend_python: Annotated[str | None, USER_PATH] = None
     """Explicit Python interpreter for this step's compute backend (escape hatch).
 
     Normally unset: the provisioner (:mod:`chemrefine.engines._provision`) resolves the

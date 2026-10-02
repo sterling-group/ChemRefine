@@ -668,6 +668,12 @@ for those and the full map.
   against the job's scratch directory instead, so the MLIPTraining tutorial's
   `../step3/checkpoints_dir/…` is moved to `model_path` as written and must be rewritten
   relative to the config file.
+- **A leading `~` in a path is the home directory.** v1.3.1 resolved `output_dir: ~/runs`
+  against the working directory, into a folder literally named `~`. 2.0 reads every path
+  a config names — its directories, `input`, the templates and SLURM headers,
+  `executables`, and a step's `model_path`, `backend_python` and `tensor_folder` — as a
+  shell does: a leading `~` is a home directory, `./~/runs` still names a folder called
+  `~`, and a `~name` the host does not know is refused at the key that holds it.
 - **A FAIRChem checkpoint runs from a path.** A FAIRChem model can be given as a
   checkpoint file path as well as a registry name — which is how a fine-tuned FAIRChem
   checkpoint is run. v1 resolved registry names only.

@@ -1259,6 +1259,16 @@ def test_script_run_block_honours_backend_python_override(monkeypatch, tmp_path:
     assert block.splitlines()[-1] == "/envs/x/bin/python step1_0.py"
 
 
+def test_a_backend_python_under_home_is_read_as_home(monkeypatch, tmp_path: Path):
+    """``~/…`` names the interpreter under the user's home, as a shell would read it."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    ctx = _ctx(tmp_path, engine="mlip", options={"backend_python": "~/envs/x/bin/python"})
+    block = get_engine("mlip").run_block(ctx, Path("step1_0.py"), Path("step1_0.json")).body
+    assert block.splitlines()[-1] == f"{home / 'envs' / 'x' / 'bin' / 'python'} step1_0.py"
+
+
 def test_non_provisionable_script_engine_uses_own_interpreter(monkeypatch, tmp_path: Path):
     """A third-party ScriptEngine without ``backend_requirement`` runs this interpreter."""
     from chemrefine.engines._script import ScriptEngine

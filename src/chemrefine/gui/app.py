@@ -51,7 +51,7 @@ from werkzeug.exceptions import HTTPException
 from chemrefine import agent_tools, introspect, io
 from chemrefine.errors import ChemRefineError, ConfigError
 from chemrefine.gui import STATIC_DIR
-from chemrefine.io import atomic_write
+from chemrefine.io import atomic_write, expand_user_path
 
 
 def _refusal(error: ChemRefineError) -> dict[str, Any]:
@@ -438,10 +438,10 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         A missing path, a directory, an unreadable file and a binary one picked by mistake
         are all :func:`chemrefine.io.read_utf8`'s :class:`ConfigError`, which :func:`surface`
         answers with the plain 400 every other bad input here gets. So is a ``~name`` the
-        host cannot resolve: :func:`chemrefine.agent_tools.expand_user_path` refuses it,
+        host cannot resolve: :func:`chemrefine.io.expand_user_path` refuses it,
         and every path a user types here goes through it.
         """
-        path = agent_tools.expand_user_path(_query(_PathQuery).path)
+        path = expand_user_path(_query(_PathQuery).path)
         return jsonify(_config_payload(path))
 
     @app.post("/api/validate")
@@ -479,7 +479,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
     def browse() -> Any:
         """One directory level for the path pickers (local machine, local user)."""
         requested = _query(_BrowseQuery).path or str(Path.home())
-        path = agent_tools.expand_user_path(requested).resolve()
+        path = expand_user_path(requested).resolve()
         if not path.is_dir():
             return jsonify({"error": f"not a directory: {path}"}), 400
         try:
@@ -508,7 +508,7 @@ def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
         unwritable destination is a plain 400, like every other bad input here.
         """
         body = _read(_SaveRequest, _body())
-        destination = agent_tools.expand_user_path(body.path)
+        destination = expand_user_path(body.path)
         try:
             atomic_write(destination, body.yaml_text.encode("utf-8"))
         except OSError as e:

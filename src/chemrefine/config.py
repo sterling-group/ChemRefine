@@ -40,6 +40,7 @@ from typing import Annotated, Any, Literal, Self, TypeAlias, TypeGuard, assert_n
 import yaml
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     TypeAdapter,
@@ -287,6 +288,32 @@ def fold_engine_name(name: str) -> str:
     return name.lower()
 
 
+def _read_home(value: object) -> object:
+    """A typed path's leading ``~`` read as its home (:func:`chemrefine.io.expand_home`).
+
+    Run before a value becomes a ``Path``, whose normalisation turns ``./~/x`` into ``~/x``,
+    so the rule is decided on the text as typed. A relative path stays relative — the loader
+    anchors it to the config file's directory — and a value that is not text passes through.
+    A ``~name`` the host knows no home for is a ``ValueError``, which pydantic reports at
+    the key that holds it.
+    """
+    if not isinstance(value, str):
+        return value
+    try:
+        return io.expand_home(value)
+    except ConfigError as e:
+        raise ValueError(str(e)) from e
+
+
+USER_PATH = BeforeValidator(_read_home)
+"""``Annotated`` metadata for a key that names a path a person types: its ``~`` is a home.
+
+Declared on the field, so every key that holds a path says so where it is declared — the
+config's directories, seed, header and ``executables``, a step's template and header, and
+an engine option naming an interpreter or a directory — and :data:`STEP_OPTION_PATHS`
+reads the same way for the step options the loader resolves."""
+
+
 class StepConfig(BaseModel):
     """One stage of the pipeline."""
 
@@ -312,10 +339,10 @@ class StepConfig(BaseModel):
     vocabulary refuses any other before the run starts. Provide it when inspection can't
     decide."""
 
-    template: str | None = None
+    template: Annotated[str | None, USER_PATH] = None
     """Engine input template (basename relative to ``template_dir`` if not absolute)."""
 
-    slurm_template: str | None = None
+    slurm_template: Annotated[str | None, USER_PATH] = None
     """Per-step SLURM header override (basename in ``template_dir``); falls back to
     ``Config.slurm_template`` when ``None``. A GPU-capable engine with
     ``options.device: cuda`` (or ``options.gpu``) auto-picks ``cuda.slurm.header``
@@ -410,6 +437,24 @@ class StepConfig(BaseModel):
                     f"({e}); quote it in the YAML so it stays a plain string"
                 ) from e
         return v
+
+    @field_validator("options")
+    @classmethod
+    def _read_home_in_option_paths(cls, v: dict[str, Any]) -> dict[str, Any]:
+        """Read a leading ``~`` in each path-valued option (:data:`STEP_OPTION_PATHS`) as home.
+
+        The same reading :data:`USER_PATH` gives a declared field, applied to the keys of
+        this free mapping that name a path, so the loader anchors what the user meant; a
+        refusal names the option, as the row's location stops at the mapping.
+        """
+        read = dict(v)
+        for key in STEP_OPTION_PATHS:
+            if key in read:
+                try:
+                    read[key] = _read_home(read[key])
+                except ValueError as e:
+                    raise ValueError(f"option {key!r}: {e}") from e
+        return read
 
     @field_validator("engine", mode="before")
     @classmethod
@@ -562,7 +607,7 @@ def reject_shell_unsafe(text: str, *, what: str, fix: str) -> None:
     Value                       How it is protected
     ==========================  ===============================================================
     ``template_dir`` /          this rule — interpolated into ``export WORK_DIR=…``; asked
-    ``output_dir`` /            at load as written and as anchored
+    ``output_dir`` /            at load as read and as anchored
     ``scratch_dir``             (:func:`shell_unsafe_after_resolution`), and again at render
                                 on the *resolved* path bash receives
                                 (:mod:`chemrefine.slurm.script`)
@@ -618,10 +663,11 @@ def reject_shell_unsafe(text: str, *, what: str, fix: str) -> None:
 def shell_unsafe_after_resolution(config: Config) -> str | None:
     """Why this config's *resolved* directories cannot be interpolated into bash, or ``None``.
 
-    :func:`reject_shell_unsafe` runs as a field validator, on the paths **as written**. That
-    is not where they end up: :func:`resolve_relative_paths` anchors a relative path to the
-    config file's own directory through ``model_copy``, which by design runs no validators —
-    so every character the rule refuses can be smuggled in through a *parent directory name*
+    :func:`reject_shell_unsafe` runs as a field validator, on the paths **as read** — a
+    leading ``~`` already its home (:data:`USER_PATH`). That is not where they end up:
+    :func:`resolve_relative_paths` anchors a relative path to the config file's own
+    directory through ``model_copy``, which by design runs no validators — so every
+    character the rule refuses can be smuggled in through a *parent directory name*
     instead of through the YAML.
 
     It is a real bypass of the boundary ``docs/internals/security.md`` states: a config
@@ -674,8 +720,8 @@ class Config(BaseModel):
         """Rewrite v1.3.1's keys before validation."""
         return config_legacy.normalize(data) if isinstance(data, dict) else data
 
-    template_dir: Path = Path("./templates")
-    scratch_dir: Path | None = None
+    template_dir: Annotated[Path, USER_PATH] = Path("./templates")
+    scratch_dir: Annotated[Path | None, USER_PATH] = None
     """Fast-storage base for per-calculation working directories.
 
     Leave unset (``None``) and ChemRefine auto-derives a
@@ -689,8 +735,8 @@ class Config(BaseModel):
     the generated SLURM script's exit trap copies the result files back to
     ``output_dir`` when the job ends.
     """
-    output_dir: Path = Path("./outputs")
-    input: Path | None = None
+    output_dir: Annotated[Path, USER_PATH] = Path("./outputs")
+    input: Annotated[Path | None, USER_PATH] = None
     """Initial structure source: ``.xyz`` file, ``.csv`` of SMILES, or directory of xyz."""
 
     charge: int = 0
@@ -701,7 +747,7 @@ class Config(BaseModel):
     unlimited under SLURM (the scheduler places GPUs via ``--gres``) and the
     detected device count locally (``nvidia-smi -L``), so a single-GPU desktop
     serialises CUDA jobs while CPU jobs still parallelise under ``max_cores``."""
-    slurm_template: str = "cpu.slurm.header"
+    slurm_template: Annotated[str, USER_PATH] = "cpu.slurm.header"
     slurm_array: bool = False
     """Submit each step as SLURM job array(s) (``sbatch --array``) instead of
     one job per structure. The scheduler then enforces the ``max_cores``
@@ -747,7 +793,7 @@ class Config(BaseModel):
     (e.g. a workstation with SLURM client tools but no reachable cluster);
     ``slurm`` requires ``sbatch`` and fails fast when it is missing instead of
     silently running locally."""
-    executables: dict[str, str] = Field(default_factory=dict)
+    executables: dict[str, Annotated[str, USER_PATH]] = Field(default_factory=dict)
     """Global program-key → path map for the engines that run an external program. Each
     engine declares the keys it reads (:class:`~chemrefine.engines.api.ExecutablesDeclaring`;
     ``chemrefine engines --json`` lists them), and an entry is set once and shared by every
@@ -870,31 +916,29 @@ class Config(BaseModel):
         """Return the absolute output directory for ``step_cfg``."""
         return self.output_dir / step_cfg.dir_name()
 
-    def with_overrides(self, **updates: object) -> Config:
-        """A copy with the named fields replaced, each validated by its own declared rule.
+    def with_budgets(self, *, max_cores: int | None = None, max_gpus: int | None = None) -> Config:
+        """A copy with the run's budgets replaced; ``None`` keeps the config's own.
 
-        ``model_copy`` runs no validators by design, so without this every entry point that
-        applies an override — the CLI flag, the agent's ``start_run`` — would restate a
-        budget's floor beside this model's own ``ge=1``. Here a value is
-        validated by exactly the constraint its field declares (``max_cores: ge=1``,
-        ``max_gpus: ge=0``), read off the field rather than restated, so there is one
-        floor and one wording, and a bad override is the same :class:`ConfigError` a bad
-        YAML value is. The copy carries the validated value, so a path given as text lands
-        as a ``Path``. A name that is not a field is refused as a programming error, not
-        silently copied in.
+        The budgets are the one thing a run overrides — ``--maxcores`` / ``--maxgpus`` and
+        the agent's ``start_run``; every other field comes from the YAML, through the
+        loader that resolves its paths. ``model_copy`` runs no validators, so each value is
+        held to the rule its field declares (``max_cores: ge=1``, ``max_gpus: ge=0``), read
+        off the field rather than restated: one floor and one wording, and a bad budget is
+        the same :class:`ConfigError` a bad YAML value is. No model-level rule reads either
+        budget, so the field's rule is the whole of it.
         """
         validated: dict[str, object] = {}
-        for name, value in updates.items():
-            field = self.__class__.model_fields.get(name)
-            if field is None:
-                raise ConfigError(f"{name!r} is not a config field")
+        for name, value in (("max_cores", max_cores), ("max_gpus", max_gpus)):
+            if value is None:
+                continue
+            field = type(self).model_fields[name]
             rule: TypeAdapter[Any] = TypeAdapter(Annotated[field.annotation, field])
             try:
                 validated[name] = rule.validate_python(value)
             except ValidationError as e:
                 detail = "; ".join(err["msg"] for err in e.errors())
                 raise ConfigError(f"{name} {value!r}: {detail}") from e
-        return self.model_copy(update=validated)
+        return self.model_copy(update=validated) if validated else self
 
     def find_step(self, key: object) -> StepConfig | None:
         """Return the step matching ``key`` (a number or a name), or ``None``.
@@ -927,7 +971,8 @@ def resolve_relative_paths(cfg: Config, *, base: Path) -> Config:
     ``input`` relative to the **config file's** location, not the process working
     directory, so a config is portable: ``chemrefine run sub/proj/input.yaml``
     from anywhere finds ``sub/proj/templates`` and writes ``sub/proj/outputs``.
-    Absolute paths pass through unchanged.
+    Absolute paths pass through unchanged — a leading ``~`` is one by now, read as the
+    user's home when the model was built (:data:`USER_PATH`).
 
     A step's ``options`` get the same treatment for the keys in
     :data:`STEP_OPTION_PATHS`, and they need it more than the rest: an option's value
@@ -993,7 +1038,8 @@ def load_config(path: str | Path) -> Config:
     Relative ``template_dir`` / ``output_dir`` / ``scratch_dir`` / ``input``
     paths are resolved against the config file's own directory (see
     :func:`resolve_relative_paths`), so the file is portable regardless of the
-    process working directory.
+    process working directory; a leading ``~`` in any path is the user's home
+    (:data:`USER_PATH`).
 
     Raises :class:`ConfigError` for any malformed file, unknown top-level
     field, or per-step validation failure. The exception message is the
@@ -1015,7 +1061,7 @@ def load_config(path: str | Path) -> Config:
     except ValidationError as e:
         raise ConfigError(f"invalid config {p}:\n{e}") from e
     resolved = resolve_relative_paths(cfg, base=p.parent.resolve())
-    # Re-asked after resolution: the field validator saw the paths as written, and a parent
+    # Re-asked after resolution: the field validator saw the paths as read, and a parent
     # directory name can carry every character it refuses. See `shell_unsafe_after_resolution`.
     if problem := shell_unsafe_after_resolution(resolved):
         raise ConfigError(f"invalid config {p}:\n{problem}")

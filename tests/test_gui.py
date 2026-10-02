@@ -801,6 +801,23 @@ def test_load_reads_a_config_back_and_refuses_what_it_cannot(client: Any, tmp_pa
     assert "is not UTF-8 text" in undecodable.get_json()["error"]
 
 
+def test_a_folder_called_tilde_keeps_its_name_through_save_and_load(
+    client: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The path ``/api/save`` and ``/api/load`` report back is the file they touched.
+
+    Kept relative, ``./~/proj/input.yaml`` came back as ``~/proj/input.yaml``, which the page
+    sends on as ``config_path`` and every tool reads as the user's home.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "~" / "proj" / "input.yaml"
+    saved = _post(client, "/api/save", {"path": "./~/proj/input.yaml", "yaml_text": "steps: []\n"})
+    assert saved.get_json()["path"] == str(target)
+    assert target.is_file()
+    assert _get(client, "/api/load?path=./~/proj/input.yaml").get_json()["path"] == str(target)
+
+
 def test_a_turn_that_writes_the_config_says_so_on_both_branches(
     client: Any, chat_env: pytest.MonkeyPatch, tmp_path: Path
 ):
@@ -1238,7 +1255,7 @@ def test_every_path_a_user_types_refuses_a_home_it_cannot_resolve(client: Any):
 
     The browse box and the save box take the same user-typed path, and ``RuntimeError``
     from ``expanduser`` passed their ``OSError`` guards into the re-raising handler. One
-    helper (``agent_tools.expand_user_path``) now answers for all of them.
+    helper (``io.expand_user_path``) now answers for all of them.
     """
     browse = _get(client, "/api/browse?path=~nosuchuser1234/x")
     assert browse.status_code == 400
@@ -2077,6 +2094,30 @@ def test_cli_gui_hands_off_to_launch(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     result = CliRunner().invoke(cli_app, ["gui", str(config), "--port", "8123", "--no-browser"])
     assert result.exit_code == 0
     assert calls == [{"config": config, "port": 8123, "open_browser": False}]
+
+
+def test_cli_gui_hands_launch_the_absolute_path_it_was_given(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """A relative argument is named absolutely before the page holds it as text.
+
+    Handed on as given, ``./~/input.yaml`` reached the page as ``~/input.yaml`` — which every
+    tool reads as the user's home.
+    """
+    from typer.testing import CliRunner
+
+    from chemrefine.cli import app as cli_app
+    from chemrefine.gui import serve
+
+    calls: list[Any] = []
+    monkeypatch.setattr(serve, "launch", lambda config, **_kwargs: calls.append(config))
+    monkeypatch.chdir(tmp_path)
+    config = tmp_path / "~" / "input.yaml"
+    config.parent.mkdir()
+    config.write_text("steps: []\n", encoding="utf-8")
+    result = CliRunner().invoke(cli_app, ["gui", "./~/input.yaml", "--no-browser"])
+    assert result.exit_code == 0
+    assert calls == [config]
 
 
 def test_cli_gui_omitting_port_asks_for_the_personal_default(monkeypatch: pytest.MonkeyPatch):
