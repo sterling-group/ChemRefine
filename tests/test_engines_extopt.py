@@ -22,6 +22,7 @@ import subprocess
 import sys
 from io import BytesIO
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import numpy as np
@@ -35,6 +36,8 @@ from chemrefine.engines._backend_server.base import (
 )
 from chemrefine.engines.orca.extopt import bridge, protocol
 from chemrefine.errors import JobFailureError
+
+_TOKEN = "s3cret"
 
 # ---------------------------------------------------------------------------
 # CalculationData + Base contract
@@ -326,14 +329,14 @@ def test_write_server_url_cleans_up_temp_on_failure(tmp_path: Path):
 
 def test_write_and_read_server_token_round_trip(tmp_path: Path):
     target = tmp_path / "server.token"
-    sidecar.write_server_token(target, "s3cret")
-    assert sidecar.read_server_token(target) == "s3cret"
+    sidecar.write_server_token(target, _TOKEN)
+    assert sidecar.read_server_token(target) == _TOKEN
 
 
 def test_server_token_file_is_owner_readable_only(tmp_path: Path):
     """The token is a secret — 0600, never group/world readable."""
     target = tmp_path / "server.token"
-    sidecar.write_server_token(target, "s3cret")
+    sidecar.write_server_token(target, _TOKEN)
     assert target.stat().st_mode & 0o777 == 0o600
 
 
@@ -524,8 +527,16 @@ class _MockCalculator:
         return -1.0, [[0.0, 0.0, 0.0]] * n
 
 
+def _client(calculator: object) -> Any:
+    """A test client of the server for ``calculator``, carrying the run's bearer token."""
+    client = server.create_app(calculator, token=_TOKEN).test_client()
+    client.environ_base["HTTP_AUTHORIZATION"] = f"Bearer {_TOKEN}"
+    return client
+
+
 def test_create_app_serves_healthz_route():
-    app = server.create_app(_MockCalculator())
+    """``/healthz`` answers without the token: the run block's readiness probe carries none."""
+    app = server.create_app(_MockCalculator(), token=_TOKEN)
     rules = {r.rule for r in app.url_map.iter_rules()}
     assert "/healthz" in rules
     assert "/calculate" in rules
@@ -536,8 +547,7 @@ def test_create_app_serves_healthz_route():
 
 
 def test_create_app_calculate_route_returns_energy_and_gradient():
-    app = server.create_app(_MockCalculator())
-    resp = app.test_client().post(
+    resp = _client(_MockCalculator()).post(
         "/calculate",
         json={
             "atom_types": ["H", "H"],
@@ -585,25 +595,25 @@ def test_calculate_refuses_a_non_finite_answer(answer, caplog):
         def calc(self, data):
             return answer
 
-    app = server.create_app(_Diverged())
+    client = _client(_Diverged())
     with caplog.at_level(logging.ERROR):
-        resp = app.test_client().post("/calculate", json=_CALC_PAYLOAD)
+        resp = client.post("/calculate", json=_CALC_PAYLOAD)
     assert resp.status_code == 500
     assert "non-finite energy or gradient" in caplog.text
     assert "nan" not in resp.get_data(as_text=True)
 
 
 def test_calculate_rejects_requests_without_token():
-    """With a token configured, an unauthenticated POST is 401 — any same-node
-    user can reach the loopback port, so possession of the token is the gate."""
-    app = server.create_app(_MockCalculator(), token="s3cret")
+    """An unauthenticated POST is 401 — any same-node user can reach the loopback port,
+    so possession of the token is the gate."""
+    app = server.create_app(_MockCalculator(), token=_TOKEN)
     resp = app.test_client().post("/calculate", json=_CALC_PAYLOAD)
     assert resp.status_code == 401
     assert resp.get_json() == {"error": "unauthorized"}
 
 
 def test_calculate_rejects_wrong_token():
-    app = server.create_app(_MockCalculator(), token="s3cret")
+    app = server.create_app(_MockCalculator(), token=_TOKEN)
     resp = app.test_client().post(
         "/calculate", json=_CALC_PAYLOAD, headers={"Authorization": "Bearer wrong"}
     )
@@ -617,19 +627,10 @@ def test_calculate_rejects_wrong_token():
     assert exotic.status_code == 401
 
 
-def test_calculate_accepts_bearer_token():
-    app = server.create_app(_MockCalculator(), token="s3cret")
-    resp = app.test_client().post(
-        "/calculate", json=_CALC_PAYLOAD, headers={"Authorization": "Bearer s3cret"}
-    )
-    assert resp.status_code == 200
-    assert resp.get_json()["energy"] == -1.0
-
-
-def test_healthz_stays_open_with_token_configured():
-    """The run_block readiness probe carries no token — healthz must stay open."""
-    app = server.create_app(_MockCalculator(), token="s3cret")
-    assert app.test_client().get("/healthz").status_code == 200
+def test_an_empty_token_is_refused():
+    """An empty secret is no secret: the factory refuses it rather than serve with no gate."""
+    with pytest.raises(ValueError, match="bearer token"):
+        server.create_app(_MockCalculator(), token="")
 
 
 def test_create_app_calculate_route_returns_500_on_calculator_error():
@@ -639,8 +640,7 @@ def test_create_app_calculate_route_returns_500_on_calculator_error():
         def calc(self, data):
             raise RuntimeError("backend exploded")
 
-    app = server.create_app(_Boom())
-    resp = app.test_client().post(
+    resp = _client(_Boom()).post(
         "/calculate",
         json={
             "atom_types": ["H"],
@@ -671,8 +671,7 @@ def test_create_app_logs_the_real_error_with_its_correlation_id(caplog):
             raise RuntimeError("backend exploded")
 
     caplog.set_level(logging.ERROR, logger="chemrefine.engines._backend_server.server")
-    app = server.create_app(_Boom())
-    resp = app.test_client().post(
+    resp = _client(_Boom()).post(
         "/calculate",
         json={
             "atom_types": ["H"],
@@ -693,8 +692,7 @@ def test_create_app_logs_with_correlation_tag(caplog):
     import logging
 
     caplog.set_level(logging.INFO, logger="chemrefine.engines._backend_server.server")
-    app = server.create_app(_MockCalculator())
-    app.test_client().post(
+    _client(_MockCalculator()).post(
         "/calculate",
         json={
             "atom_types": ["H"],
@@ -721,8 +719,7 @@ def test_calculate_route_folds_top_level_tag_into_settings():
             captured["settings"] = dict(data.settings)
             return 0.0, []
 
-    app = server.create_app(_Recorder())
-    app.test_client().post(
+    _client(_Recorder()).post(
         "/calculate",
         json={
             "atom_types": ["H"],
@@ -825,8 +822,7 @@ def test_submit_calculation_round_trip():
     with patch("urllib.request.urlopen") as mock_open:
         mock_open.return_value.__enter__.return_value = BytesIO(expected)
         energy, gradient = bridge.submit_calculation(
-            server_url="127.0.0.1:54321",
-            data=_data(),
+            server_url="127.0.0.1:54321", data=_data(), token=_TOKEN
         )
     assert energy == -1.5
     assert gradient == [[0.0, 0.0, 0.0]]
@@ -845,22 +841,15 @@ def test_submit_calculation_refuses_a_non_finite_answer(body: bytes):
     with patch("urllib.request.urlopen") as mock_open:
         mock_open.return_value.__enter__.return_value = BytesIO(body)
         with pytest.raises(JobFailureError, match="non-finite energy or gradient"):
-            bridge.submit_calculation(server_url="127.0.0.1:54321", data=_data())
+            bridge.submit_calculation(server_url="127.0.0.1:54321", data=_data(), token=_TOKEN)
 
 
 def test_submit_calculation_sends_bearer_token():
     with patch("urllib.request.urlopen") as mock_open:
         mock_open.return_value.__enter__.return_value = BytesIO(b'{"energy": -1.0, "gradient": []}')
-        bridge.submit_calculation(server_url="x", data=_data(), token="s3cret")
+        bridge.submit_calculation(server_url="x", data=_data(), token=_TOKEN)
     request = mock_open.call_args[0][0]
-    assert request.get_header("Authorization") == "Bearer s3cret"
-
-
-def test_submit_calculation_omits_header_without_token():
-    with patch("urllib.request.urlopen") as mock_open:
-        mock_open.return_value.__enter__.return_value = BytesIO(b'{"energy": -1.0, "gradient": []}')
-        bridge.submit_calculation(server_url="x", data=_data())
-    assert mock_open.call_args[0][0].get_header("Authorization") is None
+    assert request.get_header("Authorization") == f"Bearer {_TOKEN}"
 
 
 def test_resolve_server_token_reads_work_dir_sidecar(tmp_path: Path, monkeypatch):
@@ -868,7 +857,7 @@ def test_resolve_server_token_reads_work_dir_sidecar(tmp_path: Path, monkeypatch
     still finds the token without any extra flag."""
     monkeypatch.setenv("WORK_DIR", str(tmp_path))
     sidecar.write_server_token(tmp_path / "server.token", "tok123")
-    args = argparse.Namespace(token_file=None)
+    args = argparse.Namespace(token_file=None, url_file=None)
     assert bridge.resolve_server_token(args) == "tok123"
 
 
@@ -877,14 +866,24 @@ def test_resolve_server_token_explicit_flag_wins(tmp_path: Path, monkeypatch):
     sidecar.write_server_token(tmp_path / "server.token", "wrong")
     explicit = tmp_path / "elsewhere.token"
     sidecar.write_server_token(explicit, "right")
-    args = argparse.Namespace(token_file=str(explicit))
+    args = argparse.Namespace(token_file=str(explicit), url_file=None)
     assert bridge.resolve_server_token(args) == "right"
 
 
-def test_resolve_server_token_missing_file_degrades_to_none(tmp_path: Path, monkeypatch):
+def test_resolve_server_token_refuses_a_missing_file_by_name(tmp_path: Path, monkeypatch):
+    """The server refuses every request without the token, so the bridge never sends one."""
     monkeypatch.setenv("WORK_DIR", str(tmp_path))
-    args = argparse.Namespace(token_file=None)
-    assert bridge.resolve_server_token(args) is None
+    args = argparse.Namespace(token_file=None, url_file=None)
+    with pytest.raises(JobFailureError, match=f"no ExtOpt server token at {tmp_path}"):
+        bridge.resolve_server_token(args)
+
+
+def test_resolve_server_token_reads_the_sidecar_beside_the_url_file(tmp_path: Path):
+    """Where the server wrote it: beside the URL sidecar the bridge was pointed at."""
+    url_file = tmp_path / "elsewhere" / "server.url"
+    sidecar.write_server_token(sidecar.token_file_for(url_file), _TOKEN)
+    args = argparse.Namespace(token_file=None, url_file=str(url_file))
+    assert bridge.resolve_server_token(args) == _TOKEN
 
 
 def test_submit_calculation_http_error_becomes_jobfailure():
@@ -895,7 +894,7 @@ def test_submit_calculation_http_error_becomes_jobfailure():
         patch("urllib.request.urlopen", side_effect=err),
         pytest.raises(JobFailureError, match="HTTP 500"),
     ):
-        bridge.submit_calculation(server_url="x", data=_data())
+        bridge.submit_calculation(server_url="x", data=_data(), token=_TOKEN)
     assert err.closed  # the error response is closed where it is caught
 
 
@@ -906,7 +905,7 @@ def test_submit_calculation_url_error_becomes_jobfailure():
         patch("urllib.request.urlopen", side_effect=URLError("refused")),
         pytest.raises(JobFailureError, match="unreachable"),
     ):
-        bridge.submit_calculation(server_url="x", data=_data())
+        bridge.submit_calculation(server_url="x", data=_data(), token=_TOKEN)
 
 
 def test_submit_calculation_connection_reset_becomes_jobfailure():
@@ -920,7 +919,7 @@ def test_submit_calculation_connection_reset_becomes_jobfailure():
         patch("urllib.request.urlopen", side_effect=ConnectionResetError(104, "reset by peer")),
         pytest.raises(JobFailureError, match="connection to x failed"),
     ):
-        bridge.submit_calculation(server_url="x", data=_data())
+        bridge.submit_calculation(server_url="x", data=_data(), token=_TOKEN)
 
 
 @pytest.mark.parametrize("expiry", [TimeoutError("timed out"), None])
@@ -939,7 +938,7 @@ def test_submit_calculation_timeout_is_named_as_one(expiry: TimeoutError | None)
         patch("urllib.request.urlopen", side_effect=raised),
         pytest.raises(JobFailureError, match="no reply within 42s") as excinfo,
     ):
-        bridge.submit_calculation(server_url="x", data=_data(), timeout=42.0)
+        bridge.submit_calculation(server_url="x", data=_data(), token=_TOKEN, timeout=42.0)
     assert "gradient_timeout_seconds" in str(excinfo.value)
     assert "unreachable" not in str(excinfo.value)
 
@@ -957,28 +956,28 @@ def test_submit_calculation_truncated_response_becomes_jobfailure():
         patch("urllib.request.urlopen", side_effect=IncompleteRead(b"{")),
         pytest.raises(JobFailureError, match="broken response"),
     ):
-        bridge.submit_calculation(server_url="x", data=_data())
+        bridge.submit_calculation(server_url="x", data=_data(), token=_TOKEN)
 
 
 def test_submit_calculation_non_json_response_becomes_jobfailure():
     with patch("urllib.request.urlopen") as mock_open:
         mock_open.return_value.__enter__.return_value = BytesIO(b"<html>")
         with pytest.raises(JobFailureError, match="non-JSON"):
-            bridge.submit_calculation(server_url="x", data=_data())
+            bridge.submit_calculation(server_url="x", data=_data(), token=_TOKEN)
 
 
 def test_submit_calculation_error_field_becomes_jobfailure():
     with patch("urllib.request.urlopen") as mock_open:
         mock_open.return_value.__enter__.return_value = BytesIO(b'{"error": "boom"}')
         with pytest.raises(JobFailureError, match="boom"):
-            bridge.submit_calculation(server_url="x", data=_data())
+            bridge.submit_calculation(server_url="x", data=_data(), token=_TOKEN)
 
 
 def test_submit_calculation_missing_fields_becomes_jobfailure():
     with patch("urllib.request.urlopen") as mock_open:
         mock_open.return_value.__enter__.return_value = BytesIO(b'{"foo": 1}')
         with pytest.raises(JobFailureError, match="missing fields"):
-            bridge.submit_calculation(server_url="x", data=_data())
+            bridge.submit_calculation(server_url="x", data=_data(), token=_TOKEN)
 
 
 def test_submit_calculation_threads_tag_into_payload():
@@ -1000,7 +999,7 @@ def test_submit_calculation_threads_tag_into_payload():
         return _FakeResp()
 
     with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
-        bridge.submit_calculation(server_url="x", data=_data(), tag="abc-123")
+        bridge.submit_calculation(server_url="x", data=_data(), token=_TOKEN, tag="abc-123")
     assert captured["payload"]["tag"] == "abc-123"
 
 
@@ -1044,6 +1043,7 @@ def test_client_main_writes_engrad(tmp_path: Path, monkeypatch):
     inp = _write_extinp(tmp_path)
     url_file = tmp_path / "server.url"
     url_file.write_text("127.0.0.1:1234\n", encoding="utf-8")
+    sidecar.write_server_token(tmp_path / "server.token", _TOKEN)
 
     monkeypatch.setattr(
         "sys.argv",
@@ -1055,6 +1055,7 @@ def test_client_main_writes_engrad(tmp_path: Path, monkeypatch):
         mock_open.return_value.__enter__.return_value = BytesIO(expected)
         rc = bridge.main()
     assert rc == 0
+    assert mock_open.call_args[0][0].get_header("Authorization") == f"Bearer {_TOKEN}"
     engrad = tmp_path / "step1_structure_0.engrad"
     assert engrad.is_file()
     text = engrad.read_text(encoding="utf-8")
@@ -1078,6 +1079,7 @@ def test_client_main_with_no_answer_exits_with_its_reason_and_leaves_no_engrad(
     inp = _write_extinp(tmp_path)
     url_file = tmp_path / "server.url"
     url_file.write_text("127.0.0.1:1234\n", encoding="utf-8")
+    sidecar.write_server_token(tmp_path / "server.token", _TOKEN)
     monkeypatch.setattr(
         "sys.argv",
         ["bridge.py", "--backend", "mlip", "--url-file", str(url_file), str(inp)],
@@ -1092,6 +1094,30 @@ def test_client_main_with_no_answer_exits_with_its_reason_and_leaves_no_engrad(
     assert not list(tmp_path.glob("*.engrad"))
 
 
+def test_client_main_without_a_token_refuses_in_one_line_and_sends_nothing(
+    tmp_path: Path, monkeypatch, capsys
+):
+    """No token beside the URL: ORCA's ``.err`` gets the one refusal line, not a traceback,
+    and no request goes out that the server would only turn away."""
+    inp = _write_extinp(tmp_path)
+    url_file = tmp_path / "server.url"
+    url_file.write_text("127.0.0.1:1234\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "sys.argv",
+        ["bridge.py", "--backend", "mlip", "--url-file", str(url_file), str(inp)],
+    )
+    with patch("urllib.request.urlopen") as mock_open:
+        rc = bridge.main()
+
+    assert rc == JobFailureError.exit_code
+    assert capsys.readouterr().err == (
+        f"JobFailureError: no ExtOpt server token at {tmp_path / 'server.token'}: the server "
+        "writes it beside its URL when it starts and refuses a request without it\n"
+    )
+    mock_open.assert_not_called()
+    assert not list(tmp_path.glob("*.engrad"))
+
+
 def test_client_main_tags_calls_with_extinp_jobname(tmp_path: Path, monkeypatch):
     """Without an explicit ``--tag``, ``main`` derives a per-structure tag from the
     ``.extinp.tmp`` jobname so per-call artefacts land in a per-structure file — and the
@@ -1099,6 +1125,7 @@ def test_client_main_tags_calls_with_extinp_jobname(tmp_path: Path, monkeypatch)
     inp = _write_extinp(tmp_path)  # writes step1_structure_0.extinp.tmp
     url_file = tmp_path / "server.url"
     url_file.write_text("127.0.0.1:1234\n", encoding="utf-8")
+    sidecar.write_server_token(tmp_path / "server.token", _TOKEN)
     argv = ["bridge.py", "--backend", "mlip", "--url-file", str(url_file), "--timeout", "42"]
     monkeypatch.setattr("sys.argv", [*argv, str(inp)])
     captured: dict = {}
@@ -1205,6 +1232,8 @@ def test_server_main_serves_with_fake_waitress(tmp_path: Path, monkeypatch):
     # on 0.0.0.0:8080 and leaves the advertised kernel port dead (the src comment's own
     # warning), which `assert_called_once()` alone cannot see.
     assert create_server_mock.call_args.kwargs["sockets"] == [fake_sock]
+    # One worker thread: the calculator behind the route keeps per-call state.
+    assert create_server_mock.call_args.kwargs["threads"] == 1
     fake_server.run.assert_called_once_with()
     assert url_file.read_text(encoding="utf-8") == "127.0.0.1:54321"
     # main() also writes the per-run bearer token next to the URL sidecar,
@@ -1213,6 +1242,12 @@ def test_server_main_serves_with_fake_waitress(tmp_path: Path, monkeypatch):
     assert token_file.is_file()
     assert len(token_file.read_text(encoding="utf-8").strip()) == 64  # token_hex(32)
     assert token_file.stat().st_mode & 0o777 == 0o600
+    # And the app it serves is gated by that token: the one property a fake server that only
+    # records its sockets cannot see.
+    served = create_server_mock.call_args.args[0].test_client()
+    assert served.post("/calculate", json=_CALC_PAYLOAD).status_code == 401
+    bearer = {"Authorization": f"Bearer {token_file.read_text(encoding='utf-8').strip()}"}
+    assert served.post("/calculate", json=_CALC_PAYLOAD, headers=bearer).status_code != 401
 
 
 def test_server_main_logs_why_it_cannot_start_when_the_server_deps_are_missing(monkeypatch, caplog):

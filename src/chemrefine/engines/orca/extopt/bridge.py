@@ -79,7 +79,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--token-file",
         default=None,
-        help=f"sidecar auth-token file (default: $WORK_DIR/{SERVER_TOKEN_FILENAME})",
+        help=f"sidecar auth-token file (default: {SERVER_TOKEN_FILENAME} beside the URL file)",
     )
     parser.add_argument(
         "--timeout",
@@ -113,8 +113,8 @@ def submit_calculation(
     *,
     server_url: str,
     data: CalculationData,
+    token: str,
     tag: str | None = None,
-    token: str | None = None,
     timeout: float = DEFAULT_TIMEOUT,
 ) -> tuple[float, list[list[float]]]:
     """Send one geometry to the ExtOpt server; return ``(energy, gradient)``.
@@ -141,9 +141,7 @@ def submit_calculation(
         "settings": data.settings,
         "tag": tag,
     }
-    headers = {"Content-Type": "application/json"}
-    if token is not None:
-        headers["Authorization"] = f"Bearer {token}"
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
     request = Request(
         f"http://{server_url}/calculate",
         data=json.dumps(payload).encode("utf-8"),
@@ -219,31 +217,39 @@ def _tag_for(inputfile: str) -> str:
     return Path(inputfile).stem
 
 
+def _url_file(args: argparse.Namespace) -> Path:
+    """The URL sidecar: ``--url-file``, else ``$WORK_DIR/server.url`` (the wrapper exports it)."""
+    import os
+
+    if args.url_file:
+        return Path(args.url_file)
+    return Path(os.environ.get("WORK_DIR", ".")) / SERVER_URL_FILENAME
+
+
 def resolve_server_url(args: argparse.Namespace) -> str:
-    """Determine the server URL from ``--bind`` (explicit) or ``--url-file``."""
+    """Determine the server URL from ``--bind`` (explicit) or the URL sidecar."""
     if args.bind:
         return cast(str, args.bind)
-    import os
-
-    default_dir = Path(os.environ.get("WORK_DIR", "."))
-    url_file = args.url_file or str(default_dir / SERVER_URL_FILENAME)
-    return sidecar.read_server_url(url_file)
+    return sidecar.read_server_url(_url_file(args))
 
 
-def resolve_server_token(args: argparse.Namespace) -> str | None:
-    """Return the per-run bearer token, or ``None`` when no token sidecar exists.
+def resolve_server_token(args: argparse.Namespace) -> str:
+    """Return the per-run bearer token the server wrote beside its URL sidecar.
 
-    Resolution mirrors :func:`resolve_server_url`: an explicit ``--token-file``
-    wins, else ``$WORK_DIR/server.token`` (the wrapper runs with ``WORK_DIR``
-    exported, so the ``--bind`` shortcut still finds the token). A missing
-    file degrades to ``None`` — the header is omitted and the server decides.
+    An explicit ``--token-file`` wins, else the token sidecar beside the URL sidecar
+    (:func:`~chemrefine.engines._backend_server.sidecar.token_file_for`) — where the server
+    writes it, and where the wrapper's ``--bind`` shortcut finds it through ``$WORK_DIR``.
+    The server refuses every request without it, so a missing file is refused here, by
+    name, rather than sent on as a request bound to be turned away.
     """
-    import os
-
-    default_dir = Path(os.environ.get("WORK_DIR", "."))
-    token_file = Path(args.token_file) if args.token_file else default_dir / SERVER_TOKEN_FILENAME
+    token_file = (
+        Path(args.token_file) if args.token_file else sidecar.token_file_for(_url_file(args))
+    )
     if not token_file.is_file():
-        return None
+        raise JobFailureError(
+            f"no ExtOpt server token at {token_file}: the server writes it beside its URL when "
+            f"it starts and refuses a request without it"
+        )
     return sidecar.read_server_token(token_file)
 
 

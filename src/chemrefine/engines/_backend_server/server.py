@@ -9,9 +9,6 @@ the same node never collide on a hardcoded port; the actual
 ``host:port`` is recorded to a sidecar URL file so the wrapper
 script can find it.
 
-The :func:`main` glue (binding waitress, writing the sidecar, blocking
-on requests) is the only path not exercised by tests — it lives on
-the production side of the import boundary.
 """
 
 from __future__ import annotations
@@ -27,7 +24,6 @@ from chemrefine.engines._backend_server.base import (
     DEFAULT_BIND_HOST,
     DEFAULT_BIND_PORT,
     SERVER_LOADING_FILENAME,
-    SERVER_TOKEN_FILENAME,
     SERVER_URL_FILENAME,
     CalculationData,
     ComputeBackend,
@@ -99,18 +95,19 @@ def _require_finite(energy: Any, gradient: Any) -> None:
         )
 
 
-def create_app(calculator: ComputeBackend, *, token: str | None = None) -> Flask:
+def create_app(calculator: ComputeBackend, *, token: str) -> Flask:
     """Build a Flask app with the ``/healthz`` + ``/calculate`` routes.
 
-    ``token`` is the per-run bearer secret: when set, ``/calculate`` rejects
-    any request whose ``Authorization`` header doesn't carry it (``/healthz``
-    stays open for the run_block's readiness curl). ``None`` disables the
-    check — a unit-test affordance; :func:`main` always passes a token.
+    ``token`` is the per-run bearer secret, required and non-empty: ``/calculate``
+    rejects any request whose ``Authorization`` header doesn't carry it (``/healthz``
+    stays open for the run block's readiness probe).
 
     The return annotation resolves under ``TYPE_CHECKING`` only — ``flask``
     is still imported lazily inside, not at module load, because the server
     deps are an optional extra.
     """
+    if not token:
+        raise ValueError("the server needs a bearer token; an empty one is no secret")
     from flask import Flask, jsonify, request
 
     app = Flask("chemrefine-backend-server")
@@ -126,7 +123,7 @@ def create_app(calculator: ComputeBackend, *, token: str | None = None) -> Flask
         # raises TypeError on a str holding a non-ASCII character — so a header with any
         # byte above 0x7F would turn a plain 401 into a 500 and a logged traceback.
         # Encoding both sides answers every input in constant time, whatever its bytes.
-        if token is not None and not secrets.compare_digest(
+        if not secrets.compare_digest(
             request.headers.get("Authorization", "").encode(), f"Bearer {token}".encode()
         ):
             return jsonify({"error": "unauthorized"}), 401
@@ -266,7 +263,7 @@ def main() -> int:
         actual_url = f"{actual_host}:{actual_port}"
 
         sidecar.write_server_url(url_file, actual_url)
-        sidecar.write_server_token(Path(url_file).with_name(SERVER_TOKEN_FILENAME), token)
+        sidecar.write_server_token(sidecar.token_file_for(url_file), token)
     finally:
         loading.unlink(missing_ok=True)
     logger.info("ExtOpt server (%s) bound at %s, sidecar=%s", args.backend, actual_url, url_file)

@@ -89,6 +89,12 @@ def test_the_brand_files_the_page_names_are_served_ungated(client: Any):
         response.close()  # file-backed, like the page itself
 
 
+def test_an_empty_token_is_refused():
+    """An empty secret opens every endpoint, so the factory refuses it outright."""
+    with pytest.raises(ValueError, match="session token"):
+        create_app(token="")
+
+
 def test_every_route_is_behind_the_gate(client: Any):
     """Walk the route table: everything but the page and its assets answers 401 bare.
 
@@ -105,11 +111,6 @@ def test_every_route_is_behind_the_gate(client: Any):
         method = "GET" if "GET" in rule.methods else "POST"
         response = client.open(rule.rule, method=method)
         assert response.status_code == 401, f"{rule.endpoint} answers {response.status_code} bare"
-
-
-def test_a_tokenless_app_is_the_unit_test_affordance(tmp_path: Path):
-    open_app = create_app(token=None).test_client()
-    assert open_app.get("/api/bootstrap").status_code == 200
 
 
 # ---------------------------------------------------------------------------
@@ -2293,12 +2294,15 @@ def test_personal_port_is_stable_and_in_range(monkeypatch: pytest.MonkeyPatch):
     assert serve_mod._personal_port() != first
 
 
-def test_launch_binds_loopback_with_a_fresh_token(monkeypatch: pytest.MonkeyPatch, caplog):
+def test_launch_binds_loopback_with_a_fresh_token(
+    monkeypatch: pytest.MonkeyPatch, caplog, tmp_path: Path
+):
     created: dict[str, Any] = {}
     opened: list[str] = []
     binds: list[tuple[str, int]] = []
 
     def fake_create_server(app: Any, *, sockets: list[Any]) -> _FakeServer:
+        created["app"] = app
         created["sockets"] = sockets
         return _FakeServer(created)
 
@@ -2311,8 +2315,10 @@ def test_launch_binds_loopback_with_a_fresh_token(monkeypatch: pytest.MonkeyPatc
     personal = serve_mod._personal_port()
     monkeypatch.setattr(serve_mod, "socket", _fake_socket_module(binds, effective=personal))
     monkeypatch.setattr(serve_mod, "webbrowser", _fake_browser(opened))
+    config = tmp_path / "input.yaml"
+    config.write_text("steps: []\n", encoding="utf-8")
     with caplog.at_level(logging.INFO, logger="chemrefine.gui.serve"):
-        serve_mod.launch(None, open_browser=True)
+        serve_mod.launch(config, open_browser=True)
 
     assert binds == [("127.0.0.1", personal)]  # the default is the personal port
     assert created["ran"] is True
@@ -2320,6 +2326,13 @@ def test_launch_binds_loopback_with_a_fresh_token(monkeypatch: pytest.MonkeyPatc
     [url] = opened
     assert url.startswith(f"http://127.0.0.1:{personal}/?token=")
     assert "ssh -L" not in caplog.text  # a browser opened; nobody needs the recipe
+    # The app it serves is gated by the token it printed — the security boundary itself.
+    served = created["app"].test_client()
+    assert served.get("/api/bootstrap").status_code == 401
+    token = {"X-ChemRefine-Token": url.split("?token=", 1)[1]}
+    bootstrap = served.get("/api/bootstrap", headers=token)
+    assert bootstrap.status_code == 200
+    assert bootstrap.get_json()["initial"]["path"] == str(config)  # and it opens the config
 
 
 def test_a_quick_restart_keeps_the_personal_port(monkeypatch: pytest.MonkeyPatch):

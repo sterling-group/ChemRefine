@@ -12,7 +12,8 @@ Security posture: this is a local tool. :mod:`chemrefine.gui.serve` binds 127.0.
 only and mints a per-session token; every ``/api/*`` request must carry it in
 ``X-ChemRefine-Token`` (compared with :func:`secrets.compare_digest`). The static
 assets are public — they contain no secrets — and the token travels once in the launch
-URL's fragment-free query string, which the frontend keeps in memory.
+URL's fragment-free query string, which the page moves into the tab's ``sessionStorage``
+before its first request.
 
 Flask is imported at module scope, the way :mod:`chemrefine.mcp_server` imports its SDK
 and for the same reason: the CLI imports *this* module inside ``except ImportError`` to
@@ -354,20 +355,20 @@ class _StructureQuery(_StepQuery):
     mode_index: _CountOrUnset = None
 
 
-def create_app(*, token: str | None, config_path: Path | None = None) -> Flask:
+def create_app(*, token: str, config_path: Path | None = None) -> Flask:
     """Build the GUI app.
 
-    ``token`` is the per-session secret every ``/api/*`` call must present
-    (``None`` disables the check — a unit-test affordance; :func:`.serve.launch`
-    always passes one). ``config_path`` preloads an existing config into the builder.
+    ``token`` is the per-session secret every ``/api/*`` call must present — required and
+    non-empty, so no app is built with the gate open. ``config_path`` preloads an existing
+    config into the builder.
     """
+    if not token:
+        raise ValueError("the GUI needs a session token; an empty one opens every endpoint")
     app = Flask("chemrefine-gui", static_folder=str(STATIC_DIR), static_url_path="/static")
     app.config["PROPAGATE_EXCEPTIONS"] = True
 
     def _authorized() -> bool:
-        """Whether this request carries the session token (or the check is off)."""
-        if token is None:
-            return True
+        """Whether this request carries the session token."""
         presented = request.headers.get("X-ChemRefine-Token", "")
         # Compared as bytes: Werkzeug decodes headers as latin-1, and `compare_digest`
         # raises TypeError on a str holding a non-ASCII character — so a header with any
