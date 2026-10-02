@@ -71,7 +71,6 @@ other step, and any other key, they are dropped with a warning:
 | `calc_type: random`             | `target: random`       | sampling along random modes |
 | `displacement_vector`           | `displacement_value`   | ± displacement magnitude (Å) |
 | `num_random_displacements`      | `num_random_displacements` | how many modes `random` displaces along |
-| `num_random_displacements`      | `num_random_displacements` | unchanged |
 
 > v2 adds a third target, `target: minimum` (remove **all** imaginary modes → a true minimum), which
 > v1.3.1 did not have. A bare `normal_mode_sampling: true` maps to `target: ts` to match v1.3.1's default.
