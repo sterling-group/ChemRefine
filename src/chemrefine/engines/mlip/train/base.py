@@ -426,23 +426,33 @@ class TrainerBase(ABC):
                 f"the step's."
             )
 
-    def write_dataset(self, plan: TrainingPlan, split: DatasetSplit) -> DatasetFiles:
-        """Refuse, warn, and write each non-empty split through :meth:`write_split`.
+    def require_validation(self, has_validation: bool) -> None:
+        """Refuse a fit this library cannot run: one with no validation set, when it needs one.
 
-        The refusal fires only when a declaration says the library cannot take the data —
-        :attr:`needs_validation` without a validation split — and says why in that library's
-        own words (:attr:`validation_reason`). The warning fires for non-neutral data only
-        when the dataset format carries no charge/spin channel — silence is the only wrong
-        answer, and the declaration decides it, not per-library prose. An empty split gets
-        no file at all: ase refuses a zero-byte extxyz, so naming one would turn "no test
-        set" into a crash. A periodic-only library's structures arrive already boxed
-        (:meth:`~chemrefine.engines.mlip.registry.MlipLibrary.boxed`, applied by the step).
+        Driven by the declaration (:attr:`needs_validation`), and worded in the library's own
+        terms (:attr:`validation_reason`). The run asks it before any step runs, of the step's
+        ``valid_fraction`` — :func:`split_structures` floors any non-zero fraction at one
+        structure, so only ``0`` leaves none — and :meth:`write_dataset` asks it again of the
+        split it writes.
         """
-        if self.needs_validation and not split.valid:
+        if self.needs_validation and not has_validation:
             raise ConfigError(
                 f"{self.label} training needs a validation set — "
                 f"{self.validation_reason}. Raise `valid_fraction` above 0."
             )
+
+    def write_dataset(self, plan: TrainingPlan, split: DatasetSplit) -> DatasetFiles:
+        """Refuse, warn, and write each non-empty split through :meth:`write_split`.
+
+        The refusal is :meth:`require_validation`, asked of the split itself. The warning
+        fires for non-neutral data only when the dataset format carries no charge/spin
+        channel — silence is the only wrong answer, and the declaration decides it, not
+        per-library prose. An empty split gets no file at all: ase refuses a zero-byte
+        extxyz, so naming one would turn "no test set" into a crash. A periodic-only
+        library's structures arrive already boxed
+        (:meth:`~chemrefine.engines.mlip.registry.MlipLibrary.boxed`, applied by the step).
+        """
+        self.require_validation(bool(split.valid))
         if not self.charge_spin_aware and not plan.is_neutral_singlet:
             logger.warning(
                 "%s has no charge/spin channel: charge %d, multiplicity %d will be "

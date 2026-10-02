@@ -623,6 +623,17 @@ _BUNDLED: tuple[Mutation, ...] = (
         breaks="a step whose engine cannot express a path with whitespace is refused only when "
         "it writes its first input, after every step ahead of it has run and been paid for",
     ),
+    Mutation(
+        id="no-validation-set-refused-at-run-start",
+        path="src/chemrefine/engines/mlip/train/engine.py",
+        old="            trainer_for(opts.task_name)()"
+        ".require_validation(opts.valid_fraction > 0)\n",
+        new="            pass\n",
+        tests="tests/test_engines_mlip_train_engine.py",
+        breaks="a training step whose library needs a validation set is refused for "
+        "`valid_fraction: 0` only when it writes its dataset, after the labelling steps ahead "
+        "of it have run and been paid for",
+    ),
 )
 
 #: What an engine files beside its contract fixture — ``tests/data/engines/<name>/`` — to

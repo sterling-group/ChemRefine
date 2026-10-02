@@ -24,6 +24,7 @@ from chemrefine.engines.api import (
     ProvisionableEngine,
     get_engine,
 )
+from chemrefine.engines.mlip.registry import registered_trainers, trainer_for
 from chemrefine.engines.mlip.train.engine import SIDECAR_NAME, MlipTrainEngine
 from chemrefine.errors import ConfigError
 from chemrefine.state import JobBatch, PipelineState, StepContext, StepInputs, Structure
@@ -164,6 +165,26 @@ def test_a_negative_seed_is_refused_before_any_label_is_computed(tmp_path: Path)
     with pytest.raises(ConfigError, match="seed"):
         preflight_steps([step_cfg], charge=0, multiplicity=1)
     assert MlipTrainEngine().options_cls.from_raw({**_ctx(tmp_path).step_cfg.options, "seed": 0})
+
+
+@pytest.mark.parametrize("task", sorted(registered_trainers()))
+def test_a_fit_with_no_validation_set_is_refused_at_the_preflight_walk(task: str):
+    """``valid_fraction: 0`` decides it — any other fraction keeps at least one structure.
+
+    Asked only where the dataset is written, a library that cannot train without a
+    validation set was refused after every labelling step upstream had run. The invariant
+    is the *iff*: a library that needs one refuses at t=0, and one that does not trains on.
+    """
+    from chemrefine.engines.api import preflight_steps
+
+    options = {"task_name": task, "device": "cpu", "valid_fraction": 0}
+    step_cfg = StepConfig(step=4, engine="mlip-train", options=options)
+    trainer = trainer_for(task)()
+    if trainer.needs_validation:
+        with pytest.raises(ConfigError, match=f"{trainer.label} training needs a validation set"):
+            preflight_steps([step_cfg], charge=0, multiplicity=1)
+    else:
+        preflight_steps([step_cfg], charge=0, multiplicity=1)
 
 
 def test_a_typoed_knob_fails_the_step_rather_than_being_ignored(tmp_path: Path):

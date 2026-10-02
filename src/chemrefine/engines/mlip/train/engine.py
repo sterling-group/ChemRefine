@@ -299,6 +299,9 @@ class MlipTrainEngine(MlipBackend):
                 f"{step_cfg.on_failure}`, which has nothing to act on — a training step "
                 f"has no per-structure failures to skip or backfill. Remove it."
             )
+        # A task no library trains is the backend requirement's to refuse, by its own row.
+        if opts.task_name in registered_trainers():
+            trainer_for(opts.task_name)().require_validation(opts.valid_fraction > 0)
 
     def check_template(self, ctx: StepContext, template: ids.StepTemplate) -> None:
         """Refuse a template that cannot hand the trainer what this step decided.

@@ -466,7 +466,9 @@ for those and the full map.
   resuming re-runs the training and replaces the model on disk. v1.3.1 counted a
   training step done once its job ended, so `--skip` passed over a failed training
   and an edited template alike. The preflight refuses a training step whose backend
-  can run but not train — before any step submits — and names which backends can.
+  can run but not train — before any step submits — and names which backends can, and
+  one whose library cannot train without a validation set when its `valid_fraction`
+  is `0`.
 
 - **`task_name` is now the only key that selects an MLIP backend.** `model_path` says
   where the named library's weights come from and selects nothing; every library's builder
