@@ -605,6 +605,15 @@ _BUNDLED: tuple[Mutation, ...] = (
         "as read by a conversion that never ran, and filters with a window 627 times narrower "
         "than its author meant",
     ),
+    Mutation(
+        id="cores-left-out-of-the-key",
+        path="src/chemrefine/engines/_options.py",
+        old="    cores: Annotated[int, UNKEYED] = Field(1, ge=1)\n",
+        new="    cores: int = Field(1, ge=1)\n",
+        tests="tests/test_step.py",
+        breaks="raising a step's core count to finish faster recomputes every row it already "
+        "finished on `resume`, and `rebuild-cache` refuses the tree as another configuration's",
+    ),
 )
 
 #: What an engine files beside its contract fixture — ``tests/data/engines/<name>/`` — to

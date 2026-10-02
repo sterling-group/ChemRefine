@@ -140,9 +140,9 @@ def test_an_undeclared_option_moves_no_key():
     assert plain.row_keys == junk.row_keys
 
 
-def test_a_declared_option_moves_the_row_key():
-    a = _key("0", engine_options={"cores": 4})
-    b = _key("0", engine_options={"cores": 8})
+def test_a_keyed_option_moves_the_row_key():
+    a = _key("0", engine_options={"device": "cpu"})
+    b = _key("0", engine_options={"device": "cuda"})
     assert a.row_keys != b.row_keys
     assert a.fingerprint != b.fingerprint
 

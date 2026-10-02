@@ -400,7 +400,8 @@ for those and the full map.
 - **The cache identity is per-structure, and `resume` is incremental.** A step's key
   is layered the way its work is: a **row key** per structure (engine, template bytes,
   effective charge/multiplicity, the options as the engine's declared model reads
-  them, option-file digests, the parent's content), a **resolution key** for what NMS
+  them — less those that choose where or how a job runs, such as its cores or a
+  timeout — option-file digests, the parent's content), a **resolution key** for what NMS
   reads (criterion and search), and a step fingerprint composed from the ordered rows.
   The manifest records that identity per row, and `resume` adopts every row whose
   stored key matches — re-parsed from disk, never resubmitted — computing only the

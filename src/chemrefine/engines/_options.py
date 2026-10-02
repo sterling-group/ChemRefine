@@ -10,7 +10,7 @@ adds its own fields.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Annotated, Any, ClassVar, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
 
@@ -32,18 +32,27 @@ def refuse_template_knobs(extra: Mapping[str, Any]) -> None:
         raise ValueError("`extra` is for a stepN.py template; this engine renders none")
 
 
+class Unkeyed:
+    """Marks an options field the cache key leaves out: ``Annotated[int, UNKEYED]``.
+
+    For a field that chooses where or how a job runs rather than what it computes — the
+    interpreter, the core count, how long to wait on one call. A key that held one would tie
+    a finished tree to the machine and the budget it ran with: raising the core count, or
+    the timeout a failure named, would recompute every finished row on ``resume``, and
+    ``rebuild-cache`` would refuse the tree as another configuration's
+    (:func:`chemrefine.step.derive_step_key`). Declared on the field, so a model that adds
+    such a knob marks it where it declares it.
+    """
+
+
+UNKEYED = Unkeyed()
+"""The :class:`Unkeyed` marker an options field carries (:meth:`EngineOptions.unkeyed`)."""
+
+
 class EngineOptions(BaseModel):
     """Base for an engine's validated ``step.options`` model."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
-
-    unkeyed: ClassVar[frozenset[str]] = frozenset({"backend_python"})
-    """Fields that choose where a job runs, not what it computes — left out of the cache key.
-
-    A key that held one would tie a finished tree to the machine it ran on: the same
-    config pointing at its interpreter somewhere else recomputes every step on ``resume``,
-    and ``rebuild-cache`` refuses the tree as another configuration's
-    (:func:`chemrefine.step.derive_step_key`)."""
 
     device: Literal["cuda", "cpu"] = "cpu"
     """Compute device for this engine (``cuda`` ⇒ GPU, ``cpu`` ⇒ CPU).
@@ -56,16 +65,21 @@ class EngineOptions(BaseModel):
     default schedules a CPU job whose script then asks for a device it wasn't given.
     """
 
-    backend_python: Annotated[str | None, USER_PATH] = None
+    backend_python: Annotated[str | None, USER_PATH, UNKEYED] = None
     """Explicit Python interpreter for this step's compute backend (escape hatch).
 
     Normally unset: the provisioner (:mod:`chemrefine.engines._provision`) resolves the
     backend's managed env by *name* — no paths in the YAML. Set this only to force a
     specific interpreter (e.g. a hand-built env the provisioner doesn't manage)."""
 
-    cores: int = Field(1, ge=1)
+    cores: Annotated[int, UNKEYED] = Field(1, ge=1)
     """Per-structure core budget. Lives here because it is what the scheduler asks
     every job engine for (``JobEngine.pal``), not something one backend invented."""
+
+    @classmethod
+    def unkeyed(cls) -> set[str]:
+        """The fields marked :data:`UNKEYED`, which the cache key leaves out."""
+        return {name for name, field in cls.model_fields.items() if UNKEYED in field.metadata}
 
     @property
     def gpu_demand(self) -> int:

@@ -9,9 +9,11 @@ the YAML is where the number natively lives.
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from pydantic import Field
 
-from chemrefine.engines._options import EngineOptions
+from chemrefine.engines._options import UNKEYED, EngineOptions
 
 
 class QchemOptions(EngineOptions):
@@ -21,7 +23,7 @@ class QchemOptions(EngineOptions):
     declared here are the MPI opt-in and the scratch save.
     """
 
-    nprocs: int | None = Field(None, ge=1)
+    nprocs: Annotated[int | None, UNKEYED] = Field(None, ge=1)
     """MPI ranks — **opt-in**, and deliberately so.
 
     Set, the job runs ``qchem -mpi -np {nprocs}`` (plus ``-nt {cores}`` when ``cores`` > 1)

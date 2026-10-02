@@ -853,27 +853,70 @@ def test_a_model_path_is_keyed_by_basename_so_a_relocated_tree_derives_the_same_
     assert renamed.row_keys != here.row_keys, "two same-byte files stay distinguishable"
 
 
-def test_the_interpreter_a_step_names_is_not_part_of_its_key(tmp_path: Path):
-    """Where a job's backend runs is not what it computes, so it moves no key.
+#: Options each engine below needs to validate, so a test varies one knob over a valid step.
+_BASE_OPTIONS: dict[str, dict[str, object]] = {
+    "mlip": {"task_name": "mace_off"},
+    "mlip-extopt": {"task_name": "mace_off"},
+    "mlip-train": {"task_name": "mace_off"},
+    "pyscf-extopt": {"method": "dft", "xc": "b3lyp", "basis": "def2-svp"},
+    "qchem": {},
+}
 
-    ``backend_python`` rode into the row key, so a tree whose steps named their
-    interpreter recomputed on ``resume`` wherever the interpreter lived somewhere else,
-    and ``rebuild-cache`` refused it as another configuration's. A knob that changes the
-    computation still moves the key.
-    """
+
+def _row_keys(root: Path, engine_name: str, **options: object) -> tuple[str, ...]:
+    """The row keys one seed derives under ``engine_name`` with ``options``."""
     from chemrefine.step import derive_step_key
 
-    def key_for(root: Path, **options: object):
-        cfg = _config(root, engine="mlip", options={"task_name": "mace_off", **options})
-        engine = get_engine("mlip")
-        ctx = build_context(cfg, cfg.steps[0], _seed_state(["0"]), engine)
-        return derive_step_key(ctx, cfg.steps[0], engine)
+    cfg = _config(root, engine=engine_name, options={**_BASE_OPTIONS[engine_name], **options})
+    engine = get_engine(engine_name)
+    ctx = build_context(cfg, cfg.steps[0], _seed_state(["0"]), engine)
+    return derive_step_key(ctx, cfg.steps[0], engine).row_keys
 
-    managed = key_for(tmp_path / "managed")
-    cluster = key_for(tmp_path / "cluster", backend_python="/apps/envs/mace/bin/python")
-    laptop = key_for(tmp_path / "laptop", backend_python="/home/me/envs/mace/bin/python3.12")
-    assert managed.row_keys == cluster.row_keys == laptop.row_keys
-    assert key_for(tmp_path / "gpu", device="cuda").row_keys != managed.row_keys
+
+@pytest.mark.parametrize(
+    ("engine_name", "knob", "value"),
+    [
+        ("mlip", "backend_python", "/apps/envs/mace/bin/python"),
+        ("mlip", "cores", 8),
+        ("mlip-extopt", "gradient_timeout_seconds", 3600.0),
+        ("qchem", "nprocs", 4),
+    ],
+)
+def test_where_and_how_a_job_runs_is_not_part_of_its_key(
+    tmp_path: Path, engine_name: str, knob: str, value: object
+):
+    """The interpreter, the cores, a timeout: none is what a job computes, so none moves a key.
+
+    Keyed, raising the core count to finish faster — or the timeout a failure named, the
+    one change its message asks for — recomputed every finished row on ``resume``, and
+    ``rebuild-cache`` refused the tree as another configuration's.
+    """
+    assert _row_keys(tmp_path / "a", engine_name, **{knob: value}) == _row_keys(
+        tmp_path / "b", engine_name
+    )
+
+
+@pytest.mark.parametrize(
+    ("engine_name", "knob", "value"),
+    [
+        ("mlip", "device", "cuda"),
+        ("mlip-train", "gpus", 2),
+        ("pyscf-extopt", "tensor_folder", "density"),
+        ("qchem", "save", True),
+    ],
+)
+def test_what_a_job_computes_or_keeps_still_moves_its_key(
+    tmp_path: Path, engine_name: str, knob: str, value: object
+):
+    """What a job computes, or keeps, is its key's business, however near a scheduler it sits.
+
+    A GPU computes other numbers; a training run over more GPUs splits each batch another way
+    and fits another model; a tensor folder is where a row's own files land, and a save is
+    whether they come home at all.
+    """
+    assert _row_keys(tmp_path / "a", engine_name, **{knob: value}) != _row_keys(
+        tmp_path / "b", engine_name
+    )
 
 
 def test_run_step_nms_branch_routes_through_coordinator(tmp_path: Path, monkeypatch):

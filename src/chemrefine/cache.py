@@ -26,8 +26,9 @@ coordinates inline; those are the ones a person opens, and they are a
 few KB each.
 The cache is keyed at the grain the work has (:class:`StepKey`). Each
 parent structure's job carries a *row key* (:func:`row_key`): everything
-that reaches that job — engine, operation, the options as the engine's
-declared model reads them, the effective charge and multiplicity, the
+that decides what that job computes — engine, operation, the options as the
+engine's declared model reads them (less those that choose only where or how
+it runs), the effective charge and multiplicity, the
 template's and any named file's bytes — plus the parent's own content
 (:func:`structure_digest`: symbols, coordinates, energy). An NMS step
 adds a *resolution key* (:func:`resolution_keys`) that touches no row,

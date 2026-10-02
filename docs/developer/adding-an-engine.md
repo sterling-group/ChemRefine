@@ -91,7 +91,10 @@ Add a Pydantic model in `engines/<name>/options.py` subclassing
 `backend_python` fields + frozen / `extra="forbid"` config + `from_raw`); add your own
 fields and read it in the primitives. This
 keeps `step.options` a free dict at the orchestrator level while giving the engine typed
-validation.
+validation. Every field is part of the cache key, so changing it re-runs the rows it reaches
+— except a field that chooses where or how the job runs rather than what it computes (a rank
+count, a timeout), which you declare `Annotated[..., UNKEYED]` so raising it over a finished
+step stays a cache hit; the base's `cores` and `backend_python` already are.
 
 ## Wire registration
 

@@ -18,14 +18,14 @@ model with ``extra="forbid"`` handed the whole of it refused them as strangers.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import ClassVar
+from typing import Annotated, ClassVar
 
 from pydantic import Field
 
 from chemrefine.config import StepConfig
 from chemrefine.engines import _provision
 from chemrefine.engines._backend_server.base import SERVER_URL_FILENAME, ComputeBackend
-from chemrefine.engines._options import EngineOptions
+from chemrefine.engines._options import UNKEYED, EngineOptions
 from chemrefine.engines.orca import input as orca_input
 from chemrefine.engines.orca import inspect
 from chemrefine.engines.orca.engine import OrcaEngine
@@ -45,7 +45,7 @@ class ExtOptOptions(EngineOptions):
     it and read the knob without a cast.
     """
 
-    gradient_timeout_seconds: float = Field(600.0, gt=0, allow_inf_nan=False)
+    gradient_timeout_seconds: Annotated[float, UNKEYED] = Field(600.0, gt=0, allow_inf_nan=False)
     """How long the bridge waits on one gradient before it gives the geometry up.
 
     A bound on a single ``/calculate`` call, not on the optimisation. The default is

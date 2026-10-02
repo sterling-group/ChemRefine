@@ -72,8 +72,8 @@ The cache identity is layered the way a step's work is layered:
   resolution key. An exact match serves the whole step from `step.json`; every finer
   question is asked of the rows.
 
-If the seed file, a template's contents, an option a job can read, or any upstream
-result changes, the affected **rows** change — and `resume` recomputes exactly those
+If the seed file, a template's contents, an option that decides what a job computes, or
+any upstream result changes, the affected **rows** change — and `resume` recomputes exactly those
 rows, at that step and at every step downstream, adopting the rest from disk
 (see below).
 
@@ -81,7 +81,9 @@ The `sample:` filter is deliberately **excluded** from every key: the cache stor
 the *pre-filter* results and filtering re-runs on every load, so tuning a filter is
 a cache hit (re-filter), not a re-computation. `on_failure` is likewise excluded —
 it has its own repair path. The `executables` map is a machine-local fact and is not
-part of a step's identity.
+part of a step's identity. Nor is an option that chooses where or how a job runs rather
+than what it computes — the interpreter, the core count, how long to wait on one call —
+so raising one over a finished step leaves it a cache hit.
 
 ## Auto-retry on non-convergence
 

@@ -389,13 +389,14 @@ def derive_step_key(
     file's *bytes* are pinned by :func:`chemrefine.cache.option_file_digests` under the
     same option name, so the basename is all the key needs from the string — enough to
     tell two same-byte files with different names apart, and nothing that names a machine.
-    A field that chooses where the job runs rather than what it computes
-    (:attr:`~chemrefine.engines._options.EngineOptions.unkeyed`) is not keyed at all.
+    A field that chooses where or how the job runs rather than what it computes — marked
+    :data:`~chemrefine.engines._options.UNKEYED` where its model declares it — is not keyed
+    at all.
     """
     engine_options: Mapping[str, object] = {}
     if isinstance(engine, OptionsDeclaring):
         model = engine.options_cls.from_raw_lenient(step_cfg.options)
-        dumped = model.model_dump(mode="json", exclude=set(model.unkeyed))
+        dumped = model.model_dump(mode="json", exclude=model.unkeyed())
         engine_options = {
             key: (
                 Path(value).name if key in STEP_OPTION_PATHS and isinstance(value, str) else value
