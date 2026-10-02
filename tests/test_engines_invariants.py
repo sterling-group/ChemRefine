@@ -39,6 +39,7 @@ from chemrefine.engines.api import (
     OperationsDeclaring,
     OptionsDeclaring,
     PreflightChecking,
+    ProvisionableEngine,
     StructureArtifacts,
     TemplateChecking,
     TemplateDriven,
@@ -151,10 +152,13 @@ def _assemble(engine_name: str, tmp_path: Path, *, array: bool = False) -> tuple
     """
     engine = get_engine(engine_name)
     ctx = _ctx(tmp_path, engine_name, {})
-    # Point ORCA at a binary that cannot exist, so the run block dies on its first real
-    # command. `orca` on PATH is not safe to leave resolvable: desktop Linux ships
-    # /usr/bin/orca, the GNOME screen reader (the same trap scripts/release-check.sh guards).
-    object.__setattr__(ctx, "executables", {"orca": str(tmp_path / "no-such-orca")})
+    # Point every binary the engine declares at a path that cannot exist, so the run block
+    # dies on its first real command rather than running whatever sits on PATH: desktop
+    # Linux ships /usr/bin/orca, the GNOME screen reader (the same trap
+    # scripts/release-check.sh guards), and a `qchem` there is somebody's real install.
+    keys = engine.executable_keys if isinstance(engine, ExecutablesDeclaring) else ()
+    nowhere = {key: str(tmp_path / f"no-such-{key}") for key in keys}
+    object.__setattr__(ctx, "executables", nowhere)
     header = tmp_path / "cpu.slurm.header"
     header.write_text("#!/bin/bash\n#SBATCH --partition=test\n", encoding="utf-8")
     out_dir = tmp_path / "out"
@@ -470,16 +474,22 @@ def test_the_threads_a_run_block_exports_live_inside_one_task(engine_name: str, 
 
 @pytest.mark.parametrize("engine_name", _job_executables())
 def test_run_block_survives_paths_with_spaces(engine_name: str, tmp_path: Path):
-    """Every engine's generated bash must parse, with a space in the executable path.
+    """Every path the config hands an engine reaches its bash whole, spaces and all.
 
-    A config-supplied path is the one value that reaches generated bash, and an
-    unquoted one with a space in it silently becomes two words. Asserted over every
-    engine so a new `run_block` -- or an override of an existing one -- cannot
-    reintroduce it for its own path only.
+    A config-supplied path is the one kind of value that reaches generated bash, and an
+    unquoted one with a space in it silently becomes two words. The paths are the engine's
+    own declarations — each ``executables`` key it reads, and the interpreter a step can
+    name for an engine that provisions one — so a new `run_block`, or an override of an
+    existing one, cannot reintroduce it for any path of its own.
     """
     engine = get_engine(engine_name)
-    ctx = _ctx(tmp_path, engine_name, {})
-    object.__setattr__(ctx, "executables", {"orca": "/opt/my orca/orca"})
+    keys = engine.executable_keys if isinstance(engine, ExecutablesDeclaring) else ()
+    spaced = {key: f"/opt/my {key}/{key}" for key in keys}
+    options: dict[str, object] = {}
+    if isinstance(engine, ProvisionableEngine):
+        options["backend_python"] = spaced["backend_python"] = "/opt/my env/bin/python"
+    ctx = _ctx(tmp_path, engine_name, options)
+    object.__setattr__(ctx, "executables", {key: spaced[key] for key in keys})
 
     block = engine.run_block(ctx, Path("step1_0.inp"), Path("step1_0.out")).body
 
@@ -487,10 +497,15 @@ def test_run_block_survives_paths_with_spaces(engine_name: str, tmp_path: Path):
     subprocess.run(
         ["bash", "-n"], input=block, text=True, check=True, capture_output=True, timeout=60
     )
-    for line in block.splitlines():
-        if "my orca" in line:
-            command = shlex.split(line.split(">")[0])
-            assert "/opt/my orca/orca" in command, f"executable was split by the shell: {command}"
+    assert spaced, f"{engine_name} hands its bash no path the config names"
+    for path in spaced.values():
+        lines = [line for line in block.splitlines() if path in line]
+        assert lines, f"{path} never reaches {engine_name}'s run block"
+        for line in lines:
+            words = shlex.split(line.split(">")[0])
+            assert any(w == path or w.endswith(f"={path}") for w in words), (
+                f"{path} was split by the shell: {words}"
+            )
 
 
 # ---------------------------------------------------------------------------

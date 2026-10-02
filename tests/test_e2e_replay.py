@@ -1333,10 +1333,15 @@ def _pyscf_extopt(run: Replayed) -> None:
 
 
 def _fairchem_sp(run: Replayed) -> None:
-    """UMA's omol head on water: about -76.4 Eh, a number a quantum chemist recognises."""
+    """UMA's omol head on water: about -76.4 Eh, a number a quantum chemist recognises.
+
+    Held to the default backend's own energy, bitwise repeatable, in the window the direct
+    MLIP engine's checks use — a window an Eh wide was one ORB's omol head and MACE-OFF reach
+    too, so a default that dispatched to either passed it.
+    """
     (structure,) = run.outcomes[0].state.structures
     assert structure.energy_hartree is not None
-    assert -77.0 < structure.energy_hartree < -76.0, structure.energy_hartree
+    assert abs(structure.energy_hartree - -76.43356970) < 1e-5, structure.energy_hartree
 
 
 CHECKS: dict[str, Callable[[Replayed], None]] = {
@@ -1747,6 +1752,31 @@ def test_a_job_that_finishes_as_another_starts_does_not_overlap_it(tmp_path: Pat
     def job(job_id: str, start: str, finish: str | None) -> RunlogJob:
         return RunlogJob("h", job_id, start, finish, 2, Path("/s"), Path("/o"))
 
-    assert_throttled([job("1", "t1", "t2"), job("2", "t2", "t3")], max_cores=2)
+    t1, t2, t3 = (f"2026-09-28T00:{minute}:00+02:00" for minute in ("00", "10", "20"))
+    assert_throttled([job("1", t1, t2), job("2", t2, t3)], max_cores=2)
     with pytest.raises(AssertionError):
-        assert_throttled([job("1", "t1", None), job("2", "t2", "t3")], max_cores=2)
+        assert_throttled([job("1", t1, None), job("2", t2, t3)], max_cores=2)
+
+
+def test_runlog_times_are_ordered_as_instants_across_a_clock_change() -> None:
+    """``date -Iseconds`` writes the local offset, so a time's text is no order.
+
+    The October change sets the clock back an hour: a job from 02:50+02:00 to 02:30+01:00
+    ran forty minutes, and one from 02:10+01:00 overlapped twenty of them. Ordered as text,
+    the first job's finish sorts before its own start, and the overlap disappears.
+    """
+    from replay import RunlogJob, assert_throttled
+
+    def job(job_id: str, start: str, finish: str) -> RunlogJob:
+        return RunlogJob(
+            "h", job_id, f"2026-10-25T{start}", f"2026-10-25T{finish}", 2, Path("/s"), Path("/o")
+        )
+
+    with pytest.raises(AssertionError, match="4 cores ran"):
+        assert_throttled(
+            [
+                job("1", "02:50:00+02:00", "02:30:00+01:00"),
+                job("2", "02:10:00+01:00", "02:40:00+01:00"),
+            ],
+            max_cores=2,
+        )

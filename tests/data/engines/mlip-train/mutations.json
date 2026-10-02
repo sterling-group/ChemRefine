@@ -6,5 +6,13 @@
     "new": "        forces=-np.asarray(struct.forces_ev_per_a, dtype=float),",
     "tests": "tests/test_engines_mlip_trainers.py",
     "breaks": "every fine-tune is fitted to the negated forces, and the trained model it hands on is wrong with nothing said in any log"
+  },
+  {
+    "id": "sha1-asked-for-a-fingerprint",
+    "path": "src/chemrefine/engines/mlip/train/base.py",
+    "old": "    return hashlib.sha1(usedforsecurity=False)\n",
+    "new": "    return hashlib.sha1()\n",
+    "tests": "tests/test_engines_mlip_training.py",
+    "breaks": "on a host whose crypto policy allows SHA-1 only as a fingerprint, a finished training step fails while recording the digest of the model it produced"
   }
 ]

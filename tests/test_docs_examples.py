@@ -71,11 +71,34 @@ def test_the_documented_config_validates(block: str):
 _FIRST_RUN = _REPO_ROOT / "examples" / "first_run"
 
 
-@pytest.mark.parametrize(
-    ("relative", "lang"),
-    [("input.yaml", "yaml"), ("templates/screen.inp", ""), ("templates/dft_opt.inp", "")],
-)
-def test_the_readme_quickstart_is_the_shipped_example(relative: str, lang: str):
+def _first_run_files() -> list[str]:
+    """What a reader pastes: the config, each template its steps read, each header they run under.
+
+    Read off the loaded config as the run reads it, not listed by hand: a file the run needs
+    and the README leaves out is the paste path's failure, so a hand-kept list was the one
+    place it could hide — and not off the directory either, where the output of running
+    the example in place would become a case. The seed is the reader's own.
+    """
+    from chemrefine.config import load_config
+    from chemrefine.engines.api import JobExecutable, get_engine
+    from chemrefine.state import PipelineState
+    from chemrefine.step import build_context
+    from chemrefine.validate import effective_header
+
+    config = load_config(_FIRST_RUN / "input.yaml")
+    read = {_FIRST_RUN / "input.yaml"}
+    for step in config.steps:
+        engine = get_engine(step.engine)
+        template = build_context(config, step, PipelineState(), engine).template
+        if template is not None:
+            read.add(template)
+        if isinstance(engine, JobExecutable):
+            read.add(config.template_dir / effective_header(config, step, engine))
+    return sorted(str(path.resolve().relative_to(_FIRST_RUN.resolve())) for path in read)
+
+
+@pytest.mark.parametrize("relative", _first_run_files())
+def test_the_readme_quickstart_is_the_shipped_example(relative: str):
     """The README's quickstart fences and ``examples/first_run/`` are one text, not two.
 
     The README teaches the pipeline and the example directory runs it (``test_examples``
@@ -85,7 +108,9 @@ def test_the_readme_quickstart_is_the_shipped_example(relative: str, lang: str):
     """
     text = (_FIRST_RUN / relative).read_text(encoding="utf-8")
     readme = (_REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    assert f"```{lang}\n{text}```" in readme, f"{relative} is not a README quickstart fence"
+    assert re.search(rf"```[a-z]*\n{re.escape(text)}```", readme), (
+        f"{relative} is not a README quickstart fence"
+    )
 
 
 # ---------------------------------------------------------------------------

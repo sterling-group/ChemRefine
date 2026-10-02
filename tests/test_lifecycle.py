@@ -626,12 +626,17 @@ class _FakeRound:
         self.root = root
         self.wanted = set(wanted)
         self.unconverged = set(unconverged or ())
-        self.asked: list[str] = []
+        self.asked_of: list[Structure] = []  # the structures themselves, as each was asked
         self.settled_at: dict[str, list[str]] = {}
         self.order: list[str] = []
 
+    @property
+    def asked(self) -> list[str]:
+        """The id of each structure asked about, in order."""
+        return [structure.id for structure in self.asked_of]
+
     def children_for(self, structure):
-        self.asked.append(structure.id)
+        self.asked_of.append(structure)
         if structure.id not in self.wanted:
             return None
         # Where a parent's children go — the real shape, one level down.
@@ -713,8 +718,10 @@ def test_only_a_structure_that_succeeded_earns_a_round(cls, tmp_path: Path):
     _engine, (successes, _f) = _run_with_round(cls, tmp_path, ("0",), round_)
 
     assert [s.id for s in successes] == ["0"]
-    # Asked once — after the retry landed, not for the unconverged first parse.
+    # Asked once — after the retry landed, not for the unconverged first parse: the one
+    # structure the round was asked about is the retry's converged one.
     assert round_.asked == ["0"]
+    assert [lifecycle.succeeded(s) for s in round_.asked_of] == [True]
     # The retry archived round 1 into attempt1, so the children went to attempt2.
     assert (tmp_path / "0" / "attempt1").is_dir()
     assert round_.settled_at["0"] == ["0_c0", "0_c1"]

@@ -46,6 +46,7 @@ import tarfile
 from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -752,13 +753,19 @@ def assert_throttled(jobs: list[RunlogJob], max_cores: int) -> None:
     Intervals are half-open, ``[start, finish)``, so a job that starts the second another
     finishes does not overlap it; a job that never finished runs to the end. The runlogs
     of a promoted NMS winner repeat its child's, so jobs are counted once by host, id and
+    start. Timestamps are ordered as the instants they name: ``date -Iseconds`` writes the
+    local offset, so across a daylight-saving change their text puts a finish before its
     start. An upper bound only: whole-second timestamps give a sub-second job no length,
     so reaching the cap is never asserted.
     """
     unique = {(job.host, job.job_id, job.start): job for job in jobs}.values()
     events = sorted(
-        [(job.start, 1, job.cores) for job in unique]
-        + [(job.finish, 0, -job.cores) for job in unique if job.finish is not None]
+        [(datetime.fromisoformat(job.start), 1, job.cores) for job in unique]
+        + [
+            (datetime.fromisoformat(job.finish), 0, -job.cores)
+            for job in unique
+            if job.finish is not None
+        ]
     )
     running = 0
     for when, _order, delta in events:

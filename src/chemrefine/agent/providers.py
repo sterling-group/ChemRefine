@@ -64,8 +64,22 @@ def preset_shapes() -> dict[str, dict[str, object]]:
     }
 
 
+MODEL_ENV = "CHEMREFINE_LLM_MODEL"
+"""Environment variable naming the model when neither ``--model`` nor the panel does."""
+
+BASE_URL_ENV = "CHEMREFINE_LLM_BASE_URL"
+"""Environment variable naming an OpenAI-compatible endpoint when no flag or box does."""
+
+API_KEY_ENV = "CHEMREFINE_LLM_API_KEY"
+"""Environment variable carrying the endpoint's key when the panel's box is blank."""
+
 CHAT_TIMEOUT_ENV = "CHEMREFINE_LLM_TIMEOUT"
 """Environment variable overriding how long one agent turn may take."""
+
+LLM_ENV = (MODEL_ENV, BASE_URL_ENV, API_KEY_ENV, CHAT_TIMEOUT_ENV)
+"""Every variable ChemRefine reads to configure the chat — the one list a caller that must
+not inherit them clears. A provider's own credentials (``OPENAI_API_KEY`` and the like) are
+its SDK's to read, not ChemRefine's."""
 
 DEFAULT_CHAT_TIMEOUT_SECONDS = 3600.0
 """Seconds allowed for one agent turn before the client gives up.
@@ -166,17 +180,17 @@ class ProviderConfig:
         if provider not in _PRESETS:
             raise ConfigError(f"unknown provider {provider!r}; one of {sorted(_PRESETS)}")
         preset_url, preset_key, preset_model = _PRESETS[provider]
-        resolved_model = model or os.environ.get("CHEMREFINE_LLM_MODEL") or preset_model
+        resolved_model = model or os.environ.get(MODEL_ENV) or preset_model
         if not resolved_model:
             raise ConfigError(
-                "no model configured: pass --model, set CHEMREFINE_LLM_MODEL, or use a "
+                f"no model configured: pass --model, set {MODEL_ENV}, or use a "
                 "provider:model string (e.g. --model openai:gpt-5-mini, "
                 "--provider ollama --model qwen3)"
             )
-        resolved_url = base_url or os.environ.get("CHEMREFINE_LLM_BASE_URL") or preset_url
+        resolved_url = base_url or os.environ.get(BASE_URL_ENV) or preset_url
         if resolved_url is not None and not resolved_url.startswith(("http://", "https://")):
             raise ConfigError(f"base URL {resolved_url!r} is not HTTP(S)")
-        resolved_key = api_key or os.environ.get("CHEMREFINE_LLM_API_KEY") or preset_key
+        resolved_key = api_key or os.environ.get(API_KEY_ENV) or preset_key
         if resolved_key is not None and (fault := _header_fault(resolved_key)):
             # Judged on the *resolved* key, after blank has fallen through, at the one
             # place every entry point resolves: a blank box means "use the environment" to
@@ -272,7 +286,7 @@ def _fixes(base_url: str, problem: str) -> tuple[str, ...]:
             if ollama
             else ("if this endpoint does not enumerate models, retry without --check",)
         )
-    return ("set CHEMREFINE_LLM_API_KEY",)
+    return (f"set {API_KEY_ENV}",)
 
 
 def check(config: ProviderConfig, *, timeout: float = 5.0) -> CheckReport:

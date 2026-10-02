@@ -6,5 +6,13 @@
     "new": "    if False:",
     "tests": "tests/test_engines_qchem_input.py",
     "breaks": "a template that sets input_bohr runs every structure on its Ångström geometry read as Bohr, a molecule scaled by 1/0.529"
+  },
+  {
+    "id": "qcaux-exported-only-when-configured",
+    "path": "src/chemrefine/engines/qchem/engine.py",
+    "old": "        elif qcaux:\n            lines.append(f\"export QCAUX={shlex.quote(qcaux)}\")\n",
+    "new": "        else:\n            lines.append(f\"export QCAUX={shlex.quote(qcaux or '$QC/qcaux')}\")\n",
+    "tests": "tests/test_engines_qchem_engine.py",
+    "breaks": "a Q-Chem step that names no install roots overrides the QCAUX its module load set with one that names nothing, and Q-Chem finds no basis data"
   }
 ]

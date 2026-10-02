@@ -22,7 +22,6 @@ from chemrefine.engines.mlip.registry import (
     requirement_from_options,
     trainer_for,
 )
-from chemrefine.engines.mlip.train import base as training
 from chemrefine.engines.mlip.train.base import (
     DatasetFiles,
     DatasetSplit,
@@ -348,21 +347,19 @@ def test_digest_of_reads_the_files_contents(tmp_path: Path):
     assert digest_of(model) != before
 
 
-def test_digest_of_is_computable_where_sha1_is_policy_restricted(tmp_path: Path, monkeypatch):
+def test_digest_of_is_computable_where_sha1_is_policy_restricted(
+    tmp_path: Path, sha1_fingerprints_only: None
+):
     """Recording what a training step produced must not need a restricted code path.
 
     `file_digest` handed the name `"sha1"` goes through `hashlib.new(...)` with
     `usedforsecurity` at its default, which a host allowing SHA-1 only as a fingerprint
-    refuses — failing a step for describing work it had already finished. Passing the
-    constructor keeps `new` out of it, which is what this pins.
+    refuses — failing a step for describing work it had already finished. Both halves are
+    pinned: the constructor is passed, keeping `new` out of it, and it is asked for a
+    fingerprint, which is the only SHA-1 such a host makes.
     """
     model = tmp_path / "model.pt"
     model.write_bytes(b"weights")
-
-    def refuse(name: str, *args: object, **kwargs: object):
-        raise AssertionError(f"hashlib.new({name!r}) is the path a crypto policy can refuse")
-
-    monkeypatch.setattr(training.hashlib, "new", refuse)
     assert len(digest_of(model)) == 16
 
 

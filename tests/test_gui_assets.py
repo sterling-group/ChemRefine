@@ -653,7 +653,9 @@ def test_a_steps_engine_is_looked_up_as_the_config_folds_it():
     """`ORCA` is `orca` to every lookup the form makes, as it is to the loader and the run.
 
     The dropdown offers the registered names, plus a step's own only when it names none of
-    them, so a case variant selects the registered entry rather than adding a second."""
+    them, so a case variant selects the registered entry rather than adding a second. The
+    options fields are asked of an engine that declares some — ORCA declares none, and two
+    empty lists agree whether or not the name was folded."""
     from chemrefine.introspect import schema_document
 
     schema = schema_document()
@@ -662,11 +664,13 @@ def test_a_steps_engine_is_looked_up_as_the_config_folds_it():
       b.schema = {json.dumps(schema)};
       const shout = {{ step: 1, engine: "ORCA" }};
       const plain = {{ step: 1, engine: "orca" }};
+      const mixed = b.engineFields({{ step: 1, engine: "PySCF" }});
       console.log(JSON.stringify([
         JSON.stringify(b.operationsFor(shout)) === JSON.stringify(b.operationsFor(plain)),
         b.isTemplateDriven(shout),
         b.templatePlaceholder(shout),
-        b.engineFields(shout).length === b.engineFields(plain).length,
+        mixed.length > 0 &&
+          JSON.stringify(mixed) === JSON.stringify(b.engineFields({{ step: 1, engine: "pyscf" }})),
         b.engineNamesFor(shout),
         b.engineNamesFor({{ engine: "nope" }}),
         b.engineNamesFor({{}}),
@@ -1879,12 +1883,13 @@ def test_the_typed_path_does_the_other_two_jobs_in_the_other_two_modes():
         return { path: body.path };
       };
       await b.saveTo();
+      const absolute = wrote;
       // And a bare name still lands in the directory being browsed.
       b.browse = { ...b.browse, open: true, mode: "save", path: "/here" };
       b.browse.typed = "notes.yaml";
       await b.goToTyped();
       await b.saveTo();
-      console.log(JSON.stringify({ afterPick, typedAbsolute, wrote, bare: wrote }));
+      console.log(JSON.stringify({ afterPick, typedAbsolute, absolute, bare: wrote }));
     """)
     result = json.loads(out)
     assert result["afterPick"] == {"picked": "/seeds/mol.xyz", "closed": True}
@@ -1893,6 +1898,7 @@ def test_the_typed_path_does_the_other_two_jobs_in_the_other_two_modes():
     # replaces the directory — so typing an absolute path in save mode quietly wrote the
     # file into whatever directory the listing happened to be showing.
     assert result["typedAbsolute"] == "/elsewhere/other.yaml"
+    assert result["absolute"] == "/elsewhere/other.yaml"  # and the save goes there
     assert result["bare"] == "/here/notes.yaml"  # and a bare name still joins as before
 
 
@@ -2968,6 +2974,30 @@ def test_clearing_the_canvas_takes_the_labels_choice_with_no_structure_to_apply_
     assert result["labels"] == "element"  # but the choice is remembered for the next structure
 
 
+#: Every container this page nests with, not ``div`` alone — ``<section>``, ``<details>`` and
+#: ``<fieldset>`` are all in use here, and a gate on any of them hides what it wraps.
+_CONTAINERS = "div|section|details|fieldset|template|main|p"
+
+
+def _saved_path_gates(html: str, marker: str) -> list[str]:
+    """The ``savedPath`` gates over the element ``marker`` finds: its own, and its ancestors'.
+
+    Its own tag counts — a gate written on it hides it as surely as one on an ancestor, and
+    the attribute can sit on either side of the marker — and so does every container still
+    open before it.
+    """
+    at = html.rindex("<", 0, html.index(marker))
+    still_open: list[str] = []
+    for match in re.finditer(rf"<({_CONTAINERS})\b([^>]*)>|</(?:{_CONTAINERS})>", html[:at]):
+        if match.group(0).startswith("</"):
+            if still_open:
+                still_open.pop()
+        else:
+            still_open.append(match.group(2))
+    own = html[at : html.index(">", at) + 1]
+    return [attrs for attrs in (*still_open, own) if "savedPath" in attrs]
+
+
 def test_the_numbering_control_is_not_behind_the_saved_workflow_gate():
     """Numbering acts on whatever is drawn, and a dropped file needs no workflow.
 
@@ -2976,23 +3006,7 @@ def test_the_numbering_control_is_not_behind_the_saved_workflow_gate():
     operation, hidden by the one condition that has nothing to do with it. Checked the same
     structural way the canvas is, because a comment saying so would not hold.
     """
-    html = INDEX.read_text(encoding="utf-8")
-    # From the start of the control's OWN tag, and including it: a gate written on the
-    # fieldset hides the blobs just as surely as one on an ancestor, and it can sit on
-    # either side of the `class="blobs"` this finds the element by.
-    at = html.rindex("<", 0, html.index('class="blobs"'))
-    open_tags: list[str] = [html[at : html.index(">", at) + 1]]
-    # Every container this page nests with, not `div` alone — `<section>`, `<details>` and
-    # `<fieldset>` are all in use here, and a gate on any of them hides what it wraps.
-    names = "div|section|details|fieldset|template|main|p"
-    container = rf"<({names})\b([^>]*)>|</(?:{names})>"
-    for match in re.finditer(container, html[:at]):
-        if match.group(0).startswith("</"):
-            if open_tags:
-                open_tags.pop()
-        else:
-            open_tags.append(match.group(2))
-    gated = [attrs for attrs in open_tags if "savedPath" in attrs]
+    gated = _saved_path_gates(INDEX.read_text(encoding="utf-8"), 'class="blobs"')
     assert gated == [], f"the numbering blobs sit inside a savedPath-gated element: {gated}"
 
 
@@ -3239,18 +3253,7 @@ def test_the_viewer_canvas_is_not_behind_the_saved_workflow_gate():
     step and structure controls *do* belong behind that gate — they name things only a
     workflow has — which is why this is a structural check and not a rule about the pane.
     """
-    html = INDEX.read_text(encoding="utf-8")
-    at = html.index('id="viewer"')
-    # Walk the open/close tags before it and keep the ones still open: any div gated on
-    # savedPath among them is an ancestor that would hide the canvas.
-    depth_stack: list[str] = []
-    for match in re.finditer(r"<div\b([^>]*)>|</div>", html[:at]):
-        if match.group(0) == "</div>":
-            if depth_stack:
-                depth_stack.pop()
-        else:
-            depth_stack.append(match.group(1))
-    gated = [attrs for attrs in depth_stack if "savedPath" in attrs]
+    gated = _saved_path_gates(INDEX.read_text(encoding="utf-8"), 'id="viewer"')
     assert gated == [], f"#viewer sits inside a savedPath-gated element: {gated}"
 
 

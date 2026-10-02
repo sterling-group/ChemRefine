@@ -470,7 +470,7 @@ def test_a_named_file_is_digested_by_its_contents(tmp_path: Path):
 
 
 def test_the_option_digest_is_computable_where_sha1_is_policy_restricted(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, sha1_fingerprints_only: None
 ):
     """The digest must not need the code path a crypto policy can switch off.
 
@@ -478,16 +478,12 @@ def test_the_option_digest_is_computable_where_sha1_is_policy_restricted(
     `usedforsecurity` left at the default, which a host configured to allow SHA-1 only as a
     fingerprint refuses outright. This runs on every `StepKey.of` — every step, every run —
     and the `except OSError` beside it would not catch a `ValueError`, so the run would end
-    in a traceback outside the exit-code contract. Passing the constructor keeps `new` out of
-    it entirely, which is what this pins: `new` raising must not matter.
+    in a traceback outside the exit-code contract. Both halves are pinned: the constructor
+    is passed, keeping `new` out of it, and it asks for a fingerprint, the only SHA-1 such
+    a host makes.
     """
     model = tmp_path / "model.pt"
     model.write_bytes(b"weights")
-
-    def refuse(name: str, *args: object, **kwargs: object):
-        raise AssertionError(f"hashlib.new({name!r}) is the path a crypto policy can refuse")
-
-    monkeypatch.setattr(cache.hashlib, "new", refuse)
     assert len(option_file_digests({"model_path": str(model)})["model_path"]) == 16
 
 

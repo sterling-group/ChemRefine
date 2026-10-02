@@ -821,15 +821,16 @@ def _driver_config(tmp_path: Path, **overrides) -> Path:
     from chemrefine.engines.mlip.train.engine import _as_fitted_by
 
     files = ChgnetTrainer().write_dataset(_plan(tmp_path), _as_fitted_by(CHGNET, _small_split()))
+    # None of the knobs at the hook's own default, so a value it reads proves it read it.
     config = {
         "train_set": str(files.train),
         "valid_set": str(files.valid),
         "test_set": "",
         "run_name": "train",
         "epochs": 3,
-        "learning_rate": 1e-3,
+        "learning_rate": 5e-4,
         "batch_size": 2,
-        "targets": "ef",
+        "targets": "e",
     }
     config.update(overrides)
     path = tmp_path / "rendered.yaml"
@@ -863,10 +864,15 @@ def test_the_hook_feeds_chgnet_per_atom_energies_without_resplitting(tmp_path: P
     # H2O has 3 atoms; the file's energy= field is total eV.
     assert train_ds.energies[0] == pytest.approx(-1.5 * HARTREE_TO_EV / 3, rel=1e-12)
     assert np.asarray(train_ds.forces[0]).shape == (3, 3)
-    # Two loaders (no test set), each over one already-split dataset.
+    # Two loaders (no test set), each over one already-split dataset, at the step's batch.
     assert recorded["get_loader"].call_count == 2
+    assert recorded["get_loader"].call_args.kwargs["batch_size"] == 2
     train_call = recorded["trainer"].train.call_args
     assert train_call.args[2] is None  # no test loader
+    # The rendered knobs and the step's facts reach the Trainer, none of them a default.
+    built = recorded["trainer_cls"].call_args.kwargs
+    assert (built["targets"], built["epochs"], built["learning_rate"]) == ("e", 3, 5e-4)
+    assert (built["use_device"], built["torch_seed"], built["data_seed"]) == ("cpu", 7, 7)
     # The one constant both sides read: what the hook writes here, output_dirs copies
     # home — asserted through the class so the writer and the copy-back cannot split.
     from chemrefine.engines.mlip.backends import chgnet as chgnet_mod
@@ -1241,7 +1247,7 @@ def _install_fake_orb_stack(monkeypatch) -> dict:
     orb_pkg.forcefield = forcefield
 
     tud = types.ModuleType("torch.utils.data")
-    tud.DataLoader = _FakeOrbLoader
+    tud.DataLoader = MagicMock(side_effect=_FakeOrbLoader)
     tud.BatchSampler = MagicMock(side_effect=lambda s, *, batch_size, drop_last: ("BS", batch_size))
     tud.RandomSampler = MagicMock(side_effect=lambda ds: ("RS", ds))
     torch_utils = types.ModuleType("torch.utils")
@@ -1279,6 +1285,8 @@ def _install_fake_orb_stack(monkeypatch) -> dict:
         monkeypatch.setitem(sys.modules, name, mod)
     recorded.update(
         loader_fn=loader_fn,
+        adapter=adapter,
+        data_loader=tud.DataLoader,
         model=model,
         loss=loss_out.loss,
         optimizer=optimizer,
@@ -1302,10 +1310,11 @@ def _orb_config(**overrides) -> dict:
         # run_training tests below call the hook directly, so they supply them by hand.
         "device": "cpu",
         "seed": 11,
+        # None of the knobs at the hook's own default, so a value it reads proves it read it.
         "epochs": 2,
         "learning_rate": 1e-4,
         "batch_size": 4,
-        "gradient_clip": 0.5,
+        "gradient_clip": 0.25,
     }
     config.update(overrides)
     return config
@@ -1340,6 +1349,12 @@ def test_the_orb_hook_rebuilds_the_scripts_loop(monkeypatch, tmp_path: Path):
     assert recorded["optimizer"].step.call_count == 4
     assert recorded["scheduler"].step.call_count == 4
     assert recorded["clip"].call_count == 4
+    assert recorded["clip"].call_args.args[1] == 0.25  # the config's clip, not the default
+    # The sqlite dataset and its batches go through the loader's own adapter.
+    loader = recorded["data_loader"].call_args.kwargs
+    assert loader["collate_fn"] is recorded["adapter"].batch
+    assert loader["batch_sampler"] == ("BS", 4)
+    assert recorded["dataset_cls"].call_args.kwargs["atoms_adapter"] is recorded["adapter"]
     assert recorded["saves"] == [
         "checkpoint_epoch0.ckpt",
         "checkpoint_epoch1.ckpt",

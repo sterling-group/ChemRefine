@@ -8,25 +8,16 @@ laptop.
 
 ## 1. Describe the pipeline
 
-The project is four small files. Copy
-[`examples/first_run/`](https://github.com/sterling-group/ChemRefine/tree/main/examples/first_run)
-from the repository, or paste them:
-
-```
-first_run/
-├── input.yaml
-├── step1.xyz                a few conformers, one per frame
-└── templates/
-    ├── screen.inp           ! XTB2 Opt
-    └── dft_opt.inp          ! PBE def2-SVP Opt
-```
+The project ships as
+[`examples/first_run/`](https://github.com/sterling-group/ChemRefine/tree/main/examples/first_run):
+copy it from the repository, or paste the files below and add a seed.
 
 --8<-- "README.md:quickstart"
 
 `executables:` wants the full path to the ORCA binary — ORCA finds its own helpers
 beside it. `max_cores: 4` is the whole budget: with no `%pal` line in the templates, four
-serial jobs run at once. On a cluster, add `%pal nprocs N end` to the templates and the
-`#SBATCH` lines to `templates/cpu.slurm.header`; nothing else changes.
+serial jobs run at once. On a cluster, name the partition in the header as above and add
+`%pal nprocs N end` to the templates; nothing else changes.
 
 Every key is in the [configuration reference](../workflow/configuration.md); the engines
 you can name are in the [engine table](../engines/index.md).

@@ -597,7 +597,8 @@ def test_calculate_refuses_a_non_finite_answer(answer, caplog):
         resp = client.post("/calculate", json=_CALC_PAYLOAD)
     assert resp.status_code == 500
     assert "non-finite energy or gradient" in caplog.text
-    assert "nan" not in resp.get_data(as_text=True)
+    body = resp.get_data(as_text=True).lower()  # JSON spells them NaN and Infinity
+    assert "nan" not in body and "infinity" not in body
 
 
 def test_calculate_rejects_requests_without_token():

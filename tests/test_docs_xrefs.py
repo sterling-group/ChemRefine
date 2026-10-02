@@ -230,34 +230,62 @@ def _is_module(name: str) -> bool:
 def _names_a_module(target: str, path: Path) -> bool:
     """A module beside ``path`` or of the package from its root, or a stdlib or declared one."""
     if path.is_relative_to(_PACKAGE_ROOT):
-        package = _module_of(path.parent / "__init__.py")
         if target.startswith("."):
+            package = _module_of(path.parent / "__init__.py")
             return _is_module(importlib.util.resolve_name(target, package))
-        if _is_module(f"{package}.{target}"):
-            return True
     else:  # tests/ or scripts/, whose modules import each other by their bare names
         beside = path.parent.joinpath(*target.split("."))
         if beside.with_suffix(".py").is_file() or (beside / "__init__.py").is_file():
             return True
-    if _is_module(f"chemrefine.{target}"):
+    if _importable_as(target, path):
         return True
     top = target.split(".")[0]
+    return top in sys.stdlib_module_names or _declared(top)
+
+
+def _declared(top: str) -> bool:
+    """Whether ``top`` is the import name of a distribution ``pyproject.toml`` declares."""
     dist = top.lower().replace("_", "-")
-    return top in sys.stdlib_module_names or any(
-        name == dist or name.startswith(f"{dist}-") for name in _dependencies()
-    )
+    return any(name == dist or name.startswith(f"{dist}-") for name in _dependencies())
+
+
+def _importable_as(name: str, path: Path) -> list[str]:
+    """The importable modules a bare ``name`` can mean in ``path``.
+
+    Beside it in the package, of the package from its root, or top-level — the one order
+    both :func:`_names_a_module` and a module-qualified reference look in, kept to those
+    that import, which is what an attribute chain off the name can be checked against.
+    """
+    candidates = [f"chemrefine.{name}", name]
+    if path.is_relative_to(_PACKAGE_ROOT):
+        candidates.insert(0, f"{_module_of(path.parent / '__init__.py')}.{name}")
+    return [module for module in candidates if _is_module(module)]
 
 
 def _bare_resolves(path: Path, role: str, target: str, own: frozenset[str]) -> bool:
-    """Whether a bare ``target`` in ``path`` names what the module docstring says it may."""
+    """Whether a bare ``target`` in ``path`` names what the module docstring says it may.
+
+    A dotted target starts with a module-level name of the package, with a module the file
+    can mean by that name (``lifecycle.finalize``), checked on that module, or with a name
+    the file itself binds or a builtin (``Agent.run``, ``str.join``). Anything else names
+    nothing — a misspelled or renamed module is exactly that. What the scanner cannot judge
+    is a relative reference, and one into a declared library this environment lacks.
+    """
     if role == "mod":
         return _names_a_module(target, path)
     every, module_level = _package_names()
-    first = target.split(".")[0]
-    if "." not in target:
+    first, _, rest = target.partition(".")
+    if not rest:
         return first in every or first in own or hasattr(builtins, first)
     modules = module_level.get(first)
-    return modules is None or any(_resolves(f"{module}.{target}") for module in modules)
+    if modules is not None:
+        return any(_resolves(f"{module}.{target}") for module in modules)
+    if not first.isidentifier() or (_declared(first) and not _is_module(first)):
+        return True
+    owners = _importable_as(first, path)
+    if not owners:
+        return first in own or hasattr(builtins, first)
+    return any(_resolves(f"{owner}.{rest}") for owner in owners)
 
 
 def test_every_bare_docstring_reference_names_something_that_exists():

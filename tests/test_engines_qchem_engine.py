@@ -80,9 +80,12 @@ def test_the_default_run_block_is_serial_threads(tmp_path: Path):
     assert "export QC_THREADS=1" in body
     assert 'QCSAVE="step1_0.in"; QCSAVE="${QCSAVE%.*}"' in body
     assert 'qchem -nt 1 step1_0.in "$OUTPUT_DIR/step1_0.out" "$QCSAVE"' in body
-    assert "QC=" not in body.replace("QCSCRATCH", "").replace("QC_THREADS", "").replace(
-        "QCSAVE", ""
-    ), "no QC/QCAUX exports without the executables keys"
+    exported = {
+        line.removeprefix("export ").partition("=")[0]
+        for line in body.splitlines()
+        if line.startswith("export ")
+    }
+    assert not exported & {"QC", "QCAUX"}, "no QC/QCAUX exports without the executables keys"
 
 
 def test_cores_clamp_to_the_budget_in_every_spelling(tmp_path: Path):

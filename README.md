@@ -55,9 +55,9 @@ lists every engine, backend and extra, and covers GPU setup.
 ## Run
 
 ChemRefine is driven by a single YAML config. The smallest useful pipeline
-(xTB screen → DFT refine) is the YAML, two one-line ORCA templates and a
-seed — nothing to install beyond ORCA. It ships as
-[`examples/first_run/`](examples/first_run/), or paste it:
+(xTB screen → DFT refine) is the YAML, two one-line ORCA templates, the header
+every job script starts from, and a seed — nothing to install beyond ORCA. It
+ships as [`examples/first_run/`](examples/first_run/), or paste it:
 
 <!-- --8<-- [start:quickstart] -->
 ```yaml
@@ -88,6 +88,15 @@ steps:
 ```
 # templates/dft_opt.inp — a small DFT optimisation of what the screen kept
 ! PBE def2-SVP Opt
+```
+
+`templates/cpu.slurm.header` starts every job script, on a laptop too; on a
+cluster, name your partition:
+
+```bash
+#!/bin/bash
+#SBATCH --partition=EDIT_ME
+#SBATCH --time=24:00:00
 ```
 
 Put a few conformers in `step1.xyz` (one per frame — the example ships three of

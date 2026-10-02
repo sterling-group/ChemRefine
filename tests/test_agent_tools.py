@@ -510,15 +510,21 @@ def test_start_run_renders_a_numeric_target_as_the_text_the_child_reads(
     assert all(isinstance(word, str) for word in call["argv"]), call["argv"]
 
 
-def test_start_run_ends_option_parsing_before_the_positionals(tmp_path: Path, recorded_popen):
+def test_start_run_ends_option_parsing_before_the_positionals(
+    tmp_path: Path, recorded_popen, monkeypatch: pytest.MonkeyPatch
+):
     """``--`` stands between the flags and the positionals on the child's argv.
 
     Belt and braces under the config model's leading-hyphen name refusal: whatever a
     positional looks like, the child's parser can never read it as an option — the
     failure mode was exit 2 into an unwatched log, after a pid was already returned.
+
+    The positional is the file the agent named, resolved: the child is no shell, so a
+    ``~/…`` handed on as typed names nothing it can open.
     """
+    monkeypatch.setenv("HOME", str(tmp_path))
     path = _write_config(tmp_path)
-    agent_tools.start_run(str(path))
+    agent_tools.start_run(f"~/{path.name}")
     [call] = recorded_popen.calls
     assert call["argv"][-2:] == ["--", str(path.resolve())]
 

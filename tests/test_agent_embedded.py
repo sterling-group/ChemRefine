@@ -43,9 +43,30 @@ from chemrefine.errors import ConfigError
 # ---------------------------------------------------------------------------
 
 
+def test_every_chat_variable_the_package_names_is_one_the_isolation_clears():
+    """``LLM_ENV`` is the list the suite clears, so a variable named beside it would leak.
+
+    Read off the source rather than listed: every string in the package that is a
+    ``CHEMREFINE_LLM_*`` name is one of the tuple's, and each of the tuple's is named there.
+    """
+    import ast
+    import re
+
+    import chemrefine
+    from chemrefine.agent.providers import LLM_ENV
+
+    named = {
+        node.value
+        for path in Path(chemrefine.__file__).parent.rglob("*.py")
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and re.fullmatch(r"CHEMREFINE_LLM_[A-Z_]+", node.value)
+    }
+    assert named == set(LLM_ENV)
+
+
 def test_provider_resolution_is_flags_env_preset(monkeypatch: pytest.MonkeyPatch):
-    for var in ("CHEMREFINE_LLM_MODEL", "CHEMREFINE_LLM_BASE_URL", "CHEMREFINE_LLM_API_KEY"):
-        monkeypatch.delenv(var, raising=False)
 
     ollama = ProviderConfig.resolve("ollama", model="qwen3")
     assert (ollama.base_url, ollama.api_key) == ("http://localhost:11434/v1", "ollama")
@@ -91,7 +112,6 @@ def test_a_key_that_cannot_be_a_header_is_refused_at_resolution(
     "invalid characters", while the chat endpoint beside it read the same blank as "use the
     environment". A fault in the environment's key is refused the same way, by name.
     """
-    monkeypatch.delenv("CHEMREFINE_LLM_API_KEY", raising=False)
     with pytest.raises(ConfigError, match="cannot be sent as an Authorization header"):
         ProviderConfig.resolve("ollama", model="qwen3", api_key=key)
     if "\x00" in key:
@@ -101,7 +121,7 @@ def test_a_key_that_cannot_be_a_header_is_refused_at_resolution(
         ProviderConfig.resolve("ollama", model="qwen3")
 
 
-def test_a_supplied_key_reaches_openai_and_hijacks_nothing_else(monkeypatch: pytest.MonkeyPatch):
+def test_a_supplied_key_reaches_openai_and_hijacks_nothing_else():
     """The one branch where a key changes which model object gets built.
 
     ``_PRESETS["openai"]`` carries no base URL, so ``build_model`` returned the bare name
@@ -114,8 +134,6 @@ def test_a_supplied_key_reaches_openai_and_hijacks_nothing_else(monkeypatch: pyt
     resolve the provider, credentials included), and hijack a native provider for anyone
     who merely has ``CHEMREFINE_LLM_API_KEY`` set.
     """
-    for var in ("CHEMREFINE_LLM_MODEL", "CHEMREFINE_LLM_BASE_URL", "CHEMREFINE_LLM_API_KEY"):
-        monkeypatch.delenv(var, raising=False)
 
     keyed = ProviderConfig.resolve("openai", model="gpt-5-mini", api_key="sk-panel")
     assert keyed.keyed_openai is True
@@ -135,31 +153,25 @@ def test_a_supplied_key_reaches_openai_and_hijacks_nothing_else(monkeypatch: pyt
         assert (config.probe_url is not None) == (not isinstance(config.build_model(), str))
 
 
-def test_provider_refusals_name_the_fix(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.delenv("CHEMREFINE_LLM_MODEL", raising=False)
+def test_provider_refusals_name_the_fix():
     with pytest.raises(ConfigError, match="unknown provider"):
         ProviderConfig.resolve("skynet")
     with pytest.raises(ConfigError, match="CHEMREFINE_LLM_MODEL"):
         ProviderConfig.resolve("custom")
 
 
-def test_resolve_refuses_a_non_http_base_url(monkeypatch: pytest.MonkeyPatch):
+def test_resolve_refuses_a_non_http_base_url():
     """The one resolver every caller shares refuses odd schemes before a key rides them.
 
     The GUI's chat endpoint feeds a request-supplied base URL into resolve, where it is
     paired with ``CHEMREFINE_LLM_API_KEY`` — the refusal has to live here, not only in
     the ``--check`` preflight.
     """
-    monkeypatch.delenv("CHEMREFINE_LLM_BASE_URL", raising=False)
     with pytest.raises(ConfigError, match="not HTTP"):
         ProviderConfig.resolve("custom", model="m", base_url="ftp://somewhere/v1")
 
 
-def test_build_model_pins_an_endpoint_or_passes_the_string_through(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    monkeypatch.delenv("CHEMREFINE_LLM_BASE_URL", raising=False)
-    monkeypatch.delenv("CHEMREFINE_LLM_API_KEY", raising=False)
+def test_build_model_pins_an_endpoint_or_passes_the_string_through():
     from pydantic_ai.models.openai import OpenAIChatModel
 
     pinned = ProviderConfig.resolve("ollama", model="qwen3").build_model()
@@ -234,7 +246,6 @@ def test_the_turn_timeout_defaults_and_can_be_overridden(monkeypatch: pytest.Mon
         chat_timeout_seconds,
     )
 
-    monkeypatch.delenv(CHAT_TIMEOUT_ENV, raising=False)
     assert chat_timeout_seconds() == DEFAULT_CHAT_TIMEOUT_SECONDS
     assert DEFAULT_CHAT_TIMEOUT_SECONDS > 600  # the client default this exists to clear
 
@@ -546,8 +557,9 @@ def test_instructions_carry_the_guide_and_the_session_config():
     assert "operating guide" in text
     assert "/tmp/proj/input.yaml" in text
     assert "confirmation" in text
+    # No config, no session sentence at all — not one naming ``None``.
     bare = harness.instructions(None, gate=harness.TERMINAL_GATE)
-    assert "input.yaml" not in bare.replace("input.yaml`", "")
+    assert bare == f"{agent_tools.guide_text()}\n\n{harness.TERMINAL_GATE}"
 
 
 def _prompt_seen_by(build: Any) -> str:
@@ -1224,15 +1236,13 @@ def test_cli_agent_names_the_missing_extra(without_extra, caplog):
 
     from chemrefine.cli import app
 
-    without_extra("pydantic_ai", purge=("chemrefine.agent.chat", "chemrefine.agent.harness"))
+    without_extra("pydantic_ai", purge=("chemrefine.agent",))
     result = CliRunner().invoke(app, ["agent", "--model", "openai:gpt-5-mini"])
     assert result.exit_code == 1
     assert "chemrefine[agent]" in caplog.text
 
 
-def test_agent_check_works_before_the_extra_is_installed(
-    without_extra, monkeypatch: pytest.MonkeyPatch
-):
+def test_agent_check_works_before_the_extra_is_installed(without_extra):
     """``--check`` is a preflight, so it must run in the environment it diagnoses.
 
     ``providers`` states that it imports no SDK at runtime, and ``cli.py`` depends on that
@@ -1246,9 +1256,7 @@ def test_agent_check_works_before_the_extra_is_installed(
 
     from chemrefine.cli import app
 
-    for name in ("CHEMREFINE_LLM_MODEL", "CHEMREFINE_LLM_BASE_URL", "CHEMREFINE_LLM_API_KEY"):
-        monkeypatch.delenv(name, raising=False)
-    without_extra("pydantic_ai", purge=("chemrefine.agent.chat", "chemrefine.agent.harness"))
+    without_extra("pydantic_ai", purge=("chemrefine.agent",))
     result = CliRunner().invoke(app, ["agent", "--check", "--model", "openai:gpt-5-mini"])
     assert result.exit_code == 0
     assert "not probed" in result.stdout

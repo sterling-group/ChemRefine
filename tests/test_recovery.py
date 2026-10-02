@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 from pathlib import Path
 
 import pytest
@@ -1201,6 +1202,9 @@ def test_recovery_matrix_covers_every_action():
     covered = {row[0] for row in _RECOVERY_MATRIX}
     assert covered | set(_COVERED_ELSEWHERE) == set(Action)
     assert not covered & set(_COVERED_ELSEWHERE), "an action is covered in two places"
+    # The other place has to exist: a glob naming no test here covers nothing.
+    for action, pattern in _COVERED_ELSEWHERE.items():
+        assert fnmatch.filter(globals(), pattern), f"no {pattern} test covers {action.value}"
 
 
 # ---------------------------------------------------------------------------

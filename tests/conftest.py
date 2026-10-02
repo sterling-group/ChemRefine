@@ -94,6 +94,48 @@ def _isolate_gpu_probe(request: pytest.FixtureRequest, monkeypatch: pytest.Monke
 
 
 @pytest.fixture(autouse=True)
+def _isolate_llm_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unset every variable ChemRefine reads to configure the chat, so no test meets the
+    developer's endpoint.
+
+    The docs tell users to export ``CHEMREFINE_LLM_*``, and a test that resolves a provider
+    from the environment then resolved the developer's: a real connection attempt from a
+    test that meant to script its model, and a verdict that depended on whose shell ran it.
+    The names are the product's own list (:data:`chemrefine.agent.providers.LLM_ENV`), so a
+    variable the chat starts reading is cleared by being added there. No tier is exempt:
+    every agent test scripts its model. A test that wants one sets it over the top.
+    """
+    from chemrefine.agent.providers import LLM_ENV
+
+    for name in LLM_ENV:
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture
+def sha1_fingerprints_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A host whose crypto policy allows SHA-1 only as a fingerprint.
+
+    ``hashlib.new`` is refused outright — handed a name, :func:`hashlib.file_digest` builds
+    its hash there with ``usedforsecurity`` at its default — and a SHA-1 not asked for as a
+    fingerprint (``usedforsecurity=False``) is refused as such a host refuses it.
+    """
+    import hashlib
+
+    sha1 = hashlib.sha1
+
+    def refuse(name: str, *args: object, **kwargs: object) -> Any:
+        raise AssertionError(f"hashlib.new({name!r}) is the path a crypto policy can refuse")
+
+    def fingerprints_only(*args: Any, usedforsecurity: bool = True, **kwargs: Any) -> Any:
+        if usedforsecurity:
+            raise ValueError("[digital envelope routines] unsupported")  # the host's answer
+        return sha1(*args, usedforsecurity=False, **kwargs)
+
+    monkeypatch.setattr(hashlib, "new", refuse)
+    monkeypatch.setattr(hashlib, "sha1", fingerprints_only)
+
+
+@pytest.fixture(autouse=True)
 def _restore_engine_registries() -> Iterator[None]:
     """Snapshot the engine (and MLIP backend) registries; restore them after every test.
 
@@ -150,10 +192,9 @@ def _keep_model_requests_offline() -> Iterator[None]:
 
     The suite drives real agents against ``TestModel`` / ``FunctionModel`` only, and the
     flag is the library's own fence against a test that reaches a real endpoint. It is a
-    process-global, so it is owned here with the others (``CHEMREFINE_HOME``,
-    ``CUDA_VISIBLE_DEVICES``, ``DISPLAY``, the engine registries) rather than assigned at
-    import of one test module — a fence that stood only when collection happened to
-    include that file. Without the ``agent`` extra there is nothing to fence.
+    process-global, so it is owned here with this file's other isolations rather than
+    assigned at import of one test module — a fence that stood only when collection
+    happened to include that file. Without the ``agent`` extra there is nothing to fence.
     """
     try:
         from pydantic_ai import models
@@ -191,7 +232,7 @@ def without_extra(monkeypatch: pytest.MonkeyPatch) -> Callable[..., None]:
     Call it with the third-party module names to hide, plus the ChemRefine modules that
     import them::
 
-        without_extra("flask", "waitress", purge=("chemrefine.gui.app", "chemrefine.gui.serve"))
+        without_extra("flask", "waitress", purge=("chemrefine.gui",))
 
     Both halves are load-bearing, and every hand-rolled copy of this simulation in the
     suite got at least one of them wrong — which is why it lives here now rather than
@@ -209,11 +250,20 @@ def without_extra(monkeypatch: pytest.MonkeyPatch) -> Callable[..., None]:
     enough for the ``from package import submodule`` spelling: the submodule survives as an
     attribute of the already-imported parent, so the import resolves off that instead — and
     a test that meant to assert a refusal quietly exercised the real command.
+
+    *A purged package goes with every module under it.* A submodule left cached is never
+    imported again, so an eager SDK import added to it — or to the package's ``__init__`` —
+    would not run under the block, and the guard it breaks would look alive.
     """
     real_import = builtins.__import__
 
     def block(*sdks: str, purge: tuple[str, ...] = ()) -> None:
-        for dotted in purge:
+        cached = [
+            name
+            for name in sys.modules
+            if any(name == dotted or name.startswith(f"{dotted}.") for dotted in purge)
+        ]
+        for dotted in sorted(cached):
             monkeypatch.delitem(sys.modules, dotted, raising=False)
             parent, _, leaf = dotted.rpartition(".")
             if (owner := sys.modules.get(parent)) is not None:

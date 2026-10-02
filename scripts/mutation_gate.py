@@ -634,6 +634,24 @@ _BUNDLED: tuple[Mutation, ...] = (
         "`valid_fraction: 0` only when it writes its dataset, after the labelling steps ahead "
         "of it have run and been paid for",
     ),
+    Mutation(
+        id="start-run-hands-on-the-resolved-config",
+        path="src/chemrefine/agent_tools.py",
+        old="    argv.append(str(path))\n",
+        new="    argv.append(config_path)\n",
+        tests="tests/test_agent_tools.py",
+        breaks="a run started on `~/proj/input.yaml` hands the child that text, which no shell "
+        "expands, so it exits 2 into a log nobody watches after a pid was already returned",
+    ),
+    Mutation(
+        id="cache-sha1-asked-for-a-fingerprint",
+        path="src/chemrefine/cache.py",
+        old="    return hashlib.sha1(usedforsecurity=False)\n",
+        new="    return hashlib.sha1()\n",
+        tests="tests/test_cache.py",
+        breaks="on a host whose crypto policy allows SHA-1 only as a fingerprint, every step "
+        "whose options name a file dies in a traceback while its key is derived",
+    ),
 )
 
 #: What an engine files beside its contract fixture — ``tests/data/engines/<name>/`` — to

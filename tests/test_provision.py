@@ -13,6 +13,7 @@ import sys
 import tomllib
 from email.message import Message
 from pathlib import Path
+from typing import Any
 
 import pytest
 from ase import Atoms
@@ -1270,7 +1271,12 @@ def test_a_backend_python_under_home_is_read_as_home(monkeypatch, tmp_path: Path
 
 
 def test_non_provisionable_script_engine_uses_own_interpreter(monkeypatch, tmp_path: Path):
-    """A third-party ScriptEngine without ``backend_requirement`` runs this interpreter."""
+    """A third-party ScriptEngine without ``backend_requirement`` runs this interpreter.
+
+    Beside a managed env the provisionable engine does take for the same step — so the
+    plain engine's interpreter is its own decision, not the fallback an empty home gives
+    every engine alike.
+    """
     from chemrefine.engines._script import ScriptEngine
 
     class _PlainScript(ScriptEngine):
@@ -1278,9 +1284,15 @@ def test_non_provisionable_script_engine_uses_own_interpreter(monkeypatch, tmp_p
         label = "Plain"
 
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    managed = _provisioned(tmp_path, get_engine("mlip").backend_requirement({}).extra)
     ctx = _ctx(tmp_path, engine="mlip", options={})
-    block = _PlainScript().run_block(ctx, Path("step1_0.py"), Path("step1_0.json")).body
-    assert block.splitlines()[-1] == f"{sys.executable} step1_0.py"
+
+    def launched_by(engine: Any) -> str:
+        block = engine.run_block(ctx, Path("step1_0.py"), Path("step1_0.json")).body
+        return str(block.splitlines()[-1])
+
+    assert launched_by(get_engine("mlip")) == f"{managed} step1_0.py"
+    assert launched_by(_PlainScript()) == f"{sys.executable} step1_0.py"
 
 
 def test_non_provisionable_extopt_engine_uses_own_interpreter(monkeypatch, tmp_path: Path):
@@ -1296,9 +1308,11 @@ def test_non_provisionable_extopt_engine_uses_own_interpreter(monkeypatch, tmp_p
         calculator_cls = MlipExtOptCalculator
 
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
+    managed = _provisioned(tmp_path, get_engine("mlip-extopt").backend_requirement({}).extra)
     ctx = _ctx(tmp_path, engine="mlip-extopt", options={})
-    cmd = _PlainExtOpt()._server_cmd(ctx)
-    assert cmd.startswith(f"{sys.executable} -m chemrefine.engines._backend_server.server")
+    server = "-m chemrefine.engines._backend_server.server"
+    assert get_engine("mlip-extopt")._server_cmd(ctx).startswith(f"{managed} {server}")
+    assert _PlainExtOpt()._server_cmd(ctx).startswith(f"{sys.executable} {server}")
 
 
 # ---------------------------------------------------------------------------

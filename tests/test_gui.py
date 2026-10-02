@@ -420,7 +420,12 @@ def test_a_field_the_page_leaves_out_takes_the_tools_own_default(
     The defaults are the tools' own, read off the signatures the MCP server and the chat
     agent read too, so the GUI's tail and an agent's cannot be two numbers.
     """
+    import inspect
+
     from chemrefine import agent_tools
+
+    def default(tool: Any, name: str) -> Any:
+        return inspect.signature(tool).parameters[name].default
 
     config = _reported_tree(tmp_path)
     asked: dict[str, Any] = {}
@@ -432,10 +437,15 @@ def test_a_field_the_page_leaves_out_takes_the_tools_own_default(
 
     monkeypatch.setattr(agent_tools, "run_status", recording)
     _post(client, "/api/status", {"config_path": str(config)})
-    assert asked == {"log_tail_lines": 40}
+    assert asked == {"log_tail_lines": default(status, "log_tail_lines")}
 
     page = _post(client, "/api/results", {"config_path": str(config)}).get_json()
-    assert (page["total"], page["offset"], page["limit"]) == (2, 0, 20)
+    results = agent_tools.get_results
+    assert (page["total"], page["offset"], page["limit"]) == (
+        2,
+        default(results, "offset"),
+        default(results, "limit"),
+    )
 
     (tmp_path / "scaffolded").mkdir()
     saved = _saved_config(tmp_path / "scaffolded")
@@ -641,12 +651,13 @@ def test_a_numeric_run_target_launches_and_a_malformed_one_is_refused_before_any
             argvs.append(argv)
 
     monkeypatch.setattr(subprocess, "Popen", _Strict)
+    monkeypatch.setenv("HOME", str(tmp_path))
     config = _reported_tree(tmp_path)
     logs = tmp_path / "outputs" / "agent_runs"
 
-    started = _post(
-        client, "/api/run", {"config_path": str(config), "action": "rerun", "target": 2}
-    )
+    # Named as typed, and handed on resolved: the child is no shell, so `~` would name nothing.
+    typed = f"~/{config.relative_to(tmp_path)}"
+    started = _post(client, "/api/run", {"config_path": typed, "action": "rerun", "target": 2})
     assert started.status_code == 200, started.get_json()
     [argv] = argvs
     assert argv[-3:] == ["--", str(config.resolve()), "2"]
@@ -1295,9 +1306,7 @@ def test_every_path_a_user_types_refuses_a_home_it_cannot_resolve(client: Any):
     assert "cannot resolve" in save.get_json()["error"]
 
 
-def test_a_model_with_nowhere_to_go_does_not_pass_the_preflight(
-    client: Any, monkeypatch: pytest.MonkeyPatch
-):
+def test_a_model_with_nowhere_to_go_does_not_pass_the_preflight(client: Any):
     """The gate promised a typo costs a click, not a turn. This case broke that promise.
 
     ``provider: openai`` with a bare model name and no key resolves to no endpoint at
@@ -1306,7 +1315,6 @@ def test_a_model_with_nowhere_to_go_does_not_pass_the_preflight(
     configuration that could never build a model, and the user paid a turn to find out.
     A ``provider:model`` spelling *is* provider-native and still passes.
     """
-    monkeypatch.delenv("CHEMREFINE_LLM_API_KEY", raising=False)
 
     stranded = _post(client, "/api/agent/check", {"provider": "openai", "model": "gpt-5-mini"})
     assert stranded.get_json()["ok"] is False
@@ -1325,7 +1333,6 @@ def test_check_answers_a_verdict_never_an_error(client: Any, monkeypatch: pytest
     400, because "you have not named a model yet" is a finding to render in the panel,
     not a failed request.
     """
-    monkeypatch.delenv("CHEMREFINE_LLM_MODEL", raising=False)
     # Nothing here may dial the real Ollama port: on a machine running `ollama serve` the
     # probe would be answered and the verdict below would change for a reason unrelated to
     # the endpoint under test. The refusal is scripted where `providers.check` reaches it.
@@ -2239,9 +2246,7 @@ def test_cli_gui_names_the_missing_extra(without_extra, caplog):
 
     from chemrefine.cli import app as cli_app
 
-    without_extra(
-        "flask", "waitress", "werkzeug", purge=("chemrefine.gui.app", "chemrefine.gui.serve")
-    )
+    without_extra("flask", "waitress", "werkzeug", purge=("chemrefine.gui",))
     result = CliRunner().invoke(cli_app, ["gui"])
     assert result.exit_code == 1
     assert "chemrefine[gui]" in caplog.text
