@@ -1,0 +1,10 @@
+[
+  {
+    "id": "mlip-train-forces-as-labelled",
+    "path": "src/chemrefine/engines/mlip/train/base.py",
+    "old": "        forces=np.asarray(struct.forces_ev_per_a, dtype=float),",
+    "new": "        forces=-np.asarray(struct.forces_ev_per_a, dtype=float),",
+    "tests": "tests/test_engines_mlip_trainers.py",
+    "breaks": "every fine-tune is fitted to the negated forces, and the trained model it hands on is wrong with nothing said in any log"
+  }
+]

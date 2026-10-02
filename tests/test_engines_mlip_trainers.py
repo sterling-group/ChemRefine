@@ -459,6 +459,19 @@ def test_fairchem_labels_ride_on_a_calculator_not_on_named_keys(tmp_path: Path):
     assert row.natoms == 3
 
 
+def test_fairchem_labels_survive_the_round_trip_unchanged(tmp_path: Path):
+    """The row holds what FAIRChem fits: the forces as eV/Å, the energy converted once."""
+    from ase.db import connect
+
+    struct = _labelled("0")
+    data = FairchemTrainer().write_dataset(_fc_plan(tmp_path), _fc_split())
+
+    with connect(str(data.train)) as db:
+        row = next(iter(db.select()))
+    assert np.allclose(row.forces, struct.forces_ev_per_a)
+    assert row.energy == pytest.approx(-1.5 * HARTREE_TO_EV)  # _labelled's energy
+
+
 def test_charge_and_spin_ride_in_each_rows_data_mapping(tmp_path: Path):
     """`row.data` is the one channel `AseDBDataset` copies back into `atoms.info`.
 
@@ -582,7 +595,7 @@ def test_fairchem_loads_the_dataset_we_write(tmp_path: Path):
         "print(json.dumps({\n"
         '    "n": len(ds),\n'
         '    "energy0": float(ds[0].energy),\n'
-        '    "forces_shape": list(ds[0].forces.shape),\n'
+        '    "forces0": ds[0].forces.tolist(),\n'
         '    "natoms": [int(n) for n in ds.get_metadata("natoms", [0, 1])],\n'
         "}))\n",
         str(data.train),
@@ -590,7 +603,7 @@ def test_fairchem_loads_the_dataset_we_write(tmp_path: Path):
     )
     assert loaded["n"] == 4
     assert loaded["energy0"] == pytest.approx(-1.5 * HARTREE_TO_EV, rel=1e-5)
-    assert loaded["forces_shape"] == [3, 3]
+    assert np.allclose(loaded["forces0"], _labelled("0").forces_ev_per_a)  # as FAIRChem reads them
     assert loaded["natoms"] == [3, 3]
 
 

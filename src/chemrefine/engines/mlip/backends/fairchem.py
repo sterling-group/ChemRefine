@@ -19,8 +19,12 @@ from typing import Any, ClassVar
 import numpy as np
 
 from chemrefine.engines.mlip.registry import CalculatorSpec, MlipLibrary
-from chemrefine.engines.mlip.train.base import DatasetFiles, TrainerBase, TrainingPlan
-from chemrefine.quantities import HARTREE_TO_EV
+from chemrefine.engines.mlip.train.base import (
+    DatasetFiles,
+    TrainerBase,
+    TrainingPlan,
+    labelled_atoms,
+)
 from chemrefine.state import Structure
 
 _METADATA_NAME = "metadata.npz"
@@ -69,9 +73,9 @@ def _write_ase_db(
 ) -> Path:
     """Write one split as an ASE database plus its ``metadata.npz``; return the database.
 
-    Labels go on a :class:`~ase.calculators.singlepoint.SinglePointCalculator` because that is
+    Labels ride on the :class:`~ase.calculators.singlepoint.SinglePointCalculator` that
+    :func:`~chemrefine.engines.mlip.train.base.labelled_atoms` attaches, because that is
     where ``AseDBDataset`` reads them from — there are no named info or array keys to match.
-    Energies convert Hartree → eV; forces are already eV/Å.
 
     ``charge`` and ``spin`` (the multiplicity) ride in each row's ``data=`` mapping, which is
     the one channel ``AseDBDataset`` copies back into ``atoms.info`` — a plain ``db.write``
@@ -84,7 +88,6 @@ def _write_ase_db(
     ``np.issubdtype(dtype, np.integer)`` and a float column fails there rather than anywhere
     informative.
     """
-    from ase.calculators.singlepoint import SinglePointCalculator
     from ase.db import connect
 
     directory.mkdir(parents=True, exist_ok=True)
@@ -92,15 +95,7 @@ def _write_ase_db(
     path.unlink(missing_ok=True)  # `connect` appends, and a re-run must not stack duplicates
     with connect(str(path)) as db:
         for struct in structures:
-            atoms = struct.atoms.copy()
-            assert struct.energy_hartree is not None  # noqa: S101 - split_structures rejected these
-            assert struct.forces_ev_per_a is not None  # noqa: S101
-            atoms.calc = SinglePointCalculator(
-                atoms,
-                energy=struct.energy_hartree * HARTREE_TO_EV,
-                forces=np.asarray(struct.forces_ev_per_a, dtype=float),
-            )
-            db.write(atoms, data={"charge": charge, "spin": spin})
+            db.write(labelled_atoms(struct), data={"charge": charge, "spin": spin})
     np.savez(
         directory / _METADATA_NAME,
         natoms=np.array([len(s.atoms) for s in structures], dtype=np.int64),

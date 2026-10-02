@@ -153,15 +153,12 @@ def test_write_engrad_emits_full_format(tmp_path: Path):
     assert "Number of atoms" in text
     assert "Total energy [Eh]" in text
     assert "Gradient [Eh/Bohr]" in text
-    assert "2\n" in text
-    # Six gradient components on six lines (two atoms by three components) plus one energy line.
-    numeric_lines = [
-        line
-        for line in text.splitlines()
-        if line and not line.startswith("#") and "atoms" not in line
-    ]
-    # numeric_lines now: n_atoms ('2'), energy, then 6 gradient values
-    assert len(numeric_lines) == 8
+    # Read back as ORCA reads it: the atom count, the energy to its twelve digits, then the
+    # gradient one component per line in A1X, A1Y, A1Z, A2X… order, signs intact.
+    values = [line for line in text.splitlines() if not line.startswith("#")]
+    assert values[0] == "2"
+    assert float(values[1]) == -1.123456789012
+    assert [float(v) for v in values[2:]] == [0.1, 0.2, 0.3, -0.1, -0.2, -0.3]
 
 
 def test_write_engrad_skips_gradient_block_when_dograd_false(tmp_path: Path):

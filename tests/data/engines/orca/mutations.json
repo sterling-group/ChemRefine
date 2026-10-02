@@ -46,5 +46,13 @@
     "new": "        has_extopt=True,",
     "tests": "tests/test_engines_orca_inspect.py",
     "breaks": "an ExtOpt step whose template does not name ExtOpt runs ORCA's own method under the backend's name, while its gradient server serves nothing"
+  },
+  {
+    "id": "orca-engrad-gradient-as-written",
+    "path": "src/chemrefine/engines/orca/extopt/protocol.py",
+    "old": "            lines.extend(f\"{component:.12e}\" for component in row)",
+    "new": "            lines.extend(f\"{-component:.12e}\" for component in row)",
+    "tests": "tests/test_engines_extopt.py",
+    "breaks": "every ExtOpt optimisation is handed the negated gradient and walks uphill, with nothing said in any log"
   }
 ]
