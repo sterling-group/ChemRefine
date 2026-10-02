@@ -32,6 +32,12 @@ v1.3.1's README also showed a `sampling:` key on a step, which v1.3.1 never read
     config file that emitted no deprecation warnings. **Run once on 2.x, fix what it
     warns about, and you are done** — there is no separate migration step later.
 
+A half-migrated file can carry a v1 key beside its v2 spelling — `initial_xyz` and
+`input`, a block's key and the same key under `options:`, `energy` and
+`window_kcalmol`. Where both say the same, that is one setting. Where they differ, the
+file is refused with both keys named: v1.3.1 never read the v2 key and v2 never reads
+the v1 one, so either choice would be a guess — keep one.
+
 ## Top level
 
 | v1.3.1                          | v2                                |
@@ -55,13 +61,16 @@ v1.3.1's README also showed a `sampling:` key on a step, which v1.3.1 never read
 
 ### Normal-mode sampling knobs
 
-`normal_mode_sampling_parameters` keys move into `options:` and are renamed:
+`normal_mode_sampling_parameters` keys move into `options:` and are renamed. v1.3.1 read
+them only on a step with `normal_mode_sampling: true`, and only the three below, so on any
+other step, and any other key, they are dropped with a warning:
 
 | v1.3.1                          | v2 `options` key       | notes |
 |---------------------------------|------------------------|-------|
 | `calc_type: rm_imag` (default)  | `target: ts`           | keep exactly one imaginary mode (first-order saddle / TS) |
 | `calc_type: random`             | `target: random`       | sampling along random modes |
 | `displacement_vector`           | `displacement_value`   | ± displacement magnitude (Å) |
+| `num_random_displacements`      | `num_random_displacements` | how many modes `random` displaces along |
 | `num_random_displacements`      | `num_random_displacements` | unchanged |
 
 > v2 adds a third target, `target: minimum` (remove **all** imaginary modes → a true minimum), which
@@ -157,15 +166,18 @@ potential](../engines/index.md#training-a-potential-mlip-train).
 The methods were also renamed — `integer`/`high_energy` are now `min`/`max`, and
 `energy_window` folded into `min` with a `window_kcalmol` knob:
 
-| v1.3.1 method (+ parameter) | v2 |
-|-----------------------------|----|
-| `boltzmann` (`weight`)              | `boltzmann` (`percent_cumulative`) |
+| v1.3.1 method (+ parameters) | v2 |
+|------------------------------|----|
+| `boltzmann` (`weight`, `temperature`) | `boltzmann` (`percent_cumulative`, `temperature_k`) |
 | `integer` (`num_structures`)        | `min` (`count`) |
 | `high_energy` (`num_structures`)    | `max` (`count`) |
 | `energy_window` (`energy` + `unit`) | `min` (`window_kcalmol`) |
 
 `min` / `max` take **exactly one** of `count` / `window_kcalmol`. All the old
-spellings auto-translate with one deprecation warning each.
+spellings auto-translate with one deprecation warning each. Each method read only its own
+parameters, so any other key in the block is dropped with a warning, and where the block
+named none v1.3.1's own default is written out: `energy_window`'s 0.5 hartree,
+`integer`'s every structure (`count: 0`), `high_energy`'s one (`count: 1`).
 
 The `energy` value also changes **units** on the way: v1 read it as hartree unless
 `unit: kcal/mol` was explicit, and `window_kcalmol` is kcal/mol by definition — so the

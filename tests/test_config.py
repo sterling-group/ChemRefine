@@ -871,8 +871,8 @@ def test_legacy_mlff_block_becomes_options_and_extopt_engine():
             {"model_name": "small", "task_name": "mace_off", "device": "cuda"},
         ),
         (
-            {"engine": "MLIP-ExtOpt", "mlff": {"task_name": "mace_off"}},
-            {"task_name": "mace_off", "model_name": "medium", "device": "cuda"},
+            {"engine": "MLIP-ExtOpt", "mlff": {"task_name": "mace_mp"}},
+            {"task_name": "mace_mp", "model_name": "medium", "device": "cuda"},
         ),
     ],
     ids=["bare", "mace-mp", "omol", "mace-omol", "bind", "current-name-any-case"],
@@ -1198,14 +1198,17 @@ def test_v1s_readme_step_keys_are_honoured_on_a_server_step():
 
 
 def test_the_block_outranks_a_step_level_key_v1_never_read():
-    """Where both name a key, the block's value is the one v1.3.1 ran."""
+    """Where both name a key, the block's value is the one v1.3.1 ran — said by name."""
     from chemrefine.config_legacy import normalize as _normalize_legacy
 
     seen, sink = _collect()
     step = {"step": 1, "engine": "MLFF", "mlff": {"task_name": "mace_mp"}, "task_name": "omol"}
     out = _normalize_legacy({"steps": [step]}, report=sink)["steps"][0]
     assert out["options"]["task_name"] == "mace_mp"
-    assert "outranks `omol`" in dict(seen)[("steps", 0, "task_name")]
+    assert (
+        "`steps[0].mlff.task_name: mace_mp` outranks `omol`"
+        in dict(seen)[("steps", 0, "task_name")]
+    )
 
 
 def test_a_step_level_model_name_off_a_server_step_is_left_to_the_schema():
@@ -1311,8 +1314,20 @@ def test_normalize_changes_nothing_it_is_handed():
             },
             "model_name",
         ),
+        (
+            # Spelled on v1.3.1's MLFF engine, it is a training step all the same: the
+            # gradient server's blocks are the ones its engine choice concerns, not `trainer`.
+            {"engine": "MLFF", "operation": "MLFF_TRAIN", "trainer": {"valid_fraction": 0.2}},
+            {
+                "test_fraction": 0.2,
+                "task_name": "mace_off",
+                "device": "cuda",
+                "valid_fraction": 0,
+            },
+            None,
+        ),
     ],
-    ids=["no-trainer-block", "trainer-keys", "a-key-v1-never-read"],
+    ids=["no-trainer-block", "trainer-keys", "a-key-v1-never-read", "on-the-mlff-engine"],
 )
 def test_a_v1_training_step_keeps_the_split_v1_made(
     step: dict[str, object], options: dict[str, object], dropped: str | None
@@ -1670,7 +1685,7 @@ def test_legacy_normal_mode_sampling_renamed():
         template_dir="./t",
         steps=[{"step": 1, "engine": "orca", "operation": "freq", "normal_mode_sampling": True}],
     )
-    # bare nms maps to target: ts (main's default calc_type was rm_imag).
+    # v1.3.1 ran `rm_imag` when `calc_type` named none, which is `target: ts`.
     assert cfg.steps[0].nms is True
     assert cfg.steps[0].options == {"target": "ts"}
 
@@ -1701,7 +1716,7 @@ def test_legacy_nms_rm_imag_maps_to_ts_and_displacement():
     assert (opts.target, opts.displacement_value) == ("ts", 1.5)
 
 
-def test_legacy_nms_random_passes_params_through():
+def test_legacy_nms_random_reads_its_displacement_count():
     cfg = Config(
         template_dir="./t",
         steps=[
@@ -1725,44 +1740,415 @@ def test_legacy_calculation_type_raises_clear_error():
         Config(template_dir="./t", steps=[{"step": 1, "calculation_type": "DFT"}])
 
 
-def test_legacy_initial_xyz_does_not_override_existing_input():
-    """When both spellings are present, the new ``input`` wins; the legacy key is dropped."""
-    cfg = Config(
-        template_dir="./t",
-        input="./new.xyz",
-        initial_xyz="./old.xyz",  # type: ignore[call-arg]
-        steps=[{"step": 1, "engine": "orca", "operation": "opt_sp"}],
-    )
-    assert cfg.input == Path("new.xyz")
+def test_legacy_initial_xyz_beside_input_is_one_setting_or_refused():
+    """Both spellings set: the same value is one setting, any other is refused by name.
+
+    Neither version ran both — v1.3.1 never read ``input``, 2.0 never reads ``initial_xyz``
+    — so either precedence would be a guess about which file the run was meant to start from.
+    Compared as written, because what a path names is the loader's to read: ``~/seed.xyz``
+    is the home's, ``./~/seed.xyz`` a folder called ``~``.
+    """
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    step = {"step": 1, "engine": "orca", "operation": "opt_sp"}
+    seen, sink = _collect()
+    raw = {"input": "seed.xyz", "initial_xyz": "seed.xyz", "steps": [step]}
+    assert _normalize_legacy(raw, report=sink)["input"] == "seed.xyz"
+    assert [loc for loc, _ in seen] == [("initial_xyz",)]
+    with pytest.raises(ValidationError, match="`initial_xyz` and `input` are two spellings"):
+        Config(
+            template_dir="./t",
+            input="./~/seed.xyz",
+            initial_xyz="~/seed.xyz",  # type: ignore[call-arg]
+            steps=[step],
+        )
 
 
-def test_legacy_sample_type_does_not_override_existing_sample():
-    """When both spellings are present, the new ``sample`` wins; ``sample_type`` is dropped."""
-    cfg = Config(
-        template_dir="./t",
-        steps=[
+def test_legacy_sample_type_beside_sample_is_refused():
+    """Two sampling blocks for one step are two answers to one question: keep one."""
+    with pytest.raises(
+        ValidationError, match=r"`steps\[0\]\.sample_type` and `steps\[0\]\.sample`"
+    ):
+        Config(
+            template_dir="./t",
+            steps=[
+                {
+                    "step": 1,
+                    "engine": "orca",
+                    "operation": "opt_sp",
+                    "sample": {"method": "integer", "count": 3},
+                    "sample_type": {"method": "boltzmann", "parameters": {"weight": 99}},
+                }
+            ],
+        )
+
+
+_NMS = {"step": 1, "engine": "orca", "normal_mode_sampling": True}
+
+
+@pytest.mark.parametrize(
+    ("raw", "spellings"),
+    [
+        (
+            # A command on PATH and a file beside the job: two programs, compared as written.
+            {"orca_executable": "orca", "executables": {"orca": "./orca"}, "steps": []},
+            "`orca_executable` and `executables.orca` are two spellings of one setting with "
+            "different values ('orca' and './orca'); keep one",
+        ),
+        (
             {
-                "step": 1,
-                "engine": "orca",
-                "operation": "opt_sp",
-                "sample": {"method": "integer", "count": 3},
-                "sample_type": {"method": "boltzmann", "parameters": {"weight": 99}},
-            }
-        ],
-    )
-    # The direct `sample` block (legacy `integer` -> `min`) wins; sample_type dropped.
-    assert isinstance(cfg.steps[0].sample, MinSample)
-    assert cfg.steps[0].sample.count == 3
+                "steps": [
+                    {
+                        "step": 1,
+                        "engine": "MLFF",
+                        "mlff": {"model_name": "/m/a.model"},
+                        "options": {"model_path": "/m/b.model"},
+                    }
+                ]
+            },
+            "`steps[0].mlff.model_name` and `steps[0].options.model_path`",
+        ),
+        (
+            {
+                "steps": [
+                    {
+                        "step": 1,
+                        "engine": "MLFF",
+                        "model_name": "/m/a.model",
+                        "options": {"model_path": "/m/b.model"},
+                    }
+                ]
+            },
+            "`steps[0].model_name` and `steps[0].options.model_path`",
+        ),
+        (
+            {
+                "steps": [
+                    {
+                        "step": 1,
+                        "engine": "MLFF",
+                        "mlff": {"task_name": "mace_off"},
+                        "options": {"task_name": "mace_mp"},
+                    }
+                ]
+            },
+            "`steps[0].mlff.task_name` and `steps[0].options.task_name`",
+        ),
+        (
+            {
+                "steps": [
+                    {
+                        "step": 1,
+                        "engine": "mlip-train",
+                        "trainer": {"valid_fraction": 0.2},
+                        "options": {"test_fraction": 0.1},
+                    }
+                ]
+            },
+            "`steps[0].trainer.valid_fraction` and `steps[0].options.test_fraction`",
+        ),
+        (
+            {
+                "steps": [
+                    {
+                        **_NMS,
+                        "normal_mode_sampling_parameters": {"calc_type": "random"},
+                        "options": {"target": "ts"},
+                    }
+                ]
+            },
+            "`steps[0].normal_mode_sampling_parameters.calc_type` and `steps[0].options.target`",
+        ),
+        (
+            {
+                "steps": [
+                    {
+                        **_NMS,
+                        "normal_mode_sampling_parameters": {"displacement_vector": 0.5},
+                        "options": {"displacement_value": 1.0},
+                    }
+                ]
+            },
+            "`steps[0].normal_mode_sampling_parameters.displacement_vector` and "
+            "`steps[0].options.displacement_value`",
+        ),
+        (
+            {
+                "steps": [
+                    {
+                        **_NMS,
+                        "normal_mode_sampling_parameters": {"num_random_displacements": 3},
+                        "options": {"num_random_displacements": 5},
+                    }
+                ]
+            },
+            "`steps[0].normal_mode_sampling_parameters.num_random_displacements` and "
+            "`steps[0].options.num_random_displacements`",
+        ),
+        (
+            {
+                "steps": [
+                    {"step": 1, "sample": {"method": "min", "energy": 0.005, "window_kcalmol": 3}}
+                ]
+            },
+            "`steps[0].sample.window_kcalmol` and `steps[0].sample.energy`",
+        ),
+        (
+            {
+                "steps": [
+                    {"step": 1, "sample": {"method": "min", "window_kcalmol": 3, "energy": 0.005}}
+                ]
+            },
+            "`steps[0].sample.energy` and `steps[0].sample.window_kcalmol`",
+        ),
+        (
+            {"steps": [{**_NMS, "nms": False}]},
+            "`steps[0].normal_mode_sampling` and `steps[0].nms`",
+        ),
+        (
+            {
+                "steps": [
+                    {
+                        "step": 1,
+                        "engine": "MLFF",
+                        "task_name": "omol",
+                        "options": {"task_name": "mace_mp"},
+                    }
+                ]
+            },
+            "`steps[0].task_name` and `steps[0].options.task_name`",
+        ),
+    ],
+    ids=[
+        "executable",
+        "checkpoint",
+        "step-level-checkpoint",
+        "server-block",
+        "trainer-block",
+        "nms-target",
+        "nms-displacement",
+        "nms-knob",
+        "energy-then-window",
+        "window-then-energy",
+        "nms-switch",
+        "step-level-key",
+    ],
+)
+def test_two_spellings_of_one_setting_with_different_values_are_refused(
+    raw: dict[str, object], spellings: str
+):
+    """One rule wherever a legacy key meets its current spelling, in either key order."""
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    with pytest.raises(ValueError, match=re.escape(spellings)):
+        _normalize_legacy(raw, report=_silent)
 
 
-def test_legacy_nms_false_with_no_parameters_normalizes_to_nothing():
-    """``normal_mode_sampling: false`` is consumed without setting nms or options."""
-    cfg = Config(
-        template_dir="./t",
-        steps=[{"step": 1, "engine": "orca", "operation": "freq", "normal_mode_sampling": False}],
+def test_two_spellings_of_one_setting_with_one_value_are_one_setting():
+    """The same value written twice is kept, and the legacy spelling still reports itself."""
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    seen, sink = _collect()
+    raw = {"orca_executable": "/opt/orca", "executables": {"orca": "/opt/orca"}, "steps": []}
+    assert _normalize_legacy(raw, report=sink)["executables"] == {"orca": "/opt/orca"}
+    assert [loc for loc, _ in seen] == [("orca_executable",)]
+
+    seen.clear()
+    step = {
+        "step": 1,
+        "engine": "MLFF",
+        "mlff": {"model_name": "/m/a.model"},
+        "options": {"model_path": "/m/a.model"},
+    }
+    (out,) = _normalize_legacy({"steps": [step]}, report=sink)["steps"]
+    assert out["options"] == {"model_path": "/m/a.model", "task_name": "mace_off", "device": "cuda"}
+    assert ("steps", 0, "options", "model_path") in [loc for loc, _ in seen]
+
+
+def test_a_unit_without_energy_is_dropped_from_a_v1_block_and_refused_in_a_current_one():
+    """``unit`` meant something only to v1.3.1's ``energy_window``, which converts by it.
+
+    Under any other v1.3.1 method it configured nothing and is dropped, reported. In a
+    current ``sample`` block it reaches the model, which refuses it: carried away silently,
+    a hand-migrated ``window_kcalmol: 0.005, unit: hartree`` filtered with a window 627x
+    narrower than the one its author meant.
+    """
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+    from chemrefine.validate import validate_config_text
+
+    seen, sink = _collect()
+    v1 = {"method": "integer", "parameters": {"num_structures": 3, "unit": "hartree"}}
+    (step,) = _normalize_legacy({"steps": [{"step": 1, "sample_type": v1}]}, report=sink)["steps"]
+    assert step["sample"] == {"method": "min", "count": 3}
+    assert ("steps", 0, "sample_type", "parameters", "unit") in [loc for loc, _ in seen]
+
+    current = {"method": "min", "window_kcalmol": 0.005, "unit": "hartree"}
+    report = validate_config_text(
+        yaml.safe_dump(
+            _minimal_config(steps=[{**_minimal_config()["steps"][0], "sample": current}])
+        )
     )
-    assert cfg.steps[0].nms is False
-    assert cfg.steps[0].options == {}
+    assert not report.ok
+    assert any(issue.loc[-1] == "unit" for issue in report.issues)
+
+
+def _v1_sample(block: dict[str, object]) -> tuple[dict[str, object], dict[object, str]]:
+    """The ``sample`` a v1.3.1 ``sample_type`` block becomes, and its rows by location."""
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    seen, sink = _collect()
+    (step,) = _normalize_legacy({"steps": [{"step": 1, "sample_type": block}]}, report=sink)[
+        "steps"
+    ]
+    return step["sample"], dict(seen)
+
+
+def test_v1_sampling_defaults_are_written_out_where_v2_has_none():
+    """What v1.3.1 ran in a key's absence: 0.5 in the block's unit, every structure, or one.
+
+    Each is reported once, at the key v1.3.1 read, as written out in the spelling it becomes
+    — never as a deprecated key the file does not hold.
+    """
+    at = ("steps", 0, "sample_type", "parameters")
+    window, rows = _v1_sample({"method": "energy_window"})
+    assert window == {"method": "min", "window_kcalmol": pytest.approx(313.754737, abs=1e-4)}
+    assert rows[(*at, "energy")].endswith("; written out as `window_kcalmol: 313.755`")
+    kcal, rows = _v1_sample({"method": "energy_window", "parameters": {"unit": "kcal/mol"}})
+    assert kcal == {"method": "min", "window_kcalmol": 0.5}
+    assert "read by the `energy` conversion and nowhere else" in rows[(*at, "unit")]
+    every, rows = _v1_sample({"method": "integer"})
+    assert every == {"method": "min", "count": 0}  # count: 0 keeps every structure
+    assert rows[(*at, "num_structures")].endswith("; written out as `count: 0`")
+    one, _ = _v1_sample({"method": "high_energy"})
+    assert one == {"method": "max", "count": 1}
+    three, rows = _v1_sample({"method": "high_energy", "parameters": {"num_structures": 3}})
+    assert three == {"method": "max", "count": 3}  # read, not written out
+    assert "written out" not in rows[(*at, "num_structures")]
+
+
+def test_v1_boltzmann_temperature_is_temperature_k():
+    """v1.3.1 read its Boltzmann temperature as ``temperature``, in kelvin as v2 does."""
+    sample, _ = _v1_sample({"method": "boltzmann", "parameters": {"temperature": 350}})
+    assert sample == {"method": "boltzmann", "temperature_k": 350}
+
+
+def test_a_key_a_v1_method_never_read_is_dropped_and_reported():
+    """``integer`` read ``num_structures`` alone: a ``weight`` there did nothing."""
+    block = {"method": "integer", "parameters": {"num_structures": 2, "weight": 99}}
+    sample, rows = _v1_sample(block)
+    assert sample == {"method": "min", "count": 2}
+    assert "configured nothing" in rows[("steps", 0, "sample_type", "parameters", "weight")]
+
+
+def test_a_method_v1_did_not_know_reaches_the_model_which_refuses_it():
+    """v1.3.1 raised on a method it did not know; the model refuses it by its tag.
+
+    A ``parameters.method`` is dropped, reported, under any method: the block's own
+    ``method`` is the one v1.3.1 ran, so it cannot stand in for it.
+    """
+    block = {"method": "lowest", "parameters": {"num_structures": 2, "method": "min"}}
+    sample, rows = _v1_sample(block)
+    assert sample == {"method": "lowest", "count": 2}
+    assert "configured nothing" in rows[("steps", 0, "sample_type", "parameters", "method")]
+    step = {"step": 1, "engine": "orca", "operation": "opt_sp", "sample_type": {"method": "lowest"}}
+    with pytest.raises(ValidationError, match="'lowest'"):
+        Config(template_dir="./t", steps=[step])
+
+
+def test_a_v1_sampling_block_beside_its_own_translation_is_one_setting():
+    """Compared in the current vocabulary: ``integer``/``num_structures`` is ``min``/``count``.
+
+    Both sides are, so a ``sample`` that still spells the method ``integer`` is the same
+    setting too.
+    """
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    seen, sink = _collect()
+    step = {
+        "step": 1,
+        "sample": {"method": "integer", "count": 3},
+        "sample_type": {"method": "integer", "parameters": {"num_structures": 3}},
+    }
+    (out,) = _normalize_legacy({"steps": [step]}, report=sink)["steps"]
+    assert out["sample"] == {"method": "min", "count": 3}
+    assert ("steps", 0, "sample_type") in [loc for loc, _ in seen]
+
+
+def test_a_v1_server_step_reads_only_the_block_its_engine_names():
+    """v1.3.1 read ``step.get(engine)``: on an MLFF step an ``mlip:`` block configured nothing."""
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    seen, sink = _collect()
+    step = {
+        "step": 1,
+        "engine": "MLFF",
+        "mlff": {"task_name": "mace_mp", "model_name": "small"},
+        "mlip": {"task_name": "omol"},
+    }
+    (out,) = _normalize_legacy({"steps": [step]}, report=sink)["steps"]
+    assert (out["options"]["task_name"], out["options"]["model_name"]) == ("mace_mp", "small")
+    assert "configures nothing on this step" in dict(seen)[("steps", 0, "mlip")]
+
+
+def test_v1_nms_parameters_are_read_as_v1_read_them():
+    """Only on a sampling step, only the keys v1.3.1 read, whichever switch spells it."""
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    at = ("steps", 0, "normal_mode_sampling_parameters")
+    params = {"calc_type": "random", "seed": 7}
+    seen, sink = _collect()
+    (on,) = _normalize_legacy(
+        {"steps": [{"step": 1, "nms": True, "normal_mode_sampling_parameters": params}]},
+        report=sink,
+    )["steps"]
+    assert on["options"] == {"target": "random"}  # `nms: true` reads them too
+    assert (*at, "seed") in [loc for loc, _ in seen]
+
+    seen.clear()
+    (off,) = _normalize_legacy(
+        {"steps": [{"step": 1, "normal_mode_sampling_parameters": params}]}, report=sink
+    )["steps"]
+    assert "options" not in off and not off.get("nms")
+    assert (*at, "calc_type") in [loc for loc, _ in seen]
+
+
+def test_a_sample_type_key_beside_its_parameters_yields_to_them():
+    """v1.3.1 read ``parameters``: the same key beside them is dropped, reported."""
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    seen, sink = _collect()
+    block = {"method": "integer", "parameters": {"num_structures": 3}, "num_structures": 5}
+    (step,) = _normalize_legacy({"steps": [{"step": 1, "sample_type": block}]}, report=sink)[
+        "steps"
+    ]
+    assert step["sample"]["count"] == 3
+    assert ("steps", 0, "sample_type", "num_structures") in [loc for loc, _ in seen]
+
+
+def test_v1_nms_default_target_is_written_out_and_reported_unless_the_step_names_one():
+    """v1.3.1 ran ``rm_imag`` when ``calc_type`` named none: ``target: ts``, said at its key."""
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    seen, sink = _collect()
+    (step,) = _normalize_legacy({"steps": [dict(_NMS)]}, report=sink)["steps"]
+    assert step["options"]["target"] == "ts"
+    assert ("steps", 0, "options", "target") in [loc for loc, _ in seen]
+
+    seen.clear()
+    named = {**_NMS, "options": {"target": "minimum"}}
+    (step,) = _normalize_legacy({"steps": [named]}, report=sink)["steps"]
+    assert step["options"]["target"] == "minimum"
+    assert ("steps", 0, "options", "target") not in [loc for loc, _ in seen]
+
+
+def test_legacy_nms_false_is_nms_false_and_sets_no_options():
+    """``normal_mode_sampling: false`` is ``nms: false``, and a step that does not sample
+    takes no sampling knobs."""
+    from chemrefine.config_legacy import normalize as _normalize_legacy
+
+    step = {"step": 1, "engine": "orca", "operation": "freq", "normal_mode_sampling": False}
+    (out,) = _normalize_legacy({"steps": [step]}, report=_silent)["steps"]
+    assert out == {"step": 1, "engine": "orca", "operation": "freq", "nms": False}
 
 
 def test_normalizer_passes_through_non_list_steps():
@@ -1878,8 +2264,8 @@ def test_every_legacy_rewrite_reports_where_it_happened():
     assert by_loc[("steps", 0, "mlff")].startswith("step-level `mlff:` block is deprecated")
     assert by_loc[("steps", 0, "normal_mode_sampling")].startswith("`normal_mode_sampling*`")
     assert by_loc[("steps", 0, "sample_type")].startswith("`sample_type` is deprecated")
-    assert "`min`" in by_loc[("steps", 0, "sample", "method")]
-    assert "`count`" in by_loc[("steps", 0, "sample", "num_structures")]
+    assert "`min`" in by_loc[("steps", 0, "sample_type", "method")]
+    assert "`count`" in by_loc[("steps", 0, "sample_type", "parameters", "num_structures")]
 
 
 def test_the_step_index_anchors_the_finding_to_its_own_step():
@@ -1958,27 +2344,33 @@ def test_reporting_replaces_the_log_rather_than_doubling_it(caplog):
 
 
 def test_normalize_sample_helpers_pass_through_non_dict():
-    from chemrefine.config_legacy import _flatten_sample_type, _normalize_sample_block
+    from chemrefine.config_legacy import _normalize_sample_block, _translate_sample_type
 
-    assert _flatten_sample_type("nope") == "nope"
-    assert _normalize_sample_block("nope", (), _silent) == "nope"
+    assert _translate_sample_type("nope", ("steps", 0, "sample_type"), _silent) == "nope"
+    assert _normalize_sample_block("nope", ("steps", 0, "sample"), _silent) == "nope"
 
 
-def test_flatten_then_normalize_carries_through_extra_top_level_keys():
-    from chemrefine.config_legacy import _flatten_sample_type, _normalize_sample_block
+def test_a_key_beside_a_v1_sampling_blocks_parameters_configured_nothing():
+    """v1.3.1 read ``method`` and ``parameters``: anything beside them is dropped, reported.
 
-    flat = _flatten_sample_type(
-        {"method": "boltzmann", "parameters": {"weight": 95}, "by_parent": True}
-    )
-    out = _normalize_sample_block(flat, (), _silent)
-    assert out == {"method": "boltzmann", "percent_cumulative": 95, "by_parent": True}
+    ``by_parent`` came from v1.3.1's own code path, never from the block, so carried through
+    it would change which structures survive on a run that never asked for it.
+    """
+    from chemrefine.config_legacy import _translate_sample_type
+
+    seen, sink = _collect()
+    block = {"method": "boltzmann", "parameters": {"weight": 95}, "by_parent": True}
+    out = _translate_sample_type(block, ("steps", 0, "sample_type"), sink)
+    assert out == {"method": "boltzmann", "percent_cumulative": 95}
+    assert ("steps", 0, "sample_type", "by_parent") in [loc for loc, _ in seen]
 
 
 def test_normalize_sample_block_without_method_passes_keys_through():
     """A block with no ``method`` key leaves it out (validation rejects it later)."""
     from chemrefine.config_legacy import _normalize_sample_block
 
-    assert _normalize_sample_block({"count": 5}, (), _silent) == {"count": 5}
+    block = {"count": 5}
+    assert _normalize_sample_block(block, ("steps", 0, "sample"), _silent) == block
 
 
 # ---------------------------------------------------------------------------

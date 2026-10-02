@@ -22,8 +22,9 @@ for those and the full map.
   which already raises), the `MLFF`/`DFT` engine spellings, the `sample_type`
   block, and the flag-style CLI (`chemrefine CONFIG --rebuild_cache N`) — is
   scheduled for removal in **3.0.0**. Until then it reports every rewrite as a
-  deprecation warning. Flags the translator does not map pass through to the
-  subcommand CLI, so the current flags work in the legacy spelling
+  deprecation warning, and a file that sets a v1.3.1 key and its current spelling to
+  different values is refused, naming both. Flags the translator does not map pass
+  through to the subcommand CLI, so the current flags work in the legacy spelling
   (`chemrefine cfg.yaml --dry-run`), and a flag neither CLI knows is refused,
   where v1.3.1 ignored an unknown flag silently.
   See [migrating from v1 to v2](https://sterling-group.github.io/ChemRefine/get-started/upgrading-from-v1/).

@@ -585,6 +585,26 @@ _BUNDLED: tuple[Mutation, ...] = (
         "by the scan parser — the step keeps its energies and silently loses its frequency "
         "table and every imaginary mode",
     ),
+    Mutation(
+        id="legacy-spellings-clash-refused",
+        path="src/chemrefine/config_legacy.py",
+        old="    if target[key] != value:\n",
+        new="    if False:\n",
+        tests="tests/test_config.py",
+        breaks="a half-migrated config that sets a v1 key and its current spelling to different "
+        "values runs the value already in place — the current key's where the file sets one, "
+        "else the first legacy spelling's — with nothing said",
+    ),
+    Mutation(
+        id="legacy-unit-read-only-with-energy",
+        path="src/chemrefine/config_legacy.py",
+        old='        if key == "unit" and "energy" in sample:\n',
+        new='        if key == "unit":\n',
+        tests="tests/test_config.py",
+        breaks="a hand-migrated `window_kcalmol: 0.005, unit: hartree` loses its unit, reported "
+        "as read by a conversion that never ran, and filters with a window 627 times narrower "
+        "than its author meant",
+    ),
 )
 
 #: What an engine files beside its contract fixture — ``tests/data/engines/<name>/`` — to
