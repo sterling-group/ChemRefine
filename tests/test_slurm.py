@@ -123,14 +123,14 @@ def test_a_symlink_target_passes_both_loaders_and_is_refused_at_render(tmp_path:
     """The route the load-time passes cannot see, closed where the path becomes bash.
 
     `output_dir: ./outputs` is clean as written and clean once anchored to the config's
-    directory — `shell_unsafe_after_resolution` answers nothing — but `outputs` is a symlink
-    whose target carries `$`, and the step directory the script exports is the resolved one.
-    The builder refuses that string; before it did, the script exported
-    `…/run$1/outputs/step1/…` and `$1` expanded to nothing on the node.
+    directory — `load_config` validates both readings and refuses nothing — but `outputs` is
+    a symlink whose target carries `$`, and the step directory the script exports is the
+    resolved one. The builder refuses that string; without it the script would export
+    `…/run$1/outputs/step1/…`, and `$1` would expand to nothing on the node.
     """
     import yaml
 
-    from chemrefine.config import load_config, shell_unsafe_after_resolution
+    from chemrefine.config import load_config
     from chemrefine.step import step_dir_for
 
     target = tmp_path / "run$1" / "outputs"
@@ -145,7 +145,6 @@ def test_a_symlink_target_passes_both_loaders_and_is_refused_at_render(tmp_path:
     )
 
     config = load_config(config_path)  # as written and as anchored: nothing to refuse
-    assert shell_unsafe_after_resolution(config) is None
     step_dir = step_dir_for(config, config.steps[0])
     assert "$1" in str(step_dir)  # what the script would export
 

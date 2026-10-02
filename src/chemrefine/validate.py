@@ -58,7 +58,6 @@ from chemrefine.config import (
     Config,
     StepConfig,
     resolve_relative_paths,
-    shell_unsafe_after_resolution,
 )
 from chemrefine.engines import check_batch
 from chemrefine.engines.api import (
@@ -90,7 +89,7 @@ class ValidationIssue:
     (``("steps", 1, "options")``) — so a GUI walks it to the field to highlight and an
     agent quotes it verbatim. ``kind`` is a short machine-checkable class of finding
     (``yaml`` / ``io`` / ``legacy`` / a pydantic error type / ``deprecated`` /
-    ``shell-unsafe`` / ``executable`` / ``input`` / ``engine`` / ``options`` /
+    ``executable`` / ``input`` / ``engine`` / ``options`` /
     ``backend`` / ``preflight`` / ``operation`` / ``nms`` / ``template`` /
     ``whitespace-path`` / ``budget`` / ``slurm-header``); the message alone is for
     humans.
@@ -139,10 +138,11 @@ def validate_config_text(text: str, *, base_dir: Path | None = None) -> Validati
     """Validate YAML config text; never raises.
 
     The same pipeline as :func:`~chemrefine.config.load_config` — ``yaml.safe_load``,
-    mapping check, ``Config(**raw)`` (legacy normalization included), path resolution
-    against ``base_dir`` when given — but every failure becomes a report row. Model
-    validation errors keep pydantic's per-error ``loc``; the step-level checks described
-    in the module docstring run only once a model exists.
+    mapping check, ``Config.model_validate(raw)`` (legacy normalization included) and,
+    when ``base_dir`` is given, the copy anchored to it, validated again by the model — but
+    every failure becomes a report row. Model validation errors keep pydantic's per-error
+    ``loc``; the step-level checks described in the module docstring run only once a model
+    exists.
     """
     try:
         raw = yaml.safe_load(text)
@@ -175,6 +175,10 @@ def validate_config_text(text: str, *, base_dir: Path | None = None) -> Validati
         # would raise a bare TypeError past both handlers below. pydantic's own answer is a
         # ValidationError row ("Keys should be strings") like any other finding.
         config = Config.model_validate(raw)
+        if base_dir is not None:
+            # Validated again once anchored, so a rule the paths as read could not break — a
+            # parent directory name carrying what the shell rule refuses — is a row like any.
+            config = resolve_relative_paths(config, base=base_dir.resolve())
     except ValidationError as e:
         issues = tuple(
             ValidationIssue(loc=tuple(err["loc"]), kind=str(err["type"]), message=str(err["msg"]))
@@ -184,22 +188,13 @@ def validate_config_text(text: str, *, base_dir: Path | None = None) -> Validati
     except ConfigError as e:
         # The legacy normalizer refuses some v1 spellings before pydantic runs.
         return _failed("legacy", str(e))
-    if base_dir is not None:
-        config = resolve_relative_paths(config, base=base_dir.resolve())
     issues_list, warnings_list = _inspect_steps(config)
     # A report row, not only the load-time log line: `chemrefine validate`, the GUI and
     # every MCP client read this report and nothing else, and a log-only warning would
     # tell them all `ok` — the class the deprecation sink closes for legacy spellings.
     warnings_list += [
-        ValidationIssue(
-            loc=("executables", tool),
-            kind="executable",
-            message=(
-                f"executable {value!r} for {tool!r} does not exist on this host; "
-                f"ignore if a module load provides it inside the job"
-            ),
-        )
-        for tool, value in config.missing_executable_paths()
+        ValidationIssue(loc=("executables", tool), kind="executable", message=warning)
+        for tool, warning in config.missing_executables()
     ]
     # The seed is the first file every run reads and the one file the per-step checks never
     # look at: without this row, `input:` pointing at nothing would be `ok` here and an ASE
@@ -219,11 +214,6 @@ def validate_config_text(text: str, *, base_dir: Path | None = None) -> Validati
     # First in the list: a deprecation is about the vocabulary the file is written in, which
     # is the thing to fix before anything the filesystem checks below have to say.
     warnings_list = deprecations + warnings_list
-    # An issue, not a warning, and not scoped to any engine: every job script exports these
-    # three paths, so a metacharacter in one is a broken — or dangerous — script whatever
-    # runs. Asked after resolution because that is where a parent directory name gets in.
-    if problem := shell_unsafe_after_resolution(config):
-        issues_list.insert(0, ValidationIssue(loc=(), kind="shell-unsafe", message=problem))
     report_config = config if not issues_list else None
     return ValidationReport(
         issues=tuple(issues_list), warnings=tuple(warnings_list), config=report_config

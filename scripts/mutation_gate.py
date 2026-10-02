@@ -606,6 +606,18 @@ _BUNDLED: tuple[Mutation, ...] = (
         "than its author meant",
     ),
     Mutation(
+        id="anchored-paths-judged-by-the-model",
+        path="src/chemrefine/config.py",
+        old="    return type(cfg).model_validate(cfg.model_copy(update=updates)) "
+        "if updates else cfg\n",
+        new="    return cfg.model_copy(update=updates) if updates else cfg\n",
+        tests="tests/test_config.py",
+        breaks="a config in a directory named `$(…)` passes `load_config` and `validate` and is "
+        "refused only when its first job script is built, and a `scratch_dir` naming the "
+        "directory `output_dir` anchors to loads until a budget override refuses it in the "
+        "budget's name",
+    ),
+    Mutation(
         id="cores-left-out-of-the-key",
         path="src/chemrefine/engines/_options.py",
         old="    cores: Annotated[int, UNKEYED] = Field(1, ge=1)\n",

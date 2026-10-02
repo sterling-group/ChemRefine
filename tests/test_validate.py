@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from chemrefine.config import load_config
 from chemrefine.validate import (
     ValidationIssue,
     ValidationReport,
@@ -161,13 +162,30 @@ def test_a_metacharacter_from_the_config_directory_is_an_issue_not_a_warning(tmp
 
     Every job script exports template_dir/output_dir/scratch_dir, so a `$(...)` in any of
     them is a command substitution whatever engine runs. The report has to say so before a
-    script is written, and `save_config` has to refuse to write such a config.
+    script is written, and `save_config` has to refuse to write such a config. The YAML names
+    neither directory: both anchor under the hostile one, and each is refused at its own
+    field by the rule that refuses one written into the YAML.
     """
     hostile = tmp_path / "$(echo pwned)"
     hostile.mkdir()
     report = _validate(hostile)
     assert not report.ok
-    assert report.issues[0].kind == "shell-unsafe"
+    assert {issue.loc for issue in report.issues} == {("template_dir",), ("output_dir",)}
+    assert all("$(echo pwned)" in issue.message for issue in report.issues)
+    assert report.config is None
+
+
+def test_a_scratch_dir_naming_the_anchored_output_dir_is_an_issue(tmp_path: Path):
+    """The report judges the anchored paths, as `load_config` does.
+
+    An absolute `scratch_dir` spelling the path the default `output_dir` anchors to differs
+    from it only as written; a report that judged the spelling would say `ok` to a config
+    the run refuses.
+    """
+    report = _validate(tmp_path, scratch_dir=str(tmp_path / "outputs"))
+    [issue] = report.issues
+    assert issue.loc == ()
+    assert "scratch_dir must differ from output_dir" in issue.message
     assert report.config is None
 
 
@@ -707,19 +725,29 @@ def test_the_report_serializes_whole(tmp_path: Path):
     assert wire["issues"][0]["loc"] == ["steps", 0, "engine"]
 
 
-def test_an_absent_executable_path_is_a_warning_row_not_only_a_log_line(tmp_path: Path):
+def test_an_absent_executable_path_is_a_warning_row_said_once(tmp_path: Path, caplog):
     """`chemrefine validate`, the GUI, and MCP clients read the report, not stderr.
 
-    The load-time check was logger-only, so every report reader was told `ok` with no
-    warnings while a typo'd `/opt/orca/orca` path waited to fail at submit time — the
-    same finding-only-for-stderr-watchers class the deprecation sink closed for legacy
-    spellings. A bare command name stays off the report: it resolves on the executing
-    host at submit time, exactly as the load-time warning's contract says.
+    A log line alone would tell every report reader `ok` while a typo'd `/opt/orca/orca`
+    path waits to fail at submit time. The row is the finding's one statement on this
+    path; the log line is `load_config`'s, for a run. A bare command name stays off the
+    report: it resolves on the executing host at submit time.
     """
-    report = _validate(tmp_path, executables={"orca": str(tmp_path / "no" / "orca")})
+    executables = {"orca": str(tmp_path / "no" / "orca")}
+    with caplog.at_level("WARNING"):
+        report = _validate(tmp_path, executables=executables)
     [row] = [w for w in report.warnings if w.kind == "executable"]
     assert row.loc == ("executables", "orca")
     assert "does not exist on this host" in row.message
+    assert not [r for r in caplog.records if "does not exist on this host" in r.getMessage()]
+
+    # The run's log line is the same sentence, said by the loader.
+    config_path = tmp_path / "input.yaml"
+    config_path.write_text(yaml.safe_dump(_config_dict(executables=executables)), "utf-8")
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="chemrefine.config"):
+        load_config(config_path)
+    assert [r.getMessage() for r in caplog.records] == [row.message]
 
     bare = _validate(tmp_path, executables={"orca": "orca"})
     assert [w for w in bare.warnings if w.kind == "executable"] == []
@@ -876,8 +904,10 @@ def test_a_template_that_cannot_be_read_does_not_hide_the_budget_row(tmp_path: P
 
 def test_every_kind_validate_files_is_named_where_the_kinds_are_listed():
     """``ValidationIssue`` lists the kinds a GUI or an agent can switch on; the list is held
-    to the kinds the module files, read off its source."""
+    to the kinds the module files, read off its source — both ways, so a kind no longer
+    filed leaves the list too."""
     import ast
+    import re
 
     from chemrefine import validate
 
@@ -892,7 +922,9 @@ def test_every_kind_validate_files_is_named_where_the_kinds_are_listed():
         if isinstance(value, ast.Constant) and isinstance(value.value, str):
             kinds.add(value.value)
     assert {"template", "operation", "budget"} <= kinds
-    assert sorted(k for k in kinds if f"``{k}``" not in (ValidationIssue.__doc__ or "")) == []
+    doc = ValidationIssue.__doc__ or ""
+    start = doc.index("(``yaml``")
+    assert set(re.findall(r"``([^`]+)``", doc[start : doc.index(")", start)])) == kinds
 
 
 def test_a_complete_training_template_validates_clean(tmp_path: Path):

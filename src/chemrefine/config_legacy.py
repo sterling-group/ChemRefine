@@ -228,9 +228,10 @@ def normalize(raw: dict[str, Any], *, report: DeprecationSink | None = None) -> 
 
     ``report`` redirects those announcements to a caller instead of the log, which is how
     :func:`chemrefine.validate.validate_config_text` turns them into report warnings. It is
-    a redirect rather than an addition on purpose: the validator runs this twice — once to
-    collect, once inside ``Config.model_validate`` — and a sink that also logged would say
-    everything twice.
+    a redirect rather than an addition on purpose: the validator runs this twice over the
+    user's mapping — once to collect, once inside ``Config.model_validate`` — and a sink that
+    also logged would say everything twice. Each copy the model re-checks after that hands
+    it the model's own current spellings, which pass through with nothing to announce.
     """
     sink = report or _log_deprecation
     out = dict(raw)

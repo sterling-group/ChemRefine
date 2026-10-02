@@ -43,7 +43,6 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
-    TypeAdapter,
     ValidationError,
     field_validator,
     model_validator,
@@ -608,8 +607,8 @@ def reject_shell_unsafe(text: str, *, what: str, fix: str) -> None:
     ==========================  ===============================================================
     ``template_dir`` /          this rule — interpolated into ``export WORK_DIR=…``; asked
     ``output_dir`` /            at load as read and as anchored
-    ``scratch_dir``             (:func:`shell_unsafe_after_resolution`), and again at render
-                                on the *resolved* path bash receives
+    ``scratch_dir``             (:func:`resolve_relative_paths`), and again at render on
+                                the *resolved* path bash receives
                                 (:mod:`chemrefine.slurm.script`)
     ``executables``             this rule — embedded raw in the runlog heredoc; an engine
                                 that exports a root path in its run block also
@@ -660,59 +659,14 @@ def reject_shell_unsafe(text: str, *, what: str, fix: str) -> None:
         )
 
 
-def shell_unsafe_after_resolution(config: Config) -> str | None:
-    """Why this config's *resolved* directories cannot be interpolated into bash, or ``None``.
-
-    :func:`reject_shell_unsafe` runs as a field validator, on the paths **as read** — a
-    leading ``~`` already its home (:data:`USER_PATH`). That is not where they end up:
-    :func:`resolve_relative_paths` anchors a relative path to the config file's own
-    directory through ``model_copy``, which by design runs no validators — so every
-    character the rule refuses can be smuggled in through a *parent directory name*
-    instead of through the YAML.
-
-    It is a real bypass of the boundary ``docs/internals/security.md`` states: a config
-    containing nothing but ``output_dir: ./outputs``, placed in a directory named
-    ``$(touch /tmp/MARKER)``, yields ``export OUTPUT_DIR="…/$(touch /tmp/MARKER)/outputs"``
-    in the generated script — and bash performs command substitution inside double quotes,
-    so running the job creates the file.
-    The directory name is the whole payload; the user's YAML is innocent.
-
-    Asked of the resolved config, therefore, and by both loaders — :func:`load_config` raises,
-    :func:`chemrefine.validate.validate_config_text` reports — for the same reason the rule
-    exists at all: a value that reaches generated bash is refused before a script is written,
-    not after one runs.
-
-    Unlike the whitespace rule (which belongs to the input formats that cannot quote a path,
-    and is scoped to the engines that declare
-    :class:`~chemrefine.engines.api.WhitespacePathIntolerant`), this one is
-    engine-independent: every engine's job script exports these three paths, so there is
-    nothing to scope it to.
-
-    This pass sees the anchored path with its symlinks intact, and the step directory the
-    script exports is the ``.resolve()``d one — so a symlink whose *target* carries a refused
-    character passes here. That route is closed where the path becomes bash: the script
-    builders ask the rule once more on the exact string they interpolate
-    (:func:`chemrefine.slurm.script._refuse_shell_unsafe`), which is what makes the rule a
-    property of reaching bash rather than of the two readings a loader can see. This pass
-    stays for what it is — the earliest point the user can be told, from both loaders.
-    """
-    for name in ("template_dir", "output_dir", "scratch_dir"):
-        value = getattr(config, name)
-        if value is None:
-            continue
-        try:
-            reject_shell_unsafe(
-                str(value), what=f"resolved {name}", fix="rename the directory it sits in"
-            )
-        except ValueError as e:
-            return str(e)
-    return None
-
-
 class Config(BaseModel):
     """Top-level YAML config."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    # `revalidate_instances`: `model_validate` given a Config re-checks it rather than handing
+    # it back — how a copy made with `model_copy`, which runs no validators, is held to the
+    # model's rules: the anchored paths (`resolve_relative_paths`) and a budget override
+    # (`with_budgets`).
+    model_config = ConfigDict(frozen=True, extra="forbid", revalidate_instances="always")
 
     @model_validator(mode="before")
     @classmethod
@@ -729,8 +683,10 @@ class Config(BaseModel):
     calculation — fine for a laptop / local development.
 
     On HPC, set it to the **compute node's fast local disk** (e.g.
-    ``/scratch/$USER``, node-local NVMe/SSD) — distinct from the shared network
-    filesystem (Lustre/NFS) that holds your home/project. The calculation's heavy
+    ``/scratch/<user>``, node-local NVMe/SSD) — distinct from the shared network
+    filesystem (Lustre/NFS) that holds your home/project. The path is taken as
+    written: ``$USER`` is not expanded, and a ``$`` is refused like every shell
+    metacharacter. The calculation's heavy
     I/O then runs on that fast local disk instead of hammering the shared FS, and
     the generated SLURM script's exit trap copies the result files back to
     ``output_dir`` when the job ends.
@@ -876,41 +832,27 @@ class Config(BaseModel):
             raise ValueError("step names must be unique when provided")
         return self
 
-    def missing_executable_paths(self) -> list[tuple[str, str]]:
-        """``(tool, value)`` for every explicit ``executables`` path absent on this host.
+    def missing_executables(self) -> list[tuple[str, str]]:
+        """``(tool, warning)`` for every explicit ``executables`` path absent on this host.
 
-        The one home for the predicate, read by the load-time log below **and** by
-        :mod:`chemrefine.validate`'s warning row — a log line alone would reach nobody
-        watching ``chemrefine validate``, the GUI, or an MCP client, which all read the
-        report and would be told ``ok`` with no warning. A bare command name (no path
-        separator) is not on the list — it resolves on the executing host at submit
-        time.
+        The one home for the finding and its wording, said by :func:`load_config`'s log line
+        for a run **and** by :mod:`chemrefine.validate`'s warning row — a log line alone
+        would reach nobody watching ``chemrefine validate``, the GUI, or an MCP client, which
+        all read the report and would be told ``ok`` with no warning. A warning, never a
+        refusal: on HPC a ``module load`` inside the job often provides the binary, so the
+        login node reading the YAML legitimately can't see it, while an explicit path absent
+        here is almost always a typo. A bare command name (no path separator) is not on the
+        list — it resolves on the executing host at submit time.
         """
         return [
-            (tool, value)
+            (
+                tool,
+                f"executable {value!r} for {tool!r} does not exist on this host; "
+                f"ignore if a module load provides it inside the job",
+            )
             for tool, value in self.executables.items()
             if os.sep in value and not Path(value).exists()
         ]
-
-    @model_validator(mode="after")
-    def _warn_missing_executable_paths(self) -> Config:
-        """Warn (don't fail) when an ``executables`` entry is a path that's absent.
-
-        Validation never hard-fails here: on HPC the binary is often provided by a
-        ``module load`` *inside* the SLURM job, so the login node parsing the YAML
-        legitimately can't see it. Only an explicit path that doesn't exist on this
-        host earns a warning (:meth:`missing_executable_paths`), since that is almost
-        always a typo.
-        """
-        for tool, value in self.missing_executable_paths():
-            logger.warning(
-                "executable %r for %r does not exist on this host (%s); "
-                "ignore if a module load provides it inside the job",
-                value,
-                tool,
-                value,
-            )
-        return self
 
     def step_dir(self, step_cfg: StepConfig) -> Path:
         """Return the absolute output directory for ``step_cfg``."""
@@ -921,24 +863,31 @@ class Config(BaseModel):
 
         The budgets are the one thing a run overrides — ``--maxcores`` / ``--maxgpus`` and
         the agent's ``start_run``; every other field comes from the YAML, through the
-        loader that resolves its paths. ``model_copy`` runs no validators, so each value is
-        held to the rule its field declares (``max_cores: ge=1``, ``max_gpus: ge=0``), read
-        off the field rather than restated: one floor and one wording, and a bad budget is
-        the same :class:`ConfigError` a bad YAML value is. No model-level rule reads either
-        budget, so the field's rule is the whole of it.
+        loader that resolves its paths. ``model_copy`` runs no validators, so the copy is
+        handed to the model to validate: an override meets every rule a YAML value meets —
+        its field's floor (``max_cores: ge=1``, ``max_gpus: ge=0``) and any rule the model
+        declares — with no second statement of either, and a bad budget is the same
+        :class:`ConfigError` a bad YAML value is.
         """
-        validated: dict[str, object] = {}
-        for name, value in (("max_cores", max_cores), ("max_gpus", max_gpus)):
-            if value is None:
-                continue
-            field = type(self).model_fields[name]
-            rule: TypeAdapter[Any] = TypeAdapter(Annotated[field.annotation, field])
-            try:
-                validated[name] = rule.validate_python(value)
-            except ValidationError as e:
-                detail = "; ".join(err["msg"] for err in e.errors())
-                raise ConfigError(f"{name} {value!r}: {detail}") from e
-        return self.model_copy(update=validated) if validated else self
+        budgets = {
+            name: value
+            for name, value in (("max_cores", max_cores), ("max_gpus", max_gpus))
+            if value is not None
+        }
+        if not budgets:
+            return self
+        try:
+            return type(self).model_validate(self.model_copy(update=budgets))
+        except ValidationError as e:
+            # A field's error names its own budget; a model-level rule's names every one given.
+            given = ", ".join(f"{name} {value!r}" for name, value in budgets.items())
+            detail = "; ".join(
+                f"{err['loc'][0]} {err['input']!r}: {err['msg']}"
+                if err["loc"]
+                else f"{given}: {err['msg']}"
+                for err in e.errors()
+            )
+            raise ConfigError(detail) from e
 
     def find_step(self, key: object) -> StepConfig | None:
         """Return the step matching ``key`` (a number or a name), or ``None``.
@@ -982,6 +931,15 @@ def resolve_relative_paths(cfg: Config, *, base: Path) -> Config:
     found. Naming the model a previous step produced (``./outputs/step2/train/train.model``)
     is the obvious thing to write, so it has to work from anywhere.
 
+    The anchored copy is validated by the model, which saw only the paths as read: a parent
+    directory name can carry every character the shell rule refuses (``output_dir:
+    ./outputs`` in a directory named ``$(…)`` exports ``…/$(…)/outputs``, and bash
+    substitutes inside double quotes), and an absolute ``scratch_dir`` can name the very
+    directory a relative ``output_dir`` anchors to. Raises pydantic's
+    :class:`~pydantic.ValidationError` for each loader to word. A symlink whose *target*
+    carries such a character still passes — this sees the path with its symlinks intact —
+    and is refused where the path becomes bash (:mod:`chemrefine.slurm.script`).
+
     Public, not underscored, because :func:`chemrefine.validate.validate_config_text`
     resolves the same way: it is the non-raising twin of :func:`load_config`, and a report
     that judged paths against a different directory than the run would is a report about a
@@ -999,7 +957,7 @@ def resolve_relative_paths(cfg: Config, *, base: Path) -> Config:
     steps = [_resolve_step_option_paths(step, base=base) for step in cfg.steps]
     if any(new is not old for new, old in zip(steps, cfg.steps, strict=True)):
         updates["steps"] = steps
-    return cfg.model_copy(update=updates) if updates else cfg
+    return type(cfg).model_validate(cfg.model_copy(update=updates)) if updates else cfg
 
 
 STEP_OPTION_PATHS = ("model_path",)
@@ -1057,12 +1015,11 @@ def load_config(path: str | Path) -> Config:
         # `model_validate`, not `Config(**raw)`: a non-string key (YAML 1.1's unquoted
         # `on:` parses to a boolean) would make the splat raise a bare TypeError past this
         # handler; pydantic itself turns it into the ValidationError caught here.
-        cfg = Config.model_validate(raw)
+        resolved = resolve_relative_paths(Config.model_validate(raw), base=p.parent.resolve())
     except ValidationError as e:
         raise ConfigError(f"invalid config {p}:\n{e}") from e
-    resolved = resolve_relative_paths(cfg, base=p.parent.resolve())
-    # Re-asked after resolution: the field validator saw the paths as read, and a parent
-    # directory name can carry every character it refuses. See `shell_unsafe_after_resolution`.
-    if problem := shell_unsafe_after_resolution(resolved):
-        raise ConfigError(f"invalid config {p}:\n{problem}")
+    # Said here, once per load, rather than by a model validator, which runs again on every
+    # copy the model re-checks.
+    for _tool, warning in resolved.missing_executables():
+        logger.warning("%s", warning)
     return resolved

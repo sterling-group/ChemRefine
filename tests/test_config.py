@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from pydantic import ValidationError
+from pydantic import ValidationError, model_validator
 
 from chemrefine.config import (
     BoltzmannSample,
@@ -627,6 +627,19 @@ def test_scratch_dir_equal_output_dir_rejected(tmp_path: Path):
         load_config(_write_yaml(tmp_path, data))
 
 
+def test_a_scratch_dir_naming_the_anchored_output_dir_is_refused(tmp_path: Path):
+    """The rule compares the anchored paths, not only the paths as written.
+
+    An absolute ``scratch_dir`` spelling the path a relative ``output_dir`` anchors to
+    differs from it only as written. The model judges the anchored copy too, so the load
+    refuses it — and a budget override, which re-checks that copy, never meets a rule the
+    load did not.
+    """
+    data = _minimal_config(scratch_dir=str(tmp_path / "outputs"))
+    with pytest.raises(ConfigError, match="scratch_dir must differ from output_dir"):
+        load_config(_write_yaml(tmp_path, data))
+
+
 @pytest.mark.parametrize("field", ["template_dir", "output_dir", "scratch_dir"])
 @pytest.mark.parametrize("bad", ['./out"dir', "./out$dir", "./out`dir"])
 def test_directory_paths_with_shell_metacharacters_rejected(tmp_path: Path, field: str, bad: str):
@@ -637,10 +650,7 @@ def test_directory_paths_with_shell_metacharacters_rejected(tmp_path: Path, fiel
     broken — or dangerous — job script at submit time.
     """
     data = _minimal_config(**{field: bad})
-    # `match="path"`: the field validator's own wording. The post-resolution re-check
-    # (`shell_unsafe_after_resolution`) refuses the same string as "resolved <field>", so
-    # without the match the field-level refusal could be deleted and this stay green.
-    with pytest.raises(ConfigError, match=r"path .* contains"):
+    with pytest.raises(ConfigError, match=rf"{field}\n.*path .* contains"):
         load_config(_write_yaml(tmp_path, data))
 
 
@@ -724,14 +734,13 @@ def test_executables_allow_spaces_and_bare_command_names(tmp_path: Path, ok: str
 
 
 def test_a_metacharacter_in_the_config_files_own_directory_is_refused(tmp_path: Path):
-    """The shell rule is re-asked after resolution, because a parent directory can carry one.
+    """The shell rule judges the anchored paths too, because a parent directory can carry one.
 
-    Reproduced before it was fixed: a config whose YAML contains nothing but
-    `output_dir: ./outputs`, sitting in a directory named `$(touch /tmp/MARKER)`, produced
-    `export OUTPUT_DIR="…/$(touch /tmp/MARKER)/outputs"` in the generated script — and bash
-    substitutes inside double quotes, so running the job created the file. The field
-    validator could not see it: it runs on the path as written, and `resolve_relative_paths`
-    anchors relative paths through `model_copy`, which runs no validators.
+    A config whose YAML contains nothing but `output_dir: ./outputs`, sitting in a directory
+    named `$(touch /tmp/MARKER)`, would export `OUTPUT_DIR="…/$(touch /tmp/MARKER)/outputs"`
+    in the generated script — and bash substitutes inside double quotes, so running the job
+    would create the file. The paths as written are clean; `resolve_relative_paths` hands
+    the anchored copy to the model, whose field validator refuses it.
 
     A directory name is the payload here, which is exactly the shape that matters on a
     shared filesystem — the environment `docs/internals/security.md` is written for.
@@ -740,12 +749,12 @@ def test_a_metacharacter_in_the_config_files_own_directory_is_refused(tmp_path: 
     hostile.mkdir()
     config = hostile / "input.yaml"
     config.write_text(yaml.safe_dump(_minimal_config()), encoding="utf-8")
-    with pytest.raises(ConfigError, match="resolved"):
+    with pytest.raises(ConfigError, match=r"output_dir\n.*path .*\$\(echo pwned\)/outputs"):
         load_config(config)
 
 
 def test_a_clean_config_directory_still_loads(tmp_path: Path):
-    """The re-check must not refuse an ordinary tree — it is a rule, not a mood."""
+    """Judging the anchored paths must not refuse an ordinary tree — a rule, not a mood."""
     project = tmp_path / "proj-1_ok"
     project.mkdir()
     config = project / "input.yaml"
@@ -2320,9 +2329,8 @@ def test_a_current_config_announces_nothing():
 def test_reporting_replaces_the_log_rather_than_doubling_it(caplog):
     """``report=`` redirects; it does not add a second voice.
 
-    The validator normalizes twice — once to collect, once inside
-    ``Config.model_validate`` — so a sink that also logged would say everything twice on a
-    path that used to say it once.
+    The validator normalizes the user's mapping twice — once to collect, once inside
+    ``Config.model_validate`` — so a sink that also logged would say everything twice.
     """
     import logging
 
@@ -2431,15 +2439,15 @@ def test_a_stored_policy_is_recognised_only_from_the_vocabulary():
 
 
 # ---------------------------------------------------------------------------
-# Budgets are held to the fields' own rules
+# Budgets are held to the model's own rules
 # ---------------------------------------------------------------------------
 
 
-def test_a_budget_is_validated_by_its_fields_own_rule():
+def test_a_budget_is_validated_by_the_model():
     """``with_budgets`` applies the declared constraint, in the model's wording.
 
-    ``model_copy`` runs no validators, so without a rule read off the field each entry point
-    that applies a budget would restate its floor — a CLI flag's ``min=1`` beside the
+    ``model_copy`` runs no validators, so without the model re-checking the copy each entry
+    point that applies a budget would restate its floor — a CLI flag's ``min=1`` beside the
     model's ``ge=1``, an agent tool's ``< 1`` beside both. A valid value lands, an invalid
     one is the same ``ConfigError`` a bad YAML value is, and ``None`` keeps the config's own.
     """
@@ -2455,3 +2463,60 @@ def test_a_budget_is_validated_by_its_fields_own_rule():
         ConfigError, match="max_gpus -1: Input should be greater than or equal to 0"
     ):
         config.with_budgets(max_gpus=-1)
+    # Given both, the refusal names the one that failed and only that one.
+    with pytest.raises(ConfigError) as refused:
+        config.with_budgets(max_cores=0, max_gpus=1)
+    assert str(refused.value) == "max_cores 0: Input should be greater than or equal to 1"
+
+
+def test_a_budget_meets_every_rule_the_model_declares():
+    """Not only its field's floor: a model-level rule that reads a budget is asked too.
+
+    The field's constraint read off on its own would pass a budget the model refuses. The
+    copy goes through the model instead, so a rule added there reaches every override with no
+    second place to add it.
+    """
+
+    class Capped(Config):
+        @model_validator(mode="after")
+        def _cap(self) -> Capped:
+            if self.max_cores > 8:
+                raise ValueError("max_cores is capped at 8 here")
+            return self
+
+    config = Capped.model_validate(_minimal_config())
+    assert config.with_budgets(max_cores=8).max_cores == 8
+    with pytest.raises(ConfigError, match="max_cores 9: Value error, max_cores is capped at 8"):
+        config.with_budgets(max_cores=9)
+    # A model-level rule has no field to point at, so its refusal names every budget given.
+    with pytest.raises(ConfigError) as refused:
+        config.with_budgets(max_cores=9, max_gpus=1)
+    assert (
+        str(refused.value) == "max_cores 9, max_gpus 1: Value error, max_cores is capped at 8 here"
+    )
+
+
+def test_a_missing_executable_path_is_warned_once_per_load(tmp_path: Path, caplog):
+    """The loader says it, not a model validator, so a re-checked copy does not repeat it.
+
+    ``with_budgets`` validates its copy through the model. A warning made by a model
+    validator would be logged a second time by every ``--maxcores`` run.
+    """
+    absent = str(tmp_path / "no" / "orca")
+    path = _write_yaml(tmp_path, _minimal_config(executables={"orca": absent}))
+    with caplog.at_level("WARNING", logger="chemrefine.config"):
+        load_config(path).with_budgets(max_cores=2)
+    [record] = caplog.records
+    assert absent in record.getMessage() and "does not exist on this host" in record.getMessage()
+
+
+def test_a_legacy_spelling_is_announced_once_per_load(tmp_path: Path, caplog):
+    """A copy the model re-checks carries current spellings only, so it announces nothing.
+
+    The anchored copy and a budget override both pass the legacy normalizer again; a v1 key
+    is said once, by the load that read it.
+    """
+    path = _write_yaml(tmp_path, _minimal_config(initial_xyz="./seed.xyz"))
+    with caplog.at_level("WARNING", logger="chemrefine.config_legacy"):
+        load_config(path).with_budgets(max_cores=2)
+    assert [r.getMessage() for r in caplog.records] == ["`initial_xyz` is deprecated; use `input`"]
