@@ -1,5 +1,12 @@
 # Provider job recovery
 
+The local journal, archive lookup and explicit retrieval contracts are validated
+with provider adapters and local SDK execution. Recovery of an actual IBM
+hardware job remains unverified. Journal recovery also differs from reproducing
+a scientific state; retain the [reproducible checkpoints](qiskit-checkpoints.md)
+alongside the journals. The [support status](qiskit-status.md) lists known failures
+and validation limits.
+
 Quantum workers receive `CHEMREFINE_PROVIDER_JOURNAL_DIR`, an absolute path to
 `provider_jobs` inside their durable job directory. Both local and array scripts
 set it before launching Python. Request records are written there immediately,
@@ -75,6 +82,28 @@ resubmission acknowledgement above; ordinary resume is not a recovery decision.
 Neither a journal entry nor a provider job ID substitutes for a complete validated
 result bundle.
 
+## What to keep before a worker exits
+
+Preserve the integral bundle and its arrays, molecular identity, active-orbital
+indices, particle/spin sector, mapper and energy offsets. Save supported bound
+circuits with their Hamiltonian data, parameter values and resolved solver
+options. Parameters alone refer to a particular orbital basis and circuit; a
+fresh SCF calculation can change orbital ordering or phases and therefore does
+not establish that the old state was reconstructed.
+
+Keep the complete result bundle, its referenced payloads and `provider_jobs`
+directory together. For known-ID Runtime retrieval, preserve the original
+execution options, submitted compiled circuits, observables and parameter PUBs
+in submission order, plus calibration inputs where applicable. The request
+digest verifies equality but does not contain recoverable circuit or integral
+data. A logical circuit checkpoint cannot guarantee identical recompilation on
+a changed provider target.
+
+These artifacts support state reconstruction, comparisons and explicit provider
+retrieval. They do **not** save optimizer internals or implement a general
+continuation of an interrupted VQE/ADAPT optimization. A restarted optimization
+from saved parameters is a new solve; it can follow a different trajectory.
+
 ## Execution provenance
 
 Molecular diagnostics retain provenance under `engine_metadata.provenance`;
@@ -92,5 +121,14 @@ their recorded commit or SHA-256 where available; other installs identify the pa
 version and leave unavailable source facts unknown. Source URLs, account selectors,
 local paths and changed filenames are omitted. A dirty flag does not preserve the
 patch: archive the source changes separately before publishing reproducible results.
-The runnable `examples/tutorials/qiskit_sp/runtime_fake.yaml` example produces the
-same provenance schema without remote execution.
+Local fake-backend execution produces the same provenance schema without remote
+execution.
+
+Execution provenance is an inventory, rather than a complete environment lock.
+Record `pip freeze` from the actual worker, retain a Conda explicit export for
+native/CUDA package builds, and archive the ChemRefine source or built artifact.
+Include the invocation, random seeds, requested simulator method/device/precision
+and hardware/driver identity in the checkpoint manifest. The built-in source
+identity is collected once per process: editing a live checkout afterward does
+not refresh that record. Restore the recorded software and input artifacts when
+comparing reruns; do not treat missing provenance fields as verified matches.

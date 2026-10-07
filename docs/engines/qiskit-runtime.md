@@ -6,8 +6,16 @@ Qiskit IBM Runtime **0.50** API. Install the `qiskit-runtime` backend profile an
 `implementation: legacy_v2` selects the deprecated server-side V2 primitives; it
 does not follow the package's changing top-level aliases.
 
-The `examples/tutorials/qiskit_sp/runtime_fake.yaml` example uses a
-local noisy fake backend. It requires neither an IBM account nor network access.
+**Working locally:** the executor and legacy V2 adapters have numerical
+validation against the Runtime 0.50 SDK's noisy fake backends. Executor TREX and
+gate-folding ZNE, sampling and layout-aware fidelity run through these local
+paths. **Unverified on real hardware:** this validation does not demonstrate a
+successful IBM hardware run, remote calibration quality, account access,
+session behavior on the service or billing. See the
+[support status](qiskit-status.md) for the branch's validation boundaries.
+
+Select `fake_backend` for a local noisy fake backend. It requires neither an IBM
+account nor network access.
 To target hardware, replace `fake_backend` with `backend_name` and select an
 existing saved account using `account_name`, `channel` and/or `instance`. Credentials
 belong in IBM's account storage, never in ChemRefine YAML or job journals. Hardware
@@ -74,6 +82,12 @@ Executor TREX and gate-folding ZNE can run locally with a fake backend. Legacy l
 V2 ignores mitigation, twirling and dynamical decoupling, so enabling these options
 with that implementation is rejected.
 
+The unsupported combinations above fail during validation instead of producing
+an apparently mitigated result. In particular, local fake-backend PEC/PEA cannot
+provide Runtime 0.50's required noise-learning stage. The synthetic calibration
+checks described below establish executor mathematics, rather than a working
+remote calibration pipeline or an improvement on real hardware.
+
 ## Durable journals and explicit recovery
 
 Normal and array workers write directly to the durable job output directory's
@@ -94,8 +108,7 @@ not be written, the error reports it for manual provider recovery.
 
 Use explicit retrieval for known IDs. `resubmission_policy: allow_unresolved` instead
 acknowledges that a fresh submission may duplicate already accepted work. It does not
-cancel or resolve earlier jobs. The runnable local-only
-`examples/tutorials/qiskit_sp/runtime_fake.yaml` example declares the default policy;
+cancel or resolve earlier jobs. The default policy refuses unresolved work;
 change that field to `allow_unresolved` only when deliberately repeating a request.
 These local safeguards make **no exactly-once execution claim**. Separate journal
 directories, provider-side retries and lost durable storage remain outside their
@@ -108,6 +121,17 @@ IDs when explicit noise learning was used. Reproduce the original execution opti
 compiled circuits, parameter values and observables. Use a fixed transpiler seed.
 The adapter verifies each request digest against its recorded ID before fetching a
 job; mismatches, missing records and exhausted IDs fail without creating replacements.
+
+Save the original integral bundle, complete resolved options and environment
+inventory alongside any supported logical bound-circuit export. For retrieval,
+also retain the exact submitted ISA circuits, applied observable layout and PUB
+inputs when using a standalone client. A logical circuit export is a useful
+scientific checkpoint, but recompiling it with a different SDK, backend target
+or transpiler settings can produce a different request digest. The journals
+deliberately omit circuit payloads and cannot reconstruct these inputs. See
+[reproducible checkpoints](qiskit-checkpoints.md) for saving the Hamiltonian and
+circuits, and [provider recovery](qiskit-recovery.md) for the separate retrieval
+contract.
 
 Fresh worker attempts archive earlier products. For the injected default journal path,
 recovery also searches the same job's `attempt*/provider_jobs` directories without

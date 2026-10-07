@@ -27,6 +27,12 @@ for the full map.
 
 ### Added
 
+- **Qiskit support and checkpoint guides.** A consolidated feature-status table
+  distinguishes validated execution, known bugs, experimental domains and
+  unverified hardware paths. Reproducibility instructions show how to preserve
+  integral and bound-circuit bundles, reload the same Hamiltonian and reconstruct
+  a final energy independently, while documenting optimizer-restart limitations.
+
 - **Scalable circuit interpretations.** New circuit bundles store Pauli terms and
   parameter data in bounded NPZ arrays while reading existing inline bundles.
   Known export sizes fail before provider acquisition, and each root's byte budget
