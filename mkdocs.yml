@@ -155,6 +155,7 @@ nav:
   - Engines & backends:
       - engines/index.md
       - Qiskit ground-state calculations: engines/qiskit.md
+      - Qiskit support status: engines/qiskit-status.md
       - Quantum data handoffs: engines/qiskit-handoffs.md
       - Quantum experiments: engines/qiskit-experiment.md
       - Sampled quantum states: engines/qiskit-states.md
