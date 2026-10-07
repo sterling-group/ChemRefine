@@ -27,6 +27,39 @@ not universal applicability. The [spectra](qiskit-spectra.md),
 [sampled-state](qiskit-states.md), [local-encoding](qiskit-encodings.md) and
 [experiment](qiskit-experiment.md) pages give method-specific limitations.
 
+Start with [support status and known bugs](qiskit-status.md) before choosing a
+provider or research method. Use [reproducible checkpoints](qiskit-checkpoints.md)
+to retain the actual Hamiltonian and final preparation for independent replay.
+
+## Choose a workflow
+
+The molecular engine reports energies for incoming structures. The
+`qiskit-experiment` engine writes versioned numerical artifacts for measurement,
+evolution, reconstruction and resource studies. Its results do not implicitly
+become molecular energies or optimized geometries.
+
+| Need | Guide and execution boundary |
+| --- | --- |
+| Exact, fixed VQE or UCC-pool ADAPT energies | This page; local estimators by default, with explicit provider selection for remote work. |
+| Additional adaptive circuits | [TETRIS and CEO](qiskit-adaptive.md); experimental growth, sector checks and stopping diagnostics. |
+| Excited energies and quantum natural SPSA | [VQD, qEOM and QNSPSA](qiskit-spectra.md); root conventions, fidelity sampling and optional physical residuals. |
+| UCJ/LUCJ, SQD or grouped SqDRIFT | [Fermionic workflows](#fermionic-research-workflows); classical fermionic simulation or quantum sampling followed by classical projection. |
+| Explicit sampled states, Krylov powers and orbital optimization | [Sampled states](qiskit-states.md); retained amplitudes, RDMs, SKQD and extended SQD. |
+| Reference-aware qubit reduction | [Symmetry tapering](qiskit-tapering.md); reference-sector selection and consistent transformation of operators. |
+| Lattice encodings and specialized flow sets | [Local encodings](qiskit-encodings.md); supported graph domains and approximation boundaries. |
+| Circuit measurements and artifact-producing calculations | [Quantum experiments](qiskit-experiment.md); bounded acquisition, covariance and cache validation. |
+| Fermionic shadows and fitted RDMs | [Shadows](qiskit-shadows.md) and [RDM reconstruction](qiskit-rdm-reconstruction.md); measured uncertainty and solver feasibility remain separate. |
+| Real- or imaginary-time variational evolution | [Variational dynamics](qiskit-dynamics.md); numerical integration and manifold approximation diagnostics. |
+| Factorized Hamiltonian evolution | [Double-factorized evolution](qiskit-double-factorized.md); truncation, product formulas and independently checked small-system references. |
+| Endpoint Pauli checks | [Spacetime postselection](qiskit-spacetime.md); experimental Clifford-domain checks and conditional statistics. |
+| Reduced-width execution or cost planning | [Circuit cutting](qiskit-cutting.md) and [resource estimates](qiskit-resources.md); reconstructed expectations and assumption-dependent budgets. |
+| Remote execution and recovery | [IBM Runtime](qiskit-runtime.md) and [provider recovery](qiskit-recovery.md); explicit submissions, durable journals and retrieval. |
+| Reuse the exact input Hamiltonian or final preparation | [Quantum data handoffs](qiskit-handoffs.md); portable integral and bound-circuit artifacts. |
+
+Registry availability describes a supported configuration boundary. Check the
+linked guide's scientific domain and limits before treating an experimental
+component as suitable for a molecule or device.
+
 ## Install and run the example
 
 Install the optional stack in the current environment:
@@ -323,8 +356,9 @@ the active space is small enough.
 
 ### Estimators
 
-All four built-ins implement Qiskit's V2 estimator interface, but they model
-different execution semantics:
+The four local choices below implement Qiskit's V2 estimator interface, with
+different execution semantics. The optional remote provider is documented in
+[IBM Runtime execution](qiskit-runtime.md).
 
 | Name | Options | Execution model |
 | --- | --- | --- |
@@ -339,6 +373,14 @@ matter. Use `basic_backend` for a lightweight ideal shot test and `aer_shots`
 for Aer shot sampling or an Aer noise model. `simulation_precision` controls
 Aer floating-point arithmetic (`single` or `double`); it is distinct from the
 estimator's statistical `default_precision`.
+
+Changing `simulation_precision` does not change the basis set, active space,
+ansatz or optimization budget. Single precision can reduce simulator storage,
+but its floating-point error must be checked for the observable and circuit
+depth being studied. For a molecular precision comparison, reuse one integral
+bundle and evaluate the same bound circuit in both modes before comparing
+independently optimized energies. A small error in one Pauli expectation does
+not establish a small error in a molecular energy difference or spin residual.
 
 The allowed `aer_shots.options.method` values are `automatic`, `statevector`,
 `density_matrix`, `matrix_product_state`, and `tensor_network`. ChemRefine
@@ -382,9 +424,12 @@ does not participate in this lock; use separate processes in that situation.
 | `zeros` | none | One zero per fixed-circuit parameter. This is the Hartree-Fock point when UCCSD is built on the Hartree-Fock initial state. |
 | `random` | `seed=null`, `scale=0.1` | Uniform samples in `[-scale, scale]`, generated independently for the fixed circuit's parameter count. |
 
-Initial points apply to fixed VQE only. ADAPT initializes the newly selected
-operator coefficient internally and retains optimized coefficients as it grows;
-it does not consume this component.
+For fixed VQE, this component supplies the circuit's starting parameters.
+Upstream ADAPT initializes the newly selected operator coefficient internally
+and retains optimized coefficients as it grows; it does not consume this
+component. Other algorithms use their documented initialization contracts:
+SQD can sample a fixed circuit at its selected initial point, while native
+ffsim uses numeric initialization inside its algorithm options.
 
 ## VQE versus ADAPT-VQE
 
@@ -827,7 +872,7 @@ print(mapped.num_qubits, vqe.energy_error_hartree, adapt.energy_error_hartree)
 Integral values and energy offsets use atomic units. Declare
 `two_body_order="chemist"` for `(pq|rs)` or `"physicist"` for the Qiskit
 ordering; the engine does not infer tensor ordering or transform atomic-orbital
-integrals into molecular orbitals. The input validates dimensions, finite real
+integrals into molecular orbitals. The input validates dimensions, finite real or complex
 values, Hermitian symmetries, electron counts, and reference occupations.
 For unrestricted inputs, supply the beta one-electron block, beta-beta and
 beta-alpha two-electron blocks, and `overlap_alpha_beta` for the spin observable.
@@ -880,9 +925,11 @@ same mapper, reduced register, and qubit ordering as the prepared problem.
 Metadata may include an excitation's occupied/unoccupied indices and a source
 label; stable `pool_index` values identify retained ADAPT operators. Validation
 checks dimensions and Hermiticity. Callers supplying arbitrary qubit operators
-remain responsible for particle and spin conservation. Pool selection and
-orbital selection belong to upstream code; this engine does not implement
-AutoCAS, SQD, determinant ranking, or correlation-based filtering.
+remain responsible for particle and spin conservation. An externally supplied
+ADAPT pool is not automatically ranked or filtered by classical correlation
+metrics. The separate [sampled-state workflows](qiskit-states.md) implement SQD,
+SKQD, extended SQD and bounded active-orbital optimization. Automatic active-space
+selection such as AutoCAS remains outside the engine.
 
 ## Output and metadata
 
@@ -984,10 +1031,17 @@ Results also record runtime in seconds, mapping and reduction counts, Pauli
 terms, optimizer/energy evaluations, and ADAPT iterations, pool size, retained
 operators, and gradient checks. A final stopping gradient or a rolled-back
 candidate may appear in the gradient history without appearing in the final
-operator sequence. `success` records a completed valid calculation;
+operator sequence. `success` records execution returning a finite energy;
 `converged` is optional. VQE leaves convergence unknown when Qiskit's optimizer
 result does not expose a convergence verdict. ADAPT iteration-limit and cycle
 termination are distinct from convergence.
+
+Neither field certifies chemical accuracy. Ordinary VQE and upstream ADAPT
+results do not currently expose a standardized final total-spin residual in
+the scalar result contract. Keeping alpha/beta particle counts fixed does not
+prove that a state is an eigenstate of the requested total spin. Native sampled
+and owned adaptive solvers have their own documented spin checks; inspect those
+diagnostics and the same-sector reference before accepting an energy.
 
 Circuit resources are separated into `logical_circuit_metrics` and
 `transpiled_circuit_metrics`. Logical counts use an unoptimized generic `u`/`cx`
@@ -1022,18 +1076,34 @@ For repeatable local comparisons:
 6. Record estimator precision, Aer method/numerical precision, any serialized
    noise model, and optimizer stopping tolerances; each can
    materially change a variational result.
-7. Preserve the rendered `stepN_<id>.py` and raw `.json` output that ChemRefine
-   leaves in each structure directory.
-8. Save `python -m pip freeze` or the managed environment lock alongside
+7. Preserve the original molecular-orbital integrals with `save_integrals`,
+   including occupations, tensor ordering, geometry and energy offsets. Reuse
+   that bundle for solver comparisons instead of rebuilding SCF independently.
+8. Enable `circuit_export: {}` for a supported circuit-producing solver and
+   retain the resulting bound circuit with its active Hamiltonian and offsets.
+   Keep each JSON descriptor with its referenced NPZ payload. An optimal
+   parameter vector alone does not preserve its orbital representation.
+9. Preserve the resolved worker options, raw result metadata, objective records
+   and source revision alongside the checkpoints. A dirty-worktree flag does
+   not archive the source changes.
+10. Save `python -m pip freeze` or the managed environment lock alongside
    published results. Installed Qiskit, Nature, Algorithms, Aer, and PySCF
    versions are also recorded under `engine_metadata.provenance.package_versions`
    when available.
 
-The `statevector` or `aer_statevector` estimator with
+For a fixed prepared Hamiltonian, the `statevector` or `aer_statevector` estimator with
 `default_precision: 0.0`, a deterministic initial point, and SLSQP is
-deterministic for the built-in unitary circuits. For a shot-based estimator,
+free of shot sampling for the built-in unitary circuits. Fresh SCF preparation
+can change orbital phases or rotations in degenerate spaces; numerical libraries,
+thread allocation and hardware can also change floating-point results. This is
+not a promise of bitwise reproduction across environments. For a shot-based estimator,
 identical seeds improve reproducibility but do not turn a finite-shot answer
 into an exact one.
+
+The [checkpoint guide](qiskit-checkpoints.md) gives complete save, reload and
+energy-reconstruction examples, and explains which artifacts support a fresh
+optimization versus replaying a finished state. Optimizer continuation is not
+implemented by these checkpoints.
 
 ## Molecular integral inputs
 
@@ -1341,12 +1411,19 @@ iteration energies, subspace sizes, occupancies and the full S² residual.
 Completion reports `converged: null`: recovery stopping does not certify that
 the samples span the true ground state or achieve chemical accuracy.
 
-Both SQD and SqDRIFT require untapered JW, real shared spatial integrals,
-nonzero alpha **and** beta populations, and at most 63 spatial orbitals. The
-empty-spin restriction comes from the released PySCF selected-CI kernel.
-Unrestricted unequal spin integrals are rejected. `symmetrize_spin` requires
-equal alpha/beta populations. Explicitly configured components that are unused
-by a native path fail preflight.
+The default `projection: cartesian` uses real shared spatial integrals,
+nonzero alpha **and** beta populations, and at most 63 spatial orbitals. These
+limits belong to the released selected-CI kernel. `symmetrize_spin` requires
+equal alpha/beta populations; it is not a general repair for open-shell states.
+
+The [explicit projector](qiskit-states.md) instead uses precisely the sampled
+determinants and supports complex and unrestricted integral inputs and empty
+spin populations within its numerical budgets. Grouped SqDRIFT circuit
+construction still requires real shared spatial integrals even when its final
+projection is explicit. Sample acquisition uses an untapered Jordan-Wigner
+occupation register. Supplied-count native paths reject nondefault mapping and
+circuit components they do not consume. Explicitly configured components that
+are unused by a native path fail preflight.
 
 ### Grouped SqDRIFT
 

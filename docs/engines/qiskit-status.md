@@ -44,6 +44,36 @@ methods remain experimental even when their numerical and artifact checks pass.
 | IBM Runtime and mitigation | Explicit executor/legacy APIs, layout-aware primitives, batching and mode ownership, typed mitigation, durable journals and known-ID retrieval. | Experimental. Released fake-backend paths and local recovery contracts are validated; physical hardware and remote calibration/billing remain unverified. | [Runtime](qiskit-runtime.md), [Recovery](qiskit-recovery.md) |
 | Artifacts, cache and GUI | Portable integrals, bound logical circuits, determinant states and experiment bundles; payload-integrity checks, cache invalidation, provenance and schema-driven GUI editing/errors. | Working local contracts and public CPU/CUDA pipeline paths. Preserve whole bundles; GUI validation is not visual browser acceptance or hardware certification. | [Handoffs](qiskit-handoffs.md), [Artifacts](qiskit-experiment.md#outputs-and-recovery) |
 
+## Validation and performance tools
+
+Provider compatibility jobs exercise selected lower-bound and current package
+stacks, retain environment and execution reports, and reject missing or skipped
+required numerical checks. The aggregate coverage gate combines the ordinary
+suite with separate provider workers. Coverage records execution; the mutation
+gate additionally checks selected scientific predicates. GUI validation covers
+configuration, nested component editing and failure records, with visual browser
+acceptance remaining separate.
+
+The standalone `scripts/quantum_validation.py` tool captures command outcomes,
+source fingerprints and worker environments. `scripts/quantum_audit.py` records
+dependency ownership, import edges and configuration compatibility. Its
+registered-name grid is schema validation, not that many numerical simulations.
+
+`scripts/quantum_benchmarks.py` runs a finite local workload matrix in isolated
+workers, retaining unsupported configurations, errors and timeouts alongside
+successful measurements. Timings include completed adapter operations rather
+than GPU kernels alone. Warmups and measured repetitions remain separate;
+compilation processes are bounded and worker process groups are cleaned up.
+This tool does not submit remote quantum jobs.
+
+`scripts/quantum_analysis.py` checks sample ordering, completion and positive
+finite timings before aggregation. CPU/GPU ratios require matching source,
+Python, numerical-provider versions and builds, hardware and recorded allocation.
+Its tables-only mode can export unmatched campaigns without asserting speedups.
+Run performance comparisons serially on an idle, controlled machine. A successful
+comparison check cannot establish equal background load or turn a few timing
+repeats into a statistical confidence interval.
+
 ## Known bugs and incomplete behavior
 
 These remain actionable; they are separate from unsupported combinations that
