@@ -112,7 +112,8 @@ Do not treat these rejections as bugs or silently substitute a different method.
 Keep prepared integral bundles, final bound logical circuits, state/experiment
 payloads, seeds, resolved options and environment provenance together. Saving only
 an optimal parameter vector does not preserve its orbital frame, circuit ordering
-or Hamiltonian. [Quantum handoffs](qiskit-handoffs.md) explains portable integral
-and circuit formats; [provider recovery](qiskit-recovery.md) explains why a provider
+or Hamiltonian. [Reproducible checkpoints](qiskit-checkpoints.md) gives executable
+save/reload and energy-reconstruction examples. [Quantum handoffs](qiskit-handoffs.md)
+explains portable integral and circuit formats; [provider recovery](qiskit-recovery.md) explains why a provider
 job ID or journal is not a complete numerical checkpoint. Integrity checks detect
 missing or corrupt payloads but do not reproduce the scientific calculation.

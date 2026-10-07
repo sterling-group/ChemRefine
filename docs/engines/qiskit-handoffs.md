@@ -5,6 +5,12 @@ and bound preparation circuits through versioned JSON/NPZ bundles. Descriptors
 record conventions and integrity digests; numeric payloads load without pickle.
 Both files must travel together. Relative payload names make a bundle relocatable.
 
+For a complete save/reload workflow and independent reconstruction of a final
+energy, use [reproducible quantum checkpoints](qiskit-checkpoints.md). The
+[support status](qiskit-status.md) separates validated artifact behavior from
+known provider bugs and unverified hardware execution. These bundles preserve
+numerical inputs and final states; they do not serialize optimizer internals.
+
 ## Molecular integral inputs
 
 Set `options.integral_source.bundle_path` on a molecular `qiskit` step to reuse
