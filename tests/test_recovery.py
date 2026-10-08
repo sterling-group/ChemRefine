@@ -673,6 +673,175 @@ def test_an_interrupted_nms_step_resumes_by_adopting_round_1(tmp_path: Path):
         ENGINES.pop("fake-nms2", None)
 
 
+def test_an_install_stopped_after_its_promote_still_names_the_winner(tmp_path: Path):
+    """A driver stopped once the winner's output is at canonical resumes it as the winner.
+
+    That output re-parses at the target, so the next resume passes the parent through, and
+    only the attempt's `resolution.json` names the child it came from. Missing there, the
+    label would be lost for good: the step would cache `resolved_from=None`, and every later
+    resume and `rebuild-nms` would read the same absence. The stop is the SIGTERM unwind,
+    landing as the promote returns.
+    """
+    from unittest.mock import patch
+
+    from chemrefine import attempts, cache
+    from chemrefine.engines.api import ENGINES
+    from chemrefine.ids import latest_attempt_dir
+
+    eng = _register_fake_nms()
+    try:
+        eng.clean = {"0"}
+        eng.resolved = {"1"}
+        whole = _seeded_config(tmp_path / "whole", [_nms_step(1.0)])
+        execute(whole, Action.RESUME)
+        expected = {
+            s.id: s.resolved_from
+            for s in cache.load((whole.output_dir / "step1_s").resolve()).results.structures
+        }
+        winner = expected["1"]
+        assert winner is not None, "precondition: the uninterrupted run promotes a winner"
+
+        cut = _seeded_config(tmp_path / "cut", [_nms_step(1.0)])
+        step_dir = (cut.output_dir / "step1_s").resolve()
+        promote = attempts.promote
+
+        def promote_then_stop(attempt_dir, **kwargs):
+            promote(attempt_dir, **kwargs)
+            raise SystemExit(143)
+
+        with patch.object(attempts, "promote", promote_then_stop), pytest.raises(SystemExit):
+            execute(cut, Action.RESUME)
+        attempt = latest_attempt_dir(step_dir / "1")
+        assert attempt is not None
+        promoted = (attempt / winner / f"step1_{winner}.out").read_bytes()
+        assert (step_dir / "1" / "step1_1.out").read_bytes() == promoted, (
+            "precondition: the stop came after the winner's output reached canonical"
+        )
+
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        execute(cut, Action.RESUME)
+
+        assert eng.submitted == [] and eng.children_submitted == [], "a re-read, not a re-run"
+        cached = {s.id: s.resolved_from for s in cache.load(step_dir).results.structures}
+        assert cached == expected
+    finally:
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        ENGINES.pop("fake-nms2", None)
+
+
+def test_an_install_stopped_as_it_names_its_winner_keeps_round_1(tmp_path: Path):
+    """A record the tree refuses leaves round 1 where it was, so no round-1 job is paid twice.
+
+    The install names its child before it moves anything. Stopped at that write, the
+    canonical path still holds round 1's own output: it re-parses off the target and earns
+    fresh children on resume, and round 1 itself is not run again.
+    """
+    from unittest.mock import patch
+
+    from chemrefine import cache, nms
+    from chemrefine.engines.api import ENGINES
+    from chemrefine.errors import OutputTreeError
+    from chemrefine.ids import latest_attempt_dir
+
+    eng = _register_fake_nms()
+    try:
+        eng.clean = {"0"}
+        eng.resolved = {"1"}
+        whole = _seeded_config(tmp_path / "whole", [_nms_step(1.0)])
+        execute(whole, Action.RESUME)
+        expected = {
+            s.id: s.resolved_from
+            for s in cache.load((whole.output_dir / "step1_s").resolve()).results.structures
+        }
+        assert expected["1"] is not None, "precondition: the uninterrupted run promotes a winner"
+
+        cut = _seeded_config(tmp_path / "cut", [_nms_step(1.0)])
+        step_dir = (cut.output_dir / "step1_s").resolve()
+
+        def refused(attempt_dir: Path, winner_id: str) -> None:
+            raise OutputTreeError(f"cannot write {attempt_dir}: No space left on device")
+
+        with patch.object(nms, "_write_resolution", refused), pytest.raises(OutputTreeError):
+            execute(cut, Action.RESUME)
+        attempt = latest_attempt_dir(step_dir / "1")
+        assert attempt is not None
+        canonical = step_dir / "1" / "step1_1.out"
+        assert canonical.is_file(), "round 1's output is still at the canonical path"
+        children = [p.read_bytes() for p in attempt.glob("*/step1_*.out")]
+        assert children and canonical.read_bytes() not in children, (
+            "precondition: the stop left round 1, not a child, at the canonical path"
+        )
+
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        execute(cut, Action.RESUME)
+
+        assert eng.submitted == [], "round 1 is not run again"
+        assert {c.split("_m")[0] for c in eng.children_submitted} == {"1"}, "fresh children"
+        cached = {s.id: s.resolved_from for s in cache.load(step_dir).results.structures}
+        assert cached == expected
+    finally:
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        ENGINES.pop("fake-nms2", None)
+
+
+def test_round_1_run_again_over_a_stopped_install_names_no_child(tmp_path: Path):
+    """The record a stopped install left is not worn by the round 1 that runs in its place.
+
+    An install names its child before it moves anything, so one stopped as its promote
+    starts leaves the record in its attempt and only attempts at the canonical path. The
+    `on_failure: stop` re-attempt then runs round 1 there again with nothing to archive
+    first, so the attempt holding the record stays the latest, and a round 1 that now lands
+    at the target passes through beside it. Worn there, the record would name a child whose
+    output never reached the canonical path.
+    """
+    import json
+    from unittest.mock import patch
+
+    from chemrefine import attempts, cache
+    from chemrefine.engines.api import ENGINES
+    from chemrefine.ids import latest_attempt_dir
+
+    eng = _register_fake_nms()
+    try:
+        eng.resolved = {"0"}  # "1" stays unresolved, and `stop` ledgers it
+        cfg = _seeded_config(tmp_path, [_nms_step(1.0, on_failure="stop")])
+        step_dir = (cfg.output_dir / "step1_s").resolve()
+        with pytest.raises(ChemRefineError):
+            execute(cfg, Action.RESUME)
+
+        eng.resolved = {"0", "1"}  # the re-attempt resolves "1", and its install stops
+        with (
+            patch.object(attempts, "promote", side_effect=SystemExit(143)),
+            pytest.raises(SystemExit),
+        ):
+            execute(cfg, Action.RESUME)
+        attempt = latest_attempt_dir(step_dir / "1")
+        assert attempt is not None
+        record = attempt / "resolution.json"
+        assert record.is_file(), "precondition: the install named its child before moving"
+        named = json.loads(record.read_text(encoding="utf-8"))["resolved_from"]
+        assert not (step_dir / "1" / "step1_1.out").exists(), (
+            "precondition: the stop came after the seal and before the promote"
+        )
+
+        eng.clean = {"1"}  # round 1, run again, lands at the target
+        eng.submitted = []
+        execute(cfg, Action.RESUME)
+
+        assert eng.submitted == ["1"], "round 1 ran again at the canonical path"
+        assert latest_attempt_dir(step_dir / "1") == attempt, "beside the record"
+        named_output = (attempt / named / f"step1_{named}.out").read_bytes()
+        assert (step_dir / "1" / "step1_1.out").read_bytes() != named_output
+        cached = {s.id: s.resolved_from for s in cache.load(step_dir).results.structures}
+        assert cached["1"] is None
+    finally:
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        ENGINES.pop("fake-nms2", None)
+
+
 def test_a_criterion_change_re_resolves_without_resubmitting_round_1(tmp_path: Path):
     """target: minimum → ts re-runs the *resolution*, and only that.
 

@@ -553,18 +553,19 @@ _RESOLUTION_FILE = "resolution.json"
 def _write_resolution(attempt_dir: Path, winner_id: str) -> None:
     """Record which child this attempt resolved to.
 
-    Written last, after the winner's artifacts are in place, so the claim never outlives the
-    files it describes.
+    When it is written is :func:`_install_winner`'s to say, and when it is worn
+    :func:`_passthrough`'s.
     """
     cache.write_json(attempt_dir / _RESOLUTION_FILE, {"resolved_from": winner_id})
 
 
-def _read_resolution(structure_dir: Path) -> str | None:
-    """The child a structure's most recent attempt resolved to, or ``None`` if none did.
+def _read_resolution(structure_dir: Path) -> tuple[Path, str] | None:
+    """A structure's most recent attempt and the child it resolved to, or ``None`` if none did.
 
     Promotion leaves the winner's output at the canonical path, so re-parsing a resolved
     structure yields one already at its target — which is the answer, but not *which child
-    produced it*. That is only on disk, here.
+    produced it*. The record says that, and the attempt comes with it because the name is a
+    claim about a file in that attempt: :func:`_passthrough` holds the canonical output to it.
     """
     attempt = latest_attempt_dir(structure_dir)
     if attempt is None:
@@ -574,7 +575,7 @@ def _read_resolution(structure_dir: Path) -> str | None:
     if record is None:
         return None
     try:
-        return str(record["resolved_from"])
+        return attempt, str(record["resolved_from"])
     except (KeyError, TypeError) as e:
         # `read_json` is typed `Any`, so it guarantees only that the file parsed — not that
         # it is the object `_write_resolution` writes. An object without the key raises
@@ -648,11 +649,14 @@ def _install_winner(
     :attr:`~chemrefine.state.Structure.resolved_from` — so there is one answer to "which
     child won" and the disk follows it rather than re-deciding.
 
-    Archive first, promote second: the copy lands on the basenames round 1 still occupies,
-    so moving those aside is what stops one calculation overwriting another. The resolution
-    sidecar is written last, after the artifacts it describes are in place.
+    Name, seal, promote. The record is written before anything at the canonical path
+    moves, so a stop never leaves the child's output there unnamed; written early, it
+    claims nothing early, because :func:`_passthrough` wears it only over that output. The
+    seal then moves round 1 off the basenames the copy lands on, so one calculation never
+    overwrites another.
     """
     step = ctx.step_cfg.step
+    _write_resolution(attempt_dir, source_id)
     attempts.seal(ctx.step_dir / parent_id, attempt_dir)
     attempts.promote(attempt_dir, step=step, source_id=source_id, target_id=parent_id)
     # Re-stamp the geometry file with its provenance: the same coordinates the promoted
@@ -662,7 +666,6 @@ def _install_winner(
         structure_artifact_path(ctx.step_dir, step, parent_id, "xyz"),
         comment=f"NMS-resolved {parent_id}",
     )
-    _write_resolution(attempt_dir, source_id)
 
 
 def _already_at_target(structure: Structure, target: int | None) -> bool:
@@ -678,18 +681,24 @@ def _already_at_target(structure: Structure, target: int | None) -> bool:
     )
 
 
-def _passthrough(structure: Structure, step_dir: Path) -> Structure:
+def _passthrough(engine: NmsCapableEngine, structure: Structure, ctx: StepContext) -> Structure:
     """A structure already at its target, carried through at the canonical place.
 
-    That is either an untouched round-1 result or one this step already resolved; the
-    attempt's sidecar is what tells the two apart — which is the one thing this needs a
-    directory for, so that is what it asks for.
+    That is either an untouched round-1 result or one this step already resolved. The latest
+    attempt's record names the child it resolved to, and is worn only over the output it
+    names: :func:`chemrefine.attempts.promote` copies that child's output to the canonical
+    path verbatim, so the two must be the same bytes — a record beside round 1, or beside a
+    child whose output is gone, names nothing.
     """
-    return replace(
-        structure,
-        converged=True,
-        resolved_from=_read_resolution(step_dir / structure.id),
-    )
+    resolved_from: str | None = None
+    record = _read_resolution(ctx.step_dir / structure.id)
+    if record is not None:
+        attempt, named = record
+        canonical_output = engine.artifact_paths(ctx, structure.id)[1]
+        child_output = engine.artifact_paths(replace(ctx, step_dir=attempt), named)[1]
+        if child_output.is_file() and child_output.read_bytes() == canonical_output.read_bytes():
+            resolved_from = named
+    return replace(structure, converged=True, resolved_from=resolved_from)
 
 
 def _children_for(structure: Structure, opts: NmsOptions) -> list[Structure]:
@@ -758,7 +767,7 @@ def _resolve_all(
             # ran under, and the next resume would trust — and resurrect — a sidecar
             # left behind.
             if read_resolutions:
-                survivors.append(_passthrough(s, ctx.step_dir))
+                survivors.append(_passthrough(engine, s, ctx))
             else:
                 _disown_resolution(ctx.step_dir / s.id)
                 survivors.append(replace(s, converged=True, resolved_from=None))

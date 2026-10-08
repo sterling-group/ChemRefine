@@ -1124,15 +1124,49 @@ def test_a_resolution_sidecar_without_its_key_is_a_cache_error(tmp_path: Path, b
 def test_an_attempt_that_resolved_nothing_has_no_sidecar_and_is_not_an_error(tmp_path: Path):
     """An attempt directory with no sidecar means the exploration resolved nothing.
 
-    `_write_resolution` runs last, only once a winner's artifacts are in place, so an
-    attempt that found none simply has no file — distinct from one whose file is unreadable.
-    A structure carried through from such an attempt has `resolved_from is None`, which is
-    the same answer it gets for an untouched round-1 result.
+    `_write_resolution` runs only inside a winner's install, so an attempt that found none
+    simply has no file — distinct from one whose file is unreadable. A structure carried
+    through from such an attempt has `resolved_from is None`, which is the same answer it
+    gets for an untouched round-1 result.
     """
     struct_dir = tmp_path / "0"
     (struct_dir / "attempt1").mkdir(parents=True)
 
     assert nms._read_resolution(struct_dir) is None
+
+
+def _record_beside(engine: _FakeNms, ctx: StepContext, child_output: bytes | None) -> Path:
+    """Write ``0``'s first attempt as an install leaves it: a record naming ``0_m5_pos``,
+    beside that child's output when ``child_output`` is given. Returns the attempt."""
+    attempt = ctx.step_dir / "0" / "attempt1"
+    attempt.mkdir(parents=True)
+    nms._write_resolution(attempt, "0_m5_pos")
+    if child_output is not None:
+        named = engine.artifact_paths(replace(ctx, step_dir=attempt), "0_m5_pos")[1]
+        named.parent.mkdir()
+        named.write_bytes(child_output)
+    return attempt
+
+
+@pytest.mark.parametrize("child", ["promoted", "another calculation", "gone"])
+def test_a_resolution_is_worn_only_over_the_output_it_names(tmp_path: Path, child: str):
+    """A record is worn only while the canonical output is the named child's, byte for byte.
+
+    `promote` copies that output verbatim, so the same bytes are what a finished install
+    leaves. Different bytes are another calculation — round 1, left at canonical or run
+    again there after an install that stopped before its promote — and a child whose output
+    is gone leaves nothing to hold the canonical one to.
+    """
+    engine = _FakeNms(freqs={"0": _Freq(imaginary={}, modes=None)})  # at target: passthrough
+    ctx = _ctx(tmp_path, (_h2("0"),))
+    round1 = _seed_round1(engine, ctx)
+    canonical = engine.artifact_paths(ctx, "0")[1].read_bytes()
+    outputs = {"promoted": canonical, "another calculation": b"E -2.0\n", "gone": None}
+    _record_beside(engine, ctx, outputs[child])
+
+    (survivor,) = nms.rebuild_nms(engine, round1, [], ctx).survivors
+
+    assert survivor.resolved_from == ("0_m5_pos" if child == "promoted" else None)
 
 
 def test_an_untrusted_passthrough_disowns_its_resolution_sidecar(tmp_path: Path):
@@ -1145,9 +1179,7 @@ def test_an_untrusted_passthrough_disowns_its_resolution_sidecar(tmp_path: Path)
     engine = _FakeNms(freqs={"0": _Freq(imaginary={}, modes=None)})  # at target: passthrough
     ctx = _ctx(tmp_path, (_h2("0"),))
     round1 = _seed_round1(engine, ctx)
-    attempt = ctx.step_dir / "0" / "attempt1"
-    attempt.mkdir(parents=True)
-    nms._write_resolution(attempt, "0_m5_pos")
+    attempt = _record_beside(engine, ctx, engine.artifact_paths(ctx, "0")[1].read_bytes())
 
     trusted = nms.resume_nms(engine, round1, [], ctx, trust_resolutions=True)
     assert trusted.survivors[0].resolved_from == "0_m5_pos"
@@ -1173,9 +1205,7 @@ def test_a_label_the_tree_will_not_let_go_of_refuses_the_resume(tmp_path: Path):
     engine = _FakeNms(freqs={"0": _Freq(imaginary={}, modes=None)})  # at target: passthrough
     ctx = _ctx(tmp_path, (_h2("0"),))
     round1 = _seed_round1(engine, ctx)
-    attempt = ctx.step_dir / "0" / "attempt1"
-    attempt.mkdir(parents=True)
-    nms._write_resolution(attempt, "0_m5_pos")
+    attempt = _record_beside(engine, ctx, engine.artifact_paths(ctx, "0")[1].read_bytes())
     attempt.chmod(0o555)
     try:
         with pytest.raises(OutputTreeError) as excinfo:

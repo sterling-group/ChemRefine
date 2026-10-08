@@ -75,6 +75,7 @@ stepN/<id>/
   attemptK/
     stepN_<id>.out .xyz .gbw .hess …      round 1, archived as it was
     <id>_m6_pos/  <id>_m6_neg/            every child that was tried
+    resolution.json                       which child won
 ```
 
 **The canonical location always describes one calculation.** Every file there — output,
@@ -88,7 +89,9 @@ Round 1 is not discarded: it moves into the same `attemptK/` its children ran in
 attempt directory holds both the state that triggered the resolution and everything tried
 to resolve it. That is also why `rebuild-cache` stays correct — it re-parses the canonical
 path, finds a structure already at the target, and re-derives the same survivor without
-re-running the exploration.
+re-running the exploration. Which child it was comes from `resolution.json`, and only while
+the canonical output is still that child's own, byte for byte: delete the winning child's
+output and the structure is no longer recorded as resolved from it.
 
 ## Targets
 

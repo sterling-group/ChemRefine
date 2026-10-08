@@ -145,6 +145,37 @@ _BUNDLED: tuple[Mutation, ...] = (
         "every structure it paid for is ledgered unresolved",
     ),
     Mutation(
+        id="nms-record-before-promote",
+        path="src/chemrefine/nms.py",
+        old=(
+            "    _write_resolution(attempt_dir, source_id)\n"
+            "    attempts.seal(ctx.step_dir / parent_id, attempt_dir)\n"
+            "    attempts.promote(attempt_dir, step=step, source_id=source_id, "
+            "target_id=parent_id)\n"
+        ),
+        new=(
+            "    attempts.seal(ctx.step_dir / parent_id, attempt_dir)\n"
+            "    attempts.promote(attempt_dir, step=step, source_id=source_id, "
+            "target_id=parent_id)\n"
+            "    _write_resolution(attempt_dir, source_id)\n"
+        ),
+        tests="tests/test_recovery.py",
+        breaks="an install stopped once the winner's output is at the canonical path leaves "
+        "it unnamed, and the next resume caches the promoted child as an untouched round-1 "
+        "result for good",
+    ),
+    Mutation(
+        id="nms-record-worn-only-over-its-output",
+        path="src/chemrefine/nms.py",
+        old="if child_output.is_file() and child_output.read_bytes() == "
+        "canonical_output.read_bytes():",
+        new="if child_output.is_file():",
+        tests="tests/test_nms.py",
+        breaks="the record an install writes before its promote is worn by whatever reaches "
+        "the canonical path instead — round 1 run again there after a stop is cached as "
+        "resolved from a child whose calculation never arrived",
+    ),
+    Mutation(
         id="resubmit-skips-unconverged",
         path="src/chemrefine/lifecycle.py",
         old=(
