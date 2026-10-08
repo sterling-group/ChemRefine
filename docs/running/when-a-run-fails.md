@@ -217,7 +217,7 @@ Two asymmetries are deliberate:
   that left the target's failures pending is what stopped the later steps from ever
   running, so they have no cache to hit — left `CACHE_ONLY` they would raise for a cache
   that cannot exist, after the command had already repaired what it was pointed at.
-- **The rebuilds walk past their target read-only.** They promise to submit nothing, and
+- **The rebuilds walk past their target from cache.** They promise to submit nothing, and
   they keep that promise — but `steps.csv` is rewritten from step 1 on every run, so
   *ending* at the target would silently drop the later steps' rows even when their caches
   are still valid. The steps past the target therefore run best-effort (`RunPlan.stop_after`):
@@ -225,7 +225,12 @@ Two asymmetries are deliberate:
   current configuration cannot serve ends the run quietly, with a log line naming the
   cheapest repair (`rebuild-cache` for outputs that still match this configuration,
   `resume` when upstream results changed). The report then covers exactly what the
-  current configuration can vouch for.
+  current configuration can vouch for. Submitting nothing is not writing nothing: a
+  rebuild takes the run lock and rewrites its target's cache, with what it derives beside
+  it — a calculation step's manifest and each structure's `.result.json` (an NMS step's
+  displaced children excepted), an artifact step's record of its product — and, like every
+  run and recovery command, rewrites `steps.csv` and each step's ensemble files. A tree
+  it cannot write stops it with [exit `11`](#exit-codes).
 
 `rerun` discards the manifest as well as the cache because the manifest is what makes an
 output tree look *interrupted rather than discarded*: kept, a later `resume` would re-parse

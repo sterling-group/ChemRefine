@@ -18,6 +18,13 @@ A boundary holds names too. Outside an engine's own package, core describes an e
 its role, so adding, renaming or removing one never sends anybody through the core to fix
 its prose: :func:`test_core_names_no_engine` holds the names, read off the registries. An
 engine's vocabulary — its keywords, its file formats — is left to review.
+
+A boundary holds writes too. Outside :mod:`chemrefine.io`, a call that creates, replaces,
+moves or removes a path stands inside ``with tree_write(path):``, io's one net, so a write
+a run's output tree refuses is the same named error whichever layer made it:
+:func:`test_the_run_tree_is_written_only_through_io` holds that call by call. A function
+whose write is no part of a run's tree — one the job runs, one writing a file a person
+owns — is listed by name, with what it writes.
 """
 
 from __future__ import annotations
@@ -26,8 +33,12 @@ import ast
 import re
 from collections.abc import Iterator, Mapping
 from pathlib import Path
+from typing import NamedTuple
+
+import pytest
 
 import chemrefine
+from chemrefine import io
 
 _PACKAGE_ROOT = Path(chemrefine.__file__).parent
 
@@ -336,3 +347,399 @@ def test_the_flat_pipeline_imports_the_engine_subsystem_through_its_public_face(
         + "\n\nRe-export what it needs from chemrefine.engines.api (or chemrefine.engines) "
         "and import it from there."
     )
+
+
+# ---------------------------------------------------------------------------
+# Writes — a run's output tree is written through io's net
+# ---------------------------------------------------------------------------
+
+#: io's net, by the dotted name an import binds — read off the function, so renaming it is
+#: an error here. A raw write standing inside a ``with`` of it is a write of the run's tree.
+_NET = f"{io.tree_write.__module__}.{io.tree_write.__qualname__}"
+
+#: Functions that create, replace, link, move, copy or remove a path, by the dotted name an
+#: import binds: the standard library's, numpy's savers and the other library writers this
+#: package calls — one joins when the package first calls it — and io's own raw replace,
+#: which a run's tree reaches through ``write_tree_file``.
+_WRITER_FUNCTIONS = frozenset(
+    {
+        "ase.db.connect",
+        "ase.io.write",
+        "chemrefine.io.atomic_write",
+        "logging.FileHandler",
+        "numpy.save",
+        "numpy.savetxt",
+        "numpy.savez",
+        "numpy.savez_compressed",
+        "os.chmod",
+        "os.link",
+        "os.makedirs",
+        "os.mkdir",
+        "os.open",
+        "os.remove",
+        "os.removedirs",
+        "os.rename",
+        "os.renames",
+        "os.replace",
+        "os.rmdir",
+        "os.symlink",
+        "os.truncate",
+        "os.unlink",
+        "shutil.copy",
+        "shutil.copy2",
+        "shutil.copyfile",
+        "shutil.copytree",
+        "shutil.move",
+        "shutil.rmtree",
+        "tempfile.NamedTemporaryFile",
+        "tempfile.TemporaryDirectory",
+        "tempfile.mkdtemp",
+        "tempfile.mkstemp",
+        "torch.save",
+    }
+)
+
+#: Functions that write a file only when handed the keyword that names one.
+_WRITER_KEYWORDS = {"logging.basicConfig": "filename"}
+
+#: Methods that create, change or remove what they are called on: a path, or a frame whose
+#: ``to_csv`` names a file. Matched by name, since a receiver's type is not in the syntax.
+_WRITER_METHODS = frozenset(
+    {
+        "chmod",
+        "hardlink_to",
+        "mkdir",
+        "rmdir",
+        "symlink_to",
+        "to_csv",
+        "touch",
+        "unlink",
+        "write_bytes",
+        "write_text",
+    }
+)
+
+#: A path's ``rename`` and ``replace`` take one target and nothing else; ``str.replace``
+#: takes two, and a frame's ``rename`` takes keywords.
+_ONE_TARGET_METHODS = frozenset({"rename", "replace"})
+
+#: Functions that write outside io's net because what they write is not this process
+#: writing a run's output tree, as ``(package-relative path, function)`` — a method or a
+#: nested function dotted under its enclosing names — each with what it writes instead: a
+#: file inside the job, whose refusal is the job's failure; a file a person owns — a
+#: config, a template, a seed; a path outside every run tree; no file at all. An entry
+#: excuses its whole function, so it names one that writes nothing of a run's tree raw.
+_RAW_WRITERS: dict[tuple[str, str], str] = {
+    ("agent_tools.py", "build_structures"): "seed files, a person's, in the directory the "
+    "caller names",
+    ("agent_tools.py", "read_structure_text"): "a scratch directory of its own, gone when it "
+    "returns",
+    ("agent_tools.py", "save_config"): "the config, a person's file: a ConfigError names it",
+    ("agent_tools.py", "write_template"): "a step template, a person's file: a ConfigError "
+    "names it",
+    ("cache.py", "_npz_bytes"): "a buffer in memory, no file",
+    ("engines/_backend_server/server.py", "main"): "the gradient server's log and loading "
+    "marker, written inside the job",
+    ("engines/_backend_server/sidecar.py", "write_server_token"): "the gradient server's "
+    "token, written inside the job",
+    ("engines/_backend_server/sidecar.py", "write_server_url"): "the gradient server's "
+    "address, written inside the job",
+    ("engines/_provision.py", "build_backend_env"): "a managed environment, outside every run tree",
+    ("engines/mlip/backends/chgnet.py", "ChgnetTrainer.train_with_library"): "the trained "
+    "model, written by the training job",
+    ("engines/mlip/backends/orb.py", "OrbTrainer.train_with_library"): "the checkpoints and "
+    "the trained model, written by the training job",
+    ("engines/orca/extopt/protocol.py", "write_engrad"): "the bridge's answer to the "
+    "program, written inside the job",
+    ("engines/pyscf/_runtime.py", "save_tensors"): "the tensors a calculation saves, written "
+    "inside the job",
+    ("gui/app.py", "create_app.save"): "the editor's YAML, a person's file: a 400 names it",
+    ("scaffold.py", "scaffold_templates"): "starter templates, a person's files: a "
+    "ConfigError names what landed",
+}
+
+
+class _RawWrite(NamedTuple):
+    """One call that writes to the filesystem outside io's net."""
+
+    function: str
+    line: int
+    primitive: str
+
+
+def _bindings(tree: ast.AST) -> tuple[dict[str, str], set[str]]:
+    """What each name a module imports means, dotted, and which of them name a module.
+
+    Every import counts wherever it stands, so a function-local ``from ase.io import write``
+    resolves as surely as one at the top.
+    """
+    names: dict[str, str] = {}
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                bound = alias.asname or alias.name.split(".")[0]
+                names[bound] = alias.name if alias.asname else bound
+                modules.add(bound)
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            for alias in node.names:
+                names[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+    return names, modules
+
+
+def _resolved(expr: ast.expr, names: dict[str, str]) -> str | None:
+    """``a.b.c`` with ``a`` replaced by what it imports, or ``None`` past a call or subscript."""
+    parts: list[str] = []
+    while isinstance(expr, ast.Attribute):
+        parts.append(expr.attr)
+        expr = expr.value
+    if not isinstance(expr, ast.Name):
+        return None
+    return ".".join([names.get(expr.id, expr.id), *reversed(parts)])
+
+
+def _open_mode(call: ast.Call, position: int) -> str | None:
+    """The mode an ``open`` spells, ``"?"`` for one it computes, ``None`` for the default.
+
+    The ``mode=`` keyword, else the positional at ``position``: a function is handed the
+    path first and the mode second, a path's own method the mode first. The reading is by
+    name alone, so the first argument of any ``open`` method is read as its mode, something
+    that is no path included: a computed one, or a literal holding ``w``, ``a``, ``x`` or
+    ``+``, reads as a write.
+    """
+    spelled = next((keyword.value for keyword in call.keywords if keyword.arg == "mode"), None)
+    if spelled is None and len(call.args) > position:
+        spelled = call.args[position]
+    if spelled is None:
+        return None
+    if isinstance(spelled, ast.Constant):
+        return spelled.value if isinstance(spelled.value, str) else None
+    return "?"
+
+
+def _primitive(call: ast.Call, names: dict[str, str], modules: set[str]) -> str | None:
+    """How ``call`` writes to the filesystem, or ``None`` when it does not."""
+    func = call.func
+    dotted = _resolved(func, names)
+    if dotted in _WRITER_FUNCTIONS:
+        return dotted
+    file_keyword = _WRITER_KEYWORDS.get(dotted or "")
+    if file_keyword is not None:
+        return dotted if any(k.arg == file_keyword for k in call.keywords) else None
+    owner = func.value if isinstance(func, ast.Attribute) else None
+    method = owner is not None and not (isinstance(owner, ast.Name) and owner.id in modules)
+    name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+    if name in ("open", "fdopen"):
+        mode = _open_mode(call, 0 if method else 1)
+        writes = mode is not None and (mode == "?" or not set(mode).isdisjoint("wax+"))
+        return f"{name}({mode!r})" if writes else None
+    if not method:
+        return None  # a module's own function, judged by its dotted name above
+    one_target = name in _ONE_TARGET_METHODS and len(call.args) == 1 and not call.keywords
+    return f".{name}" if name in _WRITER_METHODS or one_target else None
+
+
+def _raw_writes(tree: ast.AST) -> Iterator[_RawWrite]:
+    """Every call in ``tree`` that writes a path and stands inside no ``with`` of the net.
+
+    Lexical: a write is under the net where it stands, not because a caller up the stack
+    holds one. ``with a, b:`` is ``with a: with b:``, so an item after the net stands under
+    it, and a ``def`` or ``lambda`` written under the net runs later, outside it.
+    """
+    names, modules = _bindings(tree)
+
+    def net(item: ast.withitem) -> bool:
+        call = item.context_expr
+        return isinstance(call, ast.Call) and _resolved(call.func, names) == _NET
+
+    def walk(node: ast.AST, scope: tuple[str, ...], sealed: bool) -> Iterator[_RawWrite]:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            scope, sealed = (*scope, node.name), False
+        elif isinstance(node, ast.Lambda):
+            scope, sealed = (*scope, "<lambda>"), False
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                yield from walk(item, scope, sealed)
+                sealed = sealed or net(item)
+            for statement in node.body:
+                yield from walk(statement, scope, sealed)
+            return
+        if (
+            isinstance(node, ast.Call)
+            and not sealed
+            and (primitive := _primitive(node, names, modules)) is not None
+        ):
+            yield _RawWrite(".".join(scope) or "<module>", node.lineno, primitive)
+        for child in ast.iter_child_nodes(node):
+            yield from walk(child, scope, sealed)
+
+    return walk(tree, (), False)
+
+
+def _package_raw_writes() -> Iterator[tuple[str, _RawWrite]]:
+    """Every raw write in the package outside io, as ``(package-relative path, write)``."""
+    home = Path(io.__file__)
+    for path in sorted(_PACKAGE_ROOT.rglob("*.py")):
+        if path == home:
+            continue
+        rel = path.relative_to(_PACKAGE_ROOT).as_posix()
+        for write in _raw_writes(ast.parse(path.read_text(encoding="utf-8"))):
+            yield rel, write
+
+
+def test_the_run_tree_is_written_only_through_io():
+    """Outside io, a call that writes a path stands inside ``tree_write``, or is listed.
+
+    A write a run's output tree refuses is one failure whichever layer made it: an
+    :class:`~chemrefine.errors.OutputTreeError` naming the file, raised by the one net,
+    :func:`chemrefine.io.tree_write`. A raw write standing anywhere else leaves that
+    contract, and a full disk reaches the user as a traceback with the exit code of a
+    halted step — unless what it writes is no part of a run's tree, which
+    :data:`_RAW_WRITERS` says by function. Checked over the whole package but io itself,
+    where the primitives live: a shipped engine is discovered from the package's own
+    directory, so it is held by existing.
+    """
+    offences = [
+        f"{rel}:{write.line}: {write.function} — {write.primitive}"
+        for rel, write in _package_raw_writes()
+        if (rel, write.function) not in _RAW_WRITERS
+    ]
+    assert not offences, (
+        "a raw filesystem write outside io's net:\n  "
+        + "\n  ".join(offences)
+        + "\n\nWrite the file with io.write_tree_file (io.remove_tree_file removes one), or "
+        "stand the call inside `with io.tree_write(path):`. A function whose write is no "
+        "part of a run's tree — one the job runs, one writing a person's file — is listed "
+        "in _RAW_WRITERS with what it writes."
+    )
+
+
+def test_every_listed_raw_writer_still_writes_raw():
+    """An entry whose function holds no raw write has outlived its reason; it goes."""
+    raw = {(rel, write.function) for rel, write in _package_raw_writes()}
+    assert [key for key in _RAW_WRITERS if key not in raw] == []
+
+
+@pytest.mark.parametrize(
+    ("source", "found"),
+    [
+        ('def f(p):\n    p.write_text("x")\n', [("f", ".write_text")]),
+        ('def f(p):\n    open(p, "w")\n', [("f", "open('w')")]),
+        ('def f(p):\n    p.open(mode="a")\n', [("f", "open('a')")]),
+        ("def f(p, m):\n    open(p, m)\n    p.open(m)\n", [("f", "open('?')")] * 2),
+        ('import os\ndef f(fd):\n    os.fdopen(fd, "wb")\n', [("f", "fdopen('wb')")]),
+        ("def f(p, q):\n    p.replace(q)\n", [("f", ".replace")]),
+        ("from shutil import copy2 as cp\ndef f(a, b):\n    cp(a, b)\n", [("f", "shutil.copy2")]),
+        ("def f(p):\n    from ase.io import write\n    write(p, [])\n", [("f", "ase.io.write")]),
+        (
+            'from chemrefine import io\ndef f(p):\n    io.atomic_write(p, b"")\n',
+            [("f", "chemrefine.io.atomic_write")],
+        ),
+        (
+            "import logging\ndef f(p):\n    logging.basicConfig(filename=p)\n",
+            [("f", "logging.basicConfig")],
+        ),
+        ("class C:\n    def m(self):\n        self.path.mkdir()\n", [("C.m", ".mkdir")]),
+        ("def f(p):\n    return lambda: p.unlink()\n", [("f.<lambda>", ".unlink")]),
+        ('from pathlib import Path\nPath("x").touch()\n', [("<module>", ".touch")]),
+        (
+            'from chemrefine import io\ndef f(p):\n    with open(p, "w") as h, io.tree_write(p):\n'
+            "        pass\n",
+            [("f", "open('w')")],
+        ),
+        (
+            "from chemrefine import io\ndef f(p):\n    with io.tree_write(p):\n"
+            "        def later():\n            p.unlink()\n    return later\n",
+            [("f.later", ".unlink")],
+        ),
+        (
+            "from chemrefine import io\ndef f(p):\n    with io.cleanup():\n        p.unlink()\n",
+            [("f", ".unlink")],
+        ),
+        (
+            "from elsewhere import tree_write\ndef f(p):\n    with tree_write(p):\n"
+            "        p.unlink()\n",
+            [("f", ".unlink")],
+        ),
+        ('def f(p):\n    open(p).read()\n    p.open("rb")\n    p.read_text()\n', []),
+        ('def f(s, df):\n    s.replace("a", "b")\n    df.rename(columns={})\n', []),
+        (
+            "import logging\nimport webbrowser\ndef f(url):\n    webbrowser.open(url)\n"
+            "    logging.basicConfig(level=10)\n",
+            [],
+        ),
+        (
+            'from chemrefine import io\ndef f(p):\n    io.write_tree_file(p, "x")\n'
+            "    io.remove_tree_file(p)\n",
+            [],
+        ),
+        (
+            "from chemrefine import io\ndef f(p):\n    with io.tree_write(p):\n"
+            "        p.parent.mkdir(parents=True, exist_ok=True)\n        p.write_text('x')\n",
+            [],
+        ),
+        (
+            "from chemrefine.io import tree_write\nfrom ase.db import connect\ndef f(p):\n"
+            "    with tree_write(p), connect(str(p)) as db:\n        db.write(None)\n",
+            [],
+        ),
+        (
+            "import os\nfrom chemrefine import io\ndef f(claim, lock):\n"
+            "    with io.tree_write(lock):\n        try:\n            os.link(claim, lock)\n"
+            "        except FileExistsError:\n            pass\n",
+            [],
+        ),
+    ],
+    ids=[
+        "write-text",
+        "open-for-write",
+        "path-open-to-append",
+        "computed-mode",
+        "fdopen",
+        "path-replace",
+        "aliased-import",
+        "local-import",
+        "raw-replace",
+        "log-file",
+        "method",
+        "lambda",
+        "module-level",
+        "item-before-the-net",
+        "defined-under-the-net-runs-outside-it",
+        "cleanup-is-no-net",
+        "a-namesake-is-no-net",
+        "reads",
+        "str-replace-and-frame-rename",
+        "a-modules-own-open-and-a-console-log",
+        "the-whole-file-forms",
+        "under-the-net",
+        "item-after-the-net",
+        "normal-flow-handled-inside-the-net",
+    ],
+)
+def test_the_write_gate_finds_what_it_is_for(source: str, found: list[tuple[str, str]]):
+    """The gate passes on a clean tree, so its walker is shown trees that are not."""
+    writes = [(write.function, write.primitive) for write in _raw_writes(ast.parse(source))]
+    assert writes == found
+
+
+def test_every_writer_the_gate_names_is_one_it_finds():
+    """A writer in the vocabulary that the walker cannot see would be a gate on nothing."""
+    planted: dict[str, str] = {}
+    for name in _WRITER_FUNCTIONS:
+        module, _, function = name.rpartition(".")
+        planted[f"import {module}\ndef f(p):\n    {name}(p, p)\n"] = name
+        planted[f"from {module} import {function}\ndef f(p):\n    {function}(p, p)\n"] = name
+    for name, file_keyword in _WRITER_KEYWORDS.items():
+        module = name.rpartition(".")[0]
+        planted[f"import {module}\ndef f(p):\n    {name}({file_keyword}=p)\n"] = name
+    for name in _WRITER_METHODS:
+        planted[f"def f(p):\n    p.{name}()\n"] = f".{name}"
+    for name in _ONE_TARGET_METHODS:
+        planted[f"def f(p, q):\n    p.{name}(q)\n"] = f".{name}"
+    missed = [
+        source
+        for source, primitive in planted.items()
+        if [write.primitive for write in _raw_writes(ast.parse(source))] != [primitive]
+    ]
+    assert missed == []

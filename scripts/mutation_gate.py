@@ -370,6 +370,27 @@ _BUNDLED: tuple[Mutation, ...] = (
         "next run's fence passes beside it and resubmits the structures it is still writing",
     ),
     Mutation(
+        id="tree-write-names-the-refusal",
+        path="src/chemrefine/io.py",
+        old='        raise OutputTreeError(f"cannot write {path}: {reason}") from e\n',
+        new="        raise\n",
+        tests="tests/test_io.py",
+        breaks="a full disk, a spent quota or a read-only mount under a run ends it in a "
+        "traceback with exit 1, the code a halted step exits with, so a wrapper that resumes "
+        "on 1 resubmits into the same disk, and the GUI and an agent get a crash where they "
+        "would show a refusal naming the file",
+    ),
+    Mutation(
+        id="cleanup-keeps-the-exception-in-flight",
+        path="src/chemrefine/io.py",
+        old="        if in_flight is None:\n",
+        new="        if True:\n",
+        tests="tests/test_io.py",
+        breaks="a lock or lease release the output tree refuses while a run unwinds takes the "
+        "place of what stopped it, so a SIGTERM's 143 leaves as exit 11 and a batch's own "
+        "error as the release's",
+    ),
+    Mutation(
         id="cache-only-may-submit",
         path="src/chemrefine/step.py",
         old="case StepMode.CACHE_ONLY | StepMode.REBUILD:\n                return False",

@@ -47,8 +47,8 @@ developer guide lists each shipped one.
   provisioning, schema introspection — resolve the knobs through the engine's own model.
 * **Register** — import the class in ``engines/<name>/__init__.py``; the bare-named package is
   **auto-discovered** when :mod:`chemrefine.engines` loads (registration is a side effect), so
-  nothing outside the new package changes. Legacy YAML spellings map to the canonical name in
-  :func:`chemrefine.config_legacy.normalize`.
+  registering changes nothing outside the new package. Legacy YAML spellings map to the
+  canonical name in :func:`chemrefine.config_legacy.normalize`.
 * **Resources** — an external binary reads its path from ``ctx.executables.get("<key>")``, a
   key the engine declares (:class:`ExecutablesDeclaring`); an importable backend ships as a
   ``pip install chemrefine[<name>]`` extra (imported lazily).

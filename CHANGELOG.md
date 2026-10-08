@@ -503,13 +503,16 @@ for those and the full map.
   every flag left the rest of the run to `--skip`.
   - `rerun-errors N` repairs step N and then continues the run — the steps after
     it are exactly the ones the halt stopped from ever running.
-  - `rebuild-cache N` rebuilds step N, then walks the steps after it read-only:
+  - `rebuild-cache N` rebuilds step N, then walks the steps after it from cache:
     each is served from its cache — a load, never a re-parse, and never a
     submission — and the first cache the current configuration cannot serve ends
     the run quietly, its message naming the cheapest repair (`rebuild-cache` for
     outputs that still match this configuration, `resume` when upstream results
-    changed). Re-deriving a cache from a finished run tree is read-only: it
-    modifies nothing else, including each structure's `.result.json` records.
+    changed). Re-deriving a cache from a finished run tree leaves the outputs it
+    re-parses as they are. It rewrites what it derives from them — step N's cache
+    and, for a calculation step, its manifest and each structure's `.result.json`
+    record, an NMS step's displaced children excepted — and, as every run does,
+    `steps.csv` and each step's ensemble files.
   - `rebuild-nms [N]` re-resolves an NMS step from the outputs already on disk and
     submits nothing — the same rebuild `rebuild-cache` performs, aimed at the step
     setting `nms: true` rather than the last one. `--rebuild_nms` from the v1 CLI

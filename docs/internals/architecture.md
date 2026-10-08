@@ -48,9 +48,16 @@ made of are not its business. The step's template travels on the `StepContext` a
 digests it from there, so no engine has to hand the cache anything.
 `test_no_engine_module_imports_the_cache` keeps the boundary honest, since prose does not.
 
-`sbatch` / `squeue` are reached only from `slurm`; `io` and `cache` own the *shared* on-disk
-formats (each engine owns its own input format — that is the plugin contract). Engines
-receive a focused `StepContext`, never the whole `Config`.
+`sbatch` / `squeue` / `scancel` are reached only from `slurm`; `io` and `cache` own the
+*shared* on-disk formats (each engine owns its own input format — that is the plugin
+contract). `io` also owns the one path by which a run's output tree is written: outside a
+job, whatever the package writes, moves or removes under `output_dir` goes through
+`io.write_tree_file` or `io.remove_tree_file`, or stands inside
+`with io.tree_write(path):`, so a write the tree refuses is `OutputTreeError` naming the
+file, whichever layer made it. `test_the_run_tree_is_written_only_through_io` keeps the
+boundary honest, and lists by function each writer that is something else — a process
+inside a job, a file a person owns. Engines receive a focused `StepContext`, never the
+whole `Config`.
 
 ## Entry points
 

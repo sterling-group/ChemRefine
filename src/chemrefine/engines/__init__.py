@@ -9,8 +9,9 @@ engine module directly.
 The contract lives in :mod:`chemrefine.engines.api`; the reusable building blocks an engine
 is built from are the underscored modules (:mod:`._job`, :mod:`._execution`, :mod:`._script`,
 :mod:`._backend_server`, :mod:`._provision`) — the underscore is what excludes them from
-discovery. Adding a new engine is **fully self-contained**: drop a bare-named
-``engines/<name>/`` package in and it is discovered; nothing here (or anywhere else) changes.
+discovery. Registering a new engine is **fully self-contained**: drop a bare-named
+``engines/<name>/`` package in and it is discovered, with no line here or anywhere else to
+add for it.
 
 The provisioning entry points (:func:`preflight_backends`, :func:`build_backend_env`,
 :func:`backend_env_path`, :func:`backend_env_python`, :func:`known_backend_extras`) are

@@ -13,9 +13,11 @@ hand-rolled lookalikes.
 from __future__ import annotations
 
 import ast
+import errno
 import inspect
 import json
 import os
+import re
 import socket
 import subprocess
 import textwrap
@@ -27,7 +29,7 @@ import yaml
 
 from chemrefine import agent_tools, cache, ids, io, pipeline
 from chemrefine.cache import save_failure_records
-from chemrefine.errors import ConfigError, JobSubmissionError, RunLockError
+from chemrefine.errors import ConfigError, JobSubmissionError, OutputTreeError, RunLockError
 from chemrefine.quantities import DEFAULT_TEMPERATURE_K
 from chemrefine.state import FailureKind, FailureRecord
 
@@ -165,12 +167,12 @@ def test_save_config_passes_warnings_through_without_blocking(tmp_path: Path):
     assert destination.exists()
 
 
-def _fortress(tmp_path: Path) -> Path:
-    """An unwritable directory, or a skip where the wall cannot be built (root)."""
+def _fortress(tmp_path: Path, wall: str = "fortress") -> Path:
+    """An unwritable directory at ``wall``, or a skip where the wall cannot be built (root)."""
     if os.geteuid() == 0:
         pytest.skip("root writes everywhere; the permission wall cannot be built")
-    fortress = tmp_path / "fortress"
-    fortress.mkdir()
+    fortress = tmp_path / wall
+    fortress.mkdir(parents=True)
     fortress.chmod(0o555)
     return fortress
 
@@ -400,6 +402,64 @@ def test_start_run_leaves_no_log_when_the_child_cannot_be_started(
     with pytest.raises(JobSubmissionError, match="could not start `chemrefine run`"):
         agent_tools.start_run(str(path))
     assert not list((tmp_path / "outputs" / "agent_runs").glob("*.log"))
+
+
+@pytest.mark.parametrize(
+    ("wall", "names_directory"),
+    [("outputs", True), ("outputs/agent_runs", False)],
+    ids=["directory", "log"],
+)
+def test_start_run_names_a_log_the_output_tree_will_not_take(
+    tmp_path: Path, recorded_popen, wall: str, names_directory: bool
+):
+    """A log the output tree refuses is the tree's refusal, and nothing is launched into it.
+
+    The log and its directory are files of the run's tree like any other, so a directory
+    this account cannot write answers as it answers a run: ``OutputTreeError`` naming the
+    log, and the directory when that is what was refused — no crash out of the ``mkdir``,
+    and no refused spawn out of the ``open``.
+    """
+    path = _write_config(tmp_path)
+    logs = ids.agent_runs_dir((tmp_path / "outputs").resolve())
+    fortress = _fortress(tmp_path, wall)
+    try:
+        with pytest.raises(OutputTreeError) as refusal:
+            agent_tools.start_run(str(path))
+    finally:
+        fortress.chmod(0o755)
+    reason = f"{logs}: Permission denied" if names_directory else "Permission denied"
+    named = rf"cannot write {re.escape(str(logs))}/\S+-run\.log: {re.escape(reason)}"
+    assert re.fullmatch(named, str(refusal.value)), str(refusal.value)
+    assert isinstance(refusal.value.__cause__, PermissionError)
+    assert recorded_popen.calls == []
+
+
+def test_start_run_keeps_the_spawn_refusal_when_its_log_will_not_go(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    """Removing the empty log is cleanup, and a refused cleanup never replaces the refusal.
+
+    The spawn the OS refused is what the caller has to hear about. A log the tree will not
+    let go of is logged beside it, by name, and stays where it was.
+    """
+    path = _write_config(tmp_path)
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise OSError(errno.EAGAIN, os.strerror(errno.EAGAIN))
+
+    def read_only(self: Path, missing_ok: bool = False) -> None:
+        raise OSError(errno.EROFS, os.strerror(errno.EROFS), str(self))
+
+    monkeypatch.setattr(subprocess, "Popen", refuse)
+    monkeypatch.setattr(Path, "unlink", read_only)
+    with pytest.raises(JobSubmissionError, match="could not start `chemrefine run`") as refusal:
+        agent_tools.start_run(str(path))
+    assert isinstance(refusal.value.__cause__, BlockingIOError)
+    [log] = ids.agent_runs_dir((tmp_path / "outputs").resolve()).glob("*.log")
+    assert (
+        f"could not clean up during BlockingIOError: cannot write {log}: Read-only file system"
+        in caplog.text
+    )
 
 
 # ---------------------------------------------------------------------------

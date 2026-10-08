@@ -27,6 +27,7 @@ Everything else delegates to the library seams built for exactly this:
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import dataclasses
 import functools
@@ -240,6 +241,9 @@ def start_run(
     and validates ``action`` / ``target`` and the two budgets before anything launches, so
     the likeliest mistakes fail here with a message rather than in a log nobody is
     watching yet.
+    A log the run's output tree will not take — a full disk, a read-only mount — is
+    :class:`~chemrefine.errors.OutputTreeError`, raised before anything launches; a child
+    the OS will not start is :class:`~chemrefine.errors.JobSubmissionError`.
     ``target`` is a step number or name — the two spellings every step selector takes,
     and the tool schema says so, so an agent need not spell a number as text.
     """
@@ -276,7 +280,6 @@ def start_run(
         )
         raise RunLockError(f"a driver already holds {config.output_dir} ({holder})")
     log_dir = ids.agent_runs_dir(config.output_dir)
-    log_dir.mkdir(parents=True, exist_ok=True)
     # Microseconds, not seconds: the lock check above is check-then-act — the *child*
     # claims the lock, so two calls close together can both pass it — and at one-second
     # resolution they could resolve to one filename, where `open("wb")` would truncate the
@@ -298,8 +301,11 @@ def start_run(
         # `TypeError` *after* the log file below exists: a 500, and an empty log that
         # `run_status` would serve as the newest.
         argv.append(str(target))
-    try:
-        with log_path.open("wb") as log:
+    with contextlib.ExitStack() as stack:
+        with io.tree_write(log_path):
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log = stack.enter_context(log_path.open("wb"))
+        try:
             # No shell, and nothing in `argv` is free text: the interpreter is
             # `sys.executable`, `action` was matched against `_ACTIONS` above, `path` is a
             # resolved config file, `target` names a step the config was asked for, and the
@@ -308,11 +314,13 @@ def start_run(
             proc = subprocess.Popen(  # noqa: S603
                 argv, stdout=log, stderr=subprocess.STDOUT, start_new_session=True
             )
-    except OSError as e:
-        # The log exists for the child alone. With no child it is an empty file that
-        # `run_status` would serve as the newest run, so it goes with the failure.
-        log_path.unlink(missing_ok=True)
-        raise JobSubmissionError(f"could not start `chemrefine {action}`: {e}") from e
+        except OSError as e:
+            # The log exists for the child alone. With no child it is an empty file that
+            # `run_status` would serve as the newest run, so it goes with the failure — as
+            # cleanup: a removal the tree refuses is logged, and the spawn's refusal stands.
+            with io.cleanup():
+                io.remove_tree_file(log_path)
+            raise JobSubmissionError(f"could not start `chemrefine {action}`: {e}") from e
     return {"pid": proc.pid, "log": str(log_path), "output_dir": str(config.output_dir)}
 
 

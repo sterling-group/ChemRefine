@@ -19,9 +19,10 @@ Adding an engine is **the engine's own files and nothing central**: a new bare-n
 `tests/data/engines/<name>/`), and its docs (a page under `docs/engines/` with its nav line, a
 CHANGELOG bullet). You never edit a building block or a central list to make a new engine
 exist, scaffold, document itself, or join the gates: every roster is derived from the registry,
-and every per-engine verdict is read from the engine's own folder. The one file outside those
-an engine may touch is `pyproject.toml`, and only when it needs a pip extra
-([Resources](#resources)).
+and every per-engine verdict is read from the engine's own folder. Outside those, an engine
+touches `pyproject.toml` when it needs a pip extra ([Resources](#resources)), and a list a
+test module keeps by name where this guide asks for a line: the write gate's is one, for a
+function that writes a file from inside its job ([Tests](#tests)).
 
 ## The steps
 
@@ -119,11 +120,11 @@ from chemrefine.engines.<name>.engine import MyEngine
 __all__ = ["MyEngine"]
 ```
 
-Nothing outside `engines/<name>/` changes — underscored packages (building blocks) and plain
-modules are never treated as plugins, and core names no engine (it describes one by its role,
-which `tests/test_package_boundaries.py` holds). Legacy YAML engine spellings are rewritten to the
-canonical name by `config_legacy.normalize` (the single place that knows the legacy
-vocabulary) — never the registry.
+Registering changes nothing outside `engines/<name>/` — underscored packages (building
+blocks) and plain modules are never treated as plugins, and core names no engine (it
+describes one by its role, which `tests/test_package_boundaries.py` holds). Legacy YAML engine
+spellings are rewritten to the canonical name by `config_legacy.normalize` (the single place
+that knows the legacy vocabulary) — never the registry.
 
 ## Resources
 
@@ -251,6 +252,14 @@ case is its `input.yaml`, templates and seed, plus a `case.yaml` declaring its `
 --record`; the live run is replayed from its own pack before it may replace a recording. Until
 the case exists, `test_every_engine_library_and_trainer_runs_live_in_some_case` fails — or
 excuse the engine in `NOT_LIVE` with the reason it cannot run on the recording machine.
+
+An engine whose job runs this package's own Python — a server, a bridge, a trainer's
+loop — and writes a file there names that function in `_RAW_WRITERS`
+(`tests/test_package_boundaries.py`), with one line saying what it writes. The write gate,
+`test_the_run_tree_is_written_only_through_io`, reads a raw write anywhere outside
+`chemrefine.io` as the orchestrator's until a line says whose it is, so it fails until the
+function is listed. A write the orchestrator makes gets no line: it goes
+[through `chemrefine.io`](#worked-example-a-minimal-engine).
 
 ### The parsed-result contract
 
@@ -409,12 +418,13 @@ Everything an engine writes in the orchestrator's process — `build_input`'s fi
 `with chemrefine.io.tree_write(path):` where a library does the writing (ase, numpy, sqlite
 through `ase.db`), so a write the output tree refuses stops the run as `OutputTreeError`,
 [exit `11`](../running/when-a-run-fails.md#exit-codes), naming the file, the same for every
-engine.
+engine. `test_the_run_tree_is_written_only_through_io` holds it over the whole package; a
+function the job runs writes its own files, and is [listed by name](#tests).
 
 `gpus` defaults to `0` (CPU); a GPU engine overrides it.
 
 **Step 4 — register** with your own `__init__.py` — the bare-named package is auto-discovered,
-so nothing outside `engines/demoqm/` changes:
+so registering changes nothing outside `engines/demoqm/`:
 
 ```python
 # engines/demoqm/__init__.py
@@ -473,7 +483,7 @@ name a step writes as `model_name` to the one the library's trainer reads it by.
 step's `model_name` is then held to that set before the run starts, and the backend table
 lists it. A task left out takes `model_name` as the library's open vocabulary.
 
-Two obligations live outside the module, both enforced by the suite:
+These obligations live outside the module, each enforced by the suite:
 
 - **The pyproject extra.** Declare `mlip-my_mlip` under `[project.optional-dependencies]` —
   `test_every_backend_extra_is_declared_in_pyproject` fails until you do, because an extra
@@ -485,6 +495,10 @@ Two obligations live outside the module, both enforced by the suite:
   discovery, so the heavy import must stay inside the builder (an AST scan asserts it); test
   the builder by planting fake modules in `sys.modules` — the `_install_fake_*` pattern in
   `tests/test_engines_mlip_calculator.py`.
+- **The write gate's line, for an `ApiTrainerBase`.** `train_with_library` runs inside the
+  training job and saves the model there, so the method is one the write gate lists by name
+  ([Tests](#tests)): `test_the_run_tree_is_written_only_through_io` fails on a writer it
+  knows — `torch.save` is one — until it is.
 
 The registry-derived gates do the rest with no edit: the missing-dependency test tries your
 tasks and expects the install hint naming the package and extra, the trainer-contract

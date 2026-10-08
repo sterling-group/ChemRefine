@@ -159,6 +159,13 @@ a desktop, `scripts/release-check.sh --case NAME -- --record`.
   `engines/<name>/`, core names no engine — it describes one by its role.
   `tests/test_package_boundaries.py` holds the names; an engine's keywords and
   formats are left to review.
+- **A run's output tree is written through `chemrefine.io`.** Outside a job,
+  whatever writes, moves or removes a file under `output_dir` calls
+  `io.write_tree_file` / `io.remove_tree_file` or stands inside
+  `with io.tree_write(path):`, so a write the tree refuses is `OutputTreeError`
+  (exit `11`) naming the file. `tests/test_package_boundaries.py` holds it call
+  by call, and lists by function each writer that is something else — a process
+  inside a job, a file a person owns.
 - **Legacy YAML/CLI vocabulary** lives in exactly two quarantine zones:
   `config_legacy.py` (YAML keys) and `cli_legacy.py` (v1 flag-style argv).
   New legacy spellings go there, nowhere else. Both are scheduled for removal in

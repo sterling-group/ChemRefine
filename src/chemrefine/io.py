@@ -16,6 +16,9 @@ run's ``output_dir`` goes through :func:`tree_write` — :func:`write_tree_file`
 and ChemRefine replaces — a config, a template — is written with :func:`atomic_write`
 itself, and its caller words a refusal as that file's. A file a job writes for itself is
 outside this seam as well: its refusal comes back as the job's failure.
+``test_the_run_tree_is_written_only_through_io`` holds the rest of the package to this:
+outside this module a call that writes a path stands inside :func:`tree_write`, or its
+function is listed there with what it writes instead.
 """
 
 from __future__ import annotations
@@ -354,13 +357,13 @@ def remove_tree_file(path: Path) -> None:
 def cleanup() -> Generator[None]:
     """Run cleanup that must never replace the exception it runs during.
 
-    Cleanup — a ``finally``, or an ``except`` that re-raises, removing a temp file or
-    releasing what a run held, its lock or its job leases — runs while an exception may be
-    on its way out: a refused write, a ``KeyboardInterrupt``, the ``SystemExit(143)`` a
-    SIGTERM is turned into. An exception raised there takes that one's place, and the run
-    exits with the cleanup's code and says the cleanup's sentence. So while an exception is
-    in flight, a refusal in here is logged and dropped, and the one in flight goes on; with
-    none in flight, it is raised like any other.
+    Cleanup — a ``finally``, or an ``except`` that ends in a ``raise``, removing a temp file
+    or an empty log, or releasing what a run held, its lock or its job leases — runs while
+    an exception may be on its way out: a refused write, a ``KeyboardInterrupt``, the
+    ``SystemExit(143)`` a SIGTERM is turned into. An exception raised there takes that one's
+    place, and the run exits with the cleanup's code and says the cleanup's sentence. So
+    while an exception is in flight, a refusal in here is logged and dropped, and the one in
+    flight goes on; with none in flight, it is raised like any other.
 
     In flight means :func:`sys.exception`: the exception an ``except`` or ``finally`` block
     is running for, in this frame or in any caller's. Cleanup reached from inside a

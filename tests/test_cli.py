@@ -278,7 +278,7 @@ def test_run_executes_full_pipeline(tmp_path: Path):
 
 
 def test_resume_after_run_is_cache_hit(tmp_path: Path):
-    """A resume over a finished run serves both steps from cache: nothing is rewritten.
+    """A resume over a finished run serves both steps from cache: no cache document is rewritten.
 
     Exit 0 alone was true of a resume that recomputed everything; the cache documents'
     identity (inode + mtime — the cache writes atomically, replacing the inode) is what a

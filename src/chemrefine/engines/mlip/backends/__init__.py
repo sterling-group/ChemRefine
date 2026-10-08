@@ -7,9 +7,9 @@ one env for running and another for training, because there is only one place to
 (:mod:`chemrefine.engines.mlip.registry`).
 
 Modules are **auto-discovered**: every bare-named module here is imported, which runs its
-``@<LIBRARY>.calculator`` / ``@<LIBRARY>.trainer`` decorators. Making an MLIP available, or
-making an available one trainable, is **fully self-contained** — drop a module here, or add a
-decorator to the one that exists, with no import line to maintain and no central table.
+``@<LIBRARY>.calculator`` / ``@<LIBRARY>.trainer`` decorators. Registering an MLIP, or a
+trainer for one that is registered, is **fully self-contained** — drop a module here, or add
+a decorator to the one that exists, with no import line to maintain and no central table.
 
 Every heavy third-party import stays inside the builder or inside the job the trainer
 generates, so this package imports cheaply on a machine with no MLIP library installed at all.
