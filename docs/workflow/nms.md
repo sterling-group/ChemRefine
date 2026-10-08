@@ -75,7 +75,7 @@ stepN/<id>/
   attemptK/
     stepN_<id>.out .xyz .gbw .hess …      round 1, archived as it was
     <id>_m6_pos/  <id>_m6_neg/            every child that was tried
-    resolution.json                       which child won
+    resolution.json                       which child won, under which criterion
 ```
 
 **The canonical location always describes one calculation.** Every file there — output,
@@ -125,9 +125,11 @@ reuses the round-1 outputs on disk and recomputes only what the edit actually ch
   `seed`) re-reads round 1 and re-attempts just the parents that stayed unresolved;
   resolved structures keep their winners.
 - **Changing the criterion** (`target` as resolved — a TS-optimising template with no
-  `target` keys `ts` — and `ts_mode_index`) re-runs the *resolution* —
-  existing `attemptK/` results are trusted only under the criterion they were written
-  for — still without resubmitting a single round-1 job.
+  `target` keys `ts` — and `ts_mode_index`) re-runs the *resolution*, still without
+  resubmitting a single round-1 job. Each `resolution.json` names the criterion its
+  winner was resolved under and is honoured only under that one, by `resume` and
+  `rebuild-nms` alike: a structure still at the new target passes through with no
+  winner named, and going back to the earlier criterion names its winner again.
 - **Changing the parents or the template** recomputes exactly the affected rows, like
   any other step.
 

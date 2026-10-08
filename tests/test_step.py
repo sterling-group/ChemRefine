@@ -1431,7 +1431,7 @@ def test_rebuild_cache_step_nms_branch(tmp_path: Path):
         step_dir,
         operation="freq",
         engine="orca",
-        stamp=cache.ManifestStamp(fingerprint="", criterion_key="", search_key="", rows={}),
+        stamp=cache.ManifestStamp(fingerprint="", search_key="", rows={}),
     )
     seed = Structure(id="0", atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]))
     outcome = step.rebuild_cache_step(cfg, step_cfg, PipelineState(structures=(seed,)))
@@ -1468,7 +1468,7 @@ def test_rebuild_cache_step_refuses_a_step_whose_template_is_missing(tmp_path: P
         step_dir,
         operation="sp",
         engine="orca",
-        stamp=cache.ManifestStamp(fingerprint="", criterion_key="", search_key="", rows=rows),
+        stamp=cache.ManifestStamp(fingerprint="", search_key="", rows=rows),
     )
     seed = Structure(id="0", atoms=Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]]))
     with pytest.raises(ConfigError, match=r"ORCA template not found: .*step1\.inp"):
@@ -1628,24 +1628,24 @@ _H2_SEED = PipelineState(
 
 
 def test_the_resolution_stamp_waits_for_the_resolution(tmp_path: Path):
-    """The resolution half of the stamp is written once the resolution it describes exists.
+    """The search half of the stamp is written once the attempts it describes exist.
 
     The row half already waits for the archive; this is the same discipline one grain
-    up. Stamped current before `resume_nms`, a driver killed in the hours that pass
-    would leave the previous search's attempts under the current search's stamp. So the
-    first stamp carries the stored halves forward and the current ones land after
-    finalize — completed runs end with exactly the manifest they always had.
+    up. Stamped current before the resolution pass, a driver killed in the hours that
+    pass would leave the previous search's attempts under the current search's stamp. So
+    the first stamp carries the stored search key forward and the current one lands after
+    finalize — a completed run ends with the manifest a full run writes.
     """
     from chemrefine import step
 
     cfg, step_dir, stored = _nms_rebuild_tree(tmp_path, displacement_value=1.0)
     retuned = _retuned(cfg, target="minimum", displacement_value=0.25)
-    stamps: list[dict[str, str]] = []
+    stamps: list[str] = []
     real = cache.save_manifest
 
     def _spying(inputs, sd, **kwargs):
         if kwargs["stamp"]["rows"]:
-            stamps.append({k: kwargs["stamp"][k] for k in ("criterion_key", "search_key")})
+            stamps.append(kwargs["stamp"]["search_key"])
         return real(inputs, sd, **kwargs)
 
     with patch.object(cache, "save_manifest", _spying):
@@ -1657,12 +1657,8 @@ def test_the_resolution_stamp_waits_for_the_resolution(tmp_path: Path):
         get_engine("orca"),
     )
     assert stored.search_key != current.search_key, "precondition: a search retune"
-    assert stamps[0] == {"criterion_key": stored.criterion_key, "search_key": stored.search_key}
-    provenance = cache.load_manifest_provenance(step_dir)
-    assert (provenance.criterion_key, provenance.search_key) == (
-        current.criterion_key,
-        current.search_key,
-    )
+    assert stamps == [stored.search_key, current.search_key]
+    assert cache.load_manifest_provenance(step_dir).search_key == current.search_key
 
 
 def _crash_before_the_resolution(tmp_path: Path, **options) -> tuple[Config, Path, cache.StepKey]:
@@ -1670,7 +1666,7 @@ def _crash_before_the_resolution(tmp_path: Path, **options) -> tuple[Config, Pat
     cfg, step_dir, stored = _nms_rebuild_tree(tmp_path, displacement_value=1.0)
     retuned = _retuned(cfg, **options)
     with (
-        patch("chemrefine.nms.resume_nms", side_effect=SystemExit(143)),
+        patch("chemrefine.nms.run_nms", side_effect=SystemExit(143)),
         pytest.raises(SystemExit),
     ):
         run_step(retuned, retuned.steps[0], _H2_SEED, mode=StepMode.RESUME)
@@ -1692,29 +1688,6 @@ def test_a_crash_before_the_resolution_leaves_the_old_search_key(tmp_path: Path)
     assert cache.load_manifest_provenance(step_dir).search_key == stored.search_key
     with pytest.raises(CacheError, match="different search settings"):
         step.rebuild_cache_step(retuned, retuned.steps[0], _H2_SEED)
-
-
-def test_a_crash_before_the_resolution_keeps_the_labels_untrusted(tmp_path: Path):
-    """After a criterion retune crashes mid-resume, the next resume still distrusts labels.
-
-    The stored criterion is the one the attempts' labels were written under; stamped
-    current before the resolution ran, the next resume would have worn them.
-    """
-    from chemrefine import nms
-
-    retuned, _step_dir, _stored = _crash_before_the_resolution(
-        tmp_path, target="ts", ts_mode_index=6
-    )
-    seen: list[bool] = []
-    real = nms.resume_nms
-
-    def _spying(*args, **kwargs):
-        seen.append(kwargs["trust_resolutions"])
-        return real(*args, **kwargs)
-
-    with patch("chemrefine.nms.resume_nms", _spying):
-        run_step(retuned, retuned.steps[0], _H2_SEED, mode=StepMode.RESUME)
-    assert seen == [False]
 
 
 def test_the_scoped_action_advice_never_names_a_rebuild_that_refuses(tmp_path: Path):
@@ -2513,13 +2486,13 @@ def test_an_nms_step_keys_the_target_it_resolves_to(tmp_path: Path):
     """
     template = "! OptTS Freq XTB2\n"
 
-    def criterion(name: str, **options: object) -> str:
+    def keyed(name: str, **options: object) -> str:
         key = _key_over(tmp_path / name, "orca", template, nms=True, options=options)
-        return key.criterion_key
+        return key.fingerprint
 
-    inferred = criterion("inferred")
-    assert inferred == criterion("spelled", target="ts")
-    assert inferred != criterion("other", target="minimum")
+    inferred = keyed("inferred")
+    assert inferred == keyed("spelled", target="ts")
+    assert inferred != keyed("other", target="minimum")
 
 
 def test_a_step_whose_template_is_missing_still_derives_a_key(tmp_path: Path):

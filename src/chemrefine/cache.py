@@ -376,6 +376,12 @@ def resolution_keys(resolution: ResolutionSpec | None) -> tuple[str, str, str]:
     / ``seed``) changes the geometries themselves while the child ids stay the same,
     so the same attempt answers a question this configuration never asked — the one
     adoption ``rebuild-cache`` must refuse.
+
+    They are also recorded at different grains. The search half is stamped once on the
+    step's manifest (:class:`ManifestStamp`), because every attempt one submission makes is
+    displaced under one search. The criterion half is not: it belongs to each attempt's own
+    resolution, and :mod:`chemrefine.nms` writes it into that attempt's record as the winner
+    is named — one stamp for the whole step could not say which attempts it describes.
     """
     if resolution is None:
         return "", "", ""
@@ -828,14 +834,13 @@ def save(
 class ManifestStamp(TypedDict):
     """What a manifest records of the :class:`StepKey` it was written under.
 
-    The step's fingerprint, the two halves of its NMS resolution's identity, and each
+    The step's fingerprint, the search half of its NMS resolution's identity, and each
     row's ``(row_key, parent_digest)``: what lets a later ``resume`` prove an output on
     disk is the one this configuration would compute. :func:`save_manifest` takes it whole
     and requires it, so no route can write a manifest that proves less than its key.
     """
 
     fingerprint: str
-    criterion_key: str
     search_key: str
     rows: dict[str, tuple[str, str]]
 
@@ -852,11 +857,11 @@ class StepKey:
 
     The identity is layered the way the domain is layered. ``row_keys`` (one per parent,
     aligned with ``parent_ids``/``parent_digests``) are the per-structure job identities
-    (:func:`row_key`); ``criterion_key``/``search_key`` are the NMS resolution's
-    identity, kept as two halves because they age differently on disk
-    (:func:`resolution_keys`, both ``""`` for a step that resolves nothing); and
-    ``fingerprint`` composes them with the step number — an exact hit means "the whole
-    step, bit for bit", while every finer question is asked of the rows.
+    (:func:`row_key`); ``search_key`` is the half of the NMS resolution's identity that
+    says how the ``attemptK/`` children on disk were displaced (:func:`resolution_keys`,
+    ``""`` for a step that resolves nothing); and ``fingerprint`` composes the rows and
+    the whole resolution with the step number — an exact hit means "the whole step, bit
+    for bit", while every finer question is asked of the rows.
 
     :meth:`of` is the one place the derivation happens. The effective charge and
     multiplicity, the engine's own reading of the options, and the resolution spec are
@@ -868,7 +873,6 @@ class StepKey:
     parent_ids: tuple[str, ...] = ()
     parent_digests: tuple[str, ...] = ()
     row_keys: tuple[str, ...] = ()
-    criterion_key: str = ""
     search_key: str = ""
     fingerprint: str = ""
     operation: str | None = None
@@ -888,14 +892,13 @@ class StepKey:
     def manifest_stamp(self) -> ManifestStamp:
         """The key's projection onto a manifest: ``save_manifest(..., **key.manifest_stamp())``.
 
-        The step stamp (``fingerprint``), the two resolution halves and the row
+        The step stamp (``fingerprint``), the resolution's search half and the row
         provenance, in one shape, so the four routes that write a manifest cannot each
-        copy the quintet by hand and drift — :func:`save` already takes the key whole,
-        and this is the manifest's equivalent.
+        copy them by hand and drift — :func:`save` already takes the key whole, and this
+        is the manifest's equivalent.
         """
         return ManifestStamp(
             fingerprint=self.fingerprint,
-            criterion_key=self.criterion_key,
             search_key=self.search_key,
             rows=self.manifest_rows(),
         )
@@ -951,7 +954,7 @@ class StepKey:
             )
             for digest in parent_digs
         )
-        res_key, crit_key, search_key = resolution_keys(resolution)
+        res_key, _criterion_key, search_key = resolution_keys(resolution)
         step_fingerprint = _hash_payload(
             {
                 "format": CACHE_FORMAT_VERSION,
@@ -964,7 +967,6 @@ class StepKey:
             parent_ids=parent_ids,
             parent_digests=parent_digs,
             row_keys=rows,
-            criterion_key=crit_key,
             search_key=search_key,
             fingerprint=step_fingerprint,
             operation=keyed,
@@ -1101,10 +1103,10 @@ def save_manifest(
     ``stamp`` is :meth:`StepKey.manifest_stamp`. Its ``fingerprint`` is the step key
     :func:`save` would store, written **before** the jobs go out; ``rows``
     (``id -> (row_key, parent_digest)``) is the same provenance at row grain;
-    ``criterion_key``/``search_key`` are the two halves of the NMS resolution's identity
-    (:func:`resolution_keys`), stamped separately because ``resume`` and
-    ``rebuild-cache`` each ask a different half — the composed key would answer
-    neither. Together they are what lets a later ``resume`` prove, structure by
+    ``search_key`` is the search half of the NMS resolution's identity
+    (:func:`resolution_keys`), stamped apart from the fingerprint because
+    ``rebuild-cache`` asks that half alone — the composed key would not answer it.
+    Together they are what lets a later ``resume`` prove, structure by
     structure, that an output on disk is the one this configuration would compute — and,
     for an artifact step, whose one job is no structure and so carries no row key, by the
     step stamp that its product is. The manifest with provenance at its step's grain
@@ -1118,7 +1120,6 @@ def save_manifest(
         "operation": operation,
         "engine": engine,
         "fingerprint": stamp["fingerprint"],
-        "criterion_key": stamp["criterion_key"],
         "search_key": stamp["search_key"],
         "files": [
             {
@@ -1150,14 +1151,11 @@ class ManifestProvenance:
     """
 
     fingerprint: str
-    criterion_key: str
-    """The criterion half of the resolution the rows were resolved under — what decides
-    whether a passthrough's ``resolved_from`` label may be worn on *resume*, which fans
-    out fresh children (an attempt on disk predates its submission)."""
     search_key: str
-    """The search half — what decides whether the ``attemptK/`` children themselves may
-    be re-read at all: a search retune changes the displaced geometries under unchanged
-    child ids, so an attempt from another search key answers a different question.
+    """The search half of the resolution's identity — what decides whether the
+    ``attemptK/`` children may be re-read at all: a search retune changes the displaced
+    geometries under unchanged child ids, so an attempt from another search key answers a
+    different question.
     ``""`` when the step resolves nothing, and in a hand-written v1 adoption manifest —
     unprovable, adoptable only by the explicit ``rebuild-cache``, the row doctrine."""
     rows: dict[str, tuple[str, str]]
@@ -1183,7 +1181,6 @@ class _Manifest:
     """A manifest document as read from disk: the step stamp and every record."""
 
     fingerprint: str
-    criterion_key: str
     search_key: str
     records: tuple[_ManifestRecord, ...]
 
@@ -1226,7 +1223,6 @@ def _read_manifest(step_dir: Path) -> _Manifest | None:
         raise CacheError(f"corrupt manifest at {path}: {e}") from e
     return _Manifest(
         fingerprint=str(data.get("fingerprint", "")),
-        criterion_key=str(data.get("criterion_key", "")),
         search_key=str(data.get("search_key", "")),
         records=records,
     )
@@ -1246,10 +1242,9 @@ def load_manifest_provenance(step_dir: Path) -> ManifestProvenance:
     """
     manifest = _read_manifest(step_dir)
     if manifest is None:
-        return ManifestProvenance(fingerprint="", criterion_key="", search_key="", rows={})
+        return ManifestProvenance(fingerprint="", search_key="", rows={})
     return ManifestProvenance(
         fingerprint=manifest.fingerprint,
-        criterion_key=manifest.criterion_key,
         search_key=manifest.search_key,
         rows={
             rec.id: (rec.row_key, rec.parent_digest)

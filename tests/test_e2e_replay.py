@@ -49,7 +49,7 @@ from replay import (
 )
 from test_engines_orca_corpus import CYCLE_LIMIT_RE
 
-from chemrefine import cache, filtering, ids, job_log, pipeline
+from chemrefine import cache, filtering, ids, job_log, nms, pipeline
 from chemrefine.config import BoltzmannSample, Config, StepConfig, load_config
 from chemrefine.engines.api import NULL_SINK, ArtifactEngine, get_engine
 from chemrefine.engines.mlip.train.engine import SIDECAR_NAME
@@ -750,8 +750,18 @@ def _ts_path(run: Replayed) -> None:
     assert (attempt / f"step3_{ts.id}.out").read_text(encoding="utf-8") != canonical, (
         "round 1 is sealed into the attempt, not overwritten"
     )
+    # The attempt's record names the winner and the criterion that judged it: the target
+    # `Opt` implies, which no step spells. The recording holds the same record, so a
+    # relocated tree rebuilds to the winner the run promoted.
     resolution = json.loads((attempt / "resolution.json").read_text(encoding="utf-8"))
-    assert resolution == {"resolved_from": winner}
+    assert resolution == {
+        "resolved_from": winner,
+        "criterion_key": nms.NmsOptions(target="minimum").criterion_key(),
+    }
+    recorded = case.captured / s3 / ts.id / "attempt1" / "resolution.json"
+    assert json.loads(recorded.read_text(encoding="utf-8")) == resolution, (
+        "the recording's record is not the one a run writes: regenerate the recording"
+    )
     xyz = (step3_dir / ts.id / f"step3_{ts.id}.xyz").read_text(encoding="utf-8")
     assert xyz.splitlines()[1] == f"NMS-resolved {ts.id}"
 

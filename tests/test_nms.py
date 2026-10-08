@@ -10,7 +10,7 @@ minima, ``random`` fan-out, round-1/round-2 auto-retry, rebuild + reattempt).
 
 from __future__ import annotations
 
-import os
+import json
 from collections import namedtuple
 from dataclasses import replace
 from pathlib import Path
@@ -22,7 +22,7 @@ from ase import Atoms
 from chemrefine import cache, lifecycle, nms
 from chemrefine.config import Config, MinSample, StepConfig
 from chemrefine.engines.api import NmsInputInfo
-from chemrefine.errors import CacheError, ConfigError, OutputTreeError
+from chemrefine.errors import CacheError, ConfigError
 from chemrefine.ids import structure_artifact_path
 from chemrefine.state import (
     Failure,
@@ -421,27 +421,40 @@ def _key_of(cfg: StepConfig, parent: Structure) -> cache.StepKey:
     return cache.StepKey.of(cfg, (parent,), None, resolution=resolution)
 
 
+def _criterion_of(cfg: StepConfig) -> str:
+    """The criterion key a resolution under ``cfg`` is recorded and read under."""
+    return nms.NmsOptions.from_raw(cfg.options).criterion_key()
+
+
 def test_search_params_move_no_row_and_no_criterion():
     """Tuning the hunt re-runs neither round 1 nor the trust in existing resolutions."""
     parent = _structure("0")
-    base = _key_of(_cfg(options={"target": "minimum", "displacement_value": 1.0}), parent)
-    tuned = _key_of(_cfg(options={"target": "minimum", "displacement_value": 2.0}), parent)
-    assert base.row_keys == tuned.row_keys
-    assert base.criterion_key == tuned.criterion_key
-    assert base.fingerprint != tuned.fingerprint  # still a different step
+    base = _cfg(options={"target": "minimum", "displacement_value": 1.0})
+    tuned = _cfg(options={"target": "minimum", "displacement_value": 2.0})
+    assert _key_of(base, parent).row_keys == _key_of(tuned, parent).row_keys
+    assert _criterion_of(base) == _criterion_of(tuned)
+    assert _key_of(base, parent).fingerprint != _key_of(tuned, parent).fingerprint
 
 
 def test_the_criterion_moves_its_key_and_nothing_of_round_1():
     parent = _structure("0")
-    mn = _key_of(_cfg(options={"target": "minimum"}), parent)
-    ts = _key_of(_cfg(options={"target": "ts"}), parent)
-    assert mn.row_keys == ts.row_keys
-    assert mn.criterion_key != ts.criterion_key
+    mn = _cfg(options={"target": "minimum"})
+    ts = _cfg(options={"target": "ts"})
+    assert _key_of(mn, parent).row_keys == _key_of(ts, parent).row_keys
+    assert _criterion_of(mn) != _criterion_of(ts)
+    assert _criterion_of(ts) != _criterion_of(_cfg(options={"target": "ts", "ts_mode_index": 7}))
+
+
+def test_the_criterion_key_is_the_half_the_cache_keys_as_the_criterion():
+    """One derivation: the key a record names is the one the step fingerprint composes."""
+    opts = nms.NmsOptions(target="ts", ts_mode_index=7, displacement_value=0.5, seed=3)
+    _resolution, criterion, search = cache.resolution_keys(opts.resolution_spec())
+    assert opts.criterion_key() == criterion != search
 
 
 def test_a_non_resolving_step_has_no_resolution_identity():
     key = _key_of(_cfg(nms=False), _structure("0"))
-    assert key.criterion_key == "" and key.search_key == ""
+    assert key.search_key == "" and cache.resolution_keys(None) == ("", "", "")
 
 
 # ---------------------------------------------------------------------------
@@ -1118,7 +1131,7 @@ def test_a_resolution_sidecar_without_its_key_is_a_cache_error(tmp_path: Path, b
     (struct_dir / "attempt1" / "resolution.json").write_text(body, encoding="utf-8")
 
     with pytest.raises(CacheError, match="resolved_from"):
-        nms._read_resolution(struct_dir)
+        nms._read_resolution(struct_dir, nms.NmsOptions().criterion_key())
 
 
 def test_an_attempt_that_resolved_nothing_has_no_sidecar_and_is_not_an_error(tmp_path: Path):
@@ -1132,15 +1145,21 @@ def test_an_attempt_that_resolved_nothing_has_no_sidecar_and_is_not_an_error(tmp
     struct_dir = tmp_path / "0"
     (struct_dir / "attempt1").mkdir(parents=True)
 
-    assert nms._read_resolution(struct_dir) is None
+    assert nms._read_resolution(struct_dir, nms.NmsOptions().criterion_key()) is None
 
 
-def _record_beside(engine: _FakeNms, ctx: StepContext, child_output: bytes | None) -> Path:
+def _record_beside(
+    engine: _FakeNms, ctx: StepContext, child_output: bytes | None, *, under: str | None = None
+) -> Path:
     """Write ``0``'s first attempt as an install leaves it: a record naming ``0_m5_pos``,
-    beside that child's output when ``child_output`` is given. Returns the attempt."""
+    beside that child's output when ``child_output`` is given. Returns the attempt.
+
+    The record names the criterion ``ctx``'s step resolves under, as an install's does,
+    unless ``under`` gives another."""
     attempt = ctx.step_dir / "0" / "attempt1"
     attempt.mkdir(parents=True)
-    nms._write_resolution(attempt, "0_m5_pos")
+    criterion = nms.resolved_options(engine, ctx).criterion_key() if under is None else under
+    nms._write_resolution(attempt, "0_m5_pos", criterion)
     if child_output is not None:
         named = engine.artifact_paths(replace(ctx, step_dir=attempt), "0_m5_pos")[1]
         named.parent.mkdir()
@@ -1210,49 +1229,83 @@ def test_a_rebuild_credits_a_winner_only_over_the_output_it_names(tmp_path: Path
         assert failure.best is not None and failure.best.id == "0_m5_pos"
 
 
-def test_an_untrusted_passthrough_disowns_its_resolution_sidecar(tmp_path: Path):
-    """A label written under another criterion is cleared on disk, not only in memory.
+def _resolve(
+    route: str, engine: _FakeNms, round1: StepResults, ctx: StepContext
+) -> nms.NmsResolution:
+    """Resolve ``round1`` the way a run does, or the way a rebuild does."""
+    if route == "a run":
+        return nms.run_nms(engine, round1, [], ctx)
+    return nms.rebuild_nms(engine, round1, [], ctx)
 
-    The resume that distrusts it goes on to stamp the manifest with the criterion it ran
-    under, after which the next resume trusts what it finds — so a sidecar merely skipped
-    would be worn again one resume later. Trusted first, the same sidecar stays and is worn.
+
+@pytest.mark.parametrize("route", ["a run", "a rebuild"])
+@pytest.mark.parametrize("record", ["this criterion", "another criterion", "no criterion"])
+def test_a_resolution_is_worn_only_under_the_criterion_it_names(
+    tmp_path: Path, route: str, record: str
+):
+    """A record is worn under the criterion that judged its child, and under no other.
+
+    What counts as resolved is the criterion's to say, so a child named under another one
+    was never judged by this configuration, and a record naming none was judged by nothing
+    that can be checked. The bytes are the promoted child's in every case, so only the
+    criterion decides. Run and rebuild read through the one loop and so give one answer,
+    and neither touches the record: it is worn again when its criterion is the
+    configuration's.
     """
     engine = _FakeNms(freqs={"0": _Freq(imaginary={}, modes=None)})  # at target: passthrough
-    ctx = _ctx(tmp_path, (_h2("0"),))
+    ctx = _ctx(tmp_path, (_h2("0"),), options={"target": "minimum"})
     round1 = _seed_round1(engine, ctx)
-    attempt = _record_beside(engine, ctx, engine.artifact_paths(ctx, "0")[1].read_bytes())
-
-    trusted = nms.resume_nms(engine, round1, [], ctx, trust_resolutions=True)
-    assert trusted.survivors[0].resolved_from == "0_m5_pos"
-    assert (attempt / "resolution.json").is_file()
-
-    disowned = nms.resume_nms(engine, round1, [], ctx, trust_resolutions=False)
-    assert disowned.survivors[0].resolved_from is None
-    assert not (attempt / "resolution.json").exists()
-    # No resurrection: the next trusting resume finds nothing to wear.
-    assert (
-        nms.resume_nms(engine, round1, [], ctx, trust_resolutions=True).survivors[0].resolved_from
-        is None
+    mine = nms.resolved_options(engine, ctx).criterion_key()
+    other = nms.NmsOptions(target="minimum", ts_mode_index=5).criterion_key()
+    assert mine != other, "precondition: the two configurations key different criteria"
+    promoted = engine.artifact_paths(ctx, "0")[1].read_bytes()
+    attempt = _record_beside(
+        engine, ctx, promoted, under={"this criterion": mine}.get(record, other)
     )
-
-
-@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through any mode")
-def test_a_label_the_tree_will_not_let_go_of_refuses_the_resume(tmp_path: Path):
-    """A distrusted label the filesystem will not remove refuses the resume by name.
-
-    Left on disk it would be worn again by the next resume that trusts what it finds, so it
-    is not skipped quietly: the output tree's refusal names it, and it stays where it was.
-    """
-    engine = _FakeNms(freqs={"0": _Freq(imaginary={}, modes=None)})  # at target: passthrough
-    ctx = _ctx(tmp_path, (_h2("0"),))
-    round1 = _seed_round1(engine, ctx)
-    attempt = _record_beside(engine, ctx, engine.artifact_paths(ctx, "0")[1].read_bytes())
-    attempt.chmod(0o555)
-    try:
-        with pytest.raises(OutputTreeError) as excinfo:
-            nms.resume_nms(engine, round1, [], ctx, trust_resolutions=False)
-    finally:
-        attempt.chmod(0o755)
     label = attempt / "resolution.json"
-    assert str(excinfo.value) == f"cannot write {label}: Permission denied"
-    assert label.is_file()
+    if record == "no criterion":
+        label.write_text(json.dumps({"resolved_from": "0_m5_pos"}), encoding="utf-8")
+    before = label.read_bytes()
+
+    (survivor,) = _resolve(route, engine, round1, ctx).survivors
+
+    assert survivor.resolved_from == ("0_m5_pos" if record == "this criterion" else None)
+    assert label.read_bytes() == before, "a record is read, never rewritten or removed"
+    there = _ctx(tmp_path, (_h2("0"),), options={"target": "minimum", "ts_mode_index": 5})
+    (elsewhere,) = _resolve(route, engine, round1, there).survivors
+    assert elsewhere.resolved_from == ("0_m5_pos" if record == "another criterion" else None)
+
+
+@pytest.mark.parametrize(
+    ("is_ts", "target"), [(False, "minimum"), (True, "ts")], ids=["a minimum", "a ts"]
+)
+def test_an_install_names_the_criterion_that_judged_its_winner(
+    tmp_path: Path, is_ts: bool, target: str
+):
+    """The record carries the criterion as the step resolved it, not as the config spells it.
+
+    No ``target`` is set here, so the input implies it. The key the record names is the one
+    the loop judged the winner by: named under the options as written instead, spelling out
+    the target an input already implies would orphan every record on disk.
+    """
+    resolved = _Freq(imaginary={5: -9.0} if is_ts else {}, modes=None)
+    engine = _FakeNms(
+        freqs={
+            "0": _Freq(imaginary={4: -10.0, 5: -99.0} if is_ts else {5: -42.0}, modes=_modes(6)),
+            **{f"0_m{4 if is_ts else 5}_{sign}": resolved for sign in ("pos", "neg")},
+        },
+        is_ts=is_ts,
+    )
+    ctx = _ctx(tmp_path, (_h2("0"),))
+    assert "target" not in ctx.step_cfg.options, "precondition: the input implies the target"
+
+    (survivor,) = nms.run_nms(engine, _seed_round1(engine, ctx), [], ctx).survivors
+
+    record = json.loads(
+        (ctx.step_dir / "0" / "attempt1" / "resolution.json").read_text(encoding="utf-8")
+    )
+    assert record == {
+        "resolved_from": survivor.resolved_from,
+        "criterion_key": nms.NmsOptions(target=target).criterion_key(),
+    }
+    assert survivor.resolved_from is not None

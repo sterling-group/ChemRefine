@@ -759,7 +759,7 @@ def test_an_install_stopped_as_it_names_its_winner_keeps_round_1(tmp_path: Path)
         cut = _seeded_config(tmp_path / "cut", [_nms_step(1.0)])
         step_dir = (cut.output_dir / "step1_s").resolve()
 
-        def refused(attempt_dir: Path, winner_id: str) -> None:
+        def refused(attempt_dir: Path, winner_id: str, criterion_key: str) -> None:
             raise OutputTreeError(f"cannot write {attempt_dir}: No space left on device")
 
         with patch.object(nms, "_write_resolution", refused), pytest.raises(OutputTreeError):
@@ -927,6 +927,176 @@ def test_a_rebuild_over_a_stopped_install_ledgers_the_winner_it_cannot_promote(
         assert attempt is not None
         promoted = attempt / winner / f"step1_{winner}.out"
         assert canonical.read_bytes() == promoted.read_bytes()
+    finally:
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        ENGINES.pop("fake-nms2", None)
+
+
+def _under_another_criterion(step: StepConfig) -> StepConfig:
+    """``step`` with its NMS criterion edited and every parse left as it was.
+
+    `ts_mode_index` is read by a `ts` target only, so under `minimum` it moves the
+    criterion's key and nothing a job or a parse depends on.
+    """
+    return step.model_copy(update={"options": {**step.options, "ts_mode_index": 5}})
+
+
+def _resolved_from(cfg: Config) -> dict[str, str | None]:
+    """What step 1's cache names as each structure's winning child."""
+    cached = cache.load((cfg.output_dir / "step1_s").resolve())
+    assert cached is not None
+    return {s.id: s.resolved_from for s in cached.results.structures}
+
+
+@pytest.mark.parametrize("left_under", ["another criterion", "no sampling"])
+def test_a_resume_stopped_at_its_cache_write_keeps_the_winners_it_named(
+    tmp_path: Path, left_under: str
+):
+    """A winner named by a resume that never finished is still named by the next one.
+
+    The resume resolves under a criterion the tree is not left under: the criterion is
+    edited, or `nms: true` is turned on over a finished run. Its installs name their
+    winners, and the driver stops as the step cache is written. Each record says which
+    criterion resolved it, so the next resume reads it as its own: a re-read, with the
+    record as the stopped resume left it.
+    """
+    import json
+    from unittest.mock import patch
+
+    from chemrefine.engines.api import ENGINES
+    from chemrefine.ids import latest_attempt_dir
+
+    eng = _register_fake_nms()
+    try:
+        eng.clean = {"0"}
+        earlier = (
+            _plain_freq_step()
+            if left_under == "no sampling"
+            else _under_another_criterion(_nms_step(1.0))
+        )
+
+        def edited_over(root: Path) -> Config:
+            """A tree the earlier configuration finished, and the edited one to resume it."""
+            eng.resolved = set()  # the earlier run resolves nothing for "1"
+            execute(_seeded_config(root, [earlier]), Action.RESUME)
+            eng.resolved = {"1"}
+            eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+            return _seeded_config(root, [_nms_step(1.0)])
+
+        whole = edited_over(tmp_path / "whole")
+        execute(whole, Action.RESUME)
+        expected = _resolved_from(whole)
+        assert expected["1"] is not None, "precondition: the uninterrupted resume promotes a winner"
+
+        cut = edited_over(tmp_path / "cut")
+        with patch.object(cache, "save", side_effect=SystemExit(143)), pytest.raises(SystemExit):
+            execute(cut, Action.RESUME)
+        attempt = latest_attempt_dir((cut.output_dir / "step1_s").resolve() / "1")
+        assert attempt is not None
+        record = attempt / "resolution.json"
+        named = record.read_bytes()
+        assert json.loads(named)["resolved_from"] == expected["1"], (
+            "precondition: the stopped resume installed and named its winner"
+        )
+
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        execute(cut, Action.RESUME)
+
+        assert eng.submitted == [] and eng.children_submitted == [], "a re-read, not a re-run"
+        assert _resolved_from(cut) == expected
+        assert record.is_file() and record.read_bytes() == named, "the record is as it was left"
+    finally:
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        ENGINES.pop("fake-nms2", None)
+
+
+def test_a_search_retune_keeps_the_winner_of_a_resume_stopped_before_its_restamp(tmp_path: Path):
+    """Resolved structures keep their winners across a search retune, whatever stopped earlier.
+
+    `nms: true` is turned on over a finished run, and the driver stops once the step cache
+    is written, before the manifest is stamped again. The cache serves until a search
+    parameter is tuned. That resume re-reads the tree, and the structure resolved earlier
+    passes through under the record that names its criterion.
+    """
+    from unittest.mock import patch
+
+    from chemrefine import step
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_fake_nms()
+    try:
+        eng.clean = {"0"}
+        eng.resolved = {"1"}
+        execute(_seeded_config(tmp_path, [_plain_freq_step()]), Action.RESUME)
+        turned_on = _seeded_config(tmp_path, [_nms_step(1.0)])
+        with patch.object(step, "_restamp", side_effect=SystemExit(143)), pytest.raises(SystemExit):
+            execute(turned_on, Action.RESUME)
+        expected = _resolved_from(turned_on)
+        assert expected["1"] is not None, "precondition: the cache was written with its winner"
+
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        retuned = _seeded_config(tmp_path, [_nms_step(2.0)])
+        execute(retuned, Action.RESUME)
+
+        assert eng.submitted == [] and eng.children_submitted == [], "nothing is left to resolve"
+        assert _resolved_from(retuned) == expected
+    finally:
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        ENGINES.pop("fake-nms2", None)
+
+
+@pytest.mark.parametrize(
+    "route", ["resume", "resume, stopped once before it resolved", "rebuild-nms"]
+)
+def test_a_record_from_another_criterion_is_neither_worn_nor_removed(tmp_path: Path, route: str):
+    """Under another criterion a winner is not named; under its own it is named again.
+
+    The structure still parses at the target after the edit, so it passes through, and the
+    record beside it names the earlier criterion. `resume` and `rebuild-nms` read it the
+    same way, a resume stopped before its resolution included: neither wears it and
+    neither removes it, so the earlier configuration, run again, reads it as its own.
+    """
+    from unittest.mock import patch
+
+    from chemrefine import nms
+    from chemrefine.engines.api import ENGINES
+    from chemrefine.ids import latest_attempt_dir
+
+    eng = _register_fake_nms()
+    try:
+        eng.clean = {"0"}
+        eng.resolved = {"1"}
+        resolved_under = _seeded_config(tmp_path, [_nms_step(1.0)])
+        execute(resolved_under, Action.RESUME)
+        expected = _resolved_from(resolved_under)
+        assert expected["1"] is not None, "precondition: the run promotes a winner"
+        attempt = latest_attempt_dir((resolved_under.output_dir / "step1_s").resolve() / "1")
+        assert attempt is not None
+        record = attempt / "resolution.json"
+        named = record.read_bytes()
+
+        edited = _seeded_config(tmp_path, [_under_another_criterion(_nms_step(1.0))])
+        action = Action.REBUILD_NMS if route == "rebuild-nms" else Action.RESUME
+        if route == "resume, stopped once before it resolved":
+            with (
+                patch.object(nms, "_resolve_all", side_effect=SystemExit(143)),
+                pytest.raises(SystemExit),
+            ):
+                execute(edited, action)
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        execute(edited, action)
+
+        assert eng.submitted == [] and eng.children_submitted == []
+        assert _resolved_from(edited) == dict.fromkeys(expected), "no winner under this criterion"
+        assert record.is_file() and record.read_bytes() == named, "the record is as it was left"
+
+        execute(resolved_under, action)
+
+        assert eng.submitted == [] and eng.children_submitted == []
+        assert _resolved_from(resolved_under) == expected
     finally:
         eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
         eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []

@@ -455,7 +455,7 @@ def forget_provenance(case: ReplayCase) -> None:
         if not manifest.is_file():
             continue
         data = json.loads(manifest.read_text(encoding="utf-8"))
-        for key in ("fingerprint", "criterion_key", "search_key"):
+        for key in ("fingerprint", "search_key"):
             data.pop(key, None)
         for record in data.get("files") or []:
             for key in ("row_key", "parent_digest"):

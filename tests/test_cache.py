@@ -195,8 +195,8 @@ def test_the_nms_family_moves_only_the_resolution_key():
     resolving = _key("0", resolution=_resolution())
     assert plain.row_keys == resolving.row_keys
     assert plain.fingerprint != resolving.fingerprint
-    assert plain.criterion_key == plain.search_key == ""
-    assert resolving.criterion_key != "" and resolving.search_key != ""
+    assert plain.search_key == "" and cache.resolution_keys(None) == ("", "", "")
+    assert resolving.search_key != "" and all(cache.resolution_keys(_resolution()))
 
 
 def test_search_retunes_keep_the_criterion_key_criterion_changes_move_it():
@@ -206,13 +206,19 @@ def test_search_retunes_keep_the_criterion_key_criterion_changes_move_it():
     trusted; the rows are untouched by both, which is why neither edit ever re-runs
     round 1.
     """
-    base = _key("0", resolution=_resolution())
-    retuned = _key("0", resolution=_resolution(displacement=2.0, seed=7))
-    recriterioned = _key("0", resolution=_resolution(target="ts"))
-    assert base.row_keys == retuned.row_keys == recriterioned.row_keys
-    assert base.fingerprint != retuned.fingerprint  # a different step...
-    assert base.criterion_key == retuned.criterion_key  # ...same resolution verdict
-    assert base.criterion_key != recriterioned.criterion_key
+    specs = {
+        "base": _resolution(),
+        "retuned": _resolution(displacement=2.0, seed=7),
+        "recriterioned": _resolution(target="ts"),
+    }
+    keys = {name: _key("0", resolution=spec) for name, spec in specs.items()}
+    criterion = {name: cache.resolution_keys(spec)[1] for name, spec in specs.items()}
+    assert keys["base"].row_keys == keys["retuned"].row_keys == keys["recriterioned"].row_keys
+    assert keys["base"].fingerprint != keys["retuned"].fingerprint  # a different step...
+    assert criterion["base"] == criterion["retuned"]  # ...same resolution verdict
+    assert keys["base"].search_key != keys["retuned"].search_key
+    assert criterion["base"] != criterion["recriterioned"]
+    assert keys["base"].search_key == keys["recriterioned"].search_key
 
 
 def test_manifest_provenance_round_trips(tmp_path: Path):
@@ -229,7 +235,6 @@ def test_manifest_provenance_round_trips(tmp_path: Path):
     save_manifest(inputs, tmp_path, operation="opt_sp", engine="fake", stamp=key.manifest_stamp())
     provenance = load_manifest_provenance(tmp_path)
     assert provenance.fingerprint == key.fingerprint
-    assert provenance.criterion_key == key.criterion_key
     assert provenance.search_key == key.search_key
     assert provenance.rows == key.manifest_rows()
     # And the file layout is untouched by the extra keys.
@@ -252,10 +257,7 @@ def test_every_provenance_slot_is_filled_from_the_key_and_written(tmp_path: Path
     save_manifest(inputs, tmp_path, operation="opt_sp", engine="fake", stamp=stamp)
     written = cache.load_manifest_provenance(tmp_path)
     assert written.fingerprint == stamp["fingerprint"]
-    assert (written.criterion_key, written.search_key) == (
-        stamp["criterion_key"],
-        stamp["search_key"],
-    )
+    assert written.search_key == stamp["search_key"]
     assert written.rows == stamp["rows"]
 
 

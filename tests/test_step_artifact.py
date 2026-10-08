@@ -509,7 +509,7 @@ def _unstamped_tree(config: Config, seeds: PipelineState) -> _StubArtifactEngine
     ctx = build_context(config, config.steps[0], seeds, engine)
     inputs = engine.prepare(ctx)
     engine.submit(inputs, ctx)
-    blank = cache.ManifestStamp(fingerprint="", criterion_key="", search_key="", rows={})
+    blank = cache.ManifestStamp(fingerprint="", search_key="", rows={})
     cache.save_manifest(inputs, ctx.step_dir, operation="opt_sp", engine="fake", stamp=blank)
     return engine
 

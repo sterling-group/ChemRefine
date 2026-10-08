@@ -34,7 +34,7 @@ _FREQ_OUT = Path(__file__).resolve().parent / "data" / "engines" / "orca" / "fre
 
 #: analyze_mode reads which output belongs to which structure, never the provenance stamp,
 #: so the trees here are written unstamped.
-_UNSTAMPED = cache.ManifestStamp(fingerprint="", criterion_key="", search_key="", rows={})
+_UNSTAMPED = cache.ManifestStamp(fingerprint="", search_key="", rows={})
 
 
 def _write_config(tmp_path: Path, *steps: dict[str, object]) -> Path:

@@ -148,7 +148,7 @@ _BUNDLED: tuple[Mutation, ...] = (
         id="nms-record-before-promote",
         path="src/chemrefine/nms.py",
         old=(
-            "    _write_resolution(attempt_dir, source_id)\n"
+            "    _write_resolution(attempt_dir, source_id, criterion_key)\n"
             "    attempts.seal(ctx.step_dir / parent_id, attempt_dir)\n"
             "    attempts.promote(attempt_dir, step=step, source_id=source_id, "
             "target_id=parent_id)\n"
@@ -157,7 +157,7 @@ _BUNDLED: tuple[Mutation, ...] = (
             "    attempts.seal(ctx.step_dir / parent_id, attempt_dir)\n"
             "    attempts.promote(attempt_dir, step=step, source_id=source_id, "
             "target_id=parent_id)\n"
-            "    _write_resolution(attempt_dir, source_id)\n"
+            "    _write_resolution(attempt_dir, source_id, criterion_key)\n"
         ),
         tests="tests/test_recovery.py",
         breaks="an install stopped once the winner's output is at the canonical path leaves "
@@ -184,6 +184,16 @@ _BUNDLED: tuple[Mutation, ...] = (
         breaks="a rebuild caches a child's energies and frequencies under its parent's id "
         "while the canonical output is round 1's — a saddle reported as the minimum a child "
         "reached, and a mode drawn from one calculation beside frequencies from another",
+    ),
+    Mutation(
+        id="nms-record-worn-only-under-its-criterion",
+        path="src/chemrefine/nms.py",
+        old="    if resolved_under != criterion_key:",
+        new="    if False:",
+        tests="tests/test_nms.py",
+        breaks="a structure that passes through under an edited criterion is cached as "
+        "resolved from the child another criterion chose — a winner this configuration "
+        "never judged, named as its own",
     ),
     Mutation(
         id="resubmit-skips-unconverged",

@@ -97,6 +97,17 @@ class NmsOptions(NmsKnobs):
             search={k: dump[k] for k in _SEARCH_FIELDS},
         )
 
+    def criterion_key(self) -> str:
+        """The key of this reading's criterion: what a resolution is recorded under.
+
+        The half of :func:`chemrefine.cache.resolution_keys` that decides what counts as
+        resolved. A resolution record names it (:func:`_write_resolution`), so the record is
+        read under the criterion that judged its child and under no other, wherever the
+        search has moved since.
+        """
+        _resolution, criterion, _search = cache.resolution_keys(self.resolution_spec())
+        return criterion
+
 
 def target_imaginary_count(opts: NmsOptions) -> int | None:
     """Imaginary-mode count that means *resolved* for this target.
@@ -403,6 +414,7 @@ class _AttemptMode(Protocol):
         parent_id: str,
         ctx: StepContext,
         attempt: Path,
+        criterion_key: str,
     ) -> None:
         """Put the winner's calculation at the parent's canonical path, if that applies."""
         ...
@@ -496,9 +508,10 @@ class NmsRound:
         parent_id: str,
         ctx: StepContext,
         attempt: Path,
+        criterion_key: str,
     ) -> None:
         """Promote the winning child to the parent's canonical basenames."""
-        _install_winner(survivor, source_id, parent_id, ctx, attempt)
+        _install_winner(survivor, source_id, parent_id, ctx, attempt, criterion_key)
 
 
 class _RebuildAttempt:
@@ -536,6 +549,7 @@ class _RebuildAttempt:
         parent_id: str,
         ctx: StepContext,
         attempt: Path,
+        criterion_key: str,
     ) -> None:
         """Nothing: a rebuild must not rewrite the outputs it was asked to read.
 
@@ -547,20 +561,32 @@ class _RebuildAttempt:
 
 
 _RESOLUTION_FILE = "resolution.json"
-"""Sidecar naming the child an attempt resolved to, written inside that ``attemptK/``."""
+"""Sidecar naming the child an attempt resolved to and the criterion that judged it, written
+inside that ``attemptK/``."""
 
 
-def _write_resolution(attempt_dir: Path, winner_id: str) -> None:
-    """Record which child this attempt resolved to.
+def _write_resolution(attempt_dir: Path, winner_id: str, criterion_key: str) -> None:
+    """Record which child this attempt resolved to, and the criterion it was resolved under.
 
-    When it is written is :func:`_install_winner`'s to say, and when it is worn
-    :func:`_passthrough`'s.
+    The criterion is on the record because it is a fact about this attempt, set down as its
+    winner is named. Kept once for the whole step instead, it would describe every attempt
+    as of one write, and a record older or newer than that write would be judged by a
+    criterion that never resolved it. When the record is written is
+    :func:`_install_winner`'s to say, and when it is worn :func:`_passthrough`'s.
     """
-    cache.write_json(attempt_dir / _RESOLUTION_FILE, {"resolved_from": winner_id})
+    cache.write_json(
+        attempt_dir / _RESOLUTION_FILE,
+        {"resolved_from": winner_id, "criterion_key": criterion_key},
+    )
 
 
-def _read_resolution(structure_dir: Path) -> tuple[Path, str] | None:
-    """A structure's most recent attempt and the child it resolved to, or ``None`` if none did.
+def _read_resolution(structure_dir: Path, criterion_key: str) -> tuple[Path, str] | None:
+    """A structure's most recent attempt and the child it resolved to under this criterion.
+
+    ``None`` when that attempt resolved nothing, or resolved under another criterion. What
+    counts as resolved is the criterion's to say, so a record speaks only under the one it
+    names, and one that names none under none. It is left where it is either way: a
+    configuration that returns to its criterion reads it again.
 
     Promotion leaves the winner's output at the canonical path, so re-parsing a resolved
     structure yields one already at its target — which is the answer, but not *which child
@@ -575,7 +601,7 @@ def _read_resolution(structure_dir: Path) -> tuple[Path, str] | None:
     if record is None:
         return None
     try:
-        return attempt, str(record["resolved_from"])
+        named, resolved_under = str(record["resolved_from"]), record.get("criterion_key")
     except (KeyError, TypeError) as e:
         # `read_json` is typed `Any`, so it guarantees only that the file parsed — not that
         # it is the object `_write_resolution` writes. An object without the key raises
@@ -586,20 +612,9 @@ def _read_resolution(structure_dir: Path) -> tuple[Path, str] | None:
             f"corrupt NMS resolution at {path}: no 'resolved_from' — "
             f"delete the file to re-resolve this attempt"
         ) from e
-
-
-def _disown_resolution(structure_dir: Path) -> None:
-    """Remove the label a structure's most recent attempt wears, if any.
-
-    The counterpart of :func:`_read_resolution` for a label that must not be worn again:
-    it was written under a criterion this configuration no longer runs. Clearing it only
-    in memory would leave the file to be re-read by the next resume — which, once the
-    manifest carries the current criterion, trusts what it finds. Deleting the file is the
-    same escape :func:`_read_resolution` names for a corrupt one.
-    """
-    attempt = latest_attempt_dir(structure_dir)
-    if attempt is not None:
-        io.remove_tree_file(attempt / _RESOLUTION_FILE)
+    if resolved_under != criterion_key:
+        return None
+    return attempt, named
 
 
 def _select_survivors(
@@ -641,13 +656,19 @@ def _select_survivors(
 
 
 def _install_winner(
-    survivor: Structure, source_id: str, parent_id: str, ctx: StepContext, attempt_dir: Path
+    survivor: Structure,
+    source_id: str,
+    parent_id: str,
+    ctx: StepContext,
+    attempt_dir: Path,
+    criterion_key: str,
 ) -> None:
     """Put the chosen child's calculation at the parent's canonical path.
 
     ``source_id`` is the child :func:`_select_survivors` chose, taken from the survivor's
     :attr:`~chemrefine.state.Structure.resolved_from` — so there is one answer to "which
-    child won" and the disk follows it rather than re-deciding.
+    child won" and the disk follows it rather than re-deciding. ``criterion_key`` is the
+    criterion :func:`_resolve_all` judged that child by, which the record names.
 
     Name, seal, promote. The record is written before anything at the canonical path
     moves, so a stop never leaves the child's output there unnamed; written early, it
@@ -656,7 +677,7 @@ def _install_winner(
     overwrites another.
     """
     step = ctx.step_cfg.step
-    _write_resolution(attempt_dir, source_id)
+    _write_resolution(attempt_dir, source_id, criterion_key)
     attempts.seal(ctx.step_dir / parent_id, attempt_dir)
     attempts.promote(attempt_dir, step=step, source_id=source_id, target_id=parent_id)
     # Re-stamp the geometry file with its provenance: the same coordinates the promoted
@@ -698,16 +719,19 @@ def _is_promoted(
     return child_output.is_file() and child_output.read_bytes() == canonical_output.read_bytes()
 
 
-def _passthrough(engine: NmsCapableEngine, structure: Structure, ctx: StepContext) -> Structure:
+def _passthrough(
+    engine: NmsCapableEngine, structure: Structure, ctx: StepContext, criterion_key: str
+) -> Structure:
     """A structure already at its target, carried through at the canonical place.
 
     That is either an untouched round-1 result or one this step already resolved. The latest
-    attempt's record names the child it resolved to, and is worn only over the output it
+    attempt's record names the child it resolved to and the criterion that judged it, and is
+    worn only under that criterion (:func:`_read_resolution`) and only over the output it
     names (:func:`_is_promoted`): a record beside round 1, or beside a child whose output is
     gone, names nothing.
     """
     resolved_from: str | None = None
-    record = _read_resolution(ctx.step_dir / structure.id)
+    record = _read_resolution(ctx.step_dir / structure.id, criterion_key)
     if record is not None:
         attempt, named = record
         if _is_promoted(engine, ctx, structure.id, attempt, named):
@@ -749,8 +773,6 @@ def _resolve_all(
     round1_failures: list[Failure] | tuple[Failure, ...],
     ctx: StepContext,
     mode: _AttemptMode,
-    *,
-    read_resolutions: bool = True,
 ) -> NmsResolution:
     """Resolve every round-1 survivor through ``mode``. The one NMS loop.
 
@@ -775,25 +797,20 @@ def _resolve_all(
     criterion edited since the children ran — is ledgered
     :attr:`~chemrefine.state.FailureKind.UNPROMOTED_NMS`, with the child as the best
     geometry obtained, for the step's ``on_failure`` policy to judge like any other.
+
+    One reading of the options judges every child and names every record: the criterion key
+    comes from the ``opts`` that set ``target``, so a record written here names the
+    criterion that resolved it, and one read here is worn only under the criterion this
+    loop judges by.
     """
     opts = resolved_options(engine, ctx)
     target = target_imaginary_count(opts)
+    criterion_key = opts.criterion_key()
     survivors: list[Structure] = []
     failures: list[Failure] = list(round1_failures)
     for s in round1.structures:
         if _already_at_target(s, target):
-            # `read_resolutions=False` is the resume-over-adopted-rows case: any
-            # `resolution.json` on disk was written under some earlier submission's
-            # criterion, so its label must not be re-worn — the structure passes through
-            # with its provenance cleared rather than borrowed. Cleared on disk too: the
-            # resume that disowns it goes on to stamp the manifest with the criterion it
-            # ran under, and the next resume would trust — and resurrect — a sidecar
-            # left behind.
-            if read_resolutions:
-                survivors.append(_passthrough(engine, s, ctx))
-            else:
-                _disown_resolution(ctx.step_dir / s.id)
-                survivors.append(replace(s, converged=True, resolved_from=None))
+            survivors.append(_passthrough(engine, s, ctx, criterion_key))
             continue
         children = _children_for(s, opts)
         attempt = mode.attempt_dir(s, ctx)
@@ -807,7 +824,7 @@ def _resolve_all(
         # an unresolved parent has no survivor, and neither installs anything.
         winner_source = s_surv[0].resolved_from if s_surv else None
         if winner_source is not None:
-            mode.install(s_surv[0], winner_source, s.id, ctx, attempt)
+            mode.install(s_surv[0], winner_source, s.id, ctx, attempt, criterion_key)
             if not _is_promoted(engine, ctx, s.id, attempt, winner_source):
                 winner = {c.id: c for c in resolved}[winner_source]
                 detail = f"{attempt.name}/{winner_source}"
@@ -844,45 +861,17 @@ def run_nms(
     ``round2`` is a fan-out the caller has already run: :func:`chemrefine.step._run_full_step`
     hands the same object to :func:`chemrefine.lifecycle.run_with_retries`, so each parent's
     children go out behind the round-1 jobs still in flight and share their budget. A caller
-    whose round 1 did not run in this process — :func:`reattempt_nms` reads it back off disk —
-    passes nothing, and the fan-out runs here instead: still one queue for every parent, just
-    started after round 1 rather than during it.
+    whose round 1 did not run in this process — :func:`reattempt_nms` and the incremental
+    resume read it back off disk — passes nothing, and the fan-out runs here instead: still
+    one queue for every parent, just started after round 1 rather than during it. Its
+    children are fresh ones too: an attempt on disk predates the submission this
+    configuration would have made, and a child found there was displaced from a round this
+    run never produced.
     """
     if round2 is None:
         round2 = child_round(engine, ctx)
         lifecycle.run_child_rounds(engine, ctx, round1.structures, round2)
     return _resolve_all(engine, round1, round1_failures, ctx, round2)
-
-
-def resume_nms(
-    engine: NmsCapableEngine,
-    round1: StepResults,
-    round1_failures: list[Failure] | tuple[Failure, ...],
-    ctx: StepContext,
-    *,
-    trust_resolutions: bool,
-) -> NmsResolution:
-    """Resolve a round-1 set the incremental resume assembled from adopted rows.
-
-    The same loop as :func:`run_nms` with the fan-out started here (no round 1 ran in
-    this process), plus one verdict the caller supplies: ``trust_resolutions`` says
-    whether the ``attemptK/resolution.json`` labels on disk were written under this
-    configuration's *criterion* (the manifest's stored ``criterion_key`` against the
-    current one). Trusted, a passthrough keeps its ``resolved_from`` exactly as a
-    rebuild would; untrusted — the nms flip, a criterion change, a manifest with no
-    row provenance — the label is cleared and its sidecar removed, because wearing another
-    criterion's provenance is the one lie a passthrough could tell, and a sidecar left
-    behind would be re-read once the manifest carries the criterion this resume ran
-    under. Either way a parent *not* at the target fans out
-    **fresh** children: an attempt on disk predates the submission this configuration
-    would have made, and a child found there was displaced from a round this run never
-    produced.
-    """
-    round2 = child_round(engine, ctx)
-    lifecycle.run_child_rounds(engine, ctx, round1.structures, round2)
-    return _resolve_all(
-        engine, round1, round1_failures, ctx, round2, read_resolutions=trust_resolutions
-    )
 
 
 def rebuild_nms(

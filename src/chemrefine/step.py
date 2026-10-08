@@ -680,7 +680,7 @@ def _prepare_stamped(
     Archiving happens here rather than inside ``prepare`` because the retry and NMS paths
     call ``prepare`` too and manage their own attempt directories. ``stamp`` is the full
     current stamp unless a route must carry a stored half forward: the incremental resume
-    keeps the stored resolution keys until the resolution they describe exists.
+    keeps the stored search key until the attempts it describes exist.
     """
     attempts.archive_previous(ctx.step_dir, archive)
     inputs = engine.prepare(ctx)
@@ -788,18 +788,16 @@ def _incremental_step_outcome(
         len(current) - len(changed),
         len(changed),
     )
-    # The resolution half of the stamp is carried forward from the stored one: it describes
+    # The search half of the stamp is carried forward from the stored one: it describes
     # the `attemptK/` children on disk, and those are still the previous submission's until
     # the resolution pass below replaces them. Stamped current here, a driver killed
     # anywhere in the hours between this write and that pass would leave old-search attempts
     # under a current-search stamp — adoptable by `rebuild-cache`, whose search guard reads
-    # exactly this stamp, and trusted by the next resume's label check. The current halves
-    # are written only once the resolution they describe exists (after `finalize`, cache
-    # first, then provenance — `_restamp`). Rows and fingerprint stamp early as every
-    # route's do: they describe round-1 outputs, which the archive of the condemned rows
-    # makes honest.
+    # exactly this stamp. The current one is written only once the attempts it describes
+    # exist (after `finalize`, cache first, then provenance — `_restamp`). Rows and
+    # fingerprint stamp early as every route's do: they describe round-1 outputs, which the
+    # archive of the condemned rows makes honest.
     stamp = key.manifest_stamp()
-    stamp["criterion_key"] = provenance.criterion_key
     stamp["search_key"] = provenance.search_key
     # Only the condemned rows are archived: an adopted row re-renders byte-identically, a
     # condemned one renders into the directory its stale artifacts just left (the
@@ -808,18 +806,14 @@ def _incremental_step_outcome(
     successes, failures = lifecycle.resubmit_unusable(engine, ctx, inputs, stale=changed)
     successes, failures = lifecycle.retry_unconverged(engine, ctx, successes, failures)
     if nms_engine is not None:
-        # Round 1 is assembled; resolution runs exactly as a full step's would, with one
-        # verdict from the provenance: `resolved_from` labels on disk are trusted only
-        # under the criterion they were written for. Parents not at the target fan out
-        # fresh children either way — which is what makes flipping `nms: true` over a
-        # finished run cost exactly the displacement children and nothing else.
-        trust = bool(key.criterion_key) and provenance.criterion_key == key.criterion_key
-        resolution = nms.resume_nms(
-            nms_engine,
-            StepResults(structures=tuple(successes)),
-            failures,
-            ctx,
-            trust_resolutions=trust,
+        # Round 1 is assembled; resolution runs exactly as a full step's would, with its
+        # fan-out started here. A parent already at the target wears the child its latest
+        # attempt names only under the criterion that attempt's record was resolved under,
+        # which the record says for itself; one not at the target fans out fresh children
+        # — which is what makes flipping `nms: true` over a finished run cost exactly the
+        # displacement children and nothing else.
+        resolution = nms.run_nms(
+            nms_engine, StepResults(structures=tuple(successes)), failures, ctx
         )
         successes, failures = list(resolution.survivors), list(resolution.failures)
     results = lifecycle.finalize(ctx, step_cfg, key, successes, failures)
