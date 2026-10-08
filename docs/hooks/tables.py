@@ -105,12 +105,14 @@ def _backends_table() -> str:
         # ConfigError ("can be run but not trained") for any task registered without
         # one, so `mlip-train` is listed only against extras whose tasks train. Every
         # bundled backend currently does; the guard is what keeps this table honest
-        # for a future backend that registers a calculator alone.
+        # for a future backend that registers a calculator alone. This applies only
+        # to the training engine: other artifact engines, such as quantum experiments,
+        # need their declared backend but no MLIP trainer.
         users = [
             d.name
             for d in engines
             if extra in d.backend_extras
-            and ("artifact" not in d.capabilities or any(t in trainable for t in tasks))
+            and (d.name != "mlip-train" or any(t in trainable for t in tasks))
         ]
         rows.append(
             (

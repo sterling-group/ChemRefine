@@ -108,6 +108,20 @@ def test_every_backend_extra_and_task_name_is_in_the_backend_table():
     assert not absent, f"task names {absent} resolve to a backend but are absent from the table"
 
 
+def test_non_training_engines_appear_on_every_declared_backend_row():
+    """Artifact-producing experiments are not restricted to MLIP trainer backends."""
+    from chemrefine.introspect import describe_engines
+
+    rows = {line.split("|")[1].strip().strip("`"): line for line in _rows(_render("backends"))}
+    for engine in describe_engines():
+        if engine.name == "mlip-train":
+            continue
+        for extra in engine.backend_extras:
+            assert f"`{engine.name}`" in rows[extra], (
+                f"{extra}: {engine.name} declares this backend but its table row omits the engine"
+            )
+
+
 def test_the_extras_table_names_every_extra_pyproject_declares():
     """The gap this table closes: an install page naming only some of the declared extras."""
     data = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
