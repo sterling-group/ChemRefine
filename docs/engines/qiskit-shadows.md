@@ -18,8 +18,13 @@ classical reference workflow.
 
 ## YAML acquisition
 
-Supply one bound, unmeasured circuit in Qiskit's QPY format. Input paths resolve
-relative to the YAML file and their contents participate in cache identity.
+Supply one bound, unmeasured circuit in Qiskit's QPY format or a portable
+`bound_circuit` descriptor saved by a molecular run. A molecular checkpoint must
+use the unreduced `jordan_wigner` mapper: parity, Bravyi–Kitaev and tapered
+preparations are explicitly rejected. For raw QPY, the caller is responsible
+for the Jordan–Wigner mode interpretation. Input paths resolve
+relative to the YAML file and their contents participate in cache identity;
+bundle dependencies include the referenced NPZ payload.
 The selected sampler has the same local device and scheduler core grants as
 other Qiskit components. The combined backend profile must contain the sampler
 and fermionic providers.
@@ -106,6 +111,13 @@ bitstring display order; `setting_offsets` identifies each setting's count rows.
 The manifest records the mode count, conventions, seed, acceptance by setting,
 and sampler metadata. Complex tensors remain complex numeric arrays. Artifacts
 can reproduce the inverse without provider calls or another circuit submission.
+
+Keep the source preparation checkpoint and its NPZ payload alongside this
+dataset if you also need to replay acquisition. The shadow artifact retains
+the actual settings and count data, but does not copy the input preparation
+circuit. Recovery validates and reuses a finished dataset; it cannot continue
+a partially completed acquisition. Provider retrieval must follow the explicit
+[saved-job recovery contract](qiskit-recovery.md).
 
 The Python entry points are `collect_fermionic_shadows` for acquisition and
 `estimate_fermionic_shadows` for previously acquired data, in

@@ -19,6 +19,11 @@ workers. Its minimum-Python marker does not select Python 3.12; the explicit
 `--python 3.12` argument above does. Record the versions in each report when
 comparing estimates.
 
+`pauli_resources` and `surface_code_resources` use the ordinary `qiskit` backend;
+they do not require OpenFermion, Qualtran or the Python 3.12 resource profile.
+Only `factorized_resources` selects that separate worker. The combined
+`qiskit-toolkit` profile does not include the resource stack.
+
 ## Pauli LCU and phase estimation
 
 `pauli_resources` accepts a finite real dictionary of equal-width Pauli strings
@@ -56,6 +61,24 @@ unsynthesized rotations. The report multiplies these supplied costs by queries;
 inverse-QFT synthesis, initial-state preparation, routing, error correction, and
 factories remain excluded. Without an oracle, the output contains no invented
 gate count. `max_terms`, `max_phase_bits`, and `max_repetitions` bound allocations.
+
+```yaml
+experiment:
+  name: pauli_resources
+  options:
+    hamiltonian: {ZI: 0.8, IZ: -0.4, XX: 0.2, II: -0.5}
+    budget:
+      energy_error_hartree: 0.001
+      synthesis_error_hartree: 0.0001
+      failure_probability: 0.01
+      target_overlap: 0.25
+```
+
+The snippet is an artifact step's `options` fragment. `budget` requires
+`energy_error_hartree`; representation and synthesis bounds default to zero,
+`failure_probability` to 0.01, and `target_overlap` to 1. The two supplied error
+bounds must leave positive phase-estimation allowance. `max_terms` defaults to
+1000000, `budget.max_phase_bits` to 128, and `budget.max_repetitions` to 1000000.
 
 ## DF, THC and provider cost graphs
 
@@ -119,6 +142,19 @@ normalization/error certification and full circuit synthesis are not inferred.
 changing them without enabling the graph fails. See the
 [Qualtran DF documentation](https://qualtran.readthedocs.io/en/latest/bloqs/chemistry/df/double_factorization.html).
 
+| Factorized control | Default | Contract |
+| --- | --- | --- |
+| `method` | `df` | `df` factorizes the input; `thc` requires `thc_bundle_path` and consumes supplied factors. |
+| `factorization_threshold` | `1e-8` | Positive DF truncation control; leave at default for THC. |
+| `coefficient_bits`, `rotation_bits` | `20`, `30` | Finite provider precisions; require a positive supplied `budget.synthesis_error_hartree`. |
+| `initial_cost_guess` | `20000` | Positive starting cost for the provider's first QROM cost evaluation; the second evaluation uses that measured step cost. |
+| `qualtran_cost_graph` | `false` | Optional DF graph; unsupported with THC. |
+| `amplitude_bits_outer`, `amplitude_bits_inner` | `8`, `8` | Optional graph amplitude precisions; nondefault values require the graph. |
+| `max_working_bytes` | `268435456` | Input bundle and estimated factorization workspace guard, separate from output size and scheduler memory. |
+
+`budget` is required and uses the same QPE fields as the Pauli report. Relative
+`integral_bundle_path` and optional `thc_bundle_path` are typed dependencies.
+
 ## Explicit physical assumptions
 
 `surface_code_resources` accepts a separately supplied logical workload:
@@ -144,3 +180,10 @@ no hardware parameters are taken from the paper automatically.
 Python entry points live in `resources.py` and `factorized_resources.py`. The
 YAML adapters own only bundle loading and publication; ordinary artifact-engine
 validation, cache-only behavior, and resume/rebuild semantics apply.
+
+Resource bundles intentionally contain no numerical arrays. The factorized
+report records ranks, normalization, residual bounds and provider costs; it does
+not archive the DF factor arrays or executable circuits. Preserve the original
+integral and optional THC bundles, all payloads, bit precisions, provider versions
+and physical assumptions to rerun the estimate. A surface-code report is not a
+replacement for a scheduled logical workload or a hardware calibration.

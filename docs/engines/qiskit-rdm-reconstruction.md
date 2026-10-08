@@ -33,14 +33,22 @@ its real and imaginary parts are retained explicitly.
 
 An optional `hamiltonian_bundle_path` reads the same portable electronic-integral
 bundle used by [double-factorized evolution](qiskit-double-factorized.md), while
-preserving its complex/unrestricted domain. The nuclear-repulsion constant enters
-that observable once. RDM modes must already use the integral bundle's alpha-then-beta ordering when an energy is requested. Optional `one_body_weights_array` and
+preserving its complex/unrestricted domain. The nuclear-repulsion constant and
+named electronic `energy_offsets` enter that observable once. RDM modes must
+already use the integral bundle's alpha-then-beta ordering when an energy is
+requested. Optional `one_body_weights_array` and
 `two_body_weights_array` name arrays in the measurement bundle. Weights must be
 finite, real, nonnegative and match the corresponding tensor. Zero weights mask
 unmeasured entries; at least one entry must have positive weight.
 
 Both descriptors and every referenced NPZ payload participate in cache identity.
 Reconstruction parses only local input artifacts and never queries a provider.
+
+The output copies raw and fitted RDMs, but does not copy fitting weights or the
+Hamiltonian's integral arrays. Preserve both input bundles, all their NPZ
+payloads and the resolved options to reproduce the fit or its energy contraction.
+Recovery can reuse the finished product; it does not restore an interrupted
+SCS solve from optimizer state.
 
 ## YAML workflow
 

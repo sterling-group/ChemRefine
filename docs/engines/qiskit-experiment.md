@@ -23,6 +23,50 @@ SLURM header even for local dispatch.
 All options are validated strictly. A single artifact has no per-structure failure
 policy, so use `on_failure: stop`.
 
+## Choose an experiment
+
+The molecular [`qiskit` engine](qiskit.md) writes molecular energies. This engine
+selects the following artifact workflows through `options.experiment.name`:
+
+| Experiment | Product and guide | Managed backend with default components |
+| --- | --- | --- |
+| `lattice_dynamics` | Ideal lattice states, occupations and energies; [local encodings](qiskit-encodings.md). | `qiskit-fermionic` |
+| `pauli_measurement` | Grouped expectations, covariance and physical counts, described below. | `qiskit` |
+| `fermionic_shadows` | Randomized measurements and complex RDMs; [fermionic shadows](qiskit-shadows.md). | `qiskit-fermionic` |
+| `rdm_reconstruction` | Raw and constrained fitted RDMs; [RDM reconstruction](qiskit-rdm-reconstruction.md). | `qiskit-rdm` |
+| `spacetime_postselection` | Noisy joint counts and accepted diagonal observables; [Pauli checks](qiskit-spacetime.md). | `qiskit-aer`; explicit noisy sampler required |
+| `double_factorized_evolution` | Molecular state trajectories and executable evolution circuits; [double factorization](qiskit-double-factorized.md). | `qiskit-fermionic` |
+| `variational_dynamics` | Variational parameters, expectations and metric diagnostics; [variational dynamics](qiskit-dynamics.md). | `qiskit` |
+| `circuit_cutting` | Physical subexperiment records and signed reconstruction; [circuit cutting](qiskit-cutting.md). | `qiskit-cutting` |
+| `pauli_resources` | Analytical phase-estimation query bounds; [resource estimates](qiskit-resources.md). | `qiskit` |
+| `factorized_resources` | DF/THC logical costs and optional Qualtran graph; [resource estimates](qiskit-resources.md). | `qiskit-resources` on Python 3.12 |
+| `surface_code_resources` | Physical costs under supplied machine assumptions; [resource estimates](qiskit-resources.md). | `qiskit` |
+
+Lattice, double-factorized evolution, RDM reconstruction and resource reports
+require `device: cpu`. Measurement, shadows, spacetime, variational dynamics and
+cutting support CUDA when their selected sampler or estimator supports it.
+Selecting providers from different stacks may require the combined
+`qiskit-toolkit` backend; see [installation](installing.md#qiskit-nature).
+
+## Circuit and integral inputs
+
+Circuit-based experiments accept either one circuit in a raw QPY file or a
+portable `bound_circuit` JSON descriptor with its referenced NPZ payload. The
+latter can be produced by a molecular run with `circuit_export: {}` and consumed
+directly through `circuit_path`. Keep its mapper, orbital ordering and selected
+root consistent with the supplied observable. A checkpoint's saved Hamiltonian
+does not automatically fill the experiment's required `observable` field.
+
+A bound checkpoint is suitable for measurement, shadows and cutting, and can
+serve as spacetime preparation. A spacetime payload must additionally satisfy
+the Clifford restrictions. Variational dynamics requires a parameterized raw
+QPY circuit; a fully bound molecular checkpoint has no variational parameters.
+
+Relative file paths resolve beside the YAML file. Descriptor and referenced
+payload bytes enter cache identity, so copy both files when moving a checkpoint.
+Integral-consuming experiments similarly accept the portable
+[`electronic_structure` bundle](qiskit-checkpoints.md#save-the-original-integral-input).
+
 ## Lattice trajectories
 
 The `lattice_dynamics` component accepts a `model`, `occupied_modes`, `times`, and
@@ -56,8 +100,9 @@ See `examples/tutorials/qiskit_experiment/input.yaml` for a complete pipeline.
 
 ## Grouped Pauli measurement
 
-`pauli_measurement` accepts a `circuit_path` containing one bound, unmeasured QPY
-circuit, a real-coefficient `observable` mapping Pauli labels to weights, and a
+`pauli_measurement` accepts a `circuit_path` containing one bound, unmeasured
+circuit in QPY or a portable circuit bundle, a real-coefficient `observable`
+mapping Pauli labels to weights, and a
 `sampler` component. File paths resolve relative to the configuration file; input
 bytes participate in cache identity. `max_circuit_bytes` defaults to 33554432.
 Declared bundle inputs also include their referenced NPZ payloads in cache identity.
@@ -150,6 +195,23 @@ kind, required arrays, dimensions, numerical storage types and critical metadata
 An unrelated or empty integrity-valid bundle cannot satisfy a trajectory or
 measurement step. Resource reports legitimately have no arrays, but must retain
 their typed cost report and assumptions.
+
+`max_output_bytes` is enforced when publishing every bundle. Lattice, shadows,
+double-factorized evolution, reconstruction, spacetime and cutting also check a
+prospective payload bound before their main numerical solve or acquisition.
+Pauli measurement and variational dynamics currently enforce this output limit
+after their provider work; use their separate measurement/dynamics workload
+limits to bound execution. An output-capacity error can therefore occur after
+those two calculations have finished.
+
+These are complete-result artifacts. Recovery reuses a validated finished
+product or reruns the experiment; it does not continue a partially collected
+dataset or an interrupted integration from an intermediate array. Provider job
+retrieval is a separate, explicit [recovery mechanism](qiskit-recovery.md).
+Lattice and variational trajectory bundles retain numerical results without
+automatically retaining their input/evolution circuits. Preserve the original
+QPY inputs, YAML, integral bundles and dependency versions alongside the output
+for reproducible replay.
 
 | Experiment | Required product checks |
 | --- | --- |

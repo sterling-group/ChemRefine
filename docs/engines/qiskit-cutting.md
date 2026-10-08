@@ -13,9 +13,13 @@ parameter binding. The observable uses the same qubit mapping as the input QPY.
 
 ## Choosing a decomposition
 
-`circuit_path` identifies a QPY file containing exactly one circuit. Input circuits
-must have no classical bits and no unbound parameters. Measurements introduced by
-the addon are preserved throughout compilation and sampling.
+`circuit_path` identifies a QPY file containing exactly one circuit, or a portable
+`bound_circuit` JSON descriptor with its referenced NPZ payload. The latter
+allows direct use of a molecular run's [exported preparation](qiskit-handoffs.md).
+Input circuits must have no classical bits and no unbound parameters. The supplied
+observable must already use that circuit's mapper and logical qubit ordering;
+its saved Hamiltonian is not automatically selected as the observable.
+Measurements introduced by the addon are preserved throughout compilation and sampling.
 
 `cutting.mode` selects one of three interfaces:
 
@@ -104,6 +108,13 @@ the generated logical experiments as QPY bytes. Provider/version and option
 provenance accompany the arrays. `reconstruct_cutting_records(bundle.arrays,
 bundle.metadata)` repeats the SDK reconstruction without new quantum execution.
 `logical_experiments_qpy` can be read with Qiskit's QPY loader for inspection.
+
+Keep the original preparation checkpoint for future planning: the artifact
+archives the generated logical subexperiments rather than copying the original
+input descriptor. QPY inspection needs the compatible Qiskit worker; SDK-free
+cache validation checks structural integrity without reconstructing the signed
+estimate. `reconstruct_cutting_records` uses the cutting addon for that replay.
+An interrupted acquisition has no automatic partial-bundle continuation.
 
 Python users can call `plan_cutting`, inspect the resulting `CuttingPlan`, then
 call `execute_cutting`. The result carries arrays and metadata suitable for the

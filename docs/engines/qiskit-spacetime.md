@@ -49,6 +49,13 @@ The example lives in
 `examples/tutorials/qiskit_experiment/spacetime_postselection.yaml`,
 with `bell_clifford.qpy` and a fully serialized stochastic noise model.
 
+Both circuit inputs also accept portable `bound_circuit` descriptors with their
+referenced NPZ payloads. `circuit_path` must still represent a Clifford payload;
+`preparation_path` may use a general bound preparation with the same data width.
+Its mapping and bit order must match the payload and checks. Keep the complete
+source checkpoint for replay: the retained checked QPY excludes preparation,
+and the output does not copy that input circuit.
+
 The worker compiles the **whole checked circuit**, including measurements, through
 the selected sampler. Data and check classical registers retain their meaning
 after routing. At least one declared nonideal channel must match an operation
@@ -83,8 +90,8 @@ Every public option below appears explicitly in the runnable example.
 
 | Option | Default | Effect and domain |
 | --- | --- | --- |
-| `circuit_path` | required | One bound Clifford QPY payload; typed file dependency. |
-| `preparation_path` | `null` | Optional bound, width-matched preparation QPY; zero state if absent. |
+| `circuit_path` | required | One bound Clifford payload in QPY or a circuit bundle; typed file dependency. |
+| `preparation_path` | `null` | Optional bound, width-matched preparation in QPY or a circuit bundle; zero state if absent. |
 | `max_circuit_bytes` | 33554432 | Per-QPY input byte limit. |
 | `sampler` | required | `aer` with a serialized nonideal `noise_model`; preserves the standard sampler's device, precision, method, seed and compilation controls. |
 | `spacetime.checks` | required | Nonempty equal-width Pauli labels, optional `+`/`-`; identity-only checks rejected. |

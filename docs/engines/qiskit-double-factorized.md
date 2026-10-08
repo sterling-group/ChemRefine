@@ -133,6 +133,14 @@ reference preparation, whose exact occupations remain in the manifest. Compiled
 gate counts, two-qubit counts and depth accompany each time point. The circuits
 are executable; the cost records are not merely an analytical cost graph.
 
+Keep the original integral descriptor, its NPZ payload and resolved options with
+this trajectory. Retained factors and QPY allow circuit inspection and replay
+from the recorded reference occupations; they do not replace the original
+integrals for independent physical-energy or truncation-error checks. The
+trajectory is published as one completed bundle, with no partial-timepoint
+restart. Molecular `circuit_export` is a separate option on the `qiskit` engine
+and is not needed to retain these experiment evolution circuits.
+
 Tests verify complex hopping against an independently mapped original
 Hamiltonian, first/second/fourth-order convergence, open-shell and reordered
 references, both factor representations, negative time, zero time, explicit

@@ -26,6 +26,11 @@ the configuration directory and its contents participate in the cache key.
 mapping of Pauli labels to real coefficients; the optional `observables` sequence
 contains additional operators. Label widths must match the circuit.
 
+The parameterized QPY input must have no classical bits and at least one free
+parameter. Portable molecular `bound_circuit` checkpoints contain a fully bound
+preparation and therefore cannot seed this variational manifold directly. Keep
+the original parameterized circuit and its parameter order for dynamics replay.
+
 ```yaml
 experiment:
   name: variational_dynamics
@@ -51,18 +56,18 @@ NumPy arrays. The runnable example is
 
 ## Accuracy and limits
 
-| Dynamics option | Meaning |
-| --- | --- |
-| `method` | `varqite` or `varqrte` |
-| `time`, `steps` | Positive final time and fixed number of integration intervals |
-| `integrator` | `euler` or fourth-order `rk4`; compare refinements to assess error |
-| `metric_cutoff` | Absolute eigenvalue cutoff for the geometric tensor |
-| `regularization` | Nonnegative ridge added only to retained eigenvalues; introduces bias |
-| `numerical_tolerance` | Finite, Hermitian and positive-semidefinite acceptance tolerance |
-| `max_velocity` | Maximum parameter-velocity norm before failure |
-| `max_parameters`, `max_pauli_terms` | Circuit and observable size limits |
-| `max_publications` | Bound on broadcast estimator evaluations, including derivatives |
-| `max_memory_mb` | Working-array and known dense-simulator estimate guard |
+| Dynamics option | Default | Meaning |
+| --- | --- | --- |
+| `method` | `varqite` | `varqite` or `varqrte` |
+| `time`, `steps` | `1.0`, `100` | Positive final time and 1–10000 fixed integration intervals |
+| `integrator` | `rk4` | `euler` or fourth-order `rk4`; compare refinements to assess error |
+| `metric_cutoff` | `1e-10` | Absolute eigenvalue cutoff for the geometric tensor |
+| `regularization` | `0.0` | Nonnegative ridge added only to retained eigenvalues; introduces bias |
+| `numerical_tolerance` | `1e-7` | Finite, Hermitian and positive-semidefinite acceptance tolerance |
+| `max_velocity` | `1e6` | Maximum parameter-velocity norm before failure |
+| `max_parameters`, `max_pauli_terms` | `128`, `4096` | Circuit and observable size limits |
+| `max_publications` | `100000` | Bound on broadcast estimator evaluations, including derivatives |
+| `max_memory_mb` | `512` | Working-array and known dense-simulator estimate guard |
 
 `max_memory_mb` does not request scheduler memory and is not an exact peak-memory
 bound. `max_publications` does not bound provider mitigation/calibration overhead;
@@ -80,3 +85,16 @@ negative measured metric eigenvalues fail validation rather than silently becomi
 a different metric. Shot noise propagates nonlinearly through integration; these
 trajectories do not claim confidence intervals. Molecular `energy_hartree` records
 are unchanged by the artifact engine.
+
+There are `steps + 1` trajectory points and `steps` Euler or `4 * steps` RK4
+diagnostic rows. The bundle does not copy the parameterized input QPY or retain
+optimizer/provider state for a mid-trajectory restart. Preserve that input,
+resolved options and estimator versions with the completed artifact. Cache
+recovery reuses a finished trajectory or reruns from its configured initial
+parameters.
+
+The engine's `max_output_bytes` is currently checked when the finished bundle
+is written, after estimator execution. A limit that is too small can reject
+publication after the calculation has consumed its provider budget. Use the
+dynamics workload limits above and size the output budget for the complete
+trajectory before acquisition.
