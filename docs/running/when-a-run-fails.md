@@ -3,7 +3,8 @@
 ## Exit codes
 
 Every ChemRefine failure exits with a code that names the failure mode, so a
-wrapper script or a SLURM chain can branch on it without parsing log text.
+wrapper script or a SLURM chain can branch on it without parsing log text. A
+run stopped by a signal exits with the shell's code for that signal.
 
 | Code | Meaning | Usual cause | What to do |
 | --- | --- | --- | --- |
@@ -19,6 +20,8 @@ wrapper script or a SLURM chain can branch on it without parsing log text.
 | `9` | Backend env could not be built | `chemrefine backends install <extra>` failed — no network on the node, a resolver conflict, a full disk, or an env tool that is a shell function rather than a binary on `PATH` | The message quotes the command that failed. Run it on a machine with internet (on HPC: a login node); the half-built env is removed, so a re-run starts clean |
 | `10` | Another run holds this output tree | A second `chemrefine` was pointed at an `output_dir` a first one is still working in — a double-submitted driver script, or a second terminal because the first "looks hung" while waiting on the queue | Wait for the other run. If it is known dead, see [another run holds this output tree](#another-run-holds-this-output-tree) |
 | `11` | Output tree not writable | A full disk or quota, a read-only mount, or a directory under `output_dir` this account cannot write | The message names the file, and the one the filesystem refused when that was another; when it also names a SLURM job the run could not cancel, `scancel` that job, or wait until `squeue -j <id>` no longer lists it, and when it names a run whose lock a reclaim swept up, wait for that run to end or stop it — before anything else. Free space, remount read-write or fix the permissions, then run the command that stopped again: `run` and `rerun` begin by discarding caches, so `resume` in their place would serve what they were asked to discard. A `run`, `resume`, `rerun` or `rerun-errors` that stopped inside its steps continues with `chemrefine resume`, which reads back what the jobs had already finished — a trained model included — and runs only the rest |
+| `130` | Interrupted | `Ctrl-C` (SIGINT) stopped the driver | On its way out the run stopped its local jobs and released the output tree. `chemrefine resume` continues it — see [the run was interrupted mid-step](#the-run-was-interrupted-mid-step) |
+| `143` | Terminated | SIGTERM stopped the driver: `scancel`, the walltime of the batch job it ran in, a plain `kill` | As for `130`. Jobs the run had submitted to SLURM run on, and `chemrefine resume` refuses with code `10` while one of them is still queued or running: wait for them, or `scancel` them |
 
 ## A step halted with pending failures
 

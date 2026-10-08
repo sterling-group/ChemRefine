@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import signal
 import sys
 import tomllib
 from pathlib import Path
@@ -191,13 +192,16 @@ def test_every_exit_code_is_documented():
     Not generated — see this module's docstring. ``0`` is documented too and belongs to no
     exception, so the check runs one way: every code the package can exit with must appear,
     in the page's table and in the one :mod:`chemrefine.errors` carries for the API page.
+    A run stopped by ``Ctrl-C`` or SIGTERM unwinds and exits with the shell's code for the
+    signal; those two belong to no exception either, and the page's table names them.
     """
     text = _RUN_FAILS.read_text(encoding="utf-8")
     codes = sorted(set(EXIT_CODES.values()))
-    missing = [c for c in codes if not re.search(rf"^\| `{c}` \|", text, re.MULTILINE)]
+    signals = [128 + signal.SIGINT, 128 + signal.SIGTERM]
+    missing = [c for c in (*codes, *signals) if not re.search(rf"^\| `{c}` \|", text, re.MULTILINE)]
     assert not missing, (
-        f"exit code(s) {missing} are raised by chemrefine.errors but have no row in "
-        f"{_RUN_FAILS.name}"
+        f"exit code(s) {missing} are raised by chemrefine.errors, or left by a signal the run "
+        f"unwinds on, but have no row in {_RUN_FAILS.name}"
     )
     api_table = errors.__doc__ or ""
     unlisted = [c for c in codes if not re.search(rf"^``{c}``\s", api_table, re.MULTILINE)]

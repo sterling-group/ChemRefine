@@ -358,7 +358,7 @@ def _sigterm_unwinds() -> Generator[None]:
         return
 
     def _raise(signum: int, frame: FrameType | None) -> NoReturn:
-        raise SystemExit(143)
+        raise SystemExit(128 + signum)
 
     previous = signal.signal(signal.SIGTERM, _raise)
     try:
