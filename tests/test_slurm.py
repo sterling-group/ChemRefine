@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from chemrefine import slurm
+from chemrefine import job_log, slurm
 from chemrefine.errors import ConfigError, JobSubmissionError, OutputTreeError, ThrottleTimeoutError
 from chemrefine.slurm import dispatch
 from chemrefine.state import RunBlock
@@ -459,16 +459,15 @@ def test_build_script_explicit_scratch_uses_chemrefine_subdir(tmp_path: Path):
     assert f'export WORK_DIR="{scratch}/ChemRefine_' in script.read_text(encoding="utf-8")
 
 
-def test_build_script_always_removes_the_scratch_directory(tmp_path: Path):
-    """Scratch removal is unconditional — there is no keep-it knob to reach.
+def test_build_script_removes_the_scratch_directory_once_its_results_are_home(tmp_path: Path):
+    """No knob keeps scratch: it goes unless a result could not be copied home.
 
-    `build_script` used to take a `save_scratch` flag, a v1 concept carried into the
-    rewrite's signature that no caller ever passed. Keeping artifacts is engine-owned
-    instead (`RunBlock.cleanup`, `output_dirs`), which the array path honours too.
+    Keeping an artifact is the engine's to ask for (`RunBlock.cleanup`, `output_dirs`),
+    which the array path honours too. The one thing that leaves scratch behind is a copy
+    the exit handler could not make, since scratch then holds the only whole copy.
     """
     text = slurm.build_script(**_build_kwargs(tmp_path)).read_text(encoding="utf-8")
-    assert 'rm -rf "$WORK_DIR"' in text
-    assert "scratch_kept=true" not in text
+    assert '$scratch_kept || { cd "$OUTPUT_DIR" && rm -rf "$WORK_DIR"; }' in text
 
 
 def test_build_script_emits_exit_trap(tmp_path: Path):
@@ -482,7 +481,10 @@ def test_build_script_copies_output_dirs_back(tmp_path: Path):
     """``output_dirs`` (e.g. pyscf ``tensors/``) are copied back wholesale on exit."""
     script = slurm.build_script(**_build_kwargs(tmp_path, output_dirs=("tensors",)))
     text = script.read_text(encoding="utf-8")
-    assert 'cp -r "tensors" "$OUTPUT_DIR/" 2>/dev/null || true' in text
+    assert (
+        'if [ -e "tensors" ]; then cp -r -- "tensors" "$OUTPUT_DIR/" || scratch_kept=true; fi'
+        in text
+    )
 
 
 def test_a_missing_header_is_refused_where_it_is_read(tmp_path: Path):
@@ -520,11 +522,10 @@ def test_scripts_built_from_one_parse_carry_only_their_own_directives(tmp_path: 
 
 
 def test_build_script_uses_caller_supplied_output_globs(tmp_path: Path):
-    """The back-copy line must reflect the engine's declared file extensions."""
+    """The copy-back loops over the engine's declared file extensions."""
     script = slurm.build_script(**_build_kwargs(tmp_path, output_globs=("*.json", "*.npz")))
     text = script.read_text(encoding="utf-8")
-    assert 'cp *.json *.npz "$OUTPUT_DIR/"' in text
-    assert "files_copied=$(ls *.json *.npz 2>/dev/null | wc -l)" in text
+    assert "for item in *.json *.npz; do" in text
     # Engine-specific ORCA globs must not leak in.
     assert "*.gbw" not in text
 
@@ -1390,9 +1391,9 @@ def test_terminate_local_jobs_escalates_to_kill_when_sigterm_is_ignored(
 # ---------------------------------------------------------------------------
 
 
-def _runnable(tmp_path: Path, body: str, cleanup: str = "") -> Path:
+def _runnable(tmp_path: Path, body: str, cleanup: str = "", **overrides) -> Path:
     """Build a generated script that can actually execute (its input file exists)."""
-    kwargs = _build_kwargs(tmp_path, run_block=RunBlock(body=body, cleanup=cleanup))
+    kwargs = _build_kwargs(tmp_path, run_block=RunBlock(body=body, cleanup=cleanup), **overrides)
     inp = Path(kwargs["input_path"])
     inp.parent.mkdir(parents=True, exist_ok=True)
     inp.write_text("! SP\n", encoding="utf-8")
@@ -1457,6 +1458,111 @@ def test_generated_script_runs_engine_cleanup_before_copying_back(tmp_path: Path
 
     assert "HOOK_RAN" in result.stdout
     assert result.stdout.index("HOOK_RAN") < result.stdout.index("files_copied=")
+
+
+def _scratch_dirs(tmp_path: Path) -> list[Path]:
+    """The scratch directories a generated script left under the configured scratch root."""
+    root = tmp_path / "scratch"
+    return sorted(root.iterdir()) if root.is_dir() else []
+
+
+def test_a_result_that_cannot_come_home_fails_the_job_and_keeps_its_scratch(tmp_path: Path):
+    """A copy the output directory refuses is the job's failure, and scratch is not removed.
+
+    A directory already sits where the result belongs, so `cp` refuses it as a full disk
+    would. The run block succeeded, so the script exits with the status kept for exactly
+    this; the footer says both things, and scratch still holds the result whole.
+    """
+    script = _runnable(tmp_path, "echo energy > result.out")
+    (tmp_path / "out" / "result.out").mkdir(parents=True)
+
+    result = _run_generated(script)
+
+    assert result.returncode == job_log.COPY_BACK_FAILED
+    assert "exit_code=0" in result.stdout
+    assert "scratch_kept=true" in result.stdout
+    assert "result.out" in result.stderr  # cp says which file and why
+    (kept,) = _scratch_dirs(tmp_path)
+    assert (kept / "result.out").read_text(encoding="utf-8") == "energy\n"
+
+
+def test_a_declared_directory_that_cannot_come_home_fails_the_job_too(tmp_path: Path):
+    """An ``output_dirs`` entry is a result like any file: refused, it keeps scratch."""
+    script = _runnable(tmp_path, "mkdir tensors; echo t > tensors/t.npy", output_dirs=("tensors",))
+    (tmp_path / "out").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "out" / "tensors").write_text("in the way\n", encoding="utf-8")
+
+    result = _run_generated(script)
+
+    assert result.returncode == job_log.COPY_BACK_FAILED
+    assert "scratch_kept=true" in result.stdout
+    (kept,) = _scratch_dirs(tmp_path)
+    assert (kept / "tensors" / "t.npy").read_text(encoding="utf-8") == "t\n"
+
+
+def test_a_failed_run_block_keeps_its_own_status_when_a_result_stays_behind(tmp_path: Path):
+    """The copy-back's status stands in only for a run block that succeeded."""
+    script = _runnable(tmp_path, "echo energy > result.out; exit 7")
+    (tmp_path / "out" / "result.out").mkdir(parents=True)
+
+    result = _run_generated(script)
+
+    assert result.returncode == 7
+    assert "exit_code=7" in result.stdout
+    assert "scratch_kept=true" in result.stdout
+    assert len(_scratch_dirs(tmp_path)) == 1
+
+
+def test_a_pattern_or_directory_nothing_wrote_is_no_failure(tmp_path: Path):
+    """The patterns are a superset by design, and a declared directory is optional."""
+    script = _runnable(tmp_path, "true", output_dirs=("tensors",))
+
+    result = _run_generated(script)
+
+    assert result.returncode == 0
+    assert "files_copied=0" in result.stdout
+    assert "scratch_kept=false" in result.stdout
+    assert "cp:" not in result.stderr
+    assert _scratch_dirs(tmp_path) == []
+
+
+def test_files_copied_counts_the_files_that_came_home(tmp_path: Path):
+    """One for each file a pattern brought home; a directory a pattern matches is no file."""
+    script = _runnable(tmp_path, "echo a > a.out; echo b > b.xyz; mkdir c.out; echo d > c.out/d")
+
+    result = _run_generated(script)
+
+    assert result.returncode == 0
+    assert "files_copied=2" in result.stdout
+    assert sorted(p.name for p in (tmp_path / "out").iterdir() if p.suffix != ".slurm") == [
+        "a.out",
+        "b.xyz",
+    ]
+
+
+def test_a_stopped_job_exits_143_whatever_its_program_made_of_the_signal(tmp_path: Path):
+    """A stopped job's script exits with the status its footer reports.
+
+    The program here answers TERM by exiting 0, as a trainer that saves its state on a
+    signal does. The script was stopped all the same, and both its footer and its exit
+    status say so. The signal is sent once the program has said its trap is armed.
+    """
+    script = _runnable(tmp_path, "bash -c 'trap \"exit 0\" TERM; echo READY; sleep 30 & wait'")
+
+    log = tmp_path / "run.log"
+    with log.open("w", encoding="utf-8") as fh:
+        proc = subprocess.Popen(
+            ["bash", str(script)], stdout=fh, stderr=subprocess.DEVNULL, start_new_session=True
+        )
+        deadline = time.monotonic() + 30
+        while "READY" not in log.read_text(encoding="utf-8"):
+            assert time.monotonic() < deadline, "the program never armed its trap"
+            time.sleep(0.05)
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        status = proc.wait(timeout=30)
+
+    assert status == 143
+    assert "exit_code=143" in log.read_text(encoding="utf-8")
 
 
 def test_wait_for_jobs_times_out_when_a_deadline_is_set():

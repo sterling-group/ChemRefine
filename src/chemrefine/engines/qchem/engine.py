@@ -273,9 +273,12 @@ class QchemEngine(JobEngine):
         # suppress nounset). The `-n` test also keeps an empty QCSAVE from turning the
         # source into a bare scratch root. The rule is held for every engine by
         # `test_every_cleanup_survives_the_armed_trap_window`.
+        # A save directory the job never wrote is nothing to copy; one it wrote and cannot
+        # bring home is a result left in scratch, which the handler is told the way it
+        # tells itself (`scratch_kept`, see `RunBlock.cleanup`).
         cleanup = (
-            'if [ -n "${QCSAVE:-}" ]; then '
-            'cp -r "${QCSCRATCH:-}/${QCSAVE:-}" "$OUTPUT_DIR/" 2>/dev/null || true; fi'
+            'if [ -n "${QCSAVE:-}" ] && [ -e "${QCSCRATCH:-}/${QCSAVE:-}" ]; then '
+            'cp -r -- "${QCSCRATCH:-}/${QCSAVE:-}" "$OUTPUT_DIR/" || scratch_kept=true; fi'
             if opts.save
             else ""
         )

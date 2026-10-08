@@ -71,6 +71,27 @@ If you would rather drive it by hand — to inspect what survived before
 continuing — `chemrefine rebuild-cache N` re-parses step N's outputs without
 submitting anything, and ledgers whatever is missing.
 
+## A job's results did not all come home
+
+A job runs in a scratch directory and copies its results into the structure's
+directory when it ends. A copy that directory refuses — a full disk, a quota —
+is the job's failure, not something it passes over:
+
+- the job's script exits `74`, or with its program's own status when that had
+  already failed, and `cp`'s own message is in the structure's `.err`;
+- its `.runlog` ends with `scratch_kept=true`;
+- the scratch directory is left in place, because it then holds the only whole
+  copy. The runlog's header names its `host` and its `scratch` path.
+
+The `.err` and the `.runlog` sit in the directory that refused the copy, so on a
+full disk they can be cut short themselves; the exit status is what survives.
+Under SLURM `sacct` shows it, and a local run logs it as a warning.
+
+Whether the structure's result is usable is decided by reading what did arrive:
+an output cut short fails its structure like any other that cannot be parsed,
+and `chemrefine rerun-errors N` runs it again once there is room. What scratch
+kept can also be copied home by hand.
+
 ## Another run holds this output tree
 
 Every run takes an advisory lock (`<output_dir>/.chemrefine.lock`) for its whole

@@ -128,17 +128,19 @@ def read_header(template_path: Path) -> SlurmHeader:
     return SlurmHeader(tuple(sbatch_lines), tuple(body_lines))
 
 
-_SCRATCH_CLEANUP = 'scratch_kept=false; cd "$OUTPUT_DIR" && rm -rf "$WORK_DIR"'
+_SCRATCH_CLEANUP = 'cd "$OUTPUT_DIR" && rm -rf "$WORK_DIR"'
 """On-exit scratch removal shared by the per-job and array scripts.
 
-Unconditional on both paths: no config knob keeps scratch. An engine that needs something
-out of it has two ways, both honoured on the array path as well: it copies a directory home
-by naming it in ``output_dirs`` (a tensor directory, say), or runs its own teardown by
-returning it as :attr:`~chemrefine.state.RunBlock.cleanup` (a scratch copy an engine's
-option asks for; the ExtOpt server stop).
+Run once everything the engine declared has come home, on both paths: no config knob keeps
+scratch. An engine that needs something out of it has two ways, both honoured on the array
+path as well: it copies a directory home by naming it in ``output_dirs`` (a tensor
+directory, say), or runs its own teardown by returning it as
+:attr:`~chemrefine.state.RunBlock.cleanup` (a scratch copy an engine's option asks for;
+the ExtOpt server stop).
 
-``scratch_kept`` stays in the runlog: the footer is a published artifact, the field still
-reports truthfully, and changing that format is a decision of its own."""
+One thing keeps scratch: a declared result the exit handler could not copy home. The
+scratch copy is then the only whole one, so the handler leaves it, and the footer's
+``scratch_kept`` says so (:func:`_run_body_lines`)."""
 
 # ``--mem`` and ``--mem-per-cpu`` in either ``=`` or space form. ``--mem-per-gpu`` cannot
 # match: after ``--mem`` the optional group rejects ``-per-gpu`` and the mandatory ``[=\s]``
@@ -280,6 +282,18 @@ def _run_body_lines(
     to ``$OUTPUT_DIR`` and emits the runlog footer — success or failure — before
     running ``run_block.body``.
 
+    **A copy-back that fails is the job's failure.** Each file a glob matches and each
+    ``output_dirs`` entry that exists is copied on its own, and a pattern that matches
+    nothing is no failure — the globs are a superset by design. A copy the destination
+    refuses (a full disk, a quota) says why on stderr, keeps ``$WORK_DIR`` — the only whole
+    copy — and is reported as ``scratch_kept=true``; when the run block itself had
+    succeeded, the script exits :data:`chemrefine.job_log.COPY_BACK_FAILED`.
+
+    **The handler ends the script**, with the status its footer accounts for: the run
+    block's, or the copy-back's when only that failed. So the scheduler's accounting and
+    the local runner see what the footer says, and a job stopped by ``TERM`` or ``INT``
+    ends there, with nothing of its run block left to run.
+
     **This must remain the only ``trap`` in the generated script.** bash keeps one handler per
     signal, so a second one silently *replaces* this handler and takes the copy-back, the
     ``output_dirs`` copy, the scratch teardown and the footer with it. An engine that needs
@@ -295,7 +309,10 @@ def _run_body_lines(
     makes a ``scancel``-ed run look successful in its runlog. ``_cr_done`` keeps the handler
     single-shot, since ``TERM`` then ``EXIT`` would otherwise run it twice.
     """
-    dir_copies = [f'  cp -r "{d}" "$OUTPUT_DIR/" 2>/dev/null || true' for d in output_dirs]
+    dir_copies = [
+        f'  if [ -e "{d}" ]; then cp -r -- "{d}" "$OUTPUT_DIR/" || scratch_kept=true; fi'
+        for d in output_dirs
+    ]
     # The engine's teardown, indented into this handler's body. Blank when it has none.
     engine_cleanup = [f"  {line}" for line in run_block.cleanup.splitlines()]
     return [
@@ -331,11 +348,19 @@ def _run_body_lines(
         # copy-back that follows it.
         "  set +e",
         *engine_cleanup,
-        f"  files_copied=$(ls {globs_expr} 2>/dev/null | wc -l)",
-        f'  cp {globs_expr} "$OUTPUT_DIR/" 2>/dev/null || true',
+        # One file at a time: an unmatched pattern stays a literal that is no file, and a
+        # copy that fails is known for what it is rather than lost among the unmatched.
+        "  local item",
+        f"  for item in {globs_expr}; do",
+        '    [ -f "$item" ] || continue',
+        '    if cp -- "$item" "$OUTPUT_DIR/"; then files_copied=$((files_copied + 1));'
+        " else scratch_kept=true; fi",
+        "  done",
         *dir_copies,
-        f"  {cleanup}",
+        f"  $scratch_kept || {{ {cleanup}; }}",
         footer,
+        f'  $scratch_kept && [ "$exit_code" -eq 0 ] && exit {job_log.COPY_BACK_FAILED}',
+        '  exit "$exit_code"',
         "}",
         "trap _on_exit EXIT",
         "trap '_on_exit 143' TERM",

@@ -148,8 +148,8 @@ def test_save_toggles_the_cleanup_copy(tmp_path: Path):
         _ctx(tmp_path, options={"save": True}), Path("step1_0.in"), Path("step1_0.out")
     )
     assert kept.cleanup == (
-        'if [ -n "${QCSAVE:-}" ]; then '
-        'cp -r "${QCSCRATCH:-}/${QCSAVE:-}" "$OUTPUT_DIR/" 2>/dev/null || true; fi'
+        'if [ -n "${QCSAVE:-}" ] && [ -e "${QCSCRATCH:-}/${QCSAVE:-}" ]; then '
+        'cp -r -- "${QCSCRATCH:-}/${QCSAVE:-}" "$OUTPUT_DIR/" || scratch_kept=true; fi'
     )
     assert engine.run_block(_ctx(tmp_path), Path("step1_0.in"), Path("step1_0.out")).cleanup == ""
 

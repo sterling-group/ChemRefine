@@ -291,8 +291,12 @@ def _submit_local(script_path: str | Path, *, env: dict[str, str] | None = None)
     Unlike a foreground run this returns immediately — the throttler
     polls :func:`finished_jobs` to reap it — so several local jobs run
     concurrently under the PAL budget. A non-zero exit is **not** raised
-    here; it surfaces through the engine's output parsing (the same path
-    SLURM failures take), so it lands in the ``on_failure`` ledger.
+    here: a job that failed leaves an output that fails its parse (the same
+    path SLURM failures take), which lands in the ``on_failure`` ledger, and
+    the status itself is logged when the job is reaped. A job whose output
+    arrived whole and whose status says only that another result did not
+    come home (:data:`chemrefine.job_log.COPY_BACK_FAILED`) is reported by
+    that log line alone.
 
     ``start_new_session=True`` gives the job a process group of its own, which is what
     makes it *stoppable*: the thing that has to die is the calculation, and that is a

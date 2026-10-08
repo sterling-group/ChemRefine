@@ -61,6 +61,14 @@ _FOOTER_KEYS = (
     "scratch_kept",
 )
 
+COPY_BACK_FAILED = 74
+"""The status a job exits with when its run block succeeded and a result did not come home.
+
+``EX_IOERR`` of ``sysexits.h``. The generated script's exit handler exits with it
+(:func:`chemrefine.slurm.script._run_body_lines`), so a scheduler's accounting and the
+local runner's warning report a job whose footer says ``exit_code=0`` and
+``scratch_kept=true`` as the failure it is."""
+
 
 def _format_field(key: str, value: object) -> str:
     """Render one ``key=value`` field line, indented two spaces."""

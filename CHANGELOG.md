@@ -717,7 +717,11 @@ for those and the full map.
   only `.out` and `.xyz` files out of the scratch directory before deleting it, so the
   `.gbw`, the `.hess`, the property files and the `.opt` restart file went with it. 2.0
   copies those back too; `.opt` is what lets a stalled optimisation resume where it
-  stopped rather than start over.
+  stopped rather than start over. A result the structure's directory refuses — a full
+  disk, a quota — fails its job instead of being passed over: the job exits `74` (or
+  with its program's own status when that had already failed), its runlog ends with
+  `scratch_kept=true`, and the scratch directory, which then holds the only whole copy,
+  is left in place.
 - **A cluster header keeps its `--ntasks-per-node` and `--ntasks-per-core`.** v1.3.1
   dropped every `#SBATCH` line of the header containing `--ntasks` or `--cpus-per-task`,
   so those directives — and anything else on the same line — never reached the job. 2.0

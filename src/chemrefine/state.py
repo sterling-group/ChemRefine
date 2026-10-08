@@ -255,8 +255,10 @@ class RunBlock:
     Two fields rather than one string, so teardown is *data* the infra layer places rather
     than bash an engine emits. :func:`chemrefine.slurm.script._run_body_lines` installs a
     single ``EXIT`` trap that copies results back, copies each ``output_dirs`` entry back,
-    tears down scratch and writes the runlog footer; ``cleanup`` is interpolated inside that
-    handler.
+    tears down scratch once they are home and writes the runlog footer; ``cleanup`` is
+    interpolated inside that handler. A cleanup that brings something home of its own sets
+    the handler's ``scratch_kept=true`` when that copy fails, so scratch is left for it as
+    for any result that did not arrive.
 
     The split matters because bash keeps one handler per signal. An engine that wrote its own
     ``trap … EXIT`` would replace the whole of that — and the loss is quiet, because an
