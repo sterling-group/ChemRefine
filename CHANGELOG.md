@@ -565,7 +565,10 @@ for those and the full map.
   declares are copied home — files by pattern, whole directories through `output_dirs`,
   anything else through its run block's own teardown. v1.3.1's `save_scratch`, a
   parameter of its `OrcaJobSubmitter` class that no config key or flag reached, has no
-  2.0 equivalent.
+  2.0 equivalent. A scratch that filled the job's own filesystem takes the evidence with
+  it — v1.3.1 left a failed job's scratch, and the full disk, in place — so the job first
+  asks `df` what that filesystem has left and, when that is nothing, says so in its `.err`
+  once the scratch is gone.
 - **ChemRefine installs from PyPI.** `pip install chemrefine` replaces v1.3.1's
   `git+https` install. Supported Python is 3.11 through 3.14 (v1.3.1 declared 3.9–3.12).
   The sdist carries the test suite, the shipped examples and the documentation sources

@@ -159,6 +159,31 @@ reached, with the failed attempt archived under `attemptK/`. If it still fails,
 it lands in the ledger. Common fixes: loosen the SCF convergence in the template,
 give the optimiser more cycles, or start from a better geometry.
 
+## A job's `.err` says its filesystem had no space left
+
+```
+ChemRefine: the filesystem holding …/outputs/step1/0 had no space left when this job
+ended; what the job wrote there, this file included, may be cut short or missing
+```
+
+A job's `.runlog`, its `.err` and the program's output are files in the structure's
+directory. While that filesystem is full, nothing the program says about its own failure
+can be written to them. The usual reason is the job's own scratch directory, which sits
+inside the structure's directory unless `scratch_dir` puts it elsewhere. The job removes
+its scratch when it ends, which gives the disk its room back and leaves an empty `.err`
+behind — so the job script asks `df` what is left before it removes anything, and adds
+this line once the scratch is gone. Where a step's ledgered reason quotes the end of the
+`.err`, as an ORCA step's does, the line is in `failed_jobs.json` too.
+
+Point [`scratch_dir`](../workflow/configuration.md) at a filesystem with room for the
+program's temporary files, or free space, then `chemrefine resume`.
+
+The line states what `df` reports. A quota `df` does not show leaves no line: an output
+that stops mid-line beside an empty `.err` and a non-zero `exit_code` in the `.runlog`
+is the same failure without it. And with the scratch on another filesystem, removing it
+frees nothing, so the line cannot be written either: the run itself then stops with
+[exit `11`](#exit-codes) at its next write, naming the file.
+
 ## A structure failed with "the calculation diverged"
 
 ```

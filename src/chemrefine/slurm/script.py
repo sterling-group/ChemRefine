@@ -142,6 +142,39 @@ One thing keeps scratch: a declared result the exit handler could not copy home.
 scratch copy is then the only whole one, so the handler leaves it, and the footer's
 ``scratch_kept`` says so (:func:`_run_body_lines`)."""
 
+_FREE_SPACE = (
+    'local _cr_free; _cr_free=$(df -Pk "$OUTPUT_DIR" 2>/dev/null | '
+    "awk 'NR == 2 && $2 > 0 { print $4 }')"
+)
+"""The exit handler's first question: how much ``$OUTPUT_DIR``'s filesystem has left, in KiB.
+
+A job's runlog, its ``.err`` and the program's own output are files in ``$OUTPUT_DIR``.
+While that filesystem is full, the kernel refuses what the program and the shell write to
+them, their account of the failure included. The usual reason is the job's own scratch,
+which sits there too unless a ``scratch_dir`` puts it elsewhere, and which the handler
+removes: afterwards the disk has room, the ``.err`` is empty, and nothing in the tree says
+why the job died. So the figure is taken first, before the engine's teardown and the
+scratch removal free anything.
+
+POSIX ``df -P``: its second line carries the filesystem's size in the second field and the
+blocks available in the fourth. A filesystem that reports no size — one that answers the
+question with zeros throughout, as ``/proc`` does — and a ``df`` that cannot answer leave the
+figure empty, which claims nothing."""
+
+_FULL_FILESYSTEM_NOTICE = (
+    'if [ "$_cr_free" = 0 ]; then echo "ChemRefine: the filesystem holding $OUTPUT_DIR had '
+    "no space left when this job ended; what the job wrote there, this file included, may "
+    'be cut short or missing" >&2; fi'
+)
+"""What the handler says on the job's stderr when :data:`_FREE_SPACE` found nothing left.
+
+Said after the scratch removal, the first moment a line can land in the ``.err``, which is
+on the filesystem the line is about. With a ``scratch_dir`` elsewhere, or a scratch the
+handler keeps because a result could not be copied home, nothing is freed there and this
+write is refused like the ones before it; the driver's own next
+write in the tree then stops the run as :class:`~chemrefine.errors.OutputTreeError`, which
+names the same reason. The figure is ``df``'s, so a quota it does not report is not seen."""
+
 # ``--mem`` and ``--mem-per-cpu`` in either ``=`` or space form. ``--mem-per-gpu`` cannot
 # match: after ``--mem`` the optional group rejects ``-per-gpu`` and the mandatory ``[=\s]``
 # rejects the ``-`` that follows, so a GPU memory directive is neither read nor stripped.
@@ -280,7 +313,9 @@ def _run_body_lines(
     in, and installs an ``EXIT`` trap that always copies ``globs_expr`` (files) and
     each ``output_dirs`` entry (a whole directory) back
     to ``$OUTPUT_DIR`` and emits the runlog footer — success or failure — before
-    running ``run_block.body``.
+    running ``run_block.body``. Before it frees anything the handler asks what
+    ``$OUTPUT_DIR``'s filesystem has left (:data:`_FREE_SPACE`); with the scratch gone it
+    says so on stderr if the answer is nothing (:data:`_FULL_FILESYSTEM_NOTICE`).
 
     **A copy-back that fails is the job's failure.** Each file a glob matches and each
     ``output_dirs`` entry that exists is copied on its own, and a pattern that matches
@@ -347,6 +382,7 @@ def _run_body_lines(
         # `set +e` before the engine's teardown, so a cleanup that fails cannot abort the
         # copy-back that follows it.
         "  set +e",
+        f"  {_FREE_SPACE}",
         *engine_cleanup,
         # One file at a time: an unmatched pattern stays a literal that is no file, and a
         # copy that fails is known for what it is rather than lost among the unmatched.
@@ -358,6 +394,7 @@ def _run_body_lines(
         "  done",
         *dir_copies,
         f"  $scratch_kept || {{ {cleanup}; }}",
+        f"  {_FULL_FILESYSTEM_NOTICE}",
         footer,
         f'  $scratch_kept && [ "$exit_code" -eq 0 ] && exit {job_log.COPY_BACK_FAILED}',
         '  exit "$exit_code"',

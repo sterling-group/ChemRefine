@@ -1391,7 +1391,7 @@ def test_terminate_local_jobs_escalates_to_kill_when_sigterm_is_ignored(
 # ---------------------------------------------------------------------------
 
 
-def _runnable(tmp_path: Path, body: str, cleanup: str = "", **overrides) -> Path:
+def _runnable(tmp_path: Path, body: str, cleanup: str = "", **overrides: object) -> Path:
     """Build a generated script that can actually execute (its input file exists)."""
     kwargs = _build_kwargs(tmp_path, run_block=RunBlock(body=body, cleanup=cleanup), **overrides)
     inp = Path(kwargs["input_path"])
@@ -1400,11 +1400,35 @@ def _runnable(tmp_path: Path, body: str, cleanup: str = "", **overrides) -> Path
     return slurm.build_script(**kwargs)
 
 
-def _run_generated(script: Path) -> subprocess.CompletedProcess[str]:
+def _run_generated(
+    script: Path, *, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     """Execute a generated script with bash, as the local runner does."""
     return subprocess.run(
-        ["bash", str(script)], capture_output=True, text=True, timeout=60, check=False
+        ["bash", str(script)], capture_output=True, text=True, timeout=60, check=False, env=env
     )
+
+
+def _with_df(tmp_path: Path, answer: str) -> dict[str, str]:
+    """An environment whose ``df`` is the bash in ``answer``: what a job is told of its disk.
+
+    No test can fill the filesystem it runs on, so the generated script's question is
+    answered by a stand-in placed first on ``PATH``.
+    """
+    stand_ins = tmp_path / "bin"
+    stand_ins.mkdir()
+    df = stand_ins / "df"
+    df.write_text(f"#!/bin/bash\n{answer}\n", encoding="utf-8")
+    df.chmod(0o755)
+    return {**os.environ, "PATH": f"{stand_ins}{os.pathsep}{os.environ['PATH']}"}
+
+
+_DF_HEADER = "echo 'Filesystem 1024-blocks Used Available Capacity Mounted on'"
+_DF_FULL = "echo 'tmpfs 1024 1024 0 100% /mnt'"
+_DF_ROOM = "echo 'tmpfs 1024 24 1000 3% /mnt'"
+
+_BARE_HEADER = slurm.SlurmHeader(sbatch=(), body=())
+"""A header that runs nothing, for a test that reads the whole of a job's stderr."""
 
 
 def test_generated_script_records_the_real_exit_code(tmp_path: Path):
@@ -1586,6 +1610,81 @@ def test_a_stopped_job_exits_143_whatever_its_program_made_of_the_signal(tmp_pat
 
     assert status == 143
     assert "exit_code=143" in log.read_text(encoding="utf-8")
+
+
+def test_a_job_that_ends_on_a_full_filesystem_says_so_on_its_stderr(tmp_path: Path):
+    """A job whose own scratch filled the disk leaves the reason, though the disk has room again.
+
+    While the filesystem holding a job's directory is full, what the program writes to its
+    ``.err`` is refused, and the exit handler then removes the scratch that filled it: an
+    empty ``.err`` on a disk with room. The stand-in ``df`` reports no space for as long as
+    the job's scratch directory exists, so the line also proves the handler asked before it
+    removed anything.
+    """
+    script = _runnable(tmp_path, "exit 3", slurm_header=_BARE_HEADER)
+    scratch = tmp_path / "scratch"
+    full_until_the_scratch_goes = (
+        f'{_DF_HEADER}\nif ls -d "{scratch}"/ChemRefine_* >/dev/null 2>&1; '
+        f"then {_DF_FULL}; else {_DF_ROOM}; fi"
+    )
+
+    result = _run_generated(script, env=_with_df(tmp_path, full_until_the_scratch_goes))
+
+    assert result.stderr == (
+        f"ChemRefine: the filesystem holding {tmp_path / 'out'} had no space left when this "
+        "job ended; what the job wrote there, this file included, may be cut short or missing\n"
+    )
+    assert result.returncode == 3
+    assert "exit_code=3" in result.stdout
+    assert not list(scratch.glob("ChemRefine_*"))
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        f"{_DF_HEADER}\n{_DF_ROOM}",
+        f"{_DF_HEADER}\necho 'fuse 0 0 0 - /mnt'",
+        "echo 'df: cannot read table of mounted file systems' >&2\nexit 1",
+        _DF_HEADER,
+    ],
+    ids=["room-left", "no-size", "no-answer", "no-filesystem-line"],
+)
+def test_a_job_says_nothing_of_its_filesystem_unless_df_found_it_full(tmp_path: Path, answer: str):
+    """Room left, or a ``df`` that cannot say: no line, and the job ends as it would have.
+
+    The line states what ``df`` measured. A filesystem that reports no size at all has not
+    been measured, an empty figure is no measurement, and ``df``'s own complaint is not the
+    job's to pass on; none of them costs the job anything — the handler still removes the
+    scratch and writes the footer with the real exit code.
+    """
+    script = _runnable(tmp_path, "exit 3", slurm_header=_BARE_HEADER)
+
+    result = _run_generated(script, env=_with_df(tmp_path, answer))
+
+    assert result.stderr == ""
+    assert result.returncode == 3
+    assert "exit_code=3" in result.stdout
+    assert not list((tmp_path / "scratch").glob("ChemRefine_*"))
+
+
+def test_the_exit_handler_asks_before_it_frees_anything_and_answers_after_the_scratch_is_gone(
+    tmp_path: Path,
+):
+    """The question precedes the engine's teardown; the line follows the scratch removal.
+
+    Asked later, the scratch that filled the disk is gone and ``df`` finds room. Said
+    earlier, the line is one more write to the full filesystem it is about. The handler is
+    straight-line bash, so the order of its text is the order it runs in.
+    """
+    script = _runnable(tmp_path, "true", cleanup="echo TEARDOWN")
+    text = script.read_text(encoding="utf-8")
+    handler = text[text.index("_on_exit() {") : text.index("trap _on_exit EXIT")]
+
+    asked, teardown, removed, said = (
+        handler.index(mark)
+        for mark in ('df -Pk "$OUTPUT_DIR"', "echo TEARDOWN", 'rm -rf "$WORK_DIR"', "no space left")
+    )
+    assert asked < teardown < removed < said
 
 
 def test_wait_for_jobs_times_out_when_a_deadline_is_set():
