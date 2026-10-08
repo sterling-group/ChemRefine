@@ -110,7 +110,14 @@ def _parse_job(
         return [], Failure(sid, FailureKind.NOT_TERMINATED_NORMALLY, None, detail=str(e))
     except OutputParseError as e:
         return [], Failure(sid, FailureKind.UNPARSEABLE, None, detail=str(e))
+    except FileNotFoundError:
+        # Gone since the question above, or a file the parse reads beside the output.
+        return [], Failure(sid, FailureKind.MISSING_OUTPUT, None)
     except OSError as e:
+        if e.errno is None:
+            # No refusal of the filesystem's: a decoder's own error, which is the engine's
+            # to raise as OutputParseError and no reason to leave the job unrun.
+            raise
         detail = _refused_file(e, out, ctx.step_dir)
         return [], Failure(sid, FailureKind.UNREADABLE, None, detail=detail)
     bad = [s for s in parsed if not succeeded(s)]

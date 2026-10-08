@@ -477,19 +477,31 @@ def load_leases(step_dir: Path) -> list[JobLease]:
     path = lease_path(step_dir)
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-        return [
-            JobLease(str(r["id"]), str(r["host"]), None if r.get("pid") is None else int(r["pid"]))
-            for r in raw
-        ]
+        return [JobLease(str(r["id"]), str(r["host"]), _recorded_pid(r.get("pid"))) for r in raw]
     except FileNotFoundError:
         return []
-    except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError) as e:
-        # ``OSError`` is the unreadable half of "present-but-unreadable": a ledger another
-        # user's driver wrote, or one under a directory this account cannot search.
-        # ``OverflowError`` is a pid that is no finite number.
+    except OSError as e:
+        # Present and not readable: a ledger another account's driver wrote, or one under a
+        # directory this account cannot search. Nothing says it is damaged.
+        raise CacheError(
+            f"unreadable job lease at {path}: {e.strerror or e} — restore read access, or "
+            f"delete it if the run that wrote it is known dead"
+        ) from e
+    except (ValueError, KeyError, TypeError, AttributeError) as e:
         raise CacheError(
             f"corrupt job lease at {path}: {e!r} — delete it if the run that wrote it is known dead"
         ) from e
+
+
+def _recorded_pid(value: object) -> int | None:
+    """A lease's pid as it was written: an integer, or ``None`` for a scheduler's job.
+
+    Anything else is a damaged record. Coerced, ``true`` and ``1.5`` would both be probed as
+    pid 1, and a pid with a fraction as some other process's.
+    """
+    if value is None or type(value) is int:
+        return value
+    raise TypeError(f"pid {value!r} is no integer")
 
 
 def _write_leases(path: Path, leases: list[JobLease]) -> None:

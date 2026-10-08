@@ -629,7 +629,7 @@ def test_a_ledger_the_unwind_cannot_read_back_does_not_replace_the_batchs_error(
     ):
         _execution.run_batch(engine, engine.prepare(ctx), ctx)
     assert (
-        f"could not clean up during JobSubmissionError: corrupt job lease at {ledger}"
+        f"could not clean up during JobSubmissionError: unreadable job lease at {ledger}"
         in caplog.text
     )
 

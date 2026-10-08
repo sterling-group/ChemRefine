@@ -531,16 +531,25 @@ class _RebuildAttempt:
     ) -> list[Structure]:
         """Parse already-on-disk child outputs under ``attempt`` — no submission.
 
-        The engine says where its files are. A child whose output is absent, or there and
-        not readable, parses to a failure that is not kept, so its parent stays unresolved
-        rather than the rebuild failing.
+        The engine says where its files are. A child whose output is absent parses to a
+        failure that is not kept, so its parent stays unresolved rather than the rebuild
+        failing. One that is there and cannot be read proves nothing either way: left out,
+        its parent would be ledgered unresolved and displaced again for want of a
+        permission, so the rebuild refuses, naming the file.
         """
         child_ctx = replace(
             ctx, step_dir=attempt, prev_state=PipelineState(structures=tuple(children))
         )
         paths = ((c.id, engine.artifact_paths(child_ctx, c.id)) for c in children)
         files = tuple((inp, out, cid) for cid, (inp, out) in paths)
-        succ, _fail = lifecycle.parse_with_failures(engine, StepInputs(files=files), child_ctx)
+        succ, failures = lifecycle.parse_with_failures(engine, StepInputs(files=files), child_ctx)
+        for failure in failures:
+            if failure.kind is FailureKind.UNREADABLE:
+                raise CacheError(
+                    f"step {ctx.step_cfg.step}: cannot read {attempt.name}/{failure.detail} — "
+                    f"so whether a child of that attempt reached the target cannot be proven. "
+                    f"Restore read access, then run the command again."
+                )
         return succ
 
     def install(
@@ -723,16 +732,20 @@ def _is_promoted(
     """
     canonical_output = engine.artifact_paths(ctx, parent_id)[1]
     child_output = engine.artifact_paths(replace(ctx, step_dir=attempt), child_id)[1]
-    try:
-        return child_output.read_bytes() == canonical_output.read_bytes()
-    except FileNotFoundError:
-        return False
-    except OSError as e:
-        raise CacheError(
-            f"step {ctx.step_cfg.step}: cannot read {e.filename or child_output}: "
-            f"{e.strerror or e} — so which calculation {canonical_output} holds cannot be "
-            f"proven. Restore read access, then run the command again."
-        ) from e
+    read: list[bytes] = []
+    for output in (child_output, canonical_output):
+        try:
+            read.append(output.read_bytes())
+        except FileNotFoundError:
+            return False
+        except OSError as e:
+            raise CacheError(
+                f"step {ctx.step_cfg.step}: cannot read {output}: {e.strerror or e} — so which "
+                f"calculation {canonical_output} holds cannot be proven. Restore read access, "
+                f"then run the command again."
+            ) from e
+    child, canonical = read
+    return child == canonical
 
 
 def _passthrough(
@@ -919,7 +932,7 @@ def reattempt_nms(
     The still-valid resolved survivors from the old cache are kept; the failed parents'
     round-1 outputs are re-parsed once, and what that parse cannot stand behind is re-run
     by the rule the non-NMS resume applies (:func:`chemrefine.lifecycle.resubmit_unusable`):
-    a parent with no output, an unreadable one, or one whose engine says the program did
+    a parent with no output, an unparseable one, or one whose engine says the program did
     not terminate is archived and resubmitted from a regenerated input; an unconverged one
     is retried from its best geometry; an unresolved parent — whose round-1 frequency
     output is the expensive artifact this path exists to keep — is not resubmitted at all.

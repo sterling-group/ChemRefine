@@ -756,8 +756,9 @@ for those and the full map.
   GOAT, docking and solvation readers skip a frame they cannot read and fail the
   structure only when no frame is left. An output the filesystem will not let the run
   read (another account's file, a directory it cannot search) is ledgered `unreadable`
-  and left where it is: `resume` and `rerun-errors` do not run its job again, and `resume`
-  reads it once access is restored.
+  and left where it is: `resume` and `rerun-errors` do not run its job again, and once
+  access is restored `resume` reads it for an `on_failure: stop` step and `rebuild-cache N`
+  for a `skip` or `best` one.
 - **An ORCA executable whose path contains a space runs.** v1.3.1 wrote the ORCA
   executable and the step's output directory into its job scripts unquoted, so a space
   in the executable's path broke every job of every ORCA and MLFF step. 2.0 quotes both,

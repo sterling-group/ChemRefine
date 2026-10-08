@@ -274,6 +274,10 @@ def start_run(
             if status.host is not None
             else "an unreadable lock file — delete it if that run is known dead"
         )
+        if status.host is not None and status.alive is None:
+            holder += (
+                "; it cannot be probed from here — delete the lock file if that run is known dead"
+            )
         raise RunLockError(f"a driver already holds {config.output_dir} ({holder})")
     log_dir = ids.agent_runs_dir(config.output_dir)
     # Microseconds, not seconds: the lock check above is check-then-act — the *child*

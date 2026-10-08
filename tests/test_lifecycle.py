@@ -1020,12 +1020,8 @@ def test_an_output_this_account_cannot_read_is_unreadable_and_the_rest_parse(
             lambda step_dir: OSError(errno.EIO, os.strerror(errno.EIO)),
             "unreadable: 0/step1_0.out: Input/output error",
         ),
-        (
-            lambda step_dir: OSError("the mount went away"),
-            "unreadable: 0/step1_0.out: the mount went away",
-        ),
     ],
-    ids=["a-sidecar-the-system-names", "no-file-named", "no-system-reason"],
+    ids=["a-sidecar-the-system-names", "no-file-named"],
 )
 def test_an_unreadable_reason_names_the_file_the_filesystem_refused(
     tmp_path: Path, refusal: Callable[[Path], OSError], reason: str
@@ -1050,6 +1046,48 @@ def test_an_unreadable_reason_names_the_file_the_filesystem_refused(
     assert successes == []
     assert [f.kind for f in failures] == [FailureKind.UNREADABLE]
     assert failures[0].reason == reason
+
+
+def _raising(error: BaseException) -> object:
+    """An engine whose parse raises *error*."""
+
+    class _Engine:
+        def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
+            raise error
+
+    return _Engine()
+
+
+def _one_job(tmp_path: Path) -> StepInputs:
+    out = tmp_path / "0" / "step1_0.out"
+    out.parent.mkdir()
+    out.write_text("a whole calculation", encoding="utf-8")
+    return StepInputs(files=((out.with_suffix(".inp"), out, "0"),))
+
+
+def test_a_file_that_is_gone_when_the_parse_reads_it_is_a_missing_output(tmp_path: Path):
+    """Removed since the run asked, or a file the parse reads beside the output: run again.
+
+    Nothing was refused, so it is not the failure kind that is left alone until access
+    comes back.
+    """
+    gone = FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), "0/step1_0.property.txt")
+
+    _, failures = lifecycle.parse_with_failures(_raising(gone), _one_job(tmp_path), _ctx(tmp_path))
+
+    assert [f.kind for f in failures] == [FailureKind.MISSING_OUTPUT]
+
+
+def test_an_oserror_that_is_no_refusal_of_the_filesystems_is_not_filed_as_one(tmp_path: Path):
+    """A decoder's own ``OSError`` carries no errno, and is no reason to leave a job unrun.
+
+    Filed as unreadable it would never be run again. It is the engine's to raise as a
+    parse error, so it surfaces as what it is.
+    """
+    with pytest.raises(OSError, match="not a gzipped file"):
+        lifecycle.parse_with_failures(
+            _raising(OSError("not a gzipped file")), _one_job(tmp_path), _ctx(tmp_path)
+        )
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")

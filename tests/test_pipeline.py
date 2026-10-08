@@ -1443,8 +1443,13 @@ def test_a_lock_naming_a_number_no_process_can_have_is_held(tmp_path: Path, pid:
     assert (status.held, status.alive) == (True, None)
 
 
-def test_a_lock_whose_pid_is_no_finite_number_is_unreadable_and_held(tmp_path: Path):
-    """An infinity where the pid should be is a damaged record like any other: held."""
+@pytest.mark.parametrize("pid", ["Infinity", "true", "1.5", '"12"'])
+def test_a_lock_whose_pid_is_no_integer_is_unreadable_and_held(tmp_path: Path, pid: str):
+    """Anything but an integer where the pid should be is a damaged record: held.
+
+    Coerced, ``true`` and ``1.5`` would be probed as pid 1, and digits in a string as a
+    process this program never recorded.
+    """
     import socket
 
     from chemrefine.errors import RunLockError
@@ -1453,7 +1458,7 @@ def test_a_lock_whose_pid_is_no_finite_number_is_unreadable_and_held(tmp_path: P
     outputs.mkdir()
     lock = outputs / pipeline.RUN_LOCK_NAME
     lock.write_text(
-        f'{{"pid": Infinity, "host": "{socket.gethostname()}", "started": "then"}}',
+        f'{{"pid": {pid}, "host": "{socket.gethostname()}", "started": "then"}}',
         encoding="utf-8",
     )
     assert pipeline._lock_holder(lock) is None

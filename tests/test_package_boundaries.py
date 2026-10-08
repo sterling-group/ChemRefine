@@ -811,7 +811,6 @@ _RAW_ASKERS: dict[tuple[str, str], str] = {
             ("agent_tools.py", "_locate_output"),
             ("agent_tools.py", "_steps_csv_rows"),
             ("cache.py", "has_results"),
-            ("pipeline.py", "lock_status"),
         ],
         _A_STATUS_READ,
     ),

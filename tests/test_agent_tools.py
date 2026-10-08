@@ -698,6 +698,14 @@ def test_start_run_refuses_a_live_lock_but_ignores_a_dead_one(tmp_path: Path, re
         agent_tools.start_run(str(path))
     assert recorded_popen.calls == []
 
+    lock.write_text(
+        json.dumps({"pid": -7, "host": socket.gethostname(), "started": "then"}), encoding="utf-8"
+    )
+    # A holder no probe can answer for is refused like a live one, with the way out.
+    with pytest.raises(RunLockError, match="cannot be probed from here — delete the lock file"):
+        agent_tools.start_run(str(path))
+    assert recorded_popen.calls == []
+
     lock.write_text("", encoding="utf-8")
     # A 0-byte lock — a driver killed between creating and writing it — is what
     # `run_lock` refuses as unreadable, so launching a child would hand back a pid

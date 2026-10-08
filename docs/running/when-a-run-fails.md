@@ -40,7 +40,8 @@ chemrefine rerun input.yaml 2           # redo step 2 from scratch
 resubmitting, so a template edit made in between actually takes effect. Their
 previous artifacts are moved to `outputs/stepN/<id>/attemptK/` rather than
 overwritten — nothing is lost, and a job that dies without writing anything can
-never be mistaken for a success.
+never be mistaken for a success. The one failure they leave alone is an
+[`unreadable`](#a-structure-failed-with-unreadable) output, which may be whole.
 
 ## The run was interrupted mid-step
 
@@ -223,8 +224,12 @@ chemrefine resume input.yaml            # an on_failure: stop step reads it and 
 chemrefine rebuild-cache input.yaml 2   # a skip or best step, whose failure is not pending
 ```
 
+`rebuild-cache` ends at the first later step no cache serves; `chemrefine resume` then
+carries on from there.
+
 If the file is beyond recovery, delete it. The structure is then `output missing`, which
-`resume` and `rerun-errors` run again.
+`resume` and `rerun-errors` run again for an `on_failure: stop` step; for a `skip` or
+`best` step, `chemrefine rerun N` recomputes it.
 
 ## A `pyscf-extopt` step failed with "SCF did not converge"
 
@@ -352,8 +357,8 @@ applies wins, and `EXECUTE` skips straight to the full run:
 2. **Row provenance** — no cache this key can serve, but the manifest carries each
    row's own key. Rows whose stored key matches are **adopted** (re-parsed from disk);
    the rest — changed or new parents, jobs a config edit actually reaches, jobs with no
-   usable output — are computed. An output this account cannot read is neither: it stays
-   an `unreadable` failure and is not run again. NMS resolution then runs on the
+   usable output — are computed. An adopted row whose output this account cannot read is
+   neither: it stays an `unreadable` failure and is not run again. NMS resolution then runs on the
    assembled round 1: clean parents pass through, `attemptK/` resolutions are honoured
    only under the criterion they were written for, and unresolved parents fan out fresh
    children.

@@ -199,8 +199,10 @@ def _lock_holder(lock: Path) -> tuple[str, int, str] | None:
     """
     try:
         record = json.loads(lock.read_text(encoding="utf-8"))
-        return str(record["host"]), int(record["pid"]), str(record["started"])
-    except (OSError, ValueError, KeyError, TypeError, OverflowError):
+        if type(record["pid"]) is not int:
+            return None
+        return str(record["host"]), record["pid"], str(record["started"])
+    except (OSError, ValueError, KeyError, TypeError):
         return None
 
 
@@ -271,7 +273,7 @@ def lock_status(output_dir: Path) -> LockStatus:
     lock = output_dir / RUN_LOCK_NAME
     holder = _lock_holder(lock)
     if holder is None:
-        return LockStatus(held=lock.exists(), host=None, pid=None, started=None, alive=None)
+        return LockStatus(held=not io.absent(lock), host=None, pid=None, started=None, alive=None)
     host, pid, started = holder
     alive = _pid_alive(pid) if host == socket.gethostname() else None
     return LockStatus(held=alive is not False, host=host, pid=pid, started=started, alive=alive)

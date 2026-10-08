@@ -1910,14 +1910,15 @@ def test_a_corrupt_lease_ledger_is_refused_not_read_as_empty(tmp_path: Path):
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
 @pytest.mark.parametrize("locked", ["file", "directory"])
-def test_an_unreadable_lease_ledger_is_the_same_worded_refusal(tmp_path: Path, locked: str):
+def test_an_unreadable_lease_ledger_is_refused_and_not_called_corrupt(tmp_path: Path, locked: str):
     """Present but unreadable is what the docstring promises to refuse — not a traceback.
 
     Another account's driver, or a ledger the user is told to inspect from another host:
-    the fence cannot prove those jobs dead either, and the message that names the escape
-    is the same one a corrupt file gets. So is a ledger under a ``_cache/`` this account
-    cannot search, on every Python: asked of ``Path.is_file`` first, that is a traceback on
-    3.11 to 3.13 and "no leases" on 3.14, which waves the fence through over a live job.
+    the fence cannot prove those jobs dead either. Nothing says the file is damaged, so
+    the refusal names both ways out, restoring access first. So for a ledger under a
+    ``_cache/`` this account cannot search, on every Python: asked of ``Path.is_file``
+    first, that is a traceback on 3.11 to 3.13 and "no leases" on 3.14, which waves the
+    fence through over a live job.
     """
     from chemrefine.errors import CacheError
 
@@ -1926,29 +1927,33 @@ def test_an_unreadable_lease_ledger_is_the_same_worded_refusal(tmp_path: Path, l
     target = path if locked == "file" else path.parent
     target.chmod(0)
     try:
-        with pytest.raises(CacheError, match="delete it"):
+        with pytest.raises(CacheError) as refused:
             slurm.load_leases(tmp_path)
     finally:
         target.chmod(0o755)
+    assert str(refused.value) == (
+        f"unreadable job lease at {path}: Permission denied — restore read access, or "
+        f"delete it if the run that wrote it is known dead"
+    )
 
 
 @pytest.mark.parametrize(
     "pid",
-    ['"abc"', "[1]", "Infinity", "NaN"],
-    ids=["a-word", "a-list", "infinity", "not-a-number"],
+    ['"abc"', "[1]", "Infinity", "NaN", "true", "1.5", '"12"'],
+    ids=["a-word", "a-list", "infinity", "not-a-number", "a-boolean", "a-fraction", "digits"],
 )
-def test_a_lease_pid_that_is_no_number_is_a_corrupt_ledger(tmp_path: Path, pid: str):
+def test_a_lease_pid_that_is_no_integer_is_a_corrupt_ledger(tmp_path: Path, pid: str):
     """A pid is read back as the integer it was written as, or the ledger is corrupt.
 
     Handed on as it came, a word reaches the fence's probe as a ``TypeError`` and the run
-    ends in a traceback; an infinity is the one value ``int`` refuses as an overflow.
+    ends in a traceback. Coerced, ``true`` and ``1.5`` would both be probed as pid 1.
     """
     from chemrefine.errors import CacheError
 
     path = slurm.lease_path(tmp_path)
     path.parent.mkdir(parents=True)
     path.write_text(f'[{{"id": "local-1", "host": "here", "pid": {pid}}}]', encoding="utf-8")
-    with pytest.raises(CacheError, match="delete it"):
+    with pytest.raises(CacheError, match=r"^corrupt job lease .* delete it"):
         slurm.load_leases(tmp_path)
 
 

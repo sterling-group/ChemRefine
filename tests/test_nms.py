@@ -759,13 +759,17 @@ class _ReadingFakeNms(_FakeNms):
         ),
     ],
 )
-def test_a_rebuild_leaves_out_a_child_it_cannot_read(tmp_path: Path, child: str):
-    """A child whose output is gone, or there and unreadable, is left out; the rebuild goes on.
+def test_a_rebuild_leaves_out_a_child_that_is_gone_and_refuses_one_it_cannot_read(
+    tmp_path: Path, child: str
+):
+    """A child whose output is gone is left out; one that cannot be read stops the rebuild.
 
-    Each parses to a failure the rebuild does not keep, so the parent resolves from the
-    children it can read. Asked ``Path.is_file`` of every child first, a child directory
-    this account cannot search ends the rebuild in a ``PermissionError`` on Python 3.11
-    to 3.13.
+    The first parses to a failure the rebuild does not keep, so the parent resolves from
+    the children that are there. The second proves nothing either way: left out too, its
+    parent could be ledgered unresolved and displaced again for want of a permission, so
+    the rebuild refuses and names the file. Asked ``Path.is_file`` of every child first, a
+    child directory this account cannot search is a ``PermissionError`` on Python 3.11 to
+    3.13.
     """
     engine = _ReadingFakeNms(
         freqs={
@@ -782,12 +786,20 @@ def test_a_rebuild_leaves_out_a_child_it_cannot_read(tmp_path: Path, child: str)
         (winner / "step1_0_m5_pos.out").unlink()
     else:
         winner.chmod(0)
-    try:
+    if child == "gone":
         rebuilt = nms.rebuild_nms(engine, round1, [], ctx)
+        assert [(s.id, s.resolved_from) for s in rebuilt.survivors] == [("0", "0_m5_neg")]
+        return
+    try:
+        with pytest.raises(CacheError) as refused:
+            nms.rebuild_nms(engine, round1, [], ctx)
     finally:
         winner.chmod(0o755)
-
-    assert [(s.id, s.resolved_from) for s in rebuilt.survivors] == [("0", "0_m5_neg")]
+    assert str(refused.value) == (
+        "step 1: cannot read attempt1/0_m5_pos/step1_0_m5_pos.out: Permission denied — so "
+        "whether a child of that attempt reached the target cannot be proven. Restore read "
+        "access, then run the command again."
+    )
 
 
 def test_rebuild_reproduces_the_resolution_after_the_winner_was_promoted(tmp_path: Path):
