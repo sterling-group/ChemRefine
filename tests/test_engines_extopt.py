@@ -15,6 +15,7 @@ Covers:
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import shlex
@@ -184,6 +185,37 @@ def test_write_engrad_dograd_true_requires_gradient(tmp_path: Path):
             gradients_hartree_per_bohr=None,
             dograd=True,
         )
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through any mode")
+def test_a_gradient_the_work_directory_refuses_is_the_jobs_failure_by_absolute_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A work directory that will not take the ``.engrad`` fails the job, naming where it is.
+
+    ORCA hands the wrapper a bare filename and runs it in the job's work directory, so the
+    refusal spells the path out: which filesystem refused is the thing to act on, and the
+    job's ``.err`` is read from another directory.
+    """
+    sealed = tmp_path / "work"
+    sealed.mkdir()
+    monkeypatch.chdir(sealed)
+    sealed.chmod(0o555)
+    try:
+        with pytest.raises(JobFailureError) as refused:
+            protocol.write_engrad(
+                path="job.engrad",
+                n_atoms=1,
+                energy_hartree=-0.5,
+                gradients_hartree_per_bohr=None,
+                dograd=False,
+            )
+    finally:
+        sealed.chmod(0o755)
+    assert str(refused.value) == (
+        f"cannot write ExtOpt gradient {sealed / 'job.engrad'}: Permission denied"
+    )
+    assert isinstance(refused.value.__cause__, PermissionError)
 
 
 def test_write_wrapper_script_emits_exec_call_and_is_executable(tmp_path: Path):
@@ -1171,6 +1203,41 @@ def test_client_main_without_a_token_refuses_in_one_line_and_sends_nothing(
     )
     mock_open.assert_not_called()
     assert not list(tmp_path.glob("*.engrad"))
+
+
+def test_client_main_with_a_gradient_it_cannot_write_refuses_in_one_line(
+    tmp_path: Path, monkeypatch, capsys
+):
+    """The server answered and the disk will not take the ``.engrad``: one line, and its code.
+
+    A full work directory refuses the write as the buffered text is flushed, with an error
+    that names no file. The wrapper's stderr is the job's ``.err``, whose tail the step's
+    ledgered reason quotes, so the refusal is the one line naming the file and the reason,
+    and the exit status ORCA stops on is the job failure's.
+    """
+    inp = _write_extinp(tmp_path)
+    url_file = tmp_path / "server.url"
+    url_file.write_text("127.0.0.1:1234\n", encoding="utf-8")
+    sidecar.write_server_token(tmp_path / "server.token", _TOKEN)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["bridge.py", "--backend", "mlip", "--url-file", str(url_file), str(inp)],
+    )
+
+    def full(self: Path, *args: object, **kwargs: object) -> int:
+        raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+
+    monkeypatch.setattr(Path, "write_text", full)
+    expected = b'{"energy": -1.0, "gradient": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]}'
+    with patch("urllib.request.urlopen") as mock_open:
+        mock_open.return_value.__enter__.return_value = BytesIO(expected)
+        rc = bridge.main()
+
+    assert rc == JobFailureError.exit_code
+    assert capsys.readouterr().err == (
+        "JobFailureError: cannot write ExtOpt gradient "
+        f"{tmp_path / 'step1_structure_0.engrad'}: No space left on device\n"
+    )
 
 
 def test_client_main_tags_calls_with_extinp_jobname(tmp_path: Path, monkeypatch):

@@ -381,9 +381,10 @@ for those and the full map.
   v1.3.1's wrapper imported with the package on every step.
 - **A failed ExtOpt gradient call ends the job with a one-line reason.** When the bridge
   ORCA runs for each gradient fails — no reply within `gradient_timeout_seconds`, a server
-  it cannot reach, a refused request, a connection reset, a geometry it cannot read — it
-  prints the reason on one line and exits with its code, which ORCA stops on and the
-  step's ledger quotes, where v1.3.1's client printed a traceback with every failure.
+  it cannot reach, a refused request, a connection reset, a geometry it cannot read, a
+  gradient file its work directory will not take — it prints the reason on one line and
+  exits with its code, which ORCA stops on and the step's ledger quotes, where v1.3.1's
+  client printed a traceback with every failure.
 - **A threaded job is one SLURM task with N CPUs.** The `pyscf` and `mlip` script engines
   and `mlip-train` request `--ntasks=1 --cpus-per-task=N` for their single OpenMP/torch
   process, so the allocation is one node by construction; v1.3.1's training script added

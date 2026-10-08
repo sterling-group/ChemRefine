@@ -257,11 +257,12 @@ def main() -> int:
     """ORCA-invoked entry point: relay one ``.extinp.tmp`` → ``.engrad`` step.
 
     A failure ChemRefine classifies — no reply within the timeout, a server that cannot be
-    reached or refuses the request, a geometry it cannot read — exits with its one-line
-    refusal on stderr and its code, as the CLI does. ORCA stops on the non-zero exit either
-    way, and it passes the wrapper's stderr to the job's ``.err``, which the step's ledgered
-    reason quotes: raised, that quote would end in traceback frames naming install paths
-    rather than the reason. Anything else is a defect and keeps its traceback.
+    reached or refuses the request, a geometry it cannot read, a gradient file the
+    filesystem will not take — exits with its one-line refusal on stderr and its code, as
+    the CLI does. ORCA stops on the non-zero exit either way, and it passes the wrapper's
+    stderr to the job's ``.err``, which the step's ledgered reason quotes: raised, that
+    quote would end in traceback frames naming install paths rather than the reason.
+    Anything else is a defect and keeps its traceback.
     """
     import sys
 
@@ -276,16 +277,16 @@ def main() -> int:
             token=resolve_server_token(args),
             timeout=args.timeout,
         )
+        protocol.write_engrad(
+            path=_engrad_path_for(args.inputfile),
+            n_atoms=len(data.symbols),
+            energy_hartree=energy,
+            gradients_hartree_per_bohr=gradient if data.dograd else None,
+            dograd=data.dograd,
+        )
     except ChemRefineError as e:
         print(refusal_text(e), file=sys.stderr)
         return e.exit_code
-    protocol.write_engrad(
-        path=_engrad_path_for(args.inputfile),
-        n_atoms=len(data.symbols),
-        energy_hartree=energy,
-        gradients_hartree_per_bohr=gradient if data.dograd else None,
-        dograd=data.dograd,
-    )
     return 0
 
 

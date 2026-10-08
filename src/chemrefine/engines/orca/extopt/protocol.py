@@ -161,6 +161,11 @@ def write_engrad(
 
     The gradient block is omitted when ``dograd`` is false (ORCA's
     energy-only mode).
+
+    A write the filesystem refuses — ``$WORK_DIR`` full, over quota or read-only — is a
+    :class:`~chemrefine.errors.JobFailureError` naming the file by its absolute path, the
+    bridge's refusal like an input it cannot read: the wrapper runs in the job's work
+    directory, and where that is says which filesystem to look at.
     """
     path = Path(path)
     lines = [
@@ -179,7 +184,12 @@ def write_engrad(
         lines.extend(["#", "# Gradient [Eh/Bohr] A1X, A1Y, A1Z, ...", "#"])
         for row in gradients_hartree_per_bohr:
             lines.extend(f"{component:.12e}" for component in row)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    try:
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except OSError as e:
+        raise JobFailureError(
+            f"cannot write ExtOpt gradient {path.absolute()}: {e.strerror or e}"
+        ) from e
     return path
 
 
