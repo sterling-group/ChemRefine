@@ -18,7 +18,7 @@ wrapper script or a SLURM chain can branch on it without parsing log text.
 | `8` | Wait deadline expired | Nothing finished for `job_timeout_seconds` | The queue has stalled, not merely slowed — a step that keeps completing jobs restarts the clock each time. Check whether the jobs are stuck (`squeue -u $USER`), or raise the limit. Only reachable when you set `job_timeout_seconds`; the default waits indefinitely |
 | `9` | Backend env could not be built | `chemrefine backends install <extra>` failed — no network on the node, a resolver conflict, a full disk, or an env tool that is a shell function rather than a binary on `PATH` | The message quotes the command that failed. Run it on a machine with internet (on HPC: a login node); the half-built env is removed, so a re-run starts clean |
 | `10` | Another run holds this output tree | A second `chemrefine` was pointed at an `output_dir` a first one is still working in — a double-submitted driver script, or a second terminal because the first "looks hung" while waiting on the queue | Wait for the other run. If it is known dead, see [another run holds this output tree](#another-run-holds-this-output-tree) |
-| `11` | Output tree not writable | A full disk or quota, a read-only mount, or a directory under `output_dir` this account cannot write | The message names the file, and the one the filesystem refused when that was another. Free space, remount read-write or fix the permissions, then run the command that stopped again: `run` and `rerun` begin by discarding caches, so `resume` in their place would serve what they were asked to discard. A `run`, `resume`, `rerun` or `rerun-errors` that stopped inside its steps continues with `chemrefine resume`. For an artifact step (one job, one product such as a trained model) whose job already wrote its product, `chemrefine rebuild-cache N` adopts the product where `resume` would run the job again — though a full disk may have cut it short as it was copied back |
+| `11` | Output tree not writable | A full disk or quota, a read-only mount, or a directory under `output_dir` this account cannot write | The message names the file, and the one the filesystem refused when that was another; when it also names a SLURM job the run could not cancel, `scancel` that job, or wait until `squeue -j <id>` no longer lists it, and when it names a run whose lock a reclaim swept up, wait for that run to end or stop it — before anything else. Free space, remount read-write or fix the permissions, then run the command that stopped again: `run` and `rerun` begin by discarding caches, so `resume` in their place would serve what they were asked to discard. A `run`, `resume`, `rerun` or `rerun-errors` that stopped inside its steps continues with `chemrefine resume`. For an artifact step (one job, one product such as a trained model) whose job already wrote its product, `chemrefine rebuild-cache N` adopts the product where `resume` would run the job again — though a full disk may have cut it short as it was copied back |
 
 ## A step halted with pending failures
 
@@ -112,6 +112,13 @@ copy results into it.
 - **Local jobs**: probed by pid on the host that submitted them. From any other
   host they cannot be probed — once you know that run's jobs are dead, delete
   the named `active_jobs.json` and re-run.
+
+When the record of a job `sbatch` has just accepted is refused — the disk filled
+or the quota ran out at that moment — the run cancels that job before it stops
+with code `11`, since no later check could see it. If the cancel fails too, the
+message names the job: `scancel` it, or wait until `squeue -j <id>` no longer
+lists it, before running the command again. A local job stops with the run, like
+the batch's other local jobs.
 
 ## A structure keeps failing to converge
 

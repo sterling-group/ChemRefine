@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import signal
@@ -15,7 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from chemrefine import slurm
-from chemrefine.errors import ConfigError, JobSubmissionError, ThrottleTimeoutError
+from chemrefine.errors import ConfigError, JobSubmissionError, OutputTreeError, ThrottleTimeoutError
 from chemrefine.slurm import dispatch
 from chemrefine.state import RunBlock
 from chemrefine.throttle import GpuBudget
@@ -701,7 +702,7 @@ def test_submit_local_closes_the_first_log_when_the_second_cannot_be_opened(tmp_
 
     def open_runlog_only(self, *args, **kwargs):
         if self.suffix == ".err":
-            raise OSError("ENOSPC: no space left on device")
+            raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC), str(self))
         handle = real_open(self, *args, **kwargs)
         opened.append(handle)
         return handle
@@ -709,9 +710,10 @@ def test_submit_local_closes_the_first_log_when_the_second_cannot_be_opened(tmp_
     before = set(dispatch._LOCAL_PROCS)
     with (
         patch.object(Path, "open", open_runlog_only),
-        pytest.raises(OSError, match="ENOSPC"),
+        pytest.raises(OutputTreeError) as refusal,
     ):
         dispatch._submit_local(script)
+    assert str(refusal.value) == f"cannot write {tmp_path / 'half.err'}: No space left on device"
     assert len(opened) == 1 and opened[0].closed, "the .runlog handle outlived its function"
     assert set(dispatch._LOCAL_PROCS) == before
 
@@ -1317,8 +1319,8 @@ def test_terminate_local_jobs_ignores_unknown_and_finished_ids():
 def test_terminate_local_jobs_with_an_empty_batch_spares_everything_else(tmp_path: Path):
     """An empty collection means empty — it is not the no-argument sweep.
 
-    The scheduler passes its live job ids from a `finally`, and on every clean exit that
-    collection *is* empty; reading falsiness as "everything" made the ordinary end of a batch
+    The scheduler's unwind passes its live job ids, and an unwind with nothing in flight
+    passes an empty collection; reading falsiness as "everything" would make that unwind
     mean "kill every local job this process started".
     """
     script, pidfile = _job_with_a_foreground_calculation(tmp_path)
@@ -1633,7 +1635,7 @@ def test_leases_round_trip_and_an_absent_ledger_reads_empty(tmp_path: Path):
     proc = subprocess.Popen(["sleep", "5"])
     try:
         with patch.dict(dispatch._LOCAL_PROCS, {"local-7": (proc, None, None)}):
-            slurm.record_leases(tmp_path, ["12345", "local-7"])
+            slurm.record_leases(tmp_path, ["12345", "local-7"], accepted="local-7")
     finally:
         proc.kill()
         proc.wait()
@@ -1646,14 +1648,15 @@ def test_leases_round_trip_and_an_absent_ledger_reads_empty(tmp_path: Path):
 
 def test_the_ledger_is_written_whole_as_the_jobs_in_flight(tmp_path: Path):
     """Each write replaces the ledger: a job no longer in flight leaves it."""
-    slurm.record_leases(tmp_path, ["local-1", "local-2"])
-    slurm.record_leases(tmp_path, ["local-2", "local-3"])
+    slurm.record_leases(tmp_path, ["local-1", "local-2"], accepted="local-2")
+    slurm.record_leases(tmp_path, ["local-2", "local-3"], accepted="local-3")
     assert [lease.id for lease in slurm.load_leases(tmp_path)] == ["local-2", "local-3"]
 
 
 def test_an_unwinding_release_keeps_the_slurm_leases_only(tmp_path: Path):
     """`keep_slurm` is the unwind's shape: local jobs were just killed, SLURM jobs run on."""
-    slurm.record_leases(tmp_path, ["12345", "local-3"])  # no registry entry: pid stays None
+    # No registry entry for local-3, so its pid stays None.
+    slurm.record_leases(tmp_path, ["12345", "local-3"], accepted="local-3")
 
     slurm.release_leases(tmp_path, keep_slurm=True)
     assert [lease.id for lease in slurm.load_leases(tmp_path)] == ["12345"]
@@ -1661,7 +1664,7 @@ def test_an_unwinding_release_keeps_the_slurm_leases_only(tmp_path: Path):
     # A second unwind with nothing but local leases must not leave an empty ledger
     # behind — an existing-but-empty file and no file must mean the same thing.
     slurm.release_leases(tmp_path)
-    slurm.record_leases(tmp_path, ["local-4"])
+    slurm.record_leases(tmp_path, ["local-4"], accepted="local-4")
     slurm.release_leases(tmp_path, keep_slurm=True)
     assert not slurm.lease_path(tmp_path).exists()
 
@@ -1687,7 +1690,7 @@ def test_an_unreadable_lease_ledger_is_the_same_worded_refusal(tmp_path: Path):
     """
     from chemrefine.errors import CacheError
 
-    slurm.record_leases(tmp_path, ["local-1"])
+    slurm.record_leases(tmp_path, ["local-1"], accepted="local-1")
     path = slurm.lease_path(tmp_path)
     path.chmod(0)
     try:
@@ -1708,7 +1711,7 @@ def test_the_lease_ledger_is_written_readable_for_the_next_driver(tmp_path: Path
 
     previous = os.umask(0o027)
     try:
-        slurm.record_leases(tmp_path, ["local-1"])
+        slurm.record_leases(tmp_path, ["local-1"], accepted="local-1")
         mode = stat.S_IMODE(slurm.lease_path(tmp_path).stat().st_mode)
     finally:
         os.umask(previous)
@@ -1716,14 +1719,124 @@ def test_the_lease_ledger_is_written_readable_for_the_next_driver(tmp_path: Path
 
 
 def test_a_failed_lease_write_leaves_no_temp_file_behind(tmp_path: Path):
-    """The temp file is the writer's, and it is gone whether or not the rename happened."""
+    """The temp file is the writer's, and it is gone whether or not the rename happened.
+
+    The refusal is the output tree's, naming the ledger; recording a local job, it goes on
+    as it came, since the job is the unwind's to stop.
+    """
     with (
-        patch.object(Path, "replace", side_effect=OSError("disk full")),
-        pytest.raises(OSError, match="disk full"),
+        patch.object(Path, "replace", side_effect=OSError(errno.ENOSPC, "disk full")),
+        pytest.raises(OutputTreeError) as refusal,
     ):
-        slurm.record_leases(tmp_path, ["local-1"])
+        slurm.record_leases(tmp_path, ["local-1"], accepted="local-1")
+    assert str(refusal.value) == f"cannot write {slurm.lease_path(tmp_path)}: disk full"
     assert not list(slurm.lease_path(tmp_path).parent.glob(".tmp_*"))
     assert not slurm.lease_path(tmp_path).exists()
+
+
+def test_an_unwinding_release_writes_nothing_when_it_drops_nothing(tmp_path: Path):
+    """A release that keeps every lease touches no file, on a disk that refuses them all.
+
+    Under SLURM dispatch an unwind keeps every lease, and a rewrite of the same ledger
+    could only meet the full or read-only disk the unwind may be stopping for. A step with
+    no ledger at all is the same release: nothing to drop, nothing to remove.
+    """
+    slurm.record_leases(tmp_path, ["12345"], accepted="12345")
+    unrecorded = tmp_path / "step2"
+    refused = OSError(errno.EROFS, os.strerror(errno.EROFS))
+    with (
+        patch.object(Path, "replace", side_effect=refused),
+        patch.object(Path, "unlink", side_effect=refused),
+    ):
+        slurm.release_leases(tmp_path, keep_slurm=True)
+        slurm.release_leases(unrecorded, keep_slurm=True)
+    assert [lease.id for lease in slurm.load_leases(tmp_path)] == ["12345"]
+    assert not unrecorded.exists()
+
+
+def test_a_release_the_tree_refuses_is_named(tmp_path: Path):
+    """After a drained batch, a ledger the filesystem will not remove is the batch's refusal."""
+    slurm.record_leases(tmp_path, ["local-1"], accepted="local-1")
+    ledger = slurm.lease_path(tmp_path)
+    with (
+        patch.object(
+            Path, "unlink", side_effect=OSError(errno.EROFS, os.strerror(errno.EROFS), str(ledger))
+        ),
+        pytest.raises(OutputTreeError) as refusal,
+    ):
+        slurm.release_leases(tmp_path)
+    assert str(refusal.value) == f"cannot write {ledger}: Read-only file system"
+    assert ledger.exists()
+
+
+def test_scancel_answers_whether_the_cancel_landed():
+    """argv with no shell; ``None`` when the scheduler took it, its words when it did not."""
+    ok = subprocess.CompletedProcess(["scancel", "4242"], 0, "", "")
+    with patch.object(dispatch.subprocess, "run", return_value=ok) as run:
+        assert dispatch._scancel("4242") is None
+    assert run.call_args.args[0] == ["scancel", "4242"]
+    assert "shell" not in run.call_args.kwargs
+    refused = subprocess.CalledProcessError(1, "scancel", "", "Invalid job id specified\n")
+    with patch.object(dispatch.subprocess, "run", side_effect=refused):
+        assert dispatch._scancel("4242") == "Invalid job id specified"
+    silent = subprocess.CalledProcessError(1, "scancel", "", "")
+    with patch.object(dispatch.subprocess, "run", side_effect=silent):
+        assert dispatch._scancel("4242") == "scancel exited 1"
+    missing = FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), "scancel")
+    with patch.object(dispatch.subprocess, "run", side_effect=missing):
+        assert dispatch._scancel("4242") == "[Errno 2] No such file or directory: 'scancel'"
+
+
+def _array_script(tmp_path: Path) -> Path:
+    """``build_array_script`` aimed at ``out/``, the array-path twin of ``_build_kwargs``."""
+    return slurm.build_array_script(
+        step_label="step1_refine",
+        ntasks=1,
+        slurm_header=slurm.read_header(_write_header(tmp_path)),
+        script_path=tmp_path / "out" / "step1_refine_array.slurm",
+        output_dir=tmp_path / "out",
+        scratch_dir=tmp_path / "scratch",
+        run_block=RunBlock(body="echo hi"),
+        engine="orca",
+        operation="opt_sp",
+        step=1,
+        output_globs=("*.out",),
+    )
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through any mode")
+@pytest.mark.parametrize(
+    ("name", "write"),
+    [
+        ("step1_structure_0.slurm", lambda tmp_path: slurm.build_script(**_build_kwargs(tmp_path))),
+        ("step1_refine_array.slurm", _array_script),
+        (
+            "step1_array.manifest.0",
+            lambda tmp_path: slurm.write_array_manifests(
+                ((tmp_path / "0.inp", tmp_path / "0.out", "0"),),
+                tmp_path / "out",
+                step_label="step1",
+            ),
+        ),
+    ],
+    ids=["job-script", "array-script", "array-manifest"],
+)
+def test_a_script_or_manifest_the_tree_refuses_is_named(
+    tmp_path: Path, name: str, write: Callable[[Path], object]
+):
+    """Each file a submission writes before it submits refuses as the output tree's.
+
+    Refused, nothing is submitted: the script a job would run is never handed over torn.
+    """
+    out = tmp_path / "out"
+    out.mkdir()
+    out.chmod(0o555)
+    try:
+        with pytest.raises(OutputTreeError) as refusal:
+            write(tmp_path)
+    finally:
+        out.chmod(0o755)
+    assert str(refusal.value) == f"cannot write {out / name}: Permission denied"
 
 
 def test_scheduler_reachable_answers_for_squeue_on_path():

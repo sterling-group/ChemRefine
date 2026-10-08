@@ -361,6 +361,15 @@ _BUNDLED: tuple[Mutation, ...] = (
         "`12345_0`, never the bare parent id — so its outputs are parsed while it writes",
     ),
     Mutation(
+        id="lease-unrecorded-slurm-job-cancelled",
+        path="src/chemrefine/slurm/dispatch.py",
+        old="if JobLease(accepted, host).local:",
+        new="if True:",
+        tests="tests/test_execution.py",
+        breaks="a SLURM job whose lease could not be written runs on with no record, so the "
+        "next run's fence passes beside it and resubmits the structures it is still writing",
+    ),
+    Mutation(
         id="cache-only-may-submit",
         path="src/chemrefine/step.py",
         old="case StepMode.CACHE_ONLY | StepMode.REBUILD:\n                return False",

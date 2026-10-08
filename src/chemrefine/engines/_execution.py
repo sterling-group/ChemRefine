@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
 
-from chemrefine import slurm, throttle
+from chemrefine import io, slurm, throttle
 from chemrefine.engines.api import NULL_SINK, CompletionSink, JobExecutable, sweep
 from chemrefine.errors import ChemRefineError, ConfigError
 from chemrefine.state import JobBatch, JobTriple, StepContext, StepInputs
@@ -205,13 +205,16 @@ def run_batch(
         # ThrottleTimeoutError, a mid-batch JobSubmissionError, a KeyboardInterrupt.
         # Local jobs are real background processes owned by this interpreter, so
         # leaving them running would orphan compute that keeps competing for the
-        # cores of whatever the user runs next. (SLURM jobs are the scheduler's;
-        # cancelling them here would be presumptuous.)
+        # cores of whatever the user runs next. (SLURM jobs run on: the resume fence
+        # waits for them on their leases, and one whose lease could not be written was
+        # cancelled at that write, or named in its refusal — see `record_leases`.)
         slurm.terminate_local_jobs(throttler.active_jobs)
         # The local jobs just died with their leases' reason; the SLURM ones run on,
         # so their leases stay — they are what the resume fence reads once this
-        # process, and the run lock it held, are gone.
-        slurm.release_leases(ctx.step_dir, keep_slurm=True)
+        # process, and the run lock it held, are gone. The exception in flight is the
+        # batch's answer, so a release the output tree refuses is logged beside it.
+        with io.cleanup():
+            slurm.release_leases(ctx.step_dir, keep_slurm=True)
         raise
     slurm.release_leases(ctx.step_dir)
     return JobBatch(jobs=jobs)
@@ -260,9 +263,10 @@ def _submit_one(
     job_id = slurm.submit(script_path, env=env, dispatch=ctx.dispatch)
     throttler.register(job_id, plan.shape.cores, gpus=plan.shape.gpus, device=device)
     # Leased before anyone waits on it, so the record survives a driver that dies without
-    # unwinding — the case the resume fence exists for. Registered first, so a job whose
-    # ledger write fails is in the set the unwind terminates.
-    slurm.record_leases(ctx.step_dir, throttler.active_jobs)
+    # unwinding — the case the resume fence exists for. Registered first, so a local job
+    # whose ledger write fails is in the set the unwind terminates; a SLURM one is
+    # cancelled at that write, or named in its refusal (see `record_leases`).
+    slurm.record_leases(ctx.step_dir, throttler.active_jobs, accepted=job_id)
     logger.info(
         "submitted %s as job %s (cores=%d, gpus=%d)",
         inp.name,
@@ -404,7 +408,7 @@ def _run_array(
             script_path, n_tasks=len(chunk), max_concurrent=max_concurrent, manifest=manifest
         )
         submitted.append(parent_id)
-        slurm.record_leases(output_dir, submitted)
+        slurm.record_leases(output_dir, submitted, accepted=parent_id)
         for inp, _out, _sid in chunk:
             jobs[inp] = parent_id
         logger.info(

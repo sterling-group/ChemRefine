@@ -1,4 +1,4 @@
-"""Run the scripts: sbatch, squeue, and the local-process fallback.
+"""Run the scripts: sbatch, squeue, scancel, and the local-process fallback.
 
 The other half of :mod:`chemrefine.slurm` — :mod:`chemrefine.slurm.script` writes the
 bash, this runs it. Everything here shells out to a real binary or to the OS, which is
@@ -31,9 +31,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
-from chemrefine import ids
-from chemrefine.errors import CacheError, ConfigError, JobSubmissionError
-from chemrefine.io import atomic_write
+from chemrefine import ids, io
+from chemrefine.errors import CacheError, ConfigError, JobSubmissionError, OutputTreeError
 from chemrefine.throttle import GpuBudget, StallDeadline
 
 logger = logging.getLogger(__name__)
@@ -311,8 +310,10 @@ def _submit_local(script_path: str | Path, *, env: dict[str, str] | None = None)
     runlog = script_path.with_suffix(".runlog")
     errlog = script_path.with_suffix(".err")
     with contextlib.ExitStack() as stack:
-        out_handle = stack.enter_context(runlog.open("w", encoding="utf-8"))
-        err_handle = stack.enter_context(errlog.open("w", encoding="utf-8"))
+        with io.tree_write(runlog):
+            out_handle = stack.enter_context(runlog.open("w", encoding="utf-8"))
+        with io.tree_write(errlog):
+            err_handle = stack.enter_context(errlog.open("w", encoding="utf-8"))
         # `bash` from PATH is the point — this is the no-SLURM fallback — and
         # script_path is a script this process generated moments ago.
         proc = subprocess.Popen(  # noqa: S603
@@ -348,7 +349,7 @@ def _local_is_finished(job_id: str) -> bool:
 def terminate_local_jobs(job_ids: Collection[str] | None = None) -> None:
     """Kill and reap background local jobs, closing their log handles.
 
-    Called from the scheduler's ``finally`` so an abnormal exit — a throttle timeout,
+    Called from the scheduler's unwind so an abnormal exit — a throttle timeout,
     a mid-batch submission failure, Ctrl-C — doesn't orphan the ``bash`` children this
     interpreter launched. Left running they keep burning the cores the user's next
     attempt needs, and their ``.runlog`` / ``.err`` handles stay open.
@@ -357,9 +358,9 @@ def terminate_local_jobs(job_ids: Collection[str] | None = None) -> None:
     registered local job, which is what the interpreter-exit hook wants. Already-finished
     jobs are simply absent from the registry, so this is safe to call unconditionally.
 
-    **An empty collection means empty, not "everything".** The scheduler passes its live job
-    ids from a ``finally``, and on every clean exit that collection is empty; overloading
-    falsiness would make the ordinary end of a batch mean "kill every local job this process
+    **An empty collection means empty, not "everything".** The scheduler's unwind passes its
+    live job ids, and an unwind with nothing in flight passes an empty collection;
+    overloading falsiness would make that unwind mean "kill every local job this process
     started", which is the opposite of the caller's intent and would reach another batch's
     jobs the moment anything ran two.
 
@@ -478,16 +479,16 @@ def load_leases(step_dir: Path) -> list[JobLease]:
 
 
 def _write_leases(path: Path, leases: list[JobLease]) -> None:
-    """The ledger, replaced whole (:func:`chemrefine.io.atomic_write`) in a plain file's mode.
+    """The ledger, replaced whole (:func:`chemrefine.io.write_tree_file`) in a plain file's mode.
 
     The resume fence reads it from whichever account next drives the tree, which the docs
     direct to inspect it, so it gets the mode a plain write would give, not a private one.
     """
     rows = [{"id": j.id, "host": j.host, "pid": j.pid} for j in leases]
-    atomic_write(path, json.dumps(rows).encode("utf-8"))
+    io.write_tree_file(path, json.dumps(rows), atomic=True)
 
 
-def record_leases(step_dir: Path, job_ids: Iterable[str]) -> None:
+def record_leases(step_dir: Path, job_ids: Iterable[str], *, accepted: str) -> None:
     """Write ``step_dir``'s ledger as exactly ``job_ids``, the jobs in flight, before anyone waits.
 
     Written at each submission, so the record survives the one thing it exists for — a
@@ -496,12 +497,59 @@ def record_leases(step_dir: Path, job_ids: Iterable[str]) -> None:
     so the ledger stays bounded by the batch's concurrency, and the fence probes only what
     could still be alive. A local job carries its session leader's pid (the process
     :func:`terminate_local_jobs` signals); a SLURM id carries none.
+
+    ``accepted`` is the job the scheduler has just accepted, the one id this write is the
+    first to record: every earlier write recorded all the jobs then in flight. A job
+    outlives its driver only on record — an unwind kills the local jobs and leaves the
+    SLURM ones to the fence their leases feed — so a refused write decides that job's fate
+    here. A local one is already in the set the caller's unwind terminates, and the refusal
+    goes on as it came. A SLURM one, which no fence could see, is cancelled, and the
+    refusal says so; when the cancel fails too, it names the job and what to do with it
+    before the command runs again.
     """
     host = socket.gethostname()
-    _write_leases(
-        lease_path(step_dir),
-        [JobLease(j, host, _LOCAL_PROCS[j][0].pid if j in _LOCAL_PROCS else None) for j in job_ids],
-    )
+    leases = [
+        JobLease(j, host, _LOCAL_PROCS[j][0].pid if j in _LOCAL_PROCS else None) for j in job_ids
+    ]
+    try:
+        _write_leases(lease_path(step_dir), leases)
+    except OutputTreeError as e:
+        if JobLease(accepted, host).local:
+            raise
+        why = _scancel(accepted)
+        raise OutputTreeError(
+            f"{e}. SLURM had already accepted job {accepted}, which no ledger records, so "
+            + (
+                f"the run cancelled it (scancel {accepted})."
+                if why is None
+                else f"no later run would wait for it, and cancelling it failed ({why}): "
+                f"`scancel {accepted}`, or wait until `squeue -j {accepted}` no longer "
+                f"lists it, before running the command again."
+            )
+        ) from e.__cause__
+
+
+def _scancel(job_id: str) -> str | None:
+    """Cancel one SLURM job: ``None`` once the scheduler takes the request, else why not.
+
+    For the job :func:`record_leases` could not record. A cancel the scheduler refuses, or
+    a missing ``scancel``, is its answer rather than an exception: its caller is already
+    reporting a refusal and only says whether this landed.
+    """
+    try:
+        # No shell: a literal binary and an id sbatch returned, passed as argv.
+        subprocess.run(  # noqa: S603
+            ["scancel", job_id],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        said: str = (e.stderr or "").strip()
+        return said or f"scancel exited {e.returncode}"
+    except OSError as e:
+        return str(e)
+    return None
 
 
 def release_leases(step_dir: Path, *, keep_slurm: bool = False) -> None:
@@ -512,16 +560,21 @@ def release_leases(step_dir: Path, *, keep_slurm: bool = False) -> None:
     the scheduler's jobs run on by design, and their leases are what the resume fence
     reads once the lock is gone — and that fence itself on a host with no ``squeue``,
     where the local leases are proven dead and the SLURM ids cannot be asked.
+
+    A release that keeps every lease writes nothing, so an unwind under SLURM dispatch,
+    whose leases are all kept, touches no file on the full or read-only disk it may be
+    stopping for.
     """
     path = lease_path(step_dir)
-    if not keep_slurm:
-        path.unlink(missing_ok=True)
-        return
-    kept = [j for j in load_leases(step_dir) if not j.local]
-    if kept:
-        _write_leases(path, kept)
-    else:
-        path.unlink(missing_ok=True)
+    if keep_slurm:
+        leases = load_leases(step_dir)
+        kept = [j for j in leases if not j.local]
+        if len(kept) == len(leases):
+            return
+        if kept:
+            _write_leases(path, kept)
+            return
+    io.remove_tree_file(path)
 
 
 def scheduler_reachable() -> bool:

@@ -185,7 +185,6 @@ class JobEngine(abc.ABC):
         template = require_template(ctx.template, label=self.label)
         if isinstance(self, TemplateChecking):
             self.check_template(ctx, template)
-        ctx.step_dir.mkdir(parents=True, exist_ok=True)
         step = ctx.step_cfg.step
         files: list[JobTriple] = []
         for struct in ctx.prev_state.structures:

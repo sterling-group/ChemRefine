@@ -1,7 +1,8 @@
 """Assemble the bash a job runs: the SLURM script, and the job-array variants.
 
-Everything here turns values into text and returns it — nothing submits, polls or
-touches the scheduler; that is :mod:`chemrefine.slurm.dispatch`. The split is what
+Everything here turns values into a script's text and writes it where it is told
+(:func:`chemrefine.io.write_tree_file`) — nothing submits, polls or touches the
+scheduler; that is :mod:`chemrefine.slurm.dispatch`. The split is what
 lets the shell-safety rule be checked: every value that ends up inside a generated
 script passes through one of the builders below, so
 ``tests/test_engines_invariants.py`` can enumerate them from these signatures rather
@@ -449,8 +450,7 @@ def build_script(
         ),
     ]
 
-    script_path.parent.mkdir(parents=True, exist_ok=True)
-    script_path.write_text("\n".join(script_lines), encoding="utf-8")
+    io.write_tree_file(script_path, "\n".join(script_lines))
     return script_path
 
 
@@ -482,10 +482,7 @@ def write_array_manifests(
     for chunk_no, start in enumerate(range(0, len(files), _MAX_ARRAY_SIZE)):
         chunk = tuple(files[start : start + _MAX_ARRAY_SIZE])
         path = step_dir / f"{step_label}_array.manifest.{chunk_no}"
-        path.write_text(
-            "".join(f"{inp}\t{out}\t{sid}\n" for inp, out, sid in chunk),
-            encoding="utf-8",
-        )
+        io.write_tree_file(path, "".join(f"{inp}\t{out}\t{sid}\n" for inp, out, sid in chunk))
         manifests.append((path, chunk))
     return manifests
 
@@ -601,6 +598,5 @@ def build_array_script(
         ),
     ]
 
-    script_path.parent.mkdir(parents=True, exist_ok=True)
-    script_path.write_text("\n".join(script_lines), encoding="utf-8")
+    io.write_tree_file(script_path, "\n".join(script_lines))
     return script_path

@@ -7,9 +7,14 @@ here directly rather than through either.
 
 from __future__ import annotations
 
+import os
+from collections.abc import Callable
 from pathlib import Path
 
+import pytest
+
 from chemrefine import attempts
+from chemrefine.errors import OutputTreeError
 
 
 def test_archive_numbers_attempts_sequentially(tmp_path: Path):
@@ -176,3 +181,94 @@ def test_archive_previous_archives_an_engine_directory_left_alone(tmp_path: Path
     assert (step_dir / "0" / "attempt1" / "tensors" / "hessian.npy").is_file()
     assert not (step_dir / "0" / "tensors").exists()
     assert not (step_dir / "1" / "attempt2").exists()
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through any mode")
+@pytest.mark.parametrize(
+    "make",
+    [attempts.begin, lambda sid_dir: attempts.seal(sid_dir, sid_dir / "attempt1")],
+    ids=["begin", "seal"],
+)
+def test_an_attempt_the_tree_will_not_create_is_its_refusal(
+    tmp_path: Path, make: Callable[[Path], object]
+):
+    """Both halves create ``attemptK/`` when it is not there, and a refusal names it."""
+    structure_dir = tmp_path / "0"
+    structure_dir.mkdir()
+    (structure_dir / "step1_0.out").write_text("round 1", encoding="utf-8")
+    structure_dir.chmod(0o555)
+    try:
+        with pytest.raises(OutputTreeError) as excinfo:
+            make(structure_dir)
+    finally:
+        structure_dir.chmod(0o755)
+    attempt = structure_dir / "attempt1"
+    assert str(excinfo.value) == f"cannot write {attempt}: Permission denied"
+    assert (structure_dir / "step1_0.out").read_text(encoding="utf-8") == "round 1"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through any mode")
+def test_a_seal_the_attempt_will_not_take_names_the_file_and_leaves_it(tmp_path: Path):
+    """Sealing into an ``attemptK/`` this account cannot write names the file being moved.
+
+    The file stays at canonical, so the structure still describes the one calculation it
+    held.
+    """
+    structure_dir = tmp_path / "0"
+    attempt = structure_dir / "attempt1"
+    attempt.mkdir(parents=True)
+    (structure_dir / "step1_0.out").write_text("round 1", encoding="utf-8")
+    attempt.chmod(0o555)
+    try:
+        with pytest.raises(OutputTreeError) as excinfo:
+            attempts.seal(structure_dir, attempt)
+    finally:
+        attempt.chmod(0o755)
+    assert str(excinfo.value) == f"cannot write {attempt / 'step1_0.out'}: Permission denied"
+    assert (structure_dir / "step1_0.out").read_text(encoding="utf-8") == "round 1"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
+def test_a_promote_that_cannot_read_its_source_names_the_source(tmp_path: Path):
+    """A winner's output the run cannot read names the file it was copied to, then itself.
+
+    The copy is refused at its source — a job left the output unreadable — so the message
+    opens with the canonical file the run was writing and names the file that refused.
+    """
+    attempt = tmp_path / "0" / "attempt1"
+    child = attempt / "0_m5_pos"
+    child.mkdir(parents=True)
+    source = child / "step1_0_m5_pos.out"
+    source.write_text("the run that won", encoding="utf-8")
+    source.chmod(0)
+    try:
+        with pytest.raises(OutputTreeError) as excinfo:
+            attempts.promote(attempt, step=1, source_id="0_m5_pos", target_id="0")
+    finally:
+        source.chmod(0o644)
+    destination = tmp_path / "0" / "step1_0.out"
+    assert str(excinfo.value) == f"cannot write {destination}: {source}: Permission denied"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
+def test_a_promoted_directory_it_cannot_copy_whole_names_the_file_that_refused(tmp_path: Path):
+    """An engine-written directory is copied file by file; the refusal names the file.
+
+    ``copytree`` tries every file and gathers what it could not copy, and the refusal is
+    worded from that, not printed as the list it is.
+    """
+    attempt = tmp_path / "0" / "attempt1"
+    tensors = attempt / "0_m5_pos" / "tensors"
+    tensors.mkdir(parents=True)
+    source = tensors / "active.npz"
+    source.write_text("winner tensors", encoding="utf-8")
+    source.chmod(0)
+    try:
+        with pytest.raises(OutputTreeError) as excinfo:
+            attempts.promote(attempt, step=1, source_id="0_m5_pos", target_id="0")
+    finally:
+        source.chmod(0o644)
+    destination = tmp_path / "0" / "tensors"
+    assert str(excinfo.value) == (
+        f"cannot write {destination}: [Errno 13] Permission denied: '{source}'"
+    )

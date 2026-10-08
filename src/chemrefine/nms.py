@@ -598,7 +598,7 @@ def _disown_resolution(structure_dir: Path) -> None:
     """
     attempt = latest_attempt_dir(structure_dir)
     if attempt is not None:
-        (attempt / _RESOLUTION_FILE).unlink(missing_ok=True)
+        io.remove_tree_file(attempt / _RESOLUTION_FILE)
 
 
 def _select_survivors(

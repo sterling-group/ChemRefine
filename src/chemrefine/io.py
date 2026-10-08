@@ -24,6 +24,7 @@ import contextlib
 import logging
 import os
 import re
+import shutil
 import sys
 import tempfile
 from collections.abc import Generator, Iterable, Sequence
@@ -256,9 +257,14 @@ def tree_write(path: Path) -> Generator[None]:
 def _refused(path: Path, error: OSError) -> str:
     """Why the filesystem refused a write of ``path``, after the file it named if another.
 
-    An error with no ``strerror`` — a bare message, an aggregate of several — is given as
-    its own text.
+    An error with no ``strerror``, a bare message, is given as its own text. The aggregate
+    :func:`shutil.copytree` raises once it has tried every file is given as the first
+    refusal it gathered, which names its file, and how many more there were.
     """
+    rows = error.args[0] if isinstance(error, shutil.Error) and error.args else None
+    if isinstance(rows, list) and rows:
+        first = str(rows[0][2])
+        return first if len(rows) == 1 else f"{first} (and {len(rows) - 1} more)"
     reason = error.strerror or str(error)
     named = error.filename
     if not isinstance(named, (str, bytes, os.PathLike)) or Path(os.fsdecode(named)) == path:
@@ -297,23 +303,25 @@ def remove_tree_file(path: Path) -> None:
 def cleanup() -> Generator[None]:
     """Run cleanup that must never replace the exception it runs during.
 
-    A ``finally`` that removes a temp file runs while an exception may be on its way out —
-    a refused write, a ``KeyboardInterrupt``, the ``SystemExit(143)`` a SIGTERM is turned
-    into — and an exception raised there takes that one's place: the run exits with the
-    cleanup's code and says the cleanup's sentence. So while an exception is in flight, a
-    refusal in here is logged and dropped, and the one in flight goes on; with none in
-    flight, it is raised like any other.
+    Cleanup — a ``finally``, or an ``except`` that re-raises, removing a temp file or
+    releasing what a run held, its lock or its job leases — runs while an exception may be
+    on its way out: a refused write, a ``KeyboardInterrupt``, the ``SystemExit(143)`` a
+    SIGTERM is turned into. An exception raised there takes that one's place, and the run
+    exits with the cleanup's code and says the cleanup's sentence. So while an exception is
+    in flight, a refusal in here is logged and dropped, and the one in flight goes on; with
+    none in flight, it is raised like any other.
 
     In flight means :func:`sys.exception`: the exception an ``except`` or ``finally`` block
     is running for, in this frame or in any caller's. Cleanup reached from inside a
     caller's handler therefore counts the handled exception as in flight, which is why only
-    cleanup belongs in here, never a write the run needs. A refusal is an :class:`OSError`;
+    cleanup belongs in here, never a write the run needs. A refusal is an :class:`OSError`,
+    or the :class:`~chemrefine.errors.OutputTreeError` :func:`tree_write` turns one into;
     anything else — a bug, a second ``KeyboardInterrupt`` — surfaces.
     """
     in_flight = sys.exception()
     try:
         yield
-    except OSError as e:
+    except (OSError, OutputTreeError) as e:
         if in_flight is None:
             raise
         logger.warning("could not clean up during %s: %s", type(in_flight).__name__, e)

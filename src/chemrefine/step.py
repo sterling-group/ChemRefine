@@ -478,7 +478,8 @@ def run_step(
     # answer to "would this configuration have written the cache on disk". See
     # `cache.StepKey`.
     key = derive_step_key(ctx, step_cfg, engine)
-    ctx.step_dir.mkdir(parents=True, exist_ok=True)
+    with io.tree_write(ctx.step_dir):
+        ctx.step_dir.mkdir(parents=True, exist_ok=True)
     # Narrow once, here, instead of asserting the capability again with a cast at
     # each place that needs it. `nms_engine is not None` then carries
     # both facts — the step asked for NMS, and this engine can do it — and mypy

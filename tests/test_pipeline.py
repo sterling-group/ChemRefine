@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import errno
 import os
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -842,6 +844,18 @@ def _dead_pid() -> int:
     return proc.pid
 
 
+def _unlink_refused_for(path: Path) -> Callable[..., None]:
+    """``Path.unlink`` as a read-only mount answers it for ``path``; any other file as usual."""
+    real_unlink = Path.unlink
+
+    def unlink(self: Path, missing_ok: bool = False) -> None:
+        if self == path:
+            raise OSError(errno.EROFS, os.strerror(errno.EROFS), str(self))
+        real_unlink(self, missing_ok=missing_ok)
+
+    return unlink
+
+
 def test_run_lock_is_released_after_a_clean_run(tmp_path: Path):
     seed = tmp_path / "step0_seed.xyz"
     io.write_single_xyz(_h2(), seed)
@@ -873,12 +887,12 @@ def test_run_lock_is_reentrant_within_one_process(tmp_path: Path):
 
 
 def test_an_error_under_the_reentrant_lock_carries_no_lock_context(tmp_path: Path):
-    """The inner acquisition yields outside the handler, so a traceback starts at the error.
+    """A traceback out of the inner acquisition starts at the real error.
 
-    Yielding from inside ``except FileExistsError`` ran the whole inner action with that
-    exception still active, and any error the action raised was chained to it: every
-    traceback that escaped a run opened with "During handling of the above exception
-    (FileExistsError: … run.lock)", pointing the reader at the lock before the real error.
+    The inner acquisition reads its own pid and yields before it claims or links anything,
+    so no exception is being handled while the inner action runs: an error it raises
+    chains to nothing, where one raised inside a handler would open every traceback with
+    "During handling of the above exception", pointing the reader at the lock first.
     """
     outputs = tmp_path / "outputs"
     with (
@@ -1084,15 +1098,23 @@ def test_a_foreign_hosts_lock_is_never_reclaimed(tmp_path: Path):
         pass
 
 
+@pytest.mark.parametrize(
+    "code",
+    [errno.EPERM, errno.EOPNOTSUPP, errno.ENOSYS, errno.EXDEV],
+    ids=["vfat", "fuse-smb", "no-link-call", "union-branch"],
+)
 def test_a_filesystem_that_refuses_hard_links_is_the_locks_own_refusal(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int
 ):
     """A mount with no hard links cannot hold the lock; that is a RunLockError, not a
-    traceback — the exit-code contract holds for the one primitive the lock is built on."""
+    traceback — the exit-code contract holds for the one primitive the lock is built on.
+
+    Each answer such a mount gives is that refusal: vfat and exfat's ``EPERM``, the
+    ``EOPNOTSUPP`` or ``ENOSYS`` of some FUSE and SMB mounts, a union mount's ``EXDEV``."""
     from chemrefine.errors import RunLockError
 
     def refuse(src, dst, **kwargs):
-        raise PermissionError(1, "Operation not permitted")
+        raise OSError(code, os.strerror(code))
 
     monkeypatch.setattr(os, "link", refuse)
     with (
@@ -1102,6 +1124,34 @@ def test_a_filesystem_that_refuses_hard_links_is_the_locks_own_refusal(
         pass  # pragma: no cover - never entered
     assert not (tmp_path / "outputs" / pipeline.RUN_LOCK_NAME).exists()
     assert not list((tmp_path / "outputs").glob(".chemrefine.lock.claim.*")), "no claim left"
+
+
+@pytest.mark.parametrize(
+    "code",
+    [errno.ENOSPC, errno.EDQUOT, errno.EROFS, errno.EACCES, errno.EIO, errno.EMLINK],
+    ids=["full", "quota", "read-only", "permissions", "io", "link-count"],
+)
+def test_a_link_the_output_tree_refuses_is_its_refusal_not_the_locks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int
+):
+    """Any other refusal of the lock's link is the output tree's, naming the lock.
+
+    A full disk or quota, a read-only mount, a directory this account cannot write refuse
+    the link as they refuse any write: exit 11 with the file and the reason, not exit 10
+    sending the reader to move ``output_dir`` to a filesystem with hard links.
+    """
+    outputs = tmp_path / "outputs"
+    claim = outputs / f"{pipeline.RUN_LOCK_NAME}.claim.{os.getpid()}"
+
+    def refuse(src: object, dst: object, **kwargs: object) -> None:
+        raise OSError(code, os.strerror(code), str(src), None, str(dst))
+
+    monkeypatch.setattr(os, "link", refuse)
+    with pytest.raises(OutputTreeError) as excinfo, pipeline.run_lock(outputs):
+        pass  # pragma: no cover - never entered
+    lock = outputs / pipeline.RUN_LOCK_NAME
+    assert str(excinfo.value) == f"cannot write {lock}: {claim}: {os.strerror(code)}"
+    assert list(outputs.iterdir()) == [], "no lock and no claim left"
 
 
 def test_an_unreadable_lock_raises(tmp_path: Path):
@@ -1119,26 +1169,26 @@ def test_a_failed_record_write_leaves_no_lock_behind(
 ):
     """A full disk at the moment the record is written strands nothing.
 
-    Created empty with `O_EXCL` and written afterwards, the lock existed with no record for
-    as long as the write took — and for good when it failed: the ownership-checked release
-    could not recognise a 0-byte file as its own, and every later driver refused the tree as
-    "unreadable" until someone deleted it by hand. The record is now complete before the
-    lock exists, so the failure is the write's alone and the next command acquires cleanly.
+    The record is complete on disk before the lock exists, so the failure is the write's
+    alone — the output tree's refusal, naming the claim — and the next command acquires
+    cleanly. A lock created empty and written afterwards would outlive such a failure as a
+    0-byte file the ownership-checked release cannot recognise as its own, refused by every
+    later driver as unreadable until someone deleted it by hand.
     """
-    import errno
-
     outputs = tmp_path / "outputs"
-    real_write_text = Path.write_text
+    claim = outputs / f"{pipeline.RUN_LOCK_NAME}.claim.{os.getpid()}"
+    real_write_bytes = Path.write_bytes
 
-    def disk_full(self: Path, *args: object, **kwargs: object) -> int:
+    def disk_full(self: Path, data: bytes) -> int:
         if self.name.startswith(pipeline.RUN_LOCK_NAME):
-            raise OSError(errno.ENOSPC, "No space left on device")
-        return real_write_text(self, *args, **kwargs)
+            raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+        return real_write_bytes(self, data)
 
-    monkeypatch.setattr(Path, "write_text", disk_full)
-    with pytest.raises(OSError, match="No space left"), pipeline.run_lock(outputs):
+    monkeypatch.setattr(Path, "write_bytes", disk_full)
+    with pytest.raises(OutputTreeError) as excinfo, pipeline.run_lock(outputs):
         pass
-    monkeypatch.setattr(Path, "write_text", real_write_text)
+    monkeypatch.setattr(Path, "write_bytes", real_write_bytes)
+    assert str(excinfo.value) == f"cannot write {claim}: No space left on device"
     assert not (outputs / pipeline.RUN_LOCK_NAME).exists()
     assert not list(outputs.glob(f"{pipeline.RUN_LOCK_NAME}.claim.*"))
     with pipeline.run_lock(outputs):  # the tree is not stranded
@@ -1202,6 +1252,134 @@ def test_a_claimant_that_loses_the_link_race_answers_to_the_winner(
     assert not list(outputs.glob(f"{pipeline.RUN_LOCK_NAME}.claim.*"))
 
 
+def test_the_inner_acquisition_writes_nothing(tmp_path: Path):
+    """Taken again inside a run, the lock is read and left: no claim stands beside it.
+
+    The inner acquisition reads its own pid in the lock before it writes anything. A claim
+    written and linked first would sit beside the lock for the whole inner run, and on a
+    disk that filled after the outer acquisition, refuse a run that already holds the tree.
+    """
+    outputs = tmp_path / "outputs"
+    with pipeline.run_lock(outputs):
+        outer = sorted(p.name for p in outputs.iterdir())
+        with pipeline.run_lock(outputs):
+            inner = sorted(p.name for p in outputs.iterdir())
+    assert outer == inner == [pipeline.RUN_LOCK_NAME]
+    assert list(outputs.iterdir()) == []
+
+
+def test_a_claim_the_tree_will_not_remove_leaves_the_writes_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    """On a read-only mount the claim's removal is refused too; the write's refusal goes on.
+
+    The write is why the lock could not be taken, and what the run reports. The removal's
+    refusal is logged beside it rather than raised in its place.
+    """
+    outputs = tmp_path / "outputs"
+    outputs.mkdir()
+    claim = outputs / f"{pipeline.RUN_LOCK_NAME}.claim.{os.getpid()}"
+    refused = OSError(errno.EROFS, os.strerror(errno.EROFS))
+
+    def read_only(self: Path, data: bytes) -> int:
+        raise refused
+
+    monkeypatch.setattr(Path, "write_bytes", read_only)
+    monkeypatch.setattr(Path, "unlink", _unlink_refused_for(claim))
+    with pytest.raises(OutputTreeError) as excinfo, pipeline.run_lock(outputs):
+        pass
+    assert excinfo.value.__cause__ is refused
+    assert (
+        f"could not clean up during OutputTreeError: cannot write {claim}: Read-only file system"
+        in caplog.text
+    )
+
+
+def test_a_release_the_tree_refuses_after_a_clean_run_is_its_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """After a run that returned, a lock the filesystem will not remove is that run's error.
+
+    Nothing else is in flight to report, and the lock left behind refuses every driver on
+    another host until someone deletes it: a wrapper learns that from this run's exit code,
+    not from the next run's refusal.
+    """
+    outputs = tmp_path / "outputs"
+    lock = outputs / pipeline.RUN_LOCK_NAME
+    with pytest.raises(OutputTreeError) as excinfo, pipeline.run_lock(outputs):
+        monkeypatch.setattr(Path, "unlink", _unlink_refused_for(lock))
+    assert str(excinfo.value) == f"cannot write {lock}: Read-only file system"
+
+
+def test_a_stale_lock_the_tree_will_not_move_is_its_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A dead holder's lock the filesystem will not rename away refuses the run by name.
+
+    A sticky directory guarding another account's lock answers ``EPERM``: the output tree's
+    refusal, naming the lock, which stays where it was.
+    """
+    import socket
+
+    outputs = tmp_path / "outputs"
+    lock = _write_lock(outputs, host=socket.gethostname(), pid=_dead_pid())
+
+    def sticky(src: object, dst: object) -> None:
+        raise PermissionError(errno.EPERM, os.strerror(errno.EPERM), str(src), None, str(dst))
+
+    monkeypatch.setattr(os, "replace", sticky)
+    with pytest.raises(OutputTreeError) as excinfo, pipeline.run_lock(outputs):
+        pass
+    assert str(excinfo.value) == f"cannot write {lock}: Operation not permitted"
+    assert lock.exists()
+
+
+def test_a_swept_up_lock_the_filesystem_will_not_restore_stops_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A restore the filesystem refuses stops the run rather than lock beside the live one.
+
+    The reclaim swept up a live driver's fresh lock, and the link that would put it back is
+    refused — ``EPERM`` is what ``fs.protected_hardlinks`` answers for another account's
+    lock. A next pass would find the path empty and link this run's own lock into it, beside
+    the driver it swept up; the run stops with the output tree's refusal instead, which
+    names the swept-up run and what to do about it, and the swept-up record is kept.
+    """
+    import socket
+
+    outputs = tmp_path / "outputs"
+    lock = _write_lock(outputs, host=socket.gethostname(), pid=_dead_pid())
+    live_pid = os.getppid()
+    real_replace = os.replace
+    real_link = os.link
+
+    def overtaken(src: object, dst: object) -> None:
+        _write_lock(outputs, host=socket.gethostname(), pid=live_pid)
+        real_replace(src, dst)
+
+    def protected(src: object, dst: object, **kwargs: object) -> None:
+        if ".reclaim." in str(src):
+            raise PermissionError(errno.EPERM, os.strerror(errno.EPERM), str(src), None, str(dst))
+        real_link(src, dst, **kwargs)
+
+    monkeypatch.setattr(os, "replace", overtaken)
+    monkeypatch.setattr(os, "link", protected)
+    with pytest.raises(OutputTreeError) as excinfo, pipeline.run_lock(outputs):
+        pass
+    claim = outputs / f"{pipeline.RUN_LOCK_NAME}.reclaim.{os.getpid()}"
+    refusal = str(excinfo.value)
+    assert refusal.startswith(f"cannot write {lock}: {claim}: Operation not permitted. ")
+    assert f"(pid {live_pid} on {socket.gethostname()}, started " in refusal
+    assert f"holds no lock, and its record is kept at {claim}. " in refusal
+    assert refusal.endswith(
+        "Wait for that run to end, or stop it, before running the command again."
+    )
+    assert isinstance(excinfo.value.__cause__, PermissionError), "the link's refusal is the cause"
+    assert pipeline._lock_holder(lock) is None, "no lock taken beside the swept-up run"
+    swept = pipeline._lock_holder(claim)
+    assert swept is not None and swept[1] == live_pid, "the swept-up record is kept"
+
+
 def test_pid_alive_reads_permission_denied_as_alive(monkeypatch: pytest.MonkeyPatch):
     """EPERM means the process exists and is somebody else's — alive, not stale.
 
@@ -1240,6 +1418,31 @@ def test_the_installed_sigterm_handler_unwinds_and_releases_the_lock(tmp_path: P
         handler(signal.SIGTERM, None)
     assert excinfo.value.code == 143
     assert not lock.exists()
+
+
+def test_a_release_the_tree_refuses_keeps_the_sigterm_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    """A lock the filesystem will not remove while a SIGTERM unwinds is logged, not raised.
+
+    Raised, the refusal would take the place of the ``SystemExit(143)`` the signal is turned
+    into, and a ``scancel``-ed driver would exit with the output tree's code instead of the
+    one that says what stopped it. The lock stays, named in the log.
+    """
+    import signal
+
+    lock = tmp_path / "outputs" / pipeline.RUN_LOCK_NAME
+    with pytest.raises(SystemExit) as excinfo, pipeline.run_lock(tmp_path / "outputs"):
+        monkeypatch.setattr(Path, "unlink", _unlink_refused_for(lock))
+        handler = signal.getsignal(signal.SIGTERM)
+        assert callable(handler), "the unwind handler is not installed"
+        handler(signal.SIGTERM, None)
+    assert excinfo.value.code == 143
+    assert (
+        f"could not clean up during SystemExit: cannot write {lock}: Read-only file system"
+        in caplog.text
+    )
+    assert lock.exists()
 
 
 def test_the_previous_sigterm_disposition_is_restored_on_exit(tmp_path: Path):

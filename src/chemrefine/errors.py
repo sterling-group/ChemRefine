@@ -152,6 +152,10 @@ class RunLockError(ChemRefineError):
     *live* concurrent driver from a dead one by the files alone (a matching manifest
     fingerprint is exactly what both leave). The remedy is to wait, or to delete a lock
     whose holder is known dead — see :func:`chemrefine.pipeline.run_lock`.
+
+    A filesystem that cannot hard-link at all refuses with this code too, before anything
+    runs: it can never hold the lock, and the remedy is to put ``output_dir`` on one that
+    can.
     """
 
     exit_code = 10
@@ -174,7 +178,9 @@ class OutputTreeError(ChemRefineError):
     ``rerun-errors`` that stopped inside its steps continues with ``chemrefine resume``. For
     an artifact step whose job already wrote its product, ``chemrefine rebuild-cache N``
     adopts the product where ``resume`` would run the job again — though a full disk may
-    have cut it short as it was copied back.
+    have cut it short as it was copied back. A message that also names a SLURM job the run
+    could not cancel, or a live run whose lock it could not put back, says what to do about
+    that first.
 
     Not an :class:`OSError`, though the filesystem's refusal is its ``__cause__``: every
     ``except OSError`` between the write and the CLI would take it for one of its own and

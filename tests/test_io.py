@@ -873,6 +873,19 @@ def test_io_writers_refuse_as_the_output_tree_at_the_file_they_write(
     assert not stale or target.read_text(encoding="utf-8") == "stale\n"
 
 
+_CLEANUP_REFUSALS = [
+    pytest.param(
+        lambda: OSError(errno.EROFS, os.strerror(errno.EROFS), "/out/.tmp_x.part"), id="raw"
+    ),
+    pytest.param(
+        lambda: OutputTreeError("cannot write /out/.chemrefine.lock: Read-only file system"),
+        id="tree-write",
+    ),
+]
+"""What a cleanup can meet: a temp file's raw removal, or a write through the tree's net."""
+
+
+@pytest.mark.parametrize("refusal", _CLEANUP_REFUSALS)
 @pytest.mark.parametrize(
     "stopping",
     [
@@ -883,13 +896,17 @@ def test_io_writers_refuse_as_the_output_tree_at_the_file_they_write(
     ids=["sigterm", "interrupt", "refused-write"],
 )
 def test_cleanup_during_an_unwind_keeps_the_exception_in_flight(
-    stopping: Callable[[], BaseException], caplog: pytest.LogCaptureFixture
+    stopping: Callable[[], BaseException],
+    refusal: Callable[[], Exception],
+    caplog: pytest.LogCaptureFixture,
 ):
     """A cleanup the filesystem refuses while a run stops is logged; the stop goes on.
 
     Raised, the refusal would take the place of what was stopping the run — a SIGTERM's
     143, a Ctrl-C, a refused write — and the run would exit with the cleanup's code and
-    sentence. The very exception in flight is the one that leaves.
+    sentence. The very exception in flight is the one that leaves, whether the cleanup met
+    the raw ``OSError`` of a temp file's removal or the ``OutputTreeError`` of a lock or a
+    lease ledger released through the output tree's net.
     """
     in_flight = stopping()
     with pytest.raises(type(in_flight)) as excinfo:
@@ -897,16 +914,17 @@ def test_cleanup_during_an_unwind_keeps_the_exception_in_flight(
             raise in_flight
         finally:
             with chemrefine_io.cleanup():
-                raise OSError(errno.EROFS, os.strerror(errno.EROFS), "/out/.tmp_x.part")
+                raise refusal()
     assert excinfo.value is in_flight
     assert f"could not clean up during {type(in_flight).__name__}" in caplog.text
     assert "Read-only file system" in caplog.text
 
 
-def test_cleanup_with_nothing_in_flight_raises_its_refusal():
+@pytest.mark.parametrize("refusal", _CLEANUP_REFUSALS)
+def test_cleanup_with_nothing_in_flight_raises_its_refusal(refusal: Callable[[], Exception]):
     """With no exception in flight, a refused cleanup is the caller's failure, raised."""
-    refused = OSError(errno.EROFS, os.strerror(errno.EROFS), "/out/.tmp_x.part")
-    with pytest.raises(OSError) as excinfo, chemrefine_io.cleanup():
+    refused = refusal()
+    with pytest.raises(type(refused)) as excinfo, chemrefine_io.cleanup():
         raise refused
     assert excinfo.value is refused
 
@@ -936,3 +954,26 @@ def test_a_temp_file_that_will_not_go_does_not_hide_why_the_write_failed(
     assert excinfo.value.errno == errno.ENOSPC
     assert "could not clean up during OSError" in caplog.text
     assert "Input/output error" in caplog.text
+
+
+def test_a_copy_that_gathers_its_refusals_is_named_by_the_first(tmp_path: Path):
+    """``copytree`` tries every file, then raises what it could not copy all together.
+
+    Given as its own text that is a list's repr; the refusal reads as the first file the
+    copy could not write, in the filesystem's words, and how many more there were.
+    """
+    destination = tmp_path / "step1" / "0" / "tensors"
+    rows = [
+        (
+            str(tmp_path / f"{name}.npz"),
+            str(destination / f"{name}.npz"),
+            f"[Errno 28] No space left on device: '{destination / name}.npz'",
+        )
+        for name in ("hessian", "gradient")
+    ]
+    with pytest.raises(OutputTreeError) as two, chemrefine_io.tree_write(destination):
+        raise shutil.Error(rows)
+    with pytest.raises(OutputTreeError) as one, chemrefine_io.tree_write(destination):
+        raise shutil.Error(rows[:1])
+    assert str(two.value) == f"cannot write {destination}: {rows[0][2]} (and 1 more)"
+    assert str(one.value) == f"cannot write {destination}: {rows[0][2]}"

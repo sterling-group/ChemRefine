@@ -18,6 +18,7 @@ orchestrator never imports a concrete engine directly.
 from __future__ import annotations
 
 import contextlib
+import errno
 import json
 import logging
 import os
@@ -37,7 +38,7 @@ from ase import Atoms
 from chemrefine import filtering, ids, io, slurm
 from chemrefine.config import Config, StepConfig
 from chemrefine.engines import preflight_backends, preflight_steps
-from chemrefine.errors import ConfigError, NoUsableCacheError, RunLockError
+from chemrefine.errors import ConfigError, NoUsableCacheError, OutputTreeError, RunLockError
 from chemrefine.quantities import DEFAULT_TEMPERATURE_K
 from chemrefine.state import PipelineState, Structure
 
@@ -273,49 +274,63 @@ def _reclaim_stale(lock: Path, holder: tuple[str, int, str]) -> bool:
     both acquire, which is the one state the lock exists to prevent. ``os.replace`` moves
     the inode to a per-pid claim name instead: exactly one process wins the rename (atomic
     on POSIX, and on NFS where this tree lives), and the loser sees
-    :class:`FileNotFoundError` and re-reads whatever now holds the path.
+    :class:`FileNotFoundError` and re-reads whatever now holds the path. Any other refusal
+    of the rename — a sticky directory guarding another account's lock, a read-only
+    mount — is the output tree's :class:`~chemrefine.errors.OutputTreeError`.
 
     The claim is then verified against ``holder`` — the record that justified it. Between
     the caller's read and the rename, another process can have completed its *own* reclaim
     **and** created a fresh live lock at the same path, and the rename cannot tell those
     apart. A claim whose record no longer matches is therefore put back with ``os.link``,
-    the atomic fail-if-exists primitive. If a third process created a lock in that window,
-    the link fails and the restore is impossible: the swept-up driver is already running
-    with no lock on the path, beside the third one, and nothing here can un-overlap them.
-    That residue is reported rather than swallowed — an error names both drivers, and the
-    claim file is kept as the only surviving copy of the swept-up record. Either way the
-    reclaim is reported as not-ours, and the caller's next pass answers to whatever the
-    path now holds.
+    the atomic fail-if-exists primitive. When the restore fails, the swept-up driver is
+    already running with no lock on the path, and nothing here can un-overlap it. That
+    residue is said rather than swallowed (:func:`_unrestored`): which run it is, and that
+    the claim file is kept as the only surviving copy of its record. A third driver's lock
+    on the path is the ordinary failure: the residue is logged, the reclaim is reported as
+    not-ours, and the caller's next pass answers to that lock. Any other refusal of the
+    restore stops the run as the output tree's, its refusal carrying the residue and what
+    to do about it, where a next pass would link this driver's own lock into the path it
+    emptied, beside the driver it swept up.
     """
     claim = lock.with_name(f"{RUN_LOCK_NAME}.reclaim.{os.getpid()}")
-    try:
-        lock.replace(claim)
-    except FileNotFoundError:
-        return False
+    with io.tree_write(lock):
+        try:
+            lock.replace(claim)
+        except FileNotFoundError:
+            return False
     swept = _lock_holder(claim)
     if swept != holder:
         try:
-            os.link(claim, lock)
-        except OSError:
-            # The restore lost to a third driver's fresh lock. The swept-up driver is
-            # already running unlocked beside it and nothing here can un-overlap them,
-            # so the residue is reported — loudly — and the claim survives as the only
-            # remaining copy of the swept-up record.
-            current = _lock_holder(lock)
-            logger.error(
-                "run lock %s: a stale-lock reclaim swept up a live lock and could not "
-                "restore it (the path is now held by %s); the swept-up run %s may be "
-                "sharing this tree — its record is kept at %s",
-                lock,
-                f"pid {current[1]} on {current[0]}" if current else "an unreadable lock",
-                f"(pid {swept[1]} on {swept[0]}, started {swept[2]})" if swept else "(unreadable)",
-                claim,
-            )
-            return False
-        claim.unlink(missing_ok=True)
+            with io.tree_write(lock):
+                try:
+                    os.link(claim, lock)
+                except FileExistsError:
+                    current = _lock_holder(lock)
+                    logger.error(
+                        "run lock %s: a stale-lock reclaim swept up a live lock and could not "
+                        "restore it, the path now being held by %s, so two drivers may share "
+                        "this tree; %s",
+                        lock,
+                        f"pid {current[1]} on {current[0]}" if current else "an unreadable lock",
+                        _unrestored(claim, swept),
+                    )
+                    return False
+        except OutputTreeError as e:
+            raise OutputTreeError(
+                f"{e}. That link was putting back a live lock a stale-lock reclaim had swept "
+                f"up: {_unrestored(claim, swept)}. Wait for that run to end, or stop it, "
+                f"before running the command again."
+            ) from e.__cause__
+        io.remove_tree_file(claim)
         return False
-    claim.unlink(missing_ok=True)
+    io.remove_tree_file(claim)
     return True
+
+
+def _unrestored(claim: Path, swept: tuple[str, int, str] | None) -> str:
+    """What a swept-up live lock that could not be put back leaves: its run and its record."""
+    who = f"pid {swept[1]} on {swept[0]}, started {swept[2]}" if swept else "unreadable"
+    return f"the run it belongs to ({who}) holds no lock, and its record is kept at {claim}"
 
 
 @contextlib.contextmanager
@@ -327,8 +342,9 @@ def _sigterm_unwinds() -> Generator[None]:
     stay behind (stranding a cross-host resume on a lock nobody can probe) and the local
     jobs would keep burning their cores. Raising :class:`SystemExit` from the handler makes
     the signal an ordinary exception at whatever bytecode is executing: :func:`run_lock`'s
-    ``finally`` releases the lock, :func:`chemrefine.engines._execution.run_batch`'s
-    ``finally`` reaps the local jobs, and ``atexit`` still fires. ``143`` is the
+    ``finally`` releases the lock (a release the filesystem refuses is logged beside the
+    ``143``, never raised over it), :func:`chemrefine.engines._execution.run_batch`'s
+    unwind reaps the local jobs, and ``atexit`` still fires. ``143`` is the
     conventional ``128+SIGTERM`` status, so the driver's exit code still says what stopped
     it. A genuine SIGKILL remains unhandleable — the same-host dead-pid reclaim stays as the
     net for that.
@@ -351,6 +367,74 @@ def _sigterm_unwinds() -> Generator[None]:
         signal.signal(signal.SIGTERM, previous)
 
 
+_LINKS_REFUSED = frozenset({errno.EPERM, errno.EOPNOTSUPP, errno.ENOSYS, errno.EXDEV})
+"""What ``os.link`` answers on a filesystem that cannot link the run lock into place at all.
+
+vfat and exfat answer ``EPERM``; some FUSE and SMB mounts ``EOPNOTSUPP`` or ``ENOSYS``; a
+union mount that would put the link on another branch than its source, ``EXDEV``. Such a
+filesystem can never hold the lock, which is the lock's own refusal,
+:class:`~chemrefine.errors.RunLockError`. Any other refusal of the link — a full disk or
+quota, a read-only mount — is the output tree refusing a write, as for every write the run
+makes.
+"""
+
+
+def _link_claim(claim: Path, lock: Path, output_dir: Path) -> None:
+    """Link the complete record ``claim`` into place as ``lock``, or refuse while one stands.
+
+    ``FileExistsError`` is the lock being held, the ordinary answer, decided past the link:
+    a same-host holder that is dead is reclaimed (:func:`_reclaim_stale`) — one attempt per
+    process, won or lost, since a lost claim means another driver got there first and the
+    next pass answers to its lock — and any other holder is refused by name as
+    :class:`~chemrefine.errors.RunLockError`. So is a filesystem that cannot hard-link at
+    all (:data:`_LINKS_REFUSED`); any other refusal of the link is the output tree's
+    (:func:`chemrefine.io.tree_write`).
+    """
+    reclaimed = False
+    while True:
+        with io.tree_write(lock):
+            try:
+                os.link(claim, lock)
+                return
+            except FileExistsError:
+                pass
+            except OSError as e:
+                if e.errno not in _LINKS_REFUSED:
+                    raise
+                raise RunLockError(
+                    f"cannot lock {output_dir}: the filesystem refuses hard links "
+                    f"({e}), which the run lock is built on. Put output_dir on a "
+                    f"filesystem that supports them."
+                ) from e
+        # Decided past the handler, so the refusal below carries no FileExistsError in its
+        # traceback.
+        holder = _lock_holder(lock)
+        if holder is not None and holder[0] == socket.gethostname():
+            host, pid, started = holder
+            if not reclaimed and not _pid_alive(pid):
+                reclaimed = True
+                if _reclaim_stale(lock, holder):
+                    logger.warning(
+                        "reclaiming stale run lock %s (pid %d on %s, started %s, now dead)",
+                        lock,
+                        pid,
+                        host,
+                        started,
+                    )
+                continue
+        raise RunLockError(
+            f"another ChemRefine run holds this output tree: {lock} "
+            + (
+                f"names pid {holder[1]} on {holder[0]}, started {holder[2]}"
+                if holder is not None
+                else "exists but is unreadable"
+            )
+            + ". Two drivers on one tree archive and resubmit each other's work, so "
+            "this run stops here. Wait for that run to finish — or, if it is known "
+            "dead (e.g. killed on another node), delete the lock file and retry."
+        )
+
+
 @contextlib.contextmanager
 def run_lock(output_dir: Path) -> Generator[None]:
     """Hold ``output_dir`` for one driver; raise :class:`RunLockError` if another has it.
@@ -364,10 +448,12 @@ def run_lock(output_dir: Path) -> Generator[None]:
 
     **Why a pidfile and not ``flock``.** The output tree lives on a shared filesystem on
     HPC, where ``flock`` semantics are the least reliable part of NFS; a fail-if-exists
-    ``os.link`` is atomic on every filesystem that offers it, and one that does not (a
-    vfat or exfat drive, some FUSE and SMB mounts) is refused by name rather than being
-    left to raise from inside the claim. The cost is that a lock can outlive a killed
-    driver.
+    ``os.link`` is atomic on every filesystem that offers it. One that does not (a vfat or
+    exfat drive, some FUSE and SMB mounts) is refused by name, by the errno such a mount
+    answers (:data:`_LINKS_REFUSED`); any other refusal of the claim or the link — a full
+    disk or a read-only mount — is the output tree's
+    :class:`~chemrefine.errors.OutputTreeError`, as for every write the run makes. The cost
+    of a pidfile is that a lock can outlive a killed driver.
     :func:`_sigterm_unwinds` narrows that to SIGKILL alone — a ``scancel`` or walltime
     SIGTERM unwinds and releases — and a SIGKILLed holder on *this* host is probed with
     ``os.kill(pid, 0)`` and reclaimed when dead. A holder on another host cannot be probed
@@ -391,13 +477,17 @@ def run_lock(output_dir: Path) -> Generator[None]:
     let a driver whose lock was deleted out from under it (the error message's own advice,
     followed against a run that was in fact alive) remove the *current* holder's lock on
     exit, reopening the tree to a third driver — so the ``finally`` deletes the file only
-    while it still names this process.
+    while it still names this process. A release the filesystem refuses after a run that
+    returned is that run's :class:`~chemrefine.errors.OutputTreeError`; while an exception
+    is on its way out it is logged beside it instead (:func:`chemrefine.io.cleanup`), so a
+    SIGTERM's ``143`` stays ``143``.
 
     **Reentrant by pid**: :func:`chemrefine.recovery.execute` takes the lock around a
     whole action — ``run``'s cache invalidation mutates the tree *before*
     :func:`run` starts — and :func:`run` takes it again for callers that drive the
-    pipeline directly. The inner acquisition sees its own pid in the record and yields
-    without ownership, so the one release still happens at the outermost exit.
+    pipeline directly. The inner acquisition reads its own pid in the lock before it writes
+    anything and yields without ownership: it writes no claim of its own, and the one
+    release still happens at the outermost exit.
 
     **The lock fences drivers, not their jobs.** A dead holder's SLURM jobs run on
     after its lock is reclaimed (and a SIGKILLed holder's local ones too); the leases
@@ -406,82 +496,39 @@ def run_lock(output_dir: Path) -> Generator[None]:
     the tree.
     """
     with _sigterm_unwinds():
-        output_dir.mkdir(parents=True, exist_ok=True)
         lock = output_dir / RUN_LOCK_NAME
+        held = _lock_holder(lock)
+        if held is not None and held[:2] == (socket.gethostname(), os.getpid()):
+            # Ours, taken further out — see "reentrant by pid" above.
+            yield
+            return
+        with io.tree_write(output_dir):
+            output_dir.mkdir(parents=True, exist_ok=True)
         # The record in `_lock_holder`'s field order, so the release below compares whole.
         me = (socket.gethostname(), os.getpid(), datetime.now(UTC).isoformat(timespec="seconds"))
         # Complete on disk before the lock exists — see "the record and the lock are one
         # operation" above. `os.link` is the fail-if-exists primitive `_reclaim_stale`
         # already relies on; exactly one claimant's link lands.
         claim = lock.with_name(f"{RUN_LOCK_NAME}.claim.{me[1]}")
-        reclaimed = False
         try:
-            claim.write_text(
-                json.dumps({"pid": me[1], "host": me[0], "started": me[2]}), encoding="utf-8"
-            )
-            while True:
-                try:
-                    os.link(claim, lock)
-                    break
-                except FileExistsError:
-                    holder = _lock_holder(lock)
-                except OSError as e:
-                    # Not "held by someone" but "this filesystem cannot hold a lock at
-                    # all": a mount that refuses hard links (vfat/exfat, some FUSE and SMB
-                    # shares). Named as the lock's own refusal, with its exit code, rather
-                    # than escaping as a traceback from inside the claim.
-                    raise RunLockError(
-                        f"cannot lock {output_dir}: the filesystem refuses hard links "
-                        f"({e}), which the run lock is built on. Put output_dir on a "
-                        f"filesystem that supports them."
-                    ) from e
-                # Every decision about a held lock is made here, past the handler, on purpose.
-                # Inside the handler, the reentrant `yield` would run the whole inner action
-                # with the FileExistsError still active — so any error the action raised would
-                # chain to it, and every traceback that escaped a run would open with "During
-                # handling of the above exception (FileExistsError: … run.lock)", pointing the
-                # reader at the lock before the real error. Out here the exception is over,
-                # and the refusal below needs no `from None` to keep it out of its traceback.
-                if holder is not None and holder[0] == socket.gethostname():
-                    host, pid, started = holder
-                    if pid == os.getpid():
-                        # Ours, taken further out — see "reentrant by pid" above.
-                        yield
-                        return
-                    if not reclaimed and not _pid_alive(pid):
-                        # One attempt per process, won or lost: a lost claim means another
-                        # driver got there first, and the next pass answers to its lock.
-                        reclaimed = True
-                        if _reclaim_stale(lock, holder):
-                            logger.warning(
-                                "reclaiming stale run lock %s (pid %d on %s, started %s, now dead)",
-                                lock,
-                                pid,
-                                host,
-                                started,
-                            )
-                        continue
-                raise RunLockError(
-                    f"another ChemRefine run holds this output tree: {lock} "
-                    + (
-                        f"names pid {holder[1]} on {holder[0]}, started {holder[2]}"
-                        if holder is not None
-                        else "exists but is unreadable"
-                    )
-                    + ". Two drivers on one tree archive and resubmit each other's work, so "
-                    "this run stops here. Wait for that run to finish — or, if it is known "
-                    "dead (e.g. killed on another node), delete the lock file and retry."
-                )
-        finally:
-            claim.unlink(missing_ok=True)
+            io.write_tree_file(claim, json.dumps({"pid": me[1], "host": me[0], "started": me[2]}))
+            _link_claim(claim, lock, output_dir)
+        except BaseException:
+            with io.cleanup():
+                io.remove_tree_file(claim)
+            raise
         try:
+            # Linked, the claim is a second name for the lock's record. Removed inside the
+            # release's guard, so a refusal here still lets go of the lock just taken.
+            io.remove_tree_file(claim)
             yield
         finally:
             # On success and on failure alike: a raise must not leave the tree locked, and
             # back-to-back runs in one process (tests, notebooks) must each acquire cleanly.
             # Only while the file is still ours — see "release is ownership-checked".
-            if _lock_holder(lock) == me:
-                lock.unlink(missing_ok=True)
+            with io.cleanup():
+                if _lock_holder(lock) == me:
+                    io.remove_tree_file(lock)
 
 
 def require_no_live_jobs(config: Config) -> None:

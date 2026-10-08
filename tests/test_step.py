@@ -18,7 +18,7 @@ from fake_engine import FakeEngine
 from chemrefine import cache, io
 from chemrefine.config import Config, StepConfig
 from chemrefine.engines.api import NmsInputInfo, get_engine
-from chemrefine.errors import CacheError, ChemRefineError, ConfigError
+from chemrefine.errors import CacheError, ChemRefineError, ConfigError, OutputTreeError
 from chemrefine.state import (
     FailureKind,
     FailureRecord,
@@ -109,6 +109,21 @@ def test_build_context_threads_slurm_array():
 # ---------------------------------------------------------------------------
 # run_step end-to-end
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through any mode")
+def test_a_step_directory_the_tree_will_not_create_is_its_refusal(tmp_path: Path):
+    """The step's own directory is its first write, refused as the output tree's."""
+    cfg = _config(tmp_path)
+    cfg.output_dir.mkdir()
+    cfg.output_dir.chmod(0o555)
+    try:
+        with pytest.raises(OutputTreeError) as excinfo:
+            run_step(cfg, cfg.steps[0], _seed_state(["0"]))
+    finally:
+        cfg.output_dir.chmod(0o755)
+    step_dir = step_dir_for(cfg, cfg.steps[0])
+    assert str(excinfo.value) == f"cannot write {step_dir}: Permission denied"
 
 
 def test_run_step_first_run_writes_cache_and_manifest(tmp_path: Path):

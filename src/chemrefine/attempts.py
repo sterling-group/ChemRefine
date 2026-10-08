@@ -20,7 +20,9 @@ The invariant for a sealed attempt: **it holds what was at canonical, and canoni
 calculation.** Only ``attempt*/`` is ever left behind by a seal — folding one attempt into
 another would lose a run's history.
 
-Naming lives in :mod:`chemrefine.ids`; this module only moves and copies.
+Naming lives in :mod:`chemrefine.ids`; this module only moves and copies, each under the
+output tree's net (:func:`chemrefine.io.tree_write`), so one the filesystem refuses names
+its destination, and the source when that is what was refused.
 """
 
 from __future__ import annotations
@@ -29,13 +31,14 @@ import shutil
 from collections.abc import Iterable
 from pathlib import Path
 
-from chemrefine import ids
+from chemrefine import ids, io
 
 
 def begin(structure_dir: Path) -> Path:
     """Create and return the next free ``attemptK/`` under a structure's directory."""
     attempt = ids.next_attempt_dir(structure_dir)
-    attempt.mkdir(parents=True, exist_ok=True)
+    with io.tree_write(attempt):
+        attempt.mkdir(parents=True, exist_ok=True)
     return attempt
 
 
@@ -49,11 +52,14 @@ def seal(structure_dir: Path, attempt_dir: Path) -> None:
 
     ``attempt*/`` sub-directories stay where they are.
     """
-    attempt_dir.mkdir(parents=True, exist_ok=True)
+    with io.tree_write(attempt_dir):
+        attempt_dir.mkdir(parents=True, exist_ok=True)
     for item in structure_dir.iterdir():
         if item.is_dir() and ids.is_attempt_dir(item):
             continue
-        shutil.move(str(item), str(attempt_dir / item.name))
+        destination = attempt_dir / item.name
+        with io.tree_write(destination):
+            shutil.move(str(item), str(destination))
 
 
 def archive(structure_dir: Path) -> Path:
@@ -117,9 +123,14 @@ def promote(attempt_dir: Path, *, step: int, source_id: str, target_id: str) -> 
         if ids.is_attempt_dir(item):
             continue
         if item.is_dir():
-            shutil.copytree(item, attempt_dir.parent / item.name, dirs_exist_ok=True)
+            destination = attempt_dir.parent / item.name
+            with io.tree_write(destination):
+                shutil.copytree(item, destination, dirs_exist_ok=True)
             continue
         if not item.name.startswith(stem):
             continue
-        renamed = ids.structure_stem(step, target_id) + item.name[len(stem) :]
-        shutil.copy2(item, attempt_dir.parent / renamed)
+        destination = attempt_dir.parent / (
+            ids.structure_stem(step, target_id) + item.name[len(stem) :]
+        )
+        with io.tree_write(destination):
+            shutil.copy2(item, destination)

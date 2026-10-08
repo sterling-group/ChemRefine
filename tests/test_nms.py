@@ -10,6 +10,7 @@ minima, ``random`` fan-out, round-1/round-2 auto-retry, rebuild + reattempt).
 
 from __future__ import annotations
 
+import os
 from collections import namedtuple
 from dataclasses import replace
 from pathlib import Path
@@ -21,7 +22,7 @@ from ase import Atoms
 from chemrefine import cache, lifecycle, nms
 from chemrefine.config import Config, MinSample, StepConfig
 from chemrefine.engines.api import NmsInputInfo
-from chemrefine.errors import CacheError, ConfigError
+from chemrefine.errors import CacheError, ConfigError, OutputTreeError
 from chemrefine.ids import structure_artifact_path
 from chemrefine.state import (
     Failure,
@@ -1160,3 +1161,27 @@ def test_an_untrusted_passthrough_disowns_its_resolution_sidecar(tmp_path: Path)
         nms.resume_nms(engine, round1, [], ctx, trust_resolutions=True).survivors[0].resolved_from
         is None
     )
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through any mode")
+def test_a_label_the_tree_will_not_let_go_of_refuses_the_resume(tmp_path: Path):
+    """A distrusted label the filesystem will not remove refuses the resume by name.
+
+    Left on disk it would be worn again by the next resume that trusts what it finds, so it
+    is not skipped quietly: the output tree's refusal names it, and it stays where it was.
+    """
+    engine = _FakeNms(freqs={"0": _Freq(imaginary={}, modes=None)})  # at target: passthrough
+    ctx = _ctx(tmp_path, (_h2("0"),))
+    round1 = _seed_round1(engine, ctx)
+    attempt = ctx.step_dir / "0" / "attempt1"
+    attempt.mkdir(parents=True)
+    nms._write_resolution(attempt, "0_m5_pos")
+    attempt.chmod(0o555)
+    try:
+        with pytest.raises(OutputTreeError) as excinfo:
+            nms.resume_nms(engine, round1, [], ctx, trust_resolutions=False)
+    finally:
+        attempt.chmod(0o755)
+    label = attempt / "resolution.json"
+    assert str(excinfo.value) == f"cannot write {label}: Permission denied"
+    assert label.is_file()

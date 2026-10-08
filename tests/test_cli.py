@@ -346,6 +346,30 @@ def test_a_cache_run_cannot_discard_exits_with_the_output_trees_code(
     )
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through any mode")
+def test_an_output_dir_the_run_cannot_create_exits_with_the_output_trees_code(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    """The first write every command makes, the output tree itself, refuses with code 11.
+
+    An ``output_dir`` under a directory this account cannot write: one line naming the
+    directory, not a traceback with the exit 1 a halted step exits with.
+    """
+    sealed = tmp_path / "sealed"
+    sealed.mkdir()
+    config_path = _write_config(tmp_path, output_dir=str(sealed / "outputs"))
+    sealed.chmod(0o555)
+    try:
+        result = runner.invoke(app, ["run", str(config_path)])
+    finally:
+        sealed.chmod(0o755)
+
+    assert result.exit_code == OutputTreeError.exit_code
+    assert isinstance(result.exception, SystemExit), f"a typed refusal, not {result.exception!r}"
+    outputs = sealed.resolve() / "outputs"
+    assert f"OutputTreeError: cannot write {outputs}: Permission denied" in caplog.text
+
+
 def test_dry_run_does_not_create_outputs(tmp_path: Path):
     config_path = _write_config(tmp_path)
     result = runner.invoke(app, ["run", str(config_path), "--dry-run"])

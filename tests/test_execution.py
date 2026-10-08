@@ -9,6 +9,10 @@ The ORCA-specific submit paths (script contents, job arrays) are covered in
 
 from __future__ import annotations
 
+import errno
+import os
+import subprocess
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import ClassVar
@@ -25,6 +29,7 @@ from chemrefine.errors import (
     ChemRefineError,
     ConfigError,
     JobSubmissionError,
+    OutputTreeError,
     ThrottleTimeoutError,
 )
 from chemrefine.slurm import dispatch
@@ -313,7 +318,7 @@ def test_run_batch_allows_multi_gpu_step_under_slurm(_submit, _finished_jobs, tm
 def test_run_batch_terminates_local_jobs_when_a_submission_fails(tmp_path: Path):
     """A mid-batch failure unwinds through the cleanup, not past it.
 
-    _LOCAL_PROCS is module-global, so without the try/finally any exception between the
+    _LOCAL_PROCS is module-global, so without the unwind any exception between the
     first submit and the drain — a throttle timeout, a submission error, Ctrl-C — leaves real
     background children running. They keep competing for the cores of whatever the user runs
     next, and their log handles stay open.
@@ -428,21 +433,170 @@ def test_a_header_edited_mid_batch_reaches_the_next_batch_not_the_running_one(
     )
 
 
-def test_a_failed_ledger_write_leaves_its_job_in_the_unwinds_sweep(tmp_path: Path):
-    """Registered before it is leased, so the unwind terminates the job it was recording."""
+def _ledger_full_from(job_id: str) -> Callable[[Path, str | Path], Path]:
+    """``Path.replace`` refusing every ledger write from the first one that records ``job_id``.
+
+    The ledger's rename is where its write lands, and the disk stays full afterwards, as a
+    real one does — which is what an unwind's own release meets after the refusal.
+    """
+    real_replace = Path.replace
+    full = False
+
+    def replace(self: Path, target: str | Path) -> Path:
+        nonlocal full
+        if Path(target).name == slurm.ACTIVE_JOBS_NAME:
+            full = full or f'"{job_id}"' in self.read_text(encoding="utf-8")
+            if full:
+                raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC), str(self))
+        return real_replace(self, target)
+
+    return replace
+
+
+def _scancel_answers(answer: object) -> Callable[..., object]:
+    """``subprocess.run`` with ``scancel`` answered by ``answer``; anything else runs for real."""
+    real_run = subprocess.run
+
+    def run(argv, *args, **kwargs):
+        if argv[0] != "scancel":
+            return real_run(argv, *args, **kwargs)
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+    return run
+
+
+def test_a_failed_ledger_write_leaves_its_local_job_in_the_unwinds_sweep(tmp_path: Path):
+    """Registered before it is leased, so the unwind terminates the job it was recording.
+
+    A local job is the unwind's to stop, so the refused write cancels nothing itself: the
+    output tree's refusal goes on as it came.
+    """
     engine = _FakeJobEngine()
-    ctx = _ctx(tmp_path)
+    ctx = _ctx(tmp_path, dispatch="local")
     terminated: list[tuple[str, ...]] = []
     with (
         patch.object(slurm, "submit", return_value="local-1"),
-        patch.object(slurm, "record_leases", side_effect=OSError("disk full")),
+        patch.object(Path, "replace", _ledger_full_from("local-1")),
+        patch.object(dispatch.subprocess, "run", side_effect=_scancel_answers(None)) as run,
         patch.object(
             slurm, "terminate_local_jobs", side_effect=lambda ids=(): terminated.append(tuple(ids))
         ),
-        pytest.raises(OSError, match="disk full"),
+        pytest.raises(OutputTreeError) as refusal,
     ):
         _execution.run_batch(engine, engine.prepare(ctx), ctx)
+    assert str(refusal.value) == (
+        f"cannot write {slurm.lease_path(ctx.step_dir)}: No space left on device"
+    )
     assert terminated == [("local-1",)]
+    assert not [c for c in run.call_args_list if c.args[0][0] == "scancel"]
+
+
+@pytest.mark.parametrize(
+    ("scancel", "said"),
+    [
+        (
+            subprocess.CompletedProcess(["scancel", "4242"], 0, "", ""),
+            "so the run cancelled it (scancel 4242).",
+        ),
+        (
+            subprocess.CalledProcessError(1, "scancel", "", "Unable to contact slurm controller\n"),
+            "cancelling it failed (Unable to contact slurm controller): `scancel 4242`, or "
+            "wait until `squeue -j 4242` no longer lists it, before running the command again.",
+        ),
+        (
+            FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), "scancel"),
+            "cancelling it failed ([Errno 2] No such file or directory: 'scancel'): `scancel 4242`",
+        ),
+    ],
+    ids=["cancelled", "controller-unreachable", "no-scancel"],
+)
+def test_a_slurm_job_whose_lease_cannot_be_written_is_cancelled_or_named(
+    tmp_path: Path, scancel: object, said: str
+):
+    """Accepted but unrecorded, a SLURM job is invisible to the next run's fence.
+
+    The unwind leaves SLURM jobs running because their leases fence the next run; this one
+    has none. So the refused write cancels exactly that job, and the refusal names it and
+    what became of the cancel. The job recorded before it keeps its lease.
+    """
+    engine = _FakeJobEngine()
+    ctx = replace(_ctx(tmp_path, ids=("0", "1"), dispatch="slurm"), max_cores=2)
+    with (
+        patch.object(dispatch, "sbatch_available", return_value=True),
+        patch.object(slurm, "submit", side_effect=["4241", "4242"]),
+        patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids)),
+        patch.object(Path, "replace", _ledger_full_from("4242")),
+        patch.object(dispatch.subprocess, "run", side_effect=_scancel_answers(scancel)) as run,
+        pytest.raises(OutputTreeError) as refusal,
+    ):
+        _execution.run_batch(engine, engine.prepare(ctx), ctx)
+
+    assert [c.args[0] for c in run.call_args_list] == [["scancel", "4242"]]
+    assert str(refusal.value).startswith(
+        f"cannot write {slurm.lease_path(ctx.step_dir)}: No space left on device. SLURM had "
+        "already accepted job 4242, which no ledger records, so "
+    )
+    assert said in str(refusal.value)
+    assert isinstance(refusal.value.__cause__, OSError), "the disk's refusal is the cause"
+    assert [lease.id for lease in slurm.load_leases(ctx.step_dir)] == ["4241"]
+
+
+def test_an_array_chunk_whose_lease_cannot_be_written_is_cancelled_before_any_wait(
+    tmp_path: Path,
+):
+    """The array path has no unwind, so the refused write is the one place to act."""
+    engine = _FakeJobEngine()
+    ctx = _ctx(tmp_path, ids=("0", "1"), slurm_array=True, dispatch="slurm")
+    ok = subprocess.CompletedProcess(["scancel", "4242"], 0, "", "")
+    with (
+        patch.object(dispatch, "sbatch_available", return_value=True),
+        patch("chemrefine.slurm.script._MAX_ARRAY_SIZE", 1),
+        patch.object(slurm, "submit_array", side_effect=["4241", "4242"]),
+        patch.object(slurm, "wait_for_jobs") as wait,
+        patch.object(Path, "replace", _ledger_full_from("4242")),
+        patch.object(dispatch.subprocess, "run", side_effect=_scancel_answers(ok)) as run,
+        pytest.raises(OutputTreeError, match=r"so the run cancelled it \(scancel 4242\)"),
+    ):
+        _execution.run_batch(engine, engine.prepare(ctx), ctx)
+    assert [c.args[0] for c in run.call_args_list] == [["scancel", "4242"]]
+    wait.assert_not_called()
+    assert [lease.id for lease in slurm.load_leases(ctx.step_dir)] == ["4241"]
+
+
+def test_a_release_the_tree_refuses_does_not_replace_the_error_that_unwound_the_batch(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    """The batch's own error is its answer; a ledger the disk will not remove is logged.
+
+    The unwind drops the killed local job's lease on the read-only disk it may be stopping
+    for, and that refusal must not take the place of the submission failure in flight.
+    """
+    engine = _FakeJobEngine()
+    ctx = _ctx(tmp_path, ids=("0", "1"), dispatch="local")
+    ledger = slurm.lease_path(ctx.step_dir)
+    real_unlink = Path.unlink
+
+    def read_only(self: Path, missing_ok: bool = False) -> None:
+        if self == ledger:
+            raise OSError(errno.EROFS, os.strerror(errno.EROFS), str(self))
+        real_unlink(self, missing_ok=missing_ok)
+
+    with (
+        patch.object(
+            slurm, "submit", side_effect=["local-1", JobSubmissionError("sbatch refused the job")]
+        ),
+        patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set()),
+        patch.object(slurm, "terminate_local_jobs"),
+        patch.object(Path, "unlink", read_only),
+        pytest.raises(JobSubmissionError),
+    ):
+        _execution.run_batch(engine, engine.prepare(ctx), ctx)
+    assert (
+        f"could not clean up during JobSubmissionError: cannot write {ledger}: "
+        "Read-only file system" in caplog.text
+    )
 
 
 def test_run_batch_touches_nothing_on_the_happy_path(tmp_path: Path):
@@ -485,8 +639,8 @@ def test_run_batch_raises_when_jobs_outlive_the_configured_timeout(
 
     `Throttler` has always accepted `max_wait_seconds` and `ThrottleTimeoutError` has always
     owned exit code 8 — but no caller ever passed a deadline, so the error was unreachable
-    and a stuck job blocked the pipeline indefinitely with no diagnostic. The `finally` that
-    reaps local jobs could not fire either, because nothing raised.
+    and a stuck job blocked the pipeline indefinitely with no diagnostic. The unwind that
+    reaps local jobs could not run either, because nothing raised.
     """
     engine = _FakeJobEngine()
     ctx = replace(_ctx(tmp_path), job_timeout_seconds=0.05)
