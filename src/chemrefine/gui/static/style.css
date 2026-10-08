@@ -10,9 +10,10 @@
   --ok: #1e7d38;
   --warn: #9a6700;
   --err: #b33131;
-  /* The kit's own constant, from tools/gen_logo.py:68 (beside REFINE_TEAL #3f9b93,
-     which nothing here uses yet). --accent stays as it is: the title is the only
-     thing retinted, because it is the only thing sitting against the mark. */
+  /* CHEM_NAVY in tools/gen_logo.py, the navy the lockup draws "Chem" in. The theme-color
+     meta and the manifest carry it too, and tests/test_gen_logo.py holds every copy to the
+     constant. --accent is not the brand navy: only the title wears this one, because only
+     the title sits against the mark. */
   --brand-navy: #25567d;
 }
 

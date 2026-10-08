@@ -1,11 +1,12 @@
 """``tools/gen_logo.py`` takes no answer on trust and replaces no file until the kit is staged.
 
 The generator is a developer tool, not the package, and CI never runs inkscape: its renders
-are byte-stable only on the authoring toolchain. These cases pin what holds everywhere. The
-SVGs Python draws alone are the committed ones, and no stroke is cut into a piece that draws
-nothing. The tables pass the audit in ``tools/check_logo.py``, which never reports a gate it
-did not run as passed. A program's answer counts as a product only once its own bytes say
-so, since an exit status of 0 is no evidence of success. And publishing replaces no file
+are byte-stable only on the toolchain the generator names under "Regenerating". These cases
+pin what holds everywhere. The SVGs Python draws alone are the committed ones, and no stroke
+is cut into a piece that draws nothing. The tables pass the audit in ``tools/check_logo.py``,
+which never reports a gate it did not run as passed. The navy the lockup draws and the GUI's
+page spells is ``CHEM_NAVY``. A program's answer counts as a product only once its own bytes
+say so, since an exit status of 0 is no evidence of success. And publishing replaces no file
 until every one is staged. Fake programs on ``PATH`` and throwaway roots stand in for the
 toolchain, so none of the cases starts inkscape.
 """
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 import errno
 import importlib.util
+import json
 import os
 import re
 import shlex
@@ -232,6 +234,37 @@ def test_the_audit_opens_the_file_the_reference_names_and_raises_what_fails_in_t
     with pytest.raises(ImportError) as raised:
         check_logo.main()
     assert str(raised.value) == f"opened {ref}"
+
+
+def test_the_navy_the_lockup_draws_and_the_page_spells_is_chem_navy():
+    """The lockup draws "Chem" in ``CHEM_NAVY``, and the GUI's page spells that navy by hand.
+
+    Nothing the page loads can import the constant, so the stylesheet's ``--brand-navy``, the
+    ``theme-color`` meta and the manifest's ``theme_color`` each carry a copy. The kit's copy
+    is read from the lockup's source, which is the generator's own markup. A navy changed in
+    the generator fails on the lockup until the kit is regenerated, and on each page copy
+    until that is changed too; a copy edited on its own fails by name.
+    """
+    gen_logo = _load()
+    navy = gen_logo.CHEM_NAVY.lower()
+    brand = gen_logo.GUI_BRAND
+    lockup = (gen_logo.ASSETS / "logo-wordmark-src.svg").read_text(encoding="utf-8")
+    sheet = (brand.parent / "style.css").read_text(encoding="utf-8")
+    page = (brand.parent / "index.html").read_text(encoding="utf-8")
+    manifest = json.loads((brand / "site.webmanifest").read_text(encoding="utf-8"))
+    copies = {
+        'logo-wordmark-src.svg "Chem"': re.findall(r'<tspan fill="(#\w+)">Chem</tspan>', lockup),
+        "style.css --brand-navy": re.findall(r"--brand-navy:\s*(#\w+);", sheet),
+        "index.html theme-color": re.findall(r'<meta name="theme-color" content="(#\w+)">', page),
+        "site.webmanifest theme_color": [manifest.get("theme_color")],
+    }
+    drifted = {
+        name: found for name, found in copies.items() if {str(c).lower() for c in found} != {navy}
+    }
+    assert drifted == {}, (
+        f"CHEM_NAVY is {navy}, but these spell the navy otherwise or not at all: {drifted} — "
+        "after a change to CHEM_NAVY, regenerate the kit and change the page's copies with it"
+    )
 
 
 def test_inkscape_reads_the_svg_on_stdin_and_is_handed_no_path(gen_logo, tmp_path, monkeypatch):

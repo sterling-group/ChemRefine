@@ -355,10 +355,10 @@ def test_the_guis_brand_files_are_the_kits_own_bytes():
 
     Byte-identity is the right assertion *here*. Against a fresh build it is right only for
     the SVGs Python draws alone, which ``tests/test_gen_logo.py`` holds to the generator:
-    inkscape's renders are byte-stable only on the authoring toolchain, which is why CI
-    never runs inkscape. Two copies of one run are a different claim from two runs. What
-    this catches is the ordinary accident — the kit regenerated and only one root
-    committed, or a brand file hand-edited in place.
+    inkscape's renders are byte-stable only on the toolchain ``tools/gen_logo.py`` names
+    under "Regenerating", which is why CI never runs inkscape. Two copies of one run are a
+    different claim from two runs. What this catches is the ordinary accident — the kit
+    regenerated and only one root committed, or a brand file hand-edited in place.
     """
     brand = STATIC / "brand"
     docs_assets = _REPO_ROOT / "docs" / "assets"

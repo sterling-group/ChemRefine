@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Mathematical audit of the measured curve tables in gen_logo.py.
 
-Run after ANY edit to the tables, before regenerating the kit:
-
-    python3 tools/check_logo.py
+When to run it and what the run needs are under "Regenerating" in
+gen_logo.py's docstring.
 
 The generator only emits; this file carries the constraints that make the
 tables a sound drawing rather than a pile of numbers:

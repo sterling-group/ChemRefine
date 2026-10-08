@@ -42,12 +42,6 @@ legibility only, and only the 16/32/48 rasters come from it - the 180 px
 apple-touch icon and the 192/512 launcher tiles rasterize from the display
 mark, or they wear tab-sized stroke weights at tile size.
 logo-header.svg is the white mono line-art for the docs header bar.
-Requires inkscape (text->path + PNG export; authored with Inkscape 1.4.4),
-Pillow (favicon.ico) and real Arial Bold for the wordmark, as fontconfig's
-fc-match resolves it; main() checks all of them before anything renders.
-inkscape's renders are byte-stable only on the authoring toolchain, so CI never
-runs inkscape; the SVGs Python draws alone (drawn_svgs) need no toolchain, and
-the suite holds the committed ones to them.
 
 Two output roots, one writer
 ----------------------------
@@ -61,13 +55,46 @@ page ground, and
 the icon family. No dark variant: the GUI has no dark mode. Both roots are
 written from the same bytes in the same run, so they are byte-identical by
 construction and a test holds them that way. That is a different claim from
-"a rebuild reproduces the committed bytes", which CI can check only for the
-SVGs Python draws alone.
+"a rebuild reproduces the committed bytes"; Regenerating says where that one
+holds.
 
 Regenerating
 ------------
-    python3 tools/check_logo.py   # audit the tables after ANY edit
-    python3 tools/gen_logo.py     # rebuild every asset (runs from anywhere)
+The kit is generated and committed, never edited by hand. After any edit to
+what this file draws - the tables, the palette or the code - run these from
+the repository root, and commit the files the last one lists with the edit:
+
+    export CHEMREFINE_LOGO_REF=/path/to/chemrefine_logo.png
+    python tools/check_logo.py    # the audit, resemblance gate included
+    python tools/gen_logo.py      # the kit, into both roots
+    git status --short docs/assets src/chemrefine/gui/static/brand
+
+CHEMREFINE_LOGO_REF names the original raster, which the audit's resemblance
+gate compares the drawing with. It is not in the repository: REFERENCE_URL
+serves it, and its sha256 is
+
+    62a8480eeef13bd92956b6258b1225de678a3aee1a23cc2f64b55f74bb2e283d
+
+`python` is the interpreter of a development install (CONTRIBUTING.md, Dev
+setup), which has the numpy and Pillow that gate needs: activate its
+environment, or call it by path. The generator needs Pillow as well
+(favicon.ico), inkscape (it measures the wordmark, flattens it to outlines
+and exports every PNG) and real Arial Bold for the wordmark, as fontconfig's
+fc-match resolves it; main() checks all of them before anything renders.
+
+The SVGs Python draws alone (drawn_svgs) need no toolchain, and the suite
+holds the committed ones to them. Every other file needs inkscape, and those
+reproduce byte for byte only on the authoring toolchain: Inkscape 1.4.4
+(dcaf3e7d9e, 2026-05-05), snap revision 11530 on amd64, with Arial Bold 2.82.
+There a rebuild with no edit leaves git status empty; another build can move
+raster and outline bytes without changing the drawing, so CI never runs
+inkscape. main() prints the build it renders with, and a kit committed from
+another toolchain names that one here.
+
+The tables in the block the formatter skips are the output of a bake that
+lives outside this repository, with the measurements it reads. A re-bake
+replaces that block whole and nothing else in this file; everything outside
+it, the palette and the lockup proportions included, is edited here.
 """
 
 from __future__ import annotations
@@ -125,7 +152,7 @@ FILL_STOPS = (
 FACE_STOPS = ((0.000, "#3478a3"), (0.786, "#28608a"), (1.000, "#1d4a73"))
 
 # Dark-scheme remap: raise only what melts into a slate page.
-DARK_MAP = {"#1d4a75": "#2b689c", "#25567d": "#7fb0d8", "#1d4a73": "#2a659a"}
+DARK_MAP = {FILL_STOPS[0][1]: "#2b689c", CHEM_NAVY: "#7fb0d8", FACE_STOPS[-1][1]: "#2a659a"}
 
 FONT = "Arial"  # real Arial Bold required; _require_font() refuses lookalikes
 FONT_WEIGHT = "bold"
