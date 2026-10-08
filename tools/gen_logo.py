@@ -209,7 +209,7 @@ A_ANCHORS = (  # (x, y, tangent deg, len_in, len_out): left tip, apex, saddle, c
     (2327.0, 520.0, 17.89, 335.2, 0.0),
 )
 
-B_ANCHORS = (  # split off A, dive shoulder, valley, wing, tail tip
+B_ANCHORS = (  # split off A, valley, wing, tail tip
     (548.0, 17.0, 0.00, 0.0, 144.8),
     (1240.6, 820.4, 0.00, 494.8, 397.0),
     (2088.3, 451.2, 0.00, 249.6, 82.8),
@@ -363,9 +363,14 @@ def _line_seg(p, q):
 
 
 def split_chain_at_x(segs, x_target):
-    """The sub-chain of *segs* left of x_target (splitting the containing segment)."""
+    """The sub-chain of *segs* left of x_target (splitting the containing segment).
+
+    A segment that starts at x_target or right of it adds nothing: split_at_x would cut
+    it at its own start, leaving a piece that starts and ends at one point."""
     left = []
     for seg in segs:
+        if seg[0][0] >= x_target:
+            break
         if seg[3][0] <= x_target:
             left.append(seg)
         else:
@@ -393,9 +398,9 @@ def _subchain(segs, xa, xb):
 def sheet_path():
     """The closed sheet region between the strokes.
 
-    B splits from A at SPLIT (its cap sits on A's stroke) and the fill closes
-    again where the centerlines come within one stroke width (WEDGE_X);
-    outside that span the sheet is bounded by single merged lines."""
+    B splits from A at B's first anchor (its cap sits on A's stroke) and the
+    fill closes again where the centerlines come within one stroke width
+    (WEDGE_X); outside that span the sheet is bounded by single merged lines."""
     sx = B_SEGS[0][0][0]
     a_chain = _subchain(A_SEGS, sx, WEDGE_X)
     b_chain = split_chain_at_x(B_SEGS, WEDGE_X)
@@ -405,14 +410,19 @@ def sheet_path():
     return _d(segs, close=True)
 
 
-def face_path():
-    """The flank face: ascent, A over the apex to the split, B's crest+dive to
-    the junction, ground line home."""
+def face_segs():
+    """The flank face's outline: the ascent, A from the apex to where B splits off it
+    (nothing when B splits at the apex itself), B's dive to the junction, the ground
+    line home."""
     sx = B_SEGS[0][0][0]
     a_top = _subchain(A_SEGS, A_SEGS[0][3][0], sx)
     b_left = split_chain_at_x(B_SEGS, GROUND_SEGS[-1][3][0])
-    segs = [A_SEGS[0]] + a_top + b_left + [_rev(s) for s in reversed(GROUND_SEGS)]
-    return _d(segs, close=True)
+    return [A_SEGS[0]] + a_top + b_left + [_rev(s) for s in reversed(GROUND_SEGS)]
+
+
+def face_path():
+    """face_segs() as closed path data."""
+    return _d(face_segs(), close=True)
 
 
 def mark_extents(sw=SW_OUTLINE):

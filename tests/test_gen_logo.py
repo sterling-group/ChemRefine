@@ -2,10 +2,11 @@
 
 The generator is a developer tool, not the package, and CI never runs inkscape: its renders
 are byte-stable only on the authoring toolchain. These cases pin what holds everywhere. The
-SVGs Python draws alone are the committed ones. A program's answer counts
-as a product only once its own bytes say so, since an exit status of 0 is no evidence of
-success. And publishing replaces no file until every one is staged. Fake programs on ``PATH``
-and throwaway roots stand in for the toolchain, so none of the cases starts inkscape.
+SVGs Python draws alone are the committed ones, and no stroke is cut into a piece that draws
+nothing. A program's answer counts as a product only once its own bytes say so, since an
+exit status of 0 is no evidence of success. And publishing replaces no file until every one
+is staged. Fake programs on ``PATH`` and throwaway roots stand in for the toolchain, so none
+of the cases starts inkscape.
 """
 
 from __future__ import annotations
@@ -101,6 +102,24 @@ def test_the_svgs_python_draws_alone_are_the_committed_ones():
     )
     assert stale == [], (
         f"committed SVGs that are not what the generator draws: {stale} — rerun tools/gen_logo.py"
+    )
+
+
+def test_a_stroke_cut_where_a_segment_starts_keeps_none_of_that_segment():
+    """Cut at its own start, a segment leaves a piece that starts and ends at one point.
+
+    The flank face's outline cuts A at the apex, where A's second segment starts, so such a
+    piece would go into every SVG that draws the face, as a curve that goes nowhere.
+    """
+    gen_logo = _load()
+    wrong = [
+        f"{name} at x={seg[0][0]}"
+        for name, segs in (("A", gen_logo.A_SEGS), ("B", gen_logo.B_SEGS))
+        for i, seg in enumerate(segs)
+        if gen_logo.split_chain_at_x(segs, seg[0][0]) != list(segs[:i])
+    ]
+    assert wrong == [], (
+        f"cuts at a segment's start that return more or less than the segments before it: {wrong}"
     )
 
 
