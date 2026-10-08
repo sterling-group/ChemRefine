@@ -77,13 +77,15 @@ for those and the full map.
   (minimum-vs-TS from cached imaginary modes) and `analyze_mode` (which atoms and
   bonds a normal mode moves — reaction-coordinate validation). Contracts the tools
   pin down: `start_run` refuses a `target` carrying a `run`/`resume` subcommand,
-  `run_status(log_tail_lines=0)` returns an empty tail, a disk failure from
-  `save_config`/`write_template`/`scaffold_templates` surfaces as the documented
-  `ConfigError`, and a `build_structures` call owns its output directory's seed
-  set — earlier `structure_*.xyz` are cleared and a call that fails partway
-  leaves none behind, so `input:` directory-seeding reads exactly what the call
-  reported. The packaged operating guide ships as the `chemrefine://guide`
-  resource, with its vocabulary pinned to the code by tests.
+  `run_status(log_tail_lines=0)` returns an empty tail, a file the filesystem
+  refuses to `save_config`, `write_template`, `scaffold_templates` or
+  `build_structures` is the documented write refusal (`WriteRefusedError`, exit
+  code 11) naming it, and a `build_structures` call owns its output directory's
+  seed set — earlier `structure_*.xyz` are cleared and a call that stops
+  partway, a full disk included, leaves none behind, so `input:`
+  directory-seeding reads exactly what the call reported. The packaged
+  operating guide ships as the `chemrefine://guide` resource, with its
+  vocabulary pinned to the code by tests.
 - **Workflow-builder GUI** (`chemrefine gui`, extra `chemrefine[gui]`): a local
   two-pane web app (127.0.0.1 behind a per-session token, which the page moves out
   of the launch URL into the tab's `sessionStorage` on load so a bookmark or a
@@ -200,9 +202,10 @@ for those and the full map.
   preflight hook without its sentence.
 - Subcommand CLI — `run`, `resume`, `rerun [step]`, `rerun-errors [step]`,
   `rebuild-cache [step]`, `rebuild-nms [step]` — with documented process
-  exit codes per failure class, among them `11` for a write the run's output
-  tree refuses (a full disk or quota, a read-only mount, a directory this
-  account cannot write); the refusal names the file.
+  exit codes per failure class, among them `11` for a write the filesystem
+  refuses (a full disk or quota, a read-only mount, a directory this account
+  cannot write) — in the run's output tree, or of the templates `scaffold`
+  writes; the refusal names the file.
 - Per-step result cache: filter-only (`sample:`) edits refilter cached results
   without re-running calculations, and a step cache that is corrupt or cannot
   be read is treated as missing, where v1.3.1 stopped with a traceback; any

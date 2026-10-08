@@ -20,11 +20,12 @@ its prose: :func:`test_core_names_no_engine` holds the names, read off the regis
 engine's vocabulary — its keywords, its file formats — is left to review.
 
 A boundary holds writes too. Outside :mod:`chemrefine.io`, a call that creates, replaces,
-moves or removes a path stands inside ``with tree_write(path):``, io's one net, so a write
-a run's output tree refuses is the same named error whichever layer made it:
+moves or removes a path stands inside one of io's two nets — ``with tree_write(path):`` for
+a run's output tree, ``with user_write(path):`` for a file written for a person — so a
+write the filesystem refuses is the same named error whichever layer made it:
 :func:`test_the_run_tree_is_written_only_through_io` holds that call by call. A function
-whose write is no part of a run's tree — one the job runs, one writing a file a person
-owns — is listed by name, with what it writes.
+that writes outside both — one the job runs, one whose refusal its own command words — is
+listed by name, with what it writes.
 
 A boundary holds questions too. What is in a run's tree is asked through
 :func:`chemrefine.io.absent` and :func:`chemrefine.io.tree_entries`, whose answers do not
@@ -357,17 +358,19 @@ def test_the_flat_pipeline_imports_the_engine_subsystem_through_its_public_face(
 
 
 # ---------------------------------------------------------------------------
-# Writes — a run's output tree is written through io's net
+# Writes — a refused write is named by one of io's nets
 # ---------------------------------------------------------------------------
 
-#: io's net, by the dotted name an import binds — read off the function, so renaming it is
-#: an error here. A raw write standing inside a ``with`` of it is a write of the run's tree.
-_NET = f"{io.tree_write.__module__}.{io.tree_write.__qualname__}"
+#: io's nets, by the dotted name an import binds — read off the functions, so renaming one
+#: is an error here. A raw write standing inside a ``with`` of either is named when the
+#: filesystem refuses it: the run's tree by ``tree_write``, a person's file by ``user_write``.
+_NETS = frozenset(f"{net.__module__}.{net.__qualname__}" for net in (io.tree_write, io.user_write))
 
 #: Functions that create, replace, link, move, copy or remove a path, by the dotted name an
 #: import binds: the standard library's, numpy's savers and the other library writers this
 #: package calls — one joins when the package first calls it — and io's own raw replace,
-#: which a run's tree reaches through ``write_tree_file``.
+#: which a run's tree reaches through ``write_tree_file`` and a person's file through
+#: ``write_user_file``.
 _WRITER_FUNCTIONS = frozenset(
     {
         "ase.db.connect",
@@ -430,20 +433,13 @@ _WRITER_METHODS = frozenset(
 #: takes two, and a frame's ``rename`` takes keywords.
 _ONE_TARGET_METHODS = frozenset({"rename", "replace"})
 
-#: Functions that write outside io's net because what they write is not this process
-#: writing a run's output tree, as ``(package-relative path, function)`` — a method or a
-#: nested function dotted under its enclosing names — each with what it writes instead: a
-#: file inside the job, whose refusal is the job's failure; a file a person owns — a
-#: config, a template, a seed; a path outside every run tree; no file at all. An entry
-#: excuses its whole function, so it names one that writes nothing of a run's tree raw.
+#: Functions that write outside io's nets, as ``(package-relative path, function)`` — a
+#: method or a nested function dotted under its enclosing names — each with what it writes
+#: instead: a file inside the job, whose refusal is the job's failure; a managed
+#: environment, whose build words every refusal as its own; no file at all. An entry
+#: excuses its whole function, so it names one that writes neither a run's tree nor a
+#: person's file raw.
 _RAW_WRITERS: dict[tuple[str, str], str] = {
-    ("agent_tools.py", "build_structures"): "seed files, a person's, in the directory the "
-    "caller names",
-    ("agent_tools.py", "read_structure_text"): "a scratch directory of its own, gone when it "
-    "returns",
-    ("agent_tools.py", "save_config"): "the config, a person's file: a ConfigError names it",
-    ("agent_tools.py", "write_template"): "a step template, a person's file: a ConfigError "
-    "names it",
     ("cache.py", "_npz_bytes"): "a buffer in memory, no file",
     ("engines/_backend_server/server.py", "main"): "the gradient server's log and loading "
     "marker, written inside the job",
@@ -461,9 +457,6 @@ _RAW_WRITERS: dict[tuple[str, str], str] = {
     "program, written inside the job",
     ("engines/pyscf/_runtime.py", "save_tensors"): "the tensors a calculation saves, written "
     "inside the job",
-    ("gui/app.py", "create_app.save"): "the editor's YAML, a person's file: a 400 names it",
-    ("scaffold.py", "scaffold_templates"): "starter templates, a person's files: a "
-    "ConfigError names what landed",
 }
 
 
@@ -582,12 +575,12 @@ def _calls(
 
 
 def _raw_writes(tree: ast.AST) -> Iterator[_RawWrite]:
-    """Every call in ``tree`` that writes a path and stands inside no ``with`` of the net."""
+    """Every call in ``tree`` that writes a path and stands inside no ``with`` of a net."""
     names, modules = _bindings(tree)
 
     def net(item: ast.withitem) -> bool:
         call = item.context_expr
-        return isinstance(call, ast.Call) and _resolved(call.func, names) == _NET
+        return isinstance(call, ast.Call) and _resolved(call.func, names) in _NETS
 
     for function, sealed, call in _calls(tree, net):
         if not sealed and (primitive := _primitive(call, names, modules)) is not None:
@@ -606,16 +599,18 @@ def _package_raw_writes() -> Iterator[tuple[str, _RawWrite]]:
 
 
 def test_the_run_tree_is_written_only_through_io():
-    """Outside io, a call that writes a path stands inside ``tree_write``, or is listed.
+    """Outside io, a call that writes a path stands inside one of io's nets, or is listed.
 
-    A write a run's output tree refuses is one failure whichever layer made it: an
-    :class:`~chemrefine.errors.OutputTreeError` naming the file, raised by the one net,
-    :func:`chemrefine.io.tree_write`. A raw write standing anywhere else leaves that
+    A write the filesystem refuses is one failure whichever layer made it: an
+    :class:`~chemrefine.errors.OutputTreeError` naming the file for a run's output tree,
+    raised by :func:`chemrefine.io.tree_write`, and its parent
+    :class:`~chemrefine.errors.WriteRefusedError` for a file written for a person, raised by
+    :func:`chemrefine.io.user_write`. A raw write standing anywhere else leaves that
     contract, and a full disk reaches the user as a traceback with the exit code of a
-    halted step — unless what it writes is no part of a run's tree, which
-    :data:`_RAW_WRITERS` says by function. Checked over the whole package but io itself,
-    where the primitives live: a shipped engine is discovered from the package's own
-    directory, so it is held by existing.
+    halted step, or as a tool's crash — unless it is the write of a job or of a command
+    that words its own refusal, which :data:`_RAW_WRITERS` says by function. Checked over
+    the whole package but io itself, where the primitives live: a shipped engine is
+    discovered from the package's own directory, so it is held by existing.
     """
     offences = [
         f"{rel}:{write.line}: {write.function} — {write.primitive}"
@@ -625,10 +620,11 @@ def test_the_run_tree_is_written_only_through_io():
     assert not offences, (
         "a raw filesystem write outside io's net:\n  "
         + "\n  ".join(offences)
-        + "\n\nWrite the file with io.write_tree_file (io.remove_tree_file removes one), or "
-        "stand the call inside `with io.tree_write(path):`. A function whose write is no "
-        "part of a run's tree — one the job runs, one writing a person's file — is listed "
-        "in _RAW_WRITERS with what it writes."
+        + "\n\nUnder a run's output_dir, write the file with io.write_tree_file "
+        "(io.remove_tree_file removes one), or stand the call inside "
+        "`with io.tree_write(path):`. A file written for a person at a path they named goes "
+        "through io.write_user_file, io.remove_user_file or `with io.user_write(path):`. A "
+        "function the job runs is listed in _RAW_WRITERS with what it writes."
     )
 
 
@@ -688,13 +684,19 @@ def test_every_listed_raw_writer_still_writes_raw():
         ),
         (
             'from chemrefine import io\ndef f(p):\n    io.write_tree_file(p, "x")\n'
-            "    io.remove_tree_file(p)\n",
+            '    io.remove_tree_file(p)\n    io.write_user_file(p, "x")\n'
+            "    io.remove_user_file(p)\n",
             [],
         ),
         (
             "from chemrefine import io\ndef f(p):\n    with io.tree_write(p):\n"
             "        p.parent.mkdir(parents=True, exist_ok=True)\n        p.write_text('x')\n",
             [],
+        ),
+        (
+            "from chemrefine.io import user_write\ndef f(p):\n    with user_write(p):\n"
+            "        p.mkdir(parents=True, exist_ok=True)\n    p.unlink()\n",
+            [("f", ".unlink")],
         ),
         (
             "from chemrefine.io import tree_write\nfrom ase.db import connect\ndef f(p):\n"
@@ -731,6 +733,7 @@ def test_every_listed_raw_writer_still_writes_raw():
         "a-modules-own-open-and-a-console-log",
         "the-whole-file-forms",
         "under-the-net",
+        "under-the-other-net-and-after-it",
         "item-after-the-net",
         "normal-flow-handled-inside-the-net",
     ],

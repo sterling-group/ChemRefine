@@ -11,6 +11,7 @@ asserted here are the numbers an agent would reason over.
 
 from __future__ import annotations
 
+import errno
 import os
 import shutil
 import time
@@ -23,10 +24,10 @@ import pytest
 import yaml
 from ase import Atoms
 
-from chemrefine import agent_tools, cache
+from chemrefine import agent_tools, cache, io, pipeline
 from chemrefine.config import load_config
 from chemrefine.engines.orca.output import coordinator as orca_coordinator
-from chemrefine.errors import ConfigError, EngineNotFoundError
+from chemrefine.errors import ConfigError, EngineNotFoundError, WriteRefusedError
 from chemrefine.state import StepInputs, StepResults, Structure
 
 _FREQ_OUT = Path(__file__).resolve().parent / "data" / "engines" / "orca" / "freq" / "step1_0.out"
@@ -217,6 +218,155 @@ def test_a_bad_smiles_late_in_the_list_leaves_no_partial_seed_set(tmp_path: Path
     with pytest.raises(ConfigError, match="invalid SMILES"):
         agent_tools.build_structures(str(seeds), smiles=["O", "CCO", "!!!"])
     assert list(seeds.glob("structure_*.xyz")) == []
+
+
+def _refuse_the_write_of(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+    """Fill the disk at the file called ``name``: every other write lands as it would."""
+    real = io.atomic_write
+
+    def full_at(path: Path, data: bytes, *, mode: int | None = None) -> None:
+        if path.name == name:
+            raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+        real(path, data, mode=mode)
+
+    monkeypatch.setattr(io, "atomic_write", full_at)
+
+
+def test_a_seed_set_the_disk_cuts_short_is_taken_back_and_seeds_no_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A disk that fills at the third molecule leaves none of the three, and says which.
+
+    The first two are on disk when the third is refused. Left there, directory-seeding
+    reads them as the ensemble: a run on two molecules of three, with nothing saying so. The
+    refusal names the seed the filesystem would not take under the write refusal's class,
+    the two before it are taken back, and the directory seeds no run.
+    """
+    seeds = tmp_path / "seeds"
+    _refuse_the_write_of(monkeypatch, "structure_2.xyz")
+    with pytest.raises(WriteRefusedError) as refusal:
+        agent_tools.build_structures(str(seeds), smiles=["O", "CCO", "CO"])
+    assert type(refusal.value) is WriteRefusedError
+    assert str(refusal.value) == (
+        f"cannot write {seeds / 'structure_2.xyz'}: No space left on device"
+    )
+    assert list(seeds.iterdir()) == []
+    config = _write_config(tmp_path)
+    config.write_text(
+        yaml.safe_dump({"input": str(seeds), "steps": [{"step": 1, "engine": "fake"}]}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match=r"no \.xyz files found"):
+        pipeline.bootstrap(load_config(config))
+
+
+def test_a_seed_set_an_interrupt_cuts_short_is_taken_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Ctrl-C between two molecules leaves no part of the set either.
+
+    An interrupt is no error of the call's and slips past any net of them. The seeds are
+    taken back on whatever stops the call, so the directory never holds the first few
+    molecules of a list.
+    """
+    seeds = tmp_path / "seeds"
+    real_embed = io.embed_smiles
+
+    def interrupted_at_the_third(smiles: str) -> Any:
+        if smiles == "CO":
+            raise KeyboardInterrupt
+        return real_embed(smiles)
+
+    monkeypatch.setattr(io, "embed_smiles", interrupted_at_the_third)
+    with pytest.raises(KeyboardInterrupt):
+        agent_tools.build_structures(str(seeds), smiles=["O", "CCO", "CO"])
+    assert list(seeds.iterdir()) == []
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through any mode")
+@pytest.mark.parametrize("stale", [False, True], ids=["the-directory", "a-stale-seed"])
+def test_build_structures_names_what_the_filesystem_will_not_let_it_clear(
+    tmp_path: Path, stale: bool
+):
+    """The directory it cannot create and the stale seed it cannot remove are both named.
+
+    Making the directory and clearing the stale set are the call's first writes, before any
+    molecule is embedded: a directory the filesystem will not make, or a seed it holds on
+    to, is a refused write naming it, and the seed that was there is there still.
+    """
+    sealed = tmp_path / "sealed"
+    sealed.mkdir()
+    old = sealed / "structure_0.xyz"
+    old.write_text("1\nold\nH 0.0 0.0 0.0\n", encoding="utf-8")
+    sealed.chmod(0o555)
+    out_dir = sealed if stale else sealed / "seeds"
+    try:
+        with pytest.raises(WriteRefusedError) as refusal:
+            agent_tools.build_structures(str(out_dir), smiles=["O"])
+    finally:
+        sealed.chmod(0o755)
+    assert type(refusal.value) is WriteRefusedError
+    assert str(refusal.value) == f"cannot write {old if stale else out_dir}: Permission denied"
+    assert old.read_text(encoding="utf-8") == "1\nold\nH 0.0 0.0 0.0\n"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through any mode")
+@pytest.mark.parametrize(
+    "source",
+    [{"smiles": ["O"]}, {"xyz_text": "2\n\nH 0 0 0\nH 0.74 0 0\n"}],
+    ids=["smiles", "xyz-text"],
+)
+def test_a_seed_the_filesystem_refuses_is_a_write_refusal_from_either_source(
+    tmp_path: Path, source: dict[str, Any]
+):
+    """Both branches refuse alike: the seed, the reason, and never the output tree's class.
+
+    A seed directory is one a person named for a run's ``input:``, no part of any run's
+    output tree, so the refusal is the plain write refusal whichever source the seed had.
+    """
+    seeds = tmp_path / "seeds"
+    seeds.mkdir()
+    seeds.chmod(0o555)
+    try:
+        with pytest.raises(WriteRefusedError) as refusal:
+            agent_tools.build_structures(str(seeds), **source)
+    finally:
+        seeds.chmod(0o755)
+    assert type(refusal.value) is WriteRefusedError
+    assert str(refusal.value) == f"cannot write {seeds / 'structure_0.xyz'}: Permission denied"
+    assert list(seeds.iterdir()) == []
+
+
+def test_a_seed_that_will_not_go_does_not_hide_the_molecule_that_stopped_the_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    """Taking the seeds back is cleanup: one the filesystem refuses is logged, each by name.
+
+    The bad molecule is what the caller has to hear about. A seed that cannot be removed is
+    logged beside it, and the next one is still tried.
+    """
+    seeds = tmp_path / "seeds"
+    refused: list[str] = []
+    real_embed = io.embed_smiles
+
+    def read_only(self: Path, missing_ok: bool = False) -> None:
+        refused.append(self.name)
+        raise OSError(errno.EROFS, os.strerror(errno.EROFS), str(self))
+
+    def seal_before_the_bad_one(smiles: str) -> Any:
+        if smiles == "!!!":
+            monkeypatch.setattr(Path, "unlink", read_only)
+        return real_embed(smiles)
+
+    monkeypatch.setattr(io, "embed_smiles", seal_before_the_bad_one)
+    with pytest.raises(ConfigError, match="invalid SMILES"):
+        agent_tools.build_structures(str(seeds), smiles=["O", "CCO", "!!!"])
+    assert refused == ["structure_0.xyz", "structure_1.xyz"]
+    for name in refused:
+        assert (
+            f"could not clean up during ConfigError: cannot write {seeds / name}: "
+            "Read-only file system" in caplog.text
+        )
 
 
 def test_a_new_build_clears_the_previous_calls_seed_set(tmp_path: Path):

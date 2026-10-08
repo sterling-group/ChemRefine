@@ -29,7 +29,13 @@ import yaml
 
 from chemrefine import agent_tools, cache, ids, io, pipeline
 from chemrefine.cache import save_failure_records
-from chemrefine.errors import ConfigError, JobSubmissionError, OutputTreeError, RunLockError
+from chemrefine.errors import (
+    ConfigError,
+    JobSubmissionError,
+    OutputTreeError,
+    RunLockError,
+    WriteRefusedError,
+)
 from chemrefine.quantities import DEFAULT_TEMPERATURE_K
 from chemrefine.state import FailureKind, FailureRecord
 
@@ -177,22 +183,23 @@ def _fortress(tmp_path: Path, wall: str = "fortress") -> Path:
     return fortress
 
 
-def test_save_config_answers_an_unwritable_destination_with_the_contract(tmp_path: Path):
-    """A disk refusal is the module's ConfigError, not a raw OSError.
+def test_save_config_names_a_destination_the_filesystem_refuses(tmp_path: Path):
+    """A destination that refuses a config that validated is a write refusal, never a config's.
 
-    The module promises every failure carries the documented exit code; a raw ``OSError``
-    reached the GUI's handler, which re-raises anything outside the taxonomy — a 500 with
-    a logged traceback for what is an ordinary bad destination (a read-only tree, ENOSPC
-    on scratch). ``/api/save`` already answers this with a 400 "like every other bad input
-    here"; these are its siblings, held to the same rule.
+    The text was judged runnable a line earlier, so nothing in it is to change: the answer
+    names the file and the filesystem's reason under the class and code of a refused write,
+    where ``ConfigError`` would tell an agent to rewrite a YAML that was right.
     """
     fortress = _fortress(tmp_path)
     text = yaml.safe_dump({"steps": [{"step": 1, "engine": "fake"}]})
     try:
-        with pytest.raises(ConfigError, match="cannot write"):
+        with pytest.raises(WriteRefusedError) as refusal:
             agent_tools.save_config(str(fortress / "input.yaml"), text)
     finally:
         fortress.chmod(0o755)
+    assert type(refusal.value) is WriteRefusedError
+    assert str(refusal.value) == f"cannot write {fortress / 'input.yaml'}: Permission denied"
+    assert refusal.value.exit_code == 11
 
 
 def test_a_home_the_host_cannot_resolve_is_the_contracts_refusal():
@@ -331,14 +338,14 @@ def test_a_template_write_that_fails_leaves_the_edited_template_intact(
         raise OSError("No space left on device")
 
     monkeypatch.setattr(os, "fsync", refuse)
-    with pytest.raises(ConfigError, match="cannot write template"):
+    with pytest.raises(WriteRefusedError, match="No space left on device"):
         agent_tools.write_template(str(path), 1, "! Lost\n")
     assert Path(template["path"]).read_text(encoding="utf-8") == "! Mine\n"
     assert not list(Path(template["path"]).parent.glob(".tmp_*"))
 
 
-def test_write_template_answers_an_unwritable_destination_with_the_contract(tmp_path: Path):
-    """The same rule for the inline template editor's write."""
+def test_write_template_names_a_destination_the_filesystem_refuses(tmp_path: Path):
+    """The same rule for the inline template editor's write: the file, then the reason."""
     fortress = _fortress(tmp_path)
     path = tmp_path / "input.yaml"
     path.write_text(
@@ -346,10 +353,38 @@ def test_write_template_answers_an_unwritable_destination_with_the_contract(tmp_
         encoding="utf-8",
     )
     try:
-        with pytest.raises(ConfigError, match="cannot write template"):
+        with pytest.raises(WriteRefusedError) as refusal:
             agent_tools.write_template(str(path), 1, "! MyKeywords\n")
     finally:
         fortress.chmod(0o755)
+    assert type(refusal.value) is WriteRefusedError
+    assert str(refusal.value) == f"cannot write {fortress / 'step1.inp'}: Permission denied"
+
+
+def test_a_dropped_file_the_temp_directory_refuses_is_named(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The scratch copy of a dropped file is a write, and a refused one names where.
+
+    The read stages the text under the process's temp directory. One that is full, or not
+    this account's to write, refuses the copy: the answer names that directory under the
+    write refusal's class, where a bare ``OSError`` would be the builder's 500.
+    """
+    import tempfile
+
+    fortress = _fortress(tmp_path)
+    monkeypatch.setattr(tempfile, "tempdir", str(fortress))
+    try:
+        with pytest.raises(WriteRefusedError) as refusal:
+            agent_tools.read_structure_text("h2.xyz", "2\n\nH 0 0 0\nH 0.74 0 0\n")
+    finally:
+        fortress.chmod(0o755)
+    assert re.fullmatch(
+        rf"cannot write {re.escape(str(fortress))}: {re.escape(str(fortress))}/\S+: "
+        "Permission denied",
+        str(refusal.value),
+    ), str(refusal.value)
+    assert list(fortress.iterdir()) == []
 
 
 def test_read_template_answers_an_unreadable_file_with_the_contract(tmp_path: Path):
@@ -981,6 +1016,7 @@ def test_get_failures_carries_the_taxonomy_and_the_next_move(tmp_path: Path):
     assert everything["exit_codes"]["OutputTerminationError"] == 6
     # Its own code, not the 1 a halted step exits with: what a wrapper tells a full disk by.
     assert everything["exit_codes"]["OutputTreeError"] == 11
+    assert everything["exit_codes"]["WriteRefusedError"] == 11
     assert everything["suggested_action"] == "rerun-errors"
 
     clean = agent_tools.get_failures(str(path), step=2)

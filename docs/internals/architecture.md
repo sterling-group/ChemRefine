@@ -54,10 +54,13 @@ contract). `io` also owns the one path by which a run's output tree is written: 
 job, whatever the package writes, moves or removes under `output_dir` goes through
 `io.write_tree_file` or `io.remove_tree_file`, or stands inside
 `with io.tree_write(path):`, so a write the tree refuses is `OutputTreeError` naming the
-file, whichever layer made it. `test_the_run_tree_is_written_only_through_io` keeps the
-boundary honest, and lists by function each writer that is something else — a process
-inside a job, a file a person owns. Engines receive a focused `StepContext`, never the
-whole `Config`.
+file, whichever layer made it. A file a tool writes for a person outside that tree — a
+config, a template, a seed, at the path they named — goes through `io.write_user_file`,
+`io.remove_user_file` or `with io.user_write(path):`: the same sentence and exit code
+under `WriteRefusedError`, the class `OutputTreeError` specialises.
+`test_the_run_tree_is_written_only_through_io` keeps the boundary honest, and lists by
+function each writer that stands in neither net — a process inside a job, the build of
+a managed environment. Engines receive a focused `StepContext`, never the whole `Config`.
 
 ## Entry points
 

@@ -246,8 +246,15 @@ def test_save_writes_the_artifact(client: Any, tmp_path: Path):
     assert destination.read_text(encoding="utf-8") == "steps: []\n"
 
 
-def test_save_answers_an_unwritable_destination_with_a_400(client: Any, tmp_path: Path):
-    """Save-as into a directory the user cannot write is a plain 400, like any bad input."""
+def test_save_answers_a_destination_the_filesystem_refuses_in_the_documented_shape(
+    client: Any, tmp_path: Path
+):
+    """Save-as into a directory the user cannot write is the write refusal every surface shows.
+
+    The file and the filesystem's reason, with the refused write's exit code beside them —
+    the body ``/api/template`` and the agent's ``save_config`` answer with, so the page and
+    a script reading it see one failure, not this route's own.
+    """
     import os
 
     if os.geteuid() == 0:
@@ -255,14 +262,30 @@ def test_save_answers_an_unwritable_destination_with_a_400(client: Any, tmp_path
     fortress = tmp_path / "fortress"
     fortress.mkdir()
     fortress.chmod(0o555)
+    destination = fortress / "input.yaml"
     try:
-        response = _post(
-            client, "/api/save", {"path": str(fortress / "input.yaml"), "yaml_text": "steps: []\n"}
+        saved = _post(client, "/api/save", {"path": str(destination), "yaml_text": "steps: []\n"})
+        config = tmp_path / "input.yaml"
+        config.write_text(
+            yaml.safe_dump(
+                {"template_dir": str(fortress), "steps": [{"step": 1, "engine": "orca"}]}
+            ),
+            encoding="utf-8",
+        )
+        edited = _post(
+            client, "/api/template", {"config_path": str(config), "step": 1, "text": "! Opt\n"}
         )
     finally:
         fortress.chmod(0o755)
-    assert response.status_code == 400
-    assert "cannot write" in response.get_json()["error"]
+    assert saved.status_code == edited.status_code == 400
+    assert saved.get_json() == {
+        "error": f"cannot write {destination}: Permission denied",
+        "exit_code": 11,
+    }
+    assert edited.get_json() == {
+        "error": f"cannot write {fortress / 'step1.inp'}: Permission denied",
+        "exit_code": 11,
+    }
 
 
 # ---------------------------------------------------------------------------

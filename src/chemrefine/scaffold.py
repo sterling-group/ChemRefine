@@ -32,7 +32,7 @@ from chemrefine.config import Config
 from chemrefine.engines.api import JobExecutable, TemplateDriven, get_engine
 from chemrefine.errors import ConfigError
 from chemrefine.ids import step_template_path
-from chemrefine.io import atomic_write
+from chemrefine.io import user_write, write_user_file
 from chemrefine.slurm import CUDA_HEADER
 from chemrefine.validate import effective_header, shared_template_clash
 
@@ -157,36 +157,27 @@ def scaffold_templates(config: Config, *, overwrite: bool = False) -> tuple[Path
     page, and a template the user has edited is exactly the file this must never touch
     by default. ``template_dir`` is created if missing.
 
-    An unwritable destination — a read-only tree, an exhausted quota (ENOSPC on HPC
-    scratch is the everyday case) — is a :class:`~chemrefine.errors.ConfigError` naming
-    the path, not a raw :class:`OSError`: this seam serves the CLI, the GUI and the MCP
-    tools, and all three promise failures that carry the documented exit code — the GUI's
-    error handler re-raises anything else as a 500 with a logged traceback.
+    A destination the filesystem refuses — a read-only tree, an exhausted quota (ENOSPC on
+    HPC scratch is the everyday case) — is :class:`~chemrefine.errors.WriteRefusedError`
+    naming the starter it could not write, or ``template_dir`` when that could not be
+    created. Starters are written in plan order, each whole or not at all, so the ones
+    planned before the named file are on disk and the named one is not: scaffolding again
+    keeps those and writes the rest.
     """
     written: list[Path] = []
-    try:
+    with user_write(config.template_dir):
         config.template_dir.mkdir(parents=True, exist_ok=True)
-        for plan in plan_templates(config):
-            # Steps sharing a template each carry a plan (per-step lookups need one), so
-            # the file itself is written once: `exists` is snapshotted before any write, so
-            # re-writing per sharing step would redo identical work at best.
-            if plan.path in written or (plan.exists and not overwrite):
-                continue
-            # A `template:` override may name a subdirectory (or an absolute path elsewhere)
-            # — the same shape `agent_tools.write_template` already creates parents for.
-            # Whole or not at all, like every other writer of a file a user edits: with
-            # `overwrite`, this replaces a template the user may have worked on, and a
-            # write torn by a kill or a full disk would leave a stub where it had been.
-            atomic_write(plan.path, _starter_for(plan).encode("utf-8"))
-            written.append(plan.path)
-    except OSError as e:
-        # `written` is in the message because the failure is mid-loop: the starters
-        # already on disk stay there — whole, each having been written atomically — and a
-        # retry writes the one that failed. Naming what landed makes the partial state
-        # inspectable.
-        landed = ", ".join(str(p) for p in written) or "nothing"
-        raise ConfigError(
-            f"cannot scaffold templates under {config.template_dir}: {e} "
-            f"(already written before the failure: {landed})"
-        ) from e
+    for plan in plan_templates(config):
+        # Steps sharing a template each carry a plan (per-step lookups need one), so
+        # the file itself is written once: `exists` is snapshotted before any write, so
+        # re-writing per sharing step would redo identical work at best.
+        if plan.path in written or (plan.exists and not overwrite):
+            continue
+        # A `template:` override may name a subdirectory (or an absolute path elsewhere)
+        # — the same shape `agent_tools.write_template` creates parents for. Whole or not
+        # at all, like every other writer of a file a user edits: with `overwrite`, this
+        # replaces a template the user may have worked on, and a write torn by a kill or a
+        # full disk would leave a stub where it had been.
+        write_user_file(plan.path, _starter_for(plan))
+        written.append(plan.path)
     return tuple(written)

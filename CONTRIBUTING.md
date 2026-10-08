@@ -170,9 +170,12 @@ rebuild needs.
   whatever writes, moves or removes a file under `output_dir` calls
   `io.write_tree_file` / `io.remove_tree_file` or stands inside
   `with io.tree_write(path):`, so a write the tree refuses is `OutputTreeError`
-  (exit `11`) naming the file. `tests/test_package_boundaries.py` holds it call
-  by call, and lists by function each writer that is something else — a process
-  inside a job, a file a person owns.
+  (exit `11`) naming the file. A file written for a person at a path they named
+  — a config, a template, a seed — goes through `io.write_user_file` /
+  `io.remove_user_file` or `with io.user_write(path):`, the same refusal as
+  `WriteRefusedError`. `tests/test_package_boundaries.py` holds both call by
+  call, and lists by function each writer that stands in neither net — a
+  process inside a job, the build of a managed environment.
 - **Legacy YAML/CLI vocabulary** lives in exactly two quarantine zones:
   `config_legacy.py` (YAML keys) and `cli_legacy.py` (v1 flag-style argv).
   New legacy spellings go there, nowhere else. Both are scheduled for removal in

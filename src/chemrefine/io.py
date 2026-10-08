@@ -1,4 +1,4 @@
-"""Filesystem I/O — the output tree's writes, atomic replacement, XYZ, SMILES → 3D, CSV reports.
+"""Filesystem I/O — the two write nets, atomic replacement, XYZ, SMILES → 3D, CSV reports.
 
 Keeps every concrete file format in one place so individual engine
 modules don't grow their own XYZ-handling code. :func:`write_single_xyz` accepts
@@ -9,15 +9,18 @@ An engine may keep an XYZ reader of its own only for a stated price, stated wher
 reader lives; the rule for a new engine is "use :func:`read_xyz_frames` /
 :func:`write_single_xyz` unless you can name your price too".
 
-A run's own files and a person's refuse differently. Every write the driver makes under a
-run's ``output_dir`` goes through :func:`tree_write` — :func:`write_tree_file` and
-:func:`remove_tree_file` for a whole file — so a refusal is
-:class:`~chemrefine.errors.OutputTreeError`, whichever file it was. A file a person names
-and ChemRefine replaces — a config, a template — is written with :func:`atomic_write`
-itself, and its caller words a refusal as that file's. A file a job writes for itself is
-outside this seam as well: its refusal comes back as the job's failure.
+A write the filesystem refuses is one failure with one sentence, ``cannot write <file>:
+<reason>``, and one exit code, and it is worded here. Two nets say whose file it was. Every
+write the driver makes under a run's ``output_dir`` goes through :func:`tree_write` —
+:func:`write_tree_file` and :func:`remove_tree_file` for a whole file — so a refusal is
+:class:`~chemrefine.errors.OutputTreeError`, whichever file it was. A file a tool writes for
+a person outside that tree — the config, the template or the seed at the path they named —
+goes through :func:`user_write` — :func:`write_user_file` and :func:`remove_user_file` for
+a whole file — and refuses as :class:`~chemrefine.errors.WriteRefusedError`, the class the
+tree's specialises. A file a job writes for itself is outside both: its refusal comes back
+as the job's failure.
 ``test_the_run_tree_is_written_only_through_io`` holds the rest of the package to this:
-outside this module a call that writes a path stands inside :func:`tree_write`, or its
+outside this module a call that writes a path stands inside one of the two nets, or its
 function is listed there with what it writes instead.
 
 What a run reads back from its own tree is asked here too. :func:`absent` is the one
@@ -43,7 +46,7 @@ import numpy as np
 from ase import Atoms
 from numpy.typing import NDArray
 
-from chemrefine.errors import CacheError, ConfigError, OutputTreeError
+from chemrefine.errors import CacheError, ConfigError, OutputTreeError, WriteRefusedError
 from chemrefine.quantities import HARTREE_TO_KCALMOL, boltzmann_weights
 
 if TYPE_CHECKING:
@@ -154,11 +157,11 @@ def atomic_write(path: Path, data: bytes, *, mode: int | None = None) -> None:
     that shared filesystems and FUSE/CIFS mounts refuse, and there a failure still closes
     the descriptor and removes the temp file rather than stranding either.
 
-    Raw by design: a refusal leaves as the :class:`OSError` the filesystem raised, for each
-    caller to word — a person's file as that file's refusal, a run's own tree through
-    :func:`tree_write`. It names ``path``, never the temp file the data was staged in, which
-    no caller ever saw. The temp file is removed under :func:`cleanup`, so failing to remove
-    it never replaces the error that left it behind.
+    Raw by design: a refusal leaves as the :class:`OSError` the filesystem raised, for the
+    net its caller stands in to name — :func:`write_tree_file` for a run's own tree,
+    :func:`write_user_file` for a person's file. It names ``path``, never the temp file the
+    data was staged in, which no caller ever saw. The temp file is removed under
+    :func:`cleanup`, so failing to remove it never replaces the error that left it behind.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -232,13 +235,28 @@ def expand_user_path(raw: str) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# The output tree — every write the driver makes under a run's output_dir, and what it
-# asks of the tree before it reads
+# Refused writes — the run's output tree, and a file written for a person — and what
+# the run asks of its tree before it reads
 # ---------------------------------------------------------------------------
 
 
 @contextlib.contextmanager
-def tree_write(path: Path) -> Generator[None]:
+def _net(path: Path, refusal: type[WriteRefusedError]) -> Generator[None]:
+    """What the filesystem refuses inside the block leaves as ``refusal``, naming ``path``.
+
+    The one body under :func:`tree_write` and :func:`user_write`, so the sentence — ``cannot
+    write {path}: {reason}`` — and what counts as a refusal are decided once for both.
+    """
+    try:
+        yield
+    except _refusal_types() as e:
+        reason = _refused(path, e)
+        if reason is None:
+            raise
+        raise refusal(f"cannot write {path}: {reason}") from e
+
+
+def tree_write(path: Path) -> contextlib.AbstractContextManager[None]:
     """Name a write the run's output tree refuses: :class:`~chemrefine.errors.OutputTreeError`.
 
     The one net for every mutation the driver makes under ``output_dir`` — writing,
@@ -263,17 +281,29 @@ def tree_write(path: Path) -> Generator[None]:
     sqlite error on ``__cause__``. Any other sqlite error, a SQL mistake or a busy lock,
     leaves as itself.
     """
-    try:
-        yield
-    except _refusal_types() as e:
-        reason = _refused(path, e)
-        if reason is None:
-            raise
-        raise OutputTreeError(f"cannot write {path}: {reason}") from e
+    return _net(path, OutputTreeError)
+
+
+def user_write(path: Path) -> contextlib.AbstractContextManager[None]:
+    """Name a refused write of a person's file: :class:`~chemrefine.errors.WriteRefusedError`.
+
+    The net for what a tool writes on a person's behalf outside a run's output tree: the
+    config an agent or the builder saves, a step template, the starters ``scaffold`` fills
+    in, a seed set, each at the path the person named — and the scratch copy of a file
+    they dropped on the builder. The sentence and the exit code are :func:`tree_write`'s;
+    the class is the one the tree's refusal specialises, because the path is no part of a
+    run's output tree and a refusal named for one would send its reader to ``resume``. What
+    they do instead is free space, fix the permissions or name another place, and ask again.
+
+    Never :class:`~chemrefine.errors.ConfigError`: the text was judged before the write, and
+    a class that says "fix the config" about a full disk has an agent rewrite a YAML that
+    was right.
+    """
+    return _net(path, WriteRefusedError)
 
 
 def _refusal_types() -> tuple[type[Exception], ...]:
-    """What :func:`tree_write` catches: :class:`OSError`, and sqlite's error once loaded.
+    """What the nets catch: :class:`OSError`, and sqlite's error once loaded.
 
     ``ase.db`` keeps a dataset in a sqlite file, and sqlite refuses a write through
     :class:`sqlite3.OperationalError`, which is no ``OSError``. The class is read off the
@@ -359,6 +389,25 @@ def remove_tree_file(path: Path) -> None:
         path.unlink(missing_ok=True)
 
 
+def write_user_file(path: Path, data: str | bytes) -> None:
+    """Replace a person's file at ``path`` with ``data`` (text as UTF-8), parents first.
+
+    Whole or not at all (:func:`atomic_write`), always: it is a file a person edits or
+    points a run at, and a write a kill or a full disk cuts short would leave a stub where
+    their config or template had been. A refusal is :func:`user_write`'s, and leaves what
+    was at ``path`` as it was.
+    """
+    payload = data.encode("utf-8") if isinstance(data, str) else data
+    with user_write(path):
+        atomic_write(path, payload)
+
+
+def remove_user_file(path: Path) -> None:
+    """Remove a person's file at ``path`` if it is there, refusing as :func:`user_write`."""
+    with user_write(path):
+        path.unlink(missing_ok=True)
+
+
 @contextlib.contextmanager
 def cleanup() -> Generator[None]:
     """Run cleanup that must never replace the exception it runs during.
@@ -375,15 +424,15 @@ def cleanup() -> Generator[None]:
     is running for, in this frame or in any caller's. Cleanup reached from inside a
     caller's handler therefore counts the handled exception as in flight, which is why only
     cleanup belongs in here, never a write the run needs. A refusal is an :class:`OSError`,
-    or what this package turns one into over a run's own tree — the
-    :class:`~chemrefine.errors.OutputTreeError` of :func:`tree_write`, the
+    or what a net of this module turns one into — the
+    :class:`~chemrefine.errors.WriteRefusedError` of a refused write, the
     :class:`~chemrefine.errors.CacheError` of a record the cleanup reads back before it
     writes; anything else — a bug, a second ``KeyboardInterrupt`` — surfaces.
     """
     in_flight = sys.exception()
     try:
         yield
-    except (OSError, OutputTreeError, CacheError) as e:
+    except (OSError, WriteRefusedError, CacheError) as e:
         if in_flight is None:
             raise
         logger.warning("could not clean up during %s: %s", type(in_flight).__name__, e)
@@ -485,14 +534,14 @@ def extended_xyz_text(atoms: Atoms, *, displacements: NDArray[np.float64] | None
     return buffer.getvalue()
 
 
-def write_single_xyz(geometry: Atoms | CoordList, path: str | Path, *, comment: str = "") -> Path:
-    """Write one geometry to ``path`` as plain XYZ; return ``path``.
+def plain_xyz_text(geometry: Atoms | CoordList, *, comment: str = "") -> str:
+    """One geometry as plain-XYZ text: the count line, ``comment``, one row per atom.
 
-    ``geometry`` may be an :class:`ase.Atoms` or a list of ``(symbol, x, y, z)``
-    tuples (coerced on the fly). The parent directory is created if needed — this
-    is how a structure's per-id directory comes into being (engines call this with
-    :func:`chemrefine.ids.input_geometry_path`). Written through :func:`write_tree_file`,
-    so a refusal is :class:`~chemrefine.errors.OutputTreeError`.
+    ``geometry`` may be an :class:`ase.Atoms` or a list of ``(symbol, x, y, z)`` tuples
+    (coerced on the fly). Text rather than a file, so the two writers of a single geometry
+    share its bytes and differ only in whose file it is: :func:`write_single_xyz` in a
+    run's output tree, :func:`chemrefine.agent_tools.build_structures` in the seed
+    directory a person named.
     """
     if isinstance(geometry, Atoms):
         atoms = geometry
@@ -501,8 +550,19 @@ def write_single_xyz(geometry: Atoms | CoordList, path: str | Path, *, comment: 
             symbols=[row[0] for row in geometry],
             positions=np.array([row[1:] for row in geometry], dtype=float),
         )
+    return "\n".join(_xyz_frame_lines(atoms, comment)) + "\n"
+
+
+def write_single_xyz(geometry: Atoms | CoordList, path: str | Path, *, comment: str = "") -> Path:
+    """Write one geometry to ``path`` in a run's output tree as plain XYZ; return ``path``.
+
+    :func:`plain_xyz_text`, written through :func:`write_tree_file`, so a refusal is
+    :class:`~chemrefine.errors.OutputTreeError`. The parent directory is created if
+    needed — this is how a structure's per-id directory comes into being (engines call this
+    with :func:`chemrefine.ids.input_geometry_path`).
+    """
     target = Path(path)
-    write_tree_file(target, "\n".join(_xyz_frame_lines(atoms, comment)) + "\n")
+    write_tree_file(target, plain_xyz_text(geometry, comment=comment))
     return target
 
 

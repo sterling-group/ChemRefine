@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import errno
 import os
@@ -21,10 +22,11 @@ from ase import Atoms
 from ase.io import read as ase_read
 
 import chemrefine.io as chemrefine_io
-from chemrefine.errors import CacheError, OutputTreeError
+from chemrefine.errors import CacheError, OutputTreeError, WriteRefusedError
 from chemrefine.io import (
     gather_output_files,
     natural_key,
+    plain_xyz_text,
     read_xyz_frames,
     save_step_csv,
     write_ensemble_xyz,
@@ -166,6 +168,27 @@ def test_write_single_xyz_accepts_tuple_form(tmp_path: Path):
     path = write_single_xyz(tuples, tmp_path / "step1_0.xyz")
     atoms = ase_read(str(path), format="xyz")
     assert list(atoms.get_chemical_symbols()) == ["H", "H"]
+
+
+@pytest.mark.parametrize(
+    "geometry",
+    [_h2o(), [("H", 0.0, 0.0, 0.0), ("H", 0.74, 0.0, 0.0)]],
+    ids=["atoms", "rows"],
+)
+def test_the_text_of_a_geometry_is_the_file_write_single_xyz_writes(
+    tmp_path: Path, geometry: Atoms | list[tuple[str, float, float, float]]
+):
+    """One spelling of a single plain-XYZ geometry, whoever's file it lands in.
+
+    A run's input geometry and a seed built for a person are the same bytes: the count, the
+    comment, a row per atom. The seed writer takes the text and the tree's writer the file,
+    so the two cannot come apart.
+    """
+    path = write_single_xyz(geometry, tmp_path / "step1_0.xyz", comment="SMILES: O")
+    text = plain_xyz_text(geometry, comment="SMILES: O")
+    assert path.read_text(encoding="utf-8") == text
+    assert text.splitlines()[1] == "SMILES: O"
+    assert int(text.splitlines()[0]) == len(text.splitlines()) - 2
 
 
 # ---------------------------------------------------------------------------
@@ -708,7 +731,7 @@ def test_the_umask_falls_back_when_the_kernel_does_not_publish_it(
 
 
 # ---------------------------------------------------------------------------
-# The output tree's write seam — tree_write, its whole-file forms, cleanup
+# The write seam — tree_write and user_write, their whole-file forms, cleanup
 # ---------------------------------------------------------------------------
 
 _AS_ROOT = os.geteuid() == 0
@@ -860,6 +883,109 @@ def test_write_tree_file_creates_the_directory_and_writes_text_as_utf8(
     assert target.read_bytes() == b"NUMPY"
 
 
+def test_the_output_trees_refusal_is_a_write_refusal_with_its_code():
+    """One failure, one exit code: the tree's class says whose file, not another status."""
+    assert issubclass(OutputTreeError, WriteRefusedError)
+    assert OutputTreeError.exit_code == WriteRefusedError.exit_code == 11
+
+
+@pytest.mark.parametrize(
+    ("net", "refusal"),
+    [(chemrefine_io.tree_write, OutputTreeError), (chemrefine_io.user_write, WriteRefusedError)],
+    ids=["the-runs-tree", "a-persons-file"],
+)
+def test_each_net_names_a_refused_write_as_its_own_class(
+    tmp_path: Path,
+    net: Callable[[Path], contextlib.AbstractContextManager[None]],
+    refusal: type[WriteRefusedError],
+):
+    """The two nets share the sentence and differ in the class that says whose file it was.
+
+    A config, a template or a seed is no part of a run's output tree, so its refusal is the
+    plain write refusal and never the tree's — whose reader would be sent to ``resume``.
+    """
+    target = tmp_path / "missing" / "input.yaml"
+    with pytest.raises(WriteRefusedError) as excinfo, net(target):
+        target.write_text("steps: []\n", encoding="utf-8")
+    assert type(excinfo.value) is refusal
+    assert str(excinfo.value) == f"cannot write {target}: No such file or directory"
+    assert isinstance(excinfo.value.__cause__, FileNotFoundError)
+
+
+@pytest.mark.skipif(_AS_ROOT, reason="root writes through any mode")
+def test_a_persons_file_the_filesystem_refuses_is_named_and_nothing_is_left(tmp_path: Path):
+    """A directory this account cannot write refuses a person's file by name.
+
+    The file they asked for, then the filesystem's reason — the directory first when it is
+    the directory that could not be created — with the ``PermissionError`` on ``__cause__``,
+    no temp file beside it, and never the output tree's class.
+    """
+    sealed = tmp_path / "project"
+    sealed.mkdir()
+    sealed.chmod(0o555)
+    try:
+        with pytest.raises(WriteRefusedError) as written:
+            chemrefine_io.write_user_file(sealed / "input.yaml", "steps: []\n")
+        with pytest.raises(WriteRefusedError) as made:
+            chemrefine_io.write_user_file(sealed / "templates" / "step1.inp", "! Opt\n")
+        left = list(sealed.iterdir())
+    finally:
+        sealed.chmod(0o755)
+    assert str(written.value) == f"cannot write {sealed / 'input.yaml'}: Permission denied"
+    assert str(made.value) == (
+        f"cannot write {sealed / 'templates' / 'step1.inp'}: "
+        f"{sealed / 'templates'}: Permission denied"
+    )
+    assert type(written.value) is type(made.value) is WriteRefusedError
+    assert isinstance(written.value.__cause__, PermissionError)
+    assert left == []
+
+
+def test_a_persons_file_refused_mid_write_is_the_file_it_was(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A person's file is replaced whole or not at all: a full disk leaves the one they had."""
+    target = tmp_path / "templates" / "step1.inp"
+    target.parent.mkdir()
+    target.write_text("! Mine\n", encoding="utf-8")
+    monkeypatch.setattr(os, "fsync", _refuse(errno.ENOSPC))
+    with pytest.raises(WriteRefusedError) as excinfo:
+        chemrefine_io.write_user_file(target, "! Starter\n")
+    assert str(excinfo.value) == f"cannot write {target}: No space left on device"
+    assert target.read_text(encoding="utf-8") == "! Mine\n"
+    assert [p.name for p in target.parent.iterdir()] == ["step1.inp"]
+
+
+def test_write_user_file_creates_the_directory_and_writes_text_as_utf8(tmp_path: Path):
+    """Missing parents are created; text lands as its UTF-8 bytes, bytes as they are."""
+    target = tmp_path / "project" / "templates" / "step1.inp"
+    chemrefine_io.write_user_file(target, "! Å\n")
+    assert target.read_bytes() == "! Å\n".encode()
+    chemrefine_io.write_user_file(target, b"RAW")
+    assert target.read_bytes() == b"RAW"
+
+
+@pytest.mark.skipif(_AS_ROOT, reason="root writes through any mode")
+def test_removing_a_persons_file_refuses_by_name_and_passes_over_one_that_is_gone(tmp_path: Path):
+    """A removal is a write: refused, it is named like one; of a file not there, it is nothing."""
+    seeds = tmp_path / "seeds"
+    seeds.mkdir()
+    stale = seeds / "structure_0.xyz"
+    stale.write_text("1\n\nH 0 0 0\n", encoding="utf-8")
+    chemrefine_io.remove_user_file(seeds / "structure_9.xyz")
+    seeds.chmod(0o555)
+    try:
+        with pytest.raises(WriteRefusedError) as excinfo:
+            chemrefine_io.remove_user_file(stale)
+    finally:
+        seeds.chmod(0o755)
+    assert type(excinfo.value) is WriteRefusedError
+    assert str(excinfo.value) == f"cannot write {stale}: Permission denied"
+    assert stale.is_file()
+    chemrefine_io.remove_user_file(stale)
+    assert not stale.exists()
+
+
 def _report(step: int) -> Callable[[Path], object]:
     """``save_step_csv`` for one structure at ``step``, aimed at the path it is handed."""
     return lambda target: save_step_csv(
@@ -929,8 +1055,12 @@ _CLEANUP_REFUSALS = [
         ),
         id="record-read",
     ),
+    pytest.param(
+        lambda: WriteRefusedError("cannot write /seeds/structure_0.xyz: Read-only file system"),
+        id="user-write",
+    ),
 ]
-"""What a cleanup can meet: a temp file's raw removal, a write through the tree's net, or a
+"""What a cleanup can meet: a temp file's raw removal, a write through either net, or a
 record it has to read back before it writes."""
 
 
@@ -955,8 +1085,9 @@ def test_cleanup_during_an_unwind_keeps_the_exception_in_flight(
     143, a Ctrl-C, a refused write — and the run would exit with the cleanup's code and
     sentence. The very exception in flight is the one that leaves, whether the cleanup met
     the raw ``OSError`` of a temp file's removal, the ``OutputTreeError`` of a lock or a
-    lease ledger released through the output tree's net, or the ``CacheError`` of a lease
-    ledger the release could not read back.
+    lease ledger released through the output tree's net, the ``CacheError`` of a lease
+    ledger the release could not read back, or the ``WriteRefusedError`` of a
+    half-written seed set taken back through a person's.
     """
     in_flight = stopping()
     with pytest.raises(type(in_flight)) as excinfo:

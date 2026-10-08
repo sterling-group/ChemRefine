@@ -52,7 +52,7 @@ from werkzeug.exceptions import HTTPException
 from chemrefine import agent_tools, introspect, io
 from chemrefine.errors import ChemRefineError, ConfigError
 from chemrefine.gui import STATIC_DIR
-from chemrefine.io import atomic_write, expand_user_path
+from chemrefine.io import expand_user_path
 
 
 def _refusal(error: ChemRefineError) -> dict[str, Any]:
@@ -522,16 +522,15 @@ def create_app(*, token: str, config_path: Path | None = None) -> Flask:
         """Write the editor's YAML to disk — the artifact the whole GUI exists to make.
 
         Deliberately unvalidated — Save is for drafts too, and the Validate button is
-        its own action — but atomic like :func:`chemrefine.agent_tools.save_config`'s
-        write: a kill mid-save must not truncate the config a run is pointed at. An
-        unwritable destination is a plain 400, like every other bad input here.
+        its own action — but whole or not at all, like
+        :func:`chemrefine.agent_tools.save_config`'s write: a kill mid-save must not
+        truncate the config a run is pointed at. A destination the filesystem refuses is
+        :class:`~chemrefine.errors.WriteRefusedError`, which :func:`surface` answers in the
+        documented shape, as it answers the agent's save.
         """
         body = _read(_SaveRequest, _body())
         destination = expand_user_path(body.path)
-        try:
-            atomic_write(destination, body.yaml_text.encode("utf-8"))
-        except OSError as e:
-            return jsonify({"error": f"cannot write {destination}: {e}"}), 400
+        io.write_user_file(destination, body.yaml_text)
         return jsonify({"path": str(destination)})
 
     @app.post("/api/scaffold")

@@ -192,21 +192,17 @@ def read_template(config_path: str, step: int | str) -> dict[str, Any]:
 def write_template(config_path: str, step: int | str, text: str) -> dict[str, Any]:
     """Replace one step's template with ``text`` (creating template_dir if needed).
 
-    Replaced whole or not at all (:func:`chemrefine.io.atomic_write`): a kill or a
+    Replaced whole or not at all (:func:`chemrefine.io.write_user_file`): a kill or a
     full disk between truncating the file and writing it would leave an empty template
     where an edited one was, and :func:`~chemrefine.ids.require_template` would hand that
-    stub to the engine on the next run — the rule :func:`save_config` already holds for
-    the config a run is pointed at, held here for the template it renders.
+    stub to the engine on the next run — the rule :func:`save_config` holds for the config
+    a run is pointed at, held here for the template it renders.
 
-    An unwritable destination is a :class:`~chemrefine.errors.ConfigError` naming the
-    path — the module's stated contract — not a raw :class:`OSError` the GUI's error
-    handler re-raises as a 500 whose traceback names neither.
+    A destination the filesystem refuses is :class:`~chemrefine.errors.WriteRefusedError`
+    naming the file, and the template that was there is there still.
     """
     plan = _step_template_plan(load_config(_config_path(config_path)), step)
-    try:
-        io.atomic_write(plan.path, text.encode("utf-8"))
-    except OSError as e:
-        raise ConfigError(f"cannot write template {plan.path}: {e}") from e
+    io.write_user_file(plan.path, text)
     return {"path": str(plan.path), "bytes": len(text.encode("utf-8"))}
 
 
@@ -579,9 +575,9 @@ def build_structures(
     **A call owns the whole seed set.** ``input:`` directory-seeding reads every ``.xyz``
     in ``out_dir``, so a ``structure_*.xyz`` an earlier call left behind — a longer list, a
     failed attempt — would seed the run with a molecule this call never reported. The
-    stale set is cleared before writing, and a SMILES list that fails partway is cleaned
-    up as the XYZ branch is: the directory afterwards holds this call's
-    structures, or none.
+    stale set is cleared before writing, and a call that stops partway — a bad molecule, a
+    file the filesystem refuses (:class:`~chemrefine.errors.WriteRefusedError`) — takes
+    back what it wrote: the directory afterwards holds this call's structures, or none.
 
     Which is why a source that names **no** structures is refused before anything is
     deleted, on both branches. Owning the seed set means an empty call would empty the
@@ -603,53 +599,60 @@ def build_structures(
     # would make a directory literally named `~` under the cwd and report paths beginning
     # with it, which the readers next door expand to somewhere else.
     out = expand_user_path(out_dir)
-    out.mkdir(parents=True, exist_ok=True)
+    with io.user_write(out):
+        out.mkdir(parents=True, exist_ok=True)
     for stale in out.glob("structure_*.xyz"):
-        stale.unlink()
-    written: list[str] = []
+        io.remove_user_file(stale)
+    written: list[Path] = []
     build_warnings: list[str] = []
-    if smiles is not None:
-        from rdkit import Chem
+    try:
+        if smiles is not None:
+            from rdkit import Chem
 
-        for i, one in enumerate(smiles):
+            for i, one in enumerate(smiles):
+                try:
+                    rows = io.embed_smiles(one)
+                except ValueError as e:
+                    raise ConfigError(str(e)) from e
+                path = out / f"structure_{i}.xyz"
+                io.write_user_file(path, io.plain_xyz_text(rows, comment=f"SMILES: {one}"))
+                written.append(path)
+                mol = Chem.MolFromSmiles(one)
+                formal = Chem.GetFormalCharge(mol)
+                if formal != charge:
+                    build_warnings.append(
+                        f"structure_{i}: SMILES formal charge {formal} != requested {charge}"
+                    )
+                parity = _parity_warning(tuple(row[0] for row in rows), charge, multiplicity)
+                if parity is not None:
+                    build_warnings.append(f"structure_{i}: {parity}")
+        else:
+            path = out / "structure_0.xyz"
+            io.write_user_file(path, xyz_text or "")
+            written.append(path)
             try:
-                rows = io.embed_smiles(one)
-            except ValueError as e:
-                for done in written:
-                    Path(done).unlink(missing_ok=True)
-                raise ConfigError(str(e)) from e
-            path = io.write_single_xyz(rows, out / f"structure_{i}.xyz", comment=f"SMILES: {one}")
-            written.append(str(path))
-            mol = Chem.MolFromSmiles(one)
-            formal = Chem.GetFormalCharge(mol)
-            if formal != charge:
-                build_warnings.append(
-                    f"structure_{i}: SMILES formal charge {formal} != requested {charge}"
-                )
-            parity = _parity_warning(tuple(row[0] for row in rows), charge, multiplicity)
-            if parity is not None:
-                build_warnings.append(f"structure_{i}: {parity}")
-    else:
-        path = out / "structure_0.xyz"
-        io.atomic_write(path, (xyz_text or "").encode("utf-8"))
-        try:
-            frames = io.read_xyz_frames(path)
-        except (ValueError, IndexError, KeyError, OSError) as e:
-            path.unlink(missing_ok=True)
-            raise ConfigError(f"xyz_text is not valid XYZ: {e}") from e
-        if not frames:
-            # An empty string parses to zero frames without error, and a zero-byte
-            # "seed set" reported as written is a success this tool's contract says
-            # must fail here — not later, at a step that finds nothing to compute.
-            path.unlink(missing_ok=True)
-            raise ConfigError("xyz_text contains no structures")
-        written.append(str(path))
-        for i, atoms in enumerate(frames):
-            parity = _parity_warning(tuple(atoms.get_chemical_symbols()), charge, multiplicity)
-            if parity is not None:
-                build_warnings.append(f"frame {i}: {parity}")
+                frames = io.read_xyz_frames(path)
+            except (ValueError, IndexError, KeyError, OSError) as e:
+                raise ConfigError(f"xyz_text is not valid XYZ: {e}") from e
+            if not frames:
+                # An empty string parses to zero frames without error, and a zero-byte
+                # "seed set" reported as written is a success this tool's contract says
+                # must fail here — not later, at a step that finds nothing to compute.
+                raise ConfigError("xyz_text contains no structures")
+            for i, atoms in enumerate(frames):
+                parity = _parity_warning(tuple(atoms.get_chemical_symbols()), charge, multiplicity)
+                if parity is not None:
+                    build_warnings.append(f"frame {i}: {parity}")
+    except BaseException:
+        # Whatever stopped the call, the seed set is whole or absent: a part of it left
+        # behind is read by directory-seeding as the ensemble. Each removal is cleanup — one
+        # the filesystem refuses is logged, and what stopped the call is what leaves.
+        for done in written:
+            with io.cleanup():
+                io.remove_user_file(done)
+        raise
     return {
-        "written": written,
+        "written": [str(path) for path in written],
         "warnings": build_warnings,
         "charge": charge,
         "multiplicity": multiplicity,
@@ -897,7 +900,9 @@ def read_structure_text(name: str, text: str) -> dict[str, Any]:
 
     Written to a temporary file rather than parsed from a string, so that format detection
     and every one of ASE's ninety readers work exactly as they do for a path — several of
-    them seek, and a few open sibling files relative to their own.
+    them seek, and a few open sibling files relative to their own. A temporary directory
+    that refuses the copy — full, or not this account's to write — is
+    :class:`~chemrefine.errors.WriteRefusedError` naming it.
     """
     import tempfile
 
@@ -918,9 +923,12 @@ def read_structure_text(name: str, text: str) -> dict[str, Any]:
     safe = Path(name).name
     if safe in ("", ".", ".."):
         safe = "structure"
-    with tempfile.TemporaryDirectory() as scratch:
-        target = Path(scratch) / safe
-        target.write_text(text, encoding="utf-8")
+    staging = Path(tempfile.gettempdir())
+    with contextlib.ExitStack() as stack:
+        with io.user_write(staging):
+            scratch = stack.enter_context(tempfile.TemporaryDirectory(dir=staging))
+            target = Path(scratch) / safe
+            target.write_text(text, encoding="utf-8")
         return _structure_payload(target, safe)
 
 
@@ -1234,22 +1242,18 @@ def save_config(path: str, yaml_text: str) -> dict[str, Any]:
     (``written: false``) rather than saved, so no tool call can leave a broken
     ``input.yaml`` where a later ``start_run`` would trip over it; warnings (missing
     templates and the like) do not block, exactly as ``chemrefine validate`` treats
-    them. The write itself is atomic (:func:`chemrefine.io.atomic_write`), and
+    them. The write itself is atomic (:func:`chemrefine.io.write_user_file`), and
     relative paths inside the text are judged against the file's own directory, the way
-    :func:`~chemrefine.config.load_config` will resolve them later.
+    :func:`~chemrefine.config.load_config` will resolve them later. A destination the
+    filesystem refuses raises :class:`~chemrefine.errors.WriteRefusedError`: the text is
+    not what has to change.
     """
     destination = expand_user_path(path).resolve()
     report = validate_config_text(yaml_text, base_dir=destination.parent)
     payload: dict[str, Any] = {"path": str(destination), "written": False, **report.to_json()}
     if not report.ok:
         return payload
-    try:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        io.atomic_write(destination, yaml_text.encode("utf-8"))
-    except OSError as e:
-        # The module contract: a failure carries the documented exit code, so the GUI's
-        # handler answers 400 and an MCP client gets a typed refusal — not a 500 traceback.
-        raise ConfigError(f"cannot write {destination}: {e}") from e
+    io.write_user_file(destination, yaml_text)
     payload["written"] = True
     return payload
 

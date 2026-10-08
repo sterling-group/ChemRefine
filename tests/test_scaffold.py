@@ -16,8 +16,9 @@ from typing import Literal
 import pytest
 import yaml
 
+from chemrefine import io
 from chemrefine.config import Config, load_config
-from chemrefine.errors import EngineNotFoundError
+from chemrefine.errors import EngineNotFoundError, WriteRefusedError
 from chemrefine.scaffold import TemplatePlan, _starter_for, plan_templates, scaffold_templates
 
 
@@ -276,19 +277,15 @@ def test_the_template_driven_starters_render_the_real_geometry(tmp_path: Path):
     )
 
 
-def test_an_unwritable_template_dir_is_a_config_error_not_a_traceback(tmp_path: Path):
-    """A disk refusal carries the documented exit code, wherever the caller sits.
+def test_a_template_dir_the_filesystem_refuses_is_a_write_refusal_naming_it(tmp_path: Path):
+    """A ``template_dir`` that cannot be created is a refused write, wherever the caller sits.
 
     This seam serves the CLI, the GUI and the MCP tools, and all three promise failures
-    the taxonomy names: the CLI catches only ``ChemRefineError``, and the GUI's handler
-    re-raises anything else as a 500 with a logged traceback — for what is an ordinary
-    read-only tree or an exhausted quota (ENOSPC on HPC scratch is the everyday case).
+    the taxonomy names. A read-only tree or an exhausted quota (ENOSPC on HPC scratch is
+    the everyday case) is the machine's to fix, so it carries the refused write's class and
+    code and names the directory — never the config's, whose reader would look for a typo.
     """
     import os
-
-    import pytest
-
-    from chemrefine.errors import ConfigError
 
     if os.geteuid() == 0:
         pytest.skip("root writes everywhere; the permission wall cannot be built")
@@ -303,10 +300,12 @@ def test_an_unwritable_template_dir_is_a_config_error_not_a_traceback(tmp_path: 
         encoding="utf-8",
     )
     try:
-        with pytest.raises(ConfigError, match="cannot scaffold"):
+        with pytest.raises(WriteRefusedError) as refusal:
             scaffold_templates(load_config(path))
     finally:
         fortress.chmod(0o755)
+    assert type(refusal.value) is WriteRefusedError
+    assert str(refusal.value) == f"cannot write {fortress / 'templates'}: Permission denied"
 
 
 def test_steps_sharing_a_template_scaffold_it_once(tmp_path: Path):
@@ -339,10 +338,6 @@ def test_a_starter_that_fails_to_write_leaves_the_edited_template_intact(
     """
     import os
 
-    import pytest
-
-    from chemrefine.errors import ConfigError
-
     config = _config(tmp_path, {"step": 1, "engine": "orca"})
     template = tmp_path / "templates" / "step1.inp"
     template.parent.mkdir()
@@ -352,7 +347,7 @@ def test_a_starter_that_fails_to_write_leaves_the_edited_template_intact(
         raise OSError("No space left on device")
 
     monkeypatch.setattr(os, "fsync", refuse)
-    with pytest.raises(ConfigError, match="cannot scaffold"):
+    with pytest.raises(WriteRefusedError, match="No space left on device"):
         scaffold_templates(config, overwrite=True)
     assert template.read_text(encoding="utf-8") == "! Mine\n"
     assert not list(template.parent.glob(".tmp_*"))
@@ -379,30 +374,32 @@ def test_a_cross_engine_template_share_is_refused_at_planning(tmp_path: Path):
         plan_templates(config)
 
 
-def test_a_mid_scaffold_failure_names_what_already_landed(tmp_path: Path, monkeypatch):
-    """A disk refusal partway through says which starters are already on disk.
+def test_a_scaffold_refused_partway_names_the_starter_and_a_second_run_writes_the_rest(
+    tmp_path: Path, monkeypatch
+):
+    """A disk refusal partway through names the starter it stopped at, and loses nothing.
 
-    The failure leaves the earlier starters behind — whole, each written atomically —
-    and nothing at all where the failed one would have been, so a retry writes it; naming
-    what landed is what makes the partial state inspectable rather than invisible.
+    Starters land in plan order, each whole or not at all, so the named file is where the
+    plan stopped: the ones before it are on disk, it is not, and the same command again
+    keeps the first and writes the rest.
     """
-    import pytest
-
-    from chemrefine import scaffold as scaffold_module
-    from chemrefine.errors import ConfigError
-
     config = _config(
         tmp_path,
         {"step": 1, "engine": "orca"},
         {"step": 2, "engine": "qchem"},
     )
-    real_write = scaffold_module.atomic_write
+    templates = tmp_path / "templates"
+    real_write = io.atomic_write
 
-    def fail_on_qchem(path: Path, data: bytes) -> None:
+    def full_at_the_second(path: Path, data: bytes, *, mode: int | None = None) -> None:
         if path.name == "step2.in":
             raise OSError(28, "No space left on device")
-        real_write(path, data)
+        real_write(path, data, mode=mode)
 
-    monkeypatch.setattr(scaffold_module, "atomic_write", fail_on_qchem)
-    with pytest.raises(ConfigError, match=r"already written before the failure: .*step1\.inp"):
-        scaffold_templates(config)
+    with monkeypatch.context() as full_disk:
+        full_disk.setattr(io, "atomic_write", full_at_the_second)
+        with pytest.raises(WriteRefusedError) as refusal:
+            scaffold_templates(config)
+    assert str(refusal.value) == f"cannot write {templates / 'step2.in'}: No space left on device"
+    assert [p.name for p in templates.iterdir()] == ["step1.inp"]
+    assert [p.name for p in scaffold_templates(config)] == ["step2.in", "cpu.slurm.header"]

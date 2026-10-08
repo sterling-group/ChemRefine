@@ -429,7 +429,7 @@ _BUNDLED: tuple[Mutation, ...] = (
     Mutation(
         id="tree-write-names-the-refusal",
         path="src/chemrefine/io.py",
-        old='        raise OutputTreeError(f"cannot write {path}: {reason}") from e\n',
+        old='        raise refusal(f"cannot write {path}: {reason}") from e\n',
         new="        raise\n",
         tests="tests/test_io.py",
         breaks="a full disk, a spent quota or a read-only mount under a run ends it in a "
@@ -466,6 +466,17 @@ _BUNDLED: tuple[Mutation, ...] = (
         breaks="a lock or lease release the output tree refuses while a run unwinds takes the "
         "place of what stopped it, so a SIGTERM's 143 leaves as exit 11 and a batch's own "
         "error as the release's",
+    ),
+    Mutation(
+        id="build-structures-takes-back-a-partial-seed-set",
+        path="src/chemrefine/agent_tools.py",
+        old="        for done in written:\n            with io.cleanup():\n"
+        "                io.remove_user_file(done)\n        raise\n",
+        new="        raise\n",
+        tests="tests/test_agent_tools_chemistry.py",
+        breaks="a seed set a full disk or a molecule that will not embed cuts short stays in "
+        "the directory, and a run whose `input:` is that directory computes on the molecules "
+        "that landed — fewer than were asked for, with nothing saying so",
     ),
     Mutation(
         id="cache-only-may-submit",

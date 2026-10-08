@@ -19,7 +19,13 @@ from chemrefine import __version__
 from chemrefine.cache import load, load_failure_records
 from chemrefine.cli import SUBCOMMANDS, app
 from chemrefine.cli_legacy import translate_argv
-from chemrefine.errors import CacheError, ChemRefineError, ConfigError, OutputTreeError
+from chemrefine.errors import (
+    CacheError,
+    ChemRefineError,
+    ConfigError,
+    OutputTreeError,
+    WriteRefusedError,
+)
 
 runner = CliRunner()
 
@@ -213,6 +219,33 @@ def test_scaffold_surfaces_config_errors_with_their_exit_code(tmp_path: Path):
     config.write_text("steps: [unclosed", encoding="utf-8")
     result = runner.invoke(app, ["scaffold", str(config)])
     assert result.exit_code == 2
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through any mode")
+def test_scaffold_exits_with_the_refused_writes_code_when_templates_cannot_be_written(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    """A ``template_dir`` the filesystem refuses exits 11, never the config's 2.
+
+    A script wrapping ``scaffold`` sends an exit 2 back to whoever wrote the YAML. A full
+    disk or a read-only project directory is not theirs to fix in the file, so the command
+    exits with the refused write's code and one line naming the starter.
+    """
+    templates = tmp_path / "templates"
+    templates.mkdir()
+    config = _write_config(tmp_path, steps=[{"step": 1, "engine": "orca", "operation": "opt_sp"}])
+    templates.chmod(0o555)
+    try:
+        result = runner.invoke(app, ["scaffold", str(config)])
+    finally:
+        templates.chmod(0o755)
+
+    assert result.exit_code == WriteRefusedError.exit_code == 11
+    assert isinstance(result.exception, SystemExit), f"a typed refusal, not {result.exception!r}"
+    assert (
+        f"WriteRefusedError: cannot write {templates / 'step1.inp'}: Permission denied"
+        in caplog.text
+    )
 
 
 def test_engines_lists_the_registry_in_both_shapes():

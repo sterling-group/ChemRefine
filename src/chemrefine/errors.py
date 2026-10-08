@@ -27,7 +27,9 @@ Exit code     Meaning
 ``9``         :class:`BackendProvisionError` — a managed backend env
               could not be built
 ``10``        :class:`RunLockError` — another run holds this output tree
-``11``        :class:`OutputTreeError` — the output tree refused a write
+``11``        :class:`WriteRefusedError` — the filesystem refused a
+              write, and :class:`OutputTreeError` for one the run
+              makes in its own output tree
 ============  ============================================
 """
 
@@ -162,16 +164,45 @@ class RunLockError(ChemRefineError):
     exit_code = 10
 
 
-class OutputTreeError(ChemRefineError):
+class WriteRefusedError(ChemRefineError):
+    """The filesystem refused a write.
+
+    A full disk or quota, a read-only mount, or a directory this account cannot write.
+    Raised as itself for a file a tool writes on a person's behalf outside a run's output
+    tree — the config, the step template or the seed at the path they named, the scratch
+    copy of a file they dropped on the builder (:func:`chemrefine.io.user_write`) — and as
+    :class:`OutputTreeError` for a write the run makes in its own tree. The message is
+    ``cannot write <file>: <reason>`` either way, with the file the filesystem refused
+    before the reason when that was another: a directory it could not create.
+
+    Nothing is wrong with the config: what was to be saved had already been judged, and a
+    file that was there before is there still, whole. Its own code, for the reason
+    :class:`BackendProvisionError` has one: the fix is the machine's — free space, fix the
+    permissions — or another destination, and a script wrapping ``chemrefine scaffold``
+    must tell a full disk from a config it should send back to its author. One code for
+    both classes, because no command and no tool writes both kinds of file: which one ran
+    says whose file it was, and the class and the message say it again.
+
+    Not an :class:`OSError`, though the filesystem's refusal is its ``__cause__``: every
+    ``except OSError`` between the write and the surface that shows it would take it for one
+    of its own and word it again — the seed reader's net would call a full disk under
+    ``_seed/`` a bad seed file.
+    """
+
+    exit_code = 11
+
+
+class OutputTreeError(WriteRefusedError):
     """The filesystem refused a write the run makes in its own output tree.
 
     A full disk or quota, a read-only mount, or a directory under ``output_dir`` this
     account cannot write. The message names the file the run was writing, and the one the
     filesystem refused when that was another — a directory it could not create, the source
     of a copy (:func:`chemrefine.io.tree_write`). Nothing is wrong with the config, the jobs
-    or the cache. Its own code, for the reason :class:`BackendProvisionError` has one: the
-    fix is the machine's, and a script wrapping a run must tell a full disk from a step
-    that halted.
+    or the cache, and a script wrapping a run must tell a full disk from a step that
+    halted. A subclass sharing :class:`WriteRefusedError`'s code, like
+    :class:`OutputTerminationError`: what it adds is whose file it was, and with that what
+    to do next.
 
     Free space, remount read-write or fix the permissions, then run the command that
     stopped again. ``run`` and ``rerun`` begin by discarding caches, so ``resume`` in their
@@ -180,14 +211,7 @@ class OutputTreeError(ChemRefineError):
     which adopts what the jobs already finished — an artifact step's product among it. A
     message that also names a SLURM job the run could not cancel, or a live run whose lock
     it could not put back, says what to do about that first.
-
-    Not an :class:`OSError`, though the filesystem's refusal is its ``__cause__``: every
-    ``except OSError`` between the write and the CLI would take it for one of its own and
-    word it again — the seed reader's net would call a full disk under ``_seed/`` a bad
-    seed file.
     """
-
-    exit_code = 11
 
 
 EXIT_CODES: dict[str, int] = {
