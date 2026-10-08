@@ -188,6 +188,45 @@ def test_a_recording_keys_every_step_the_same_at_two_roots(
     assert first == fingerprints(tmp_path / "laptop")
 
 
+def test_a_resume_reads_a_resolved_structure_and_leaves_its_inputs_the_winners(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``ts_path``'s sampled step, its results document gone, resumes around the winner's inputs.
+
+    The step promotes a displaced child under its parent's id, and the child's ``.inp`` and
+    ``_inp.xyz`` arrive at the canonical path with its ``.out``. A resume that finds no
+    results document adopts the row from the manifest and re-parses it. It prepares nothing
+    for it, so the two inputs stay those of the job that wrote that output; prepared again
+    they would be round 1's, the saddle the sampling moved away from.
+    """
+    run = replay(recording("ts_path"), tmp_path, monkeypatch)
+    settle = run.config.steps[-1]
+    step_dir = run.config.step_dir(settle).resolve()
+    (survivor,) = run.outcomes[-1].state.structures
+    winner = survivor.resolved_from
+    assert winner is not None, "precondition: the step promoted a child"
+    home = step_dir / survivor.id
+    attempt = ids.latest_attempt_dir(home)
+    assert attempt is not None
+    stem = ids.structure_stem(settle.step, survivor.id)
+    child_stem = ids.structure_stem(settle.step, winner)
+    promoted = {
+        f"{stem}{suffix}": (attempt / winner / f"{child_stem}{suffix}").read_bytes()
+        for suffix in (".inp", "_inp.xyz")
+    }
+    assert {name: (home / name).read_bytes() for name in promoted} == promoted
+    assert all((attempt / name).read_bytes() != data for name, data in promoted.items()), (
+        "precondition: round 1's inputs, sealed in the attempt, are other files"
+    )
+
+    cache.invalidate(step_dir)
+    outcomes = pipeline.run(run.config)  # the replay left every submission forbidden
+
+    assert not outcomes[-1].cache_hit, "precondition: the step is read back row by row"
+    assert [s.resolved_from for s in outcomes[-1].state.structures] == [winner]
+    assert {name: (home / name).read_bytes() for name in promoted} == promoted
+
+
 def test_every_case_has_one_recording_and_one_check() -> None:
     """A case without a recording is never replayed, and a recording without a check proves
     only that it runs. Each is one directory, one archive and one entry here; a live check

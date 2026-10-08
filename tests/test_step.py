@@ -1803,10 +1803,16 @@ def test_resume_recomputes_rows_whose_key_the_config_change_moved(tmp_path: Path
 
 
 class _CountingEngine(FakeEngine):
-    """The fake engine, with a record of which structures each submit carried."""
+    """The fake engine, with a record of which structures each prepare and submit carried."""
 
     def __init__(self) -> None:
+        self.prepared: list[list[str]] = []
         self.submitted: list[list[str]] = []
+
+    def prepare(self, ctx):
+        """Record which structures the call asks inputs for, then write them."""
+        self.prepared.append([s.id for s in ctx.prev_state.structures])
+        return super().prepare(ctx)
 
     def submit(self, inputs, ctx):
         """Record the batch's structure ids, then run the fake calculation."""
@@ -1840,6 +1846,76 @@ def test_a_partially_changed_parent_set_computes_exactly_the_changed_rows(tmp_pa
 
     assert engine.submitted == [["2"]], "exactly the changed row computes"
     assert [s.id for s in outcome.state.structures] == ["0", "1", "2"]
+
+
+def test_resume_prepares_only_the_rows_it_recomputes(tmp_path: Path):
+    """{A, B, C} → {A, B', C} prepares B' alone; A and C are read back as they stand.
+
+    The inputs beside an adopted output belong to the job that wrote it, and preparing the
+    row again would put this run's rendering of the parent in their place. So the engine is
+    asked for the condemned row only, and the adopted rows keep the jobs the manifest records
+    for them, listed with the prepared one in the parents' order.
+    """
+    cfg = _config(tmp_path)
+    seeds = _seed_state(["0", "1", "2"])
+    run_step(cfg, cfg.steps[0], seeds, mode=StepMode.EXECUTE)
+    step_dir = step_dir_for(cfg, cfg.steps[0])
+    cache.invalidate(step_dir)
+    stored = cache.load_manifest(step_dir)
+    assert stored is not None and [sid for _inp, _out, sid in stored.files] == ["0", "1", "2"]
+
+    moved = Atoms("H")
+    moved.positions[0] = (0.0, 0.0, 0.5)
+    changed = PipelineState(
+        structures=(seeds.structures[0], Structure(id="1", atoms=moved), seeds.structures[2])
+    )
+    engine = _CountingEngine()
+    outcome = run_step(cfg, cfg.steps[0], changed, mode=StepMode.RESUME, engine=engine)
+
+    assert {sid for batch in engine.prepared for sid in batch} == {"1"}
+    assert engine.submitted == [["1"]]
+    assert cache.load_manifest(step_dir) == stored, "every row, in the parents' order"
+    assert [s.id for s in outcome.state.structures] == ["0", "1", "2"]
+
+
+def test_resume_reads_an_adopted_row_where_the_manifest_records_it(tmp_path: Path):
+    """A row's job is the one the manifest records, for as long as its key vouches for it.
+
+    A hand-written adoption manifest may name outputs wherever they are, and `rebuild-cache`
+    stamps those rows with their keys. A resume reads an adopted row at the recorded path:
+    looked for where a fresh prepare would write it, the output would be missing, and
+    finished work would be archived and run again. A condemned row's recorded job belongs to
+    the configuration that wrote it, so that row is listed under the job prepared for it.
+    """
+    cfg = _config(tmp_path)
+    seeds = _seed_state(["0", "1"])
+    run_step(cfg, cfg.steps[0], seeds, mode=StepMode.EXECUTE)
+    step_dir = step_dir_for(cfg, cfg.steps[0])
+    cache.invalidate(step_dir)
+    manifest_file = cache.manifest_path(step_dir)
+    recorded = json.loads(manifest_file.read_text(encoding="utf-8"))
+    for row in recorded["files"]:
+        kept_as = f"{row['id']}/adopted.log"
+        (step_dir / row["output"]).rename(step_dir / kept_as)
+        row["output"] = kept_as
+    manifest_file.write_text(json.dumps(recorded), encoding="utf-8")
+
+    moved = Atoms("H")
+    moved.positions[0] = (0.0, 0.0, 0.5)
+    changed = PipelineState(structures=(seeds.structures[0], Structure(id="1", atoms=moved)))
+    engine = _CountingEngine()
+    outcome = run_step(cfg, cfg.steps[0], changed, mode=StepMode.RESUME, engine=engine)
+
+    assert engine.submitted == [["1"]], "the adopted row is read, not run again"
+    assert (step_dir / "0" / "adopted.log").is_file()
+    assert not list((step_dir / "0").glob("attempt*")), "and none of it is archived"
+    manifest = cache.load_manifest(step_dir)
+    assert manifest is not None
+    assert [out for _inp, out, _sid in manifest.files] == [
+        step_dir / "0" / "adopted.log",
+        step_dir / "1" / "step1_1.out",
+    ]
+    assert [s.id for s in outcome.state.structures] == ["0", "1"]
 
 
 def _partially_changed(tmp_path: Path) -> tuple[Config, PipelineState, Path]:

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import assert_never
@@ -57,6 +57,7 @@ from chemrefine.errors import (
     NoUsableCacheError,
 )
 from chemrefine.state import (
+    JobTriple,
     PipelineState,
     StepContext,
     StepInputs,
@@ -660,9 +661,11 @@ def _prepare_stamped(
     key: cache.StepKey,
     *,
     archive: Iterable[str],
+    adopted: Iterable[JobTriple] = (),
     stamp: cache.ManifestStamp | None = None,
 ) -> StepInputs:
-    """Archive ``archive``, prepare, stamp the manifest — the head every submitting route shares.
+    """Archive ``archive``, prepare what is not ``adopted``, stamp the manifest — the head
+    every submitting route shares.
 
     In that order and no other. The previous artifacts in the named directories leave
     *before* the manifest is stamped with the keys that condemn them: stamped first, a
@@ -677,13 +680,36 @@ def _prepare_stamped(
     structure grain, for the incremental resume, and the step stamp is that proof for an
     artifact step's one product (:func:`_adopt_product`).
 
+    ``adopted`` are the jobs a route takes from the manifest on disk instead of preparing
+    them: the incremental resume's matching rows. They enter the manifest as they stand,
+    because the input beside an adopted output belongs to the job that wrote it, and that
+    need not be this context's rendering of the parent: a convergence retry starts from the
+    geometry the first attempt reached, a promoted NMS winner is a displaced child's whole
+    calculation, and a tree that moved, or a core budget that changed, renders other bytes
+    under the same row key. Prepared again, the directory would pair an output with an
+    input that never produced it. Every parent ``adopted`` does not name is prepared, and
+    the manifest lists both in the parents' order (a job that is no parent's row, an
+    artifact step's one job, follows them).
+
     Archiving happens here rather than inside ``prepare`` because the retry and NMS paths
     call ``prepare`` too and manage their own attempt directories. ``stamp`` is the full
     current stamp unless a route must carry a stored half forward: the incremental resume
     keeps the stored search key until the attempts it describes exist.
     """
     attempts.archive_previous(ctx.step_dir, archive)
-    inputs = engine.prepare(ctx)
+    kept = {job[2]: job for job in adopted}
+    parents = ctx.prev_state.structures
+    rest = PipelineState(structures=tuple(s for s in parents if s.id not in kept))
+    prepared = engine.prepare(replace(ctx, prev_state=rest))
+    position = {s.id: i for i, s in enumerate(parents)}
+    inputs = StepInputs(
+        files=tuple(
+            sorted(
+                (*kept.values(), *prepared.files),
+                key=lambda job: position.get(job[2], len(position)),
+            )
+        )
+    )
     cache.save_manifest(
         inputs,
         ctx.step_dir,
@@ -799,10 +825,20 @@ def _incremental_step_outcome(
     # archive of the condemned rows makes honest.
     stamp = key.manifest_stamp()
     stamp["search_key"] = provenance.search_key
-    # Only the condemned rows are archived: an adopted row re-renders byte-identically, a
-    # condemned one renders into the directory its stale artifacts just left (the
-    # resubmission knows they arrive pre-archived).
-    inputs = _prepare_stamped(engine, ctx, step_cfg, key, archive=changed, stamp=stamp)
+    # Only the condemned rows are archived and prepared, each into the directory its stale
+    # artifacts just left (the resubmission knows they arrive pre-archived). An adopted row
+    # is read back as it stands: it keeps the job the manifest records for it and the
+    # inputs that job ran from.
+    adopted = current.keys() - changed
+    inputs = _prepare_stamped(
+        engine,
+        ctx,
+        step_cfg,
+        key,
+        archive=changed,
+        adopted=(job for job in manifest.files if job[2] in adopted),
+        stamp=stamp,
+    )
     successes, failures = lifecycle.resubmit_unusable(engine, ctx, inputs, stale=changed)
     successes, failures = lifecycle.retry_unconverged(engine, ctx, successes, failures)
     if nms_engine is not None:

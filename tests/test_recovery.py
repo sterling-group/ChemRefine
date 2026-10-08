@@ -451,7 +451,9 @@ def test_resume_does_not_reattempt_skip_step(tmp_path: Path):
 def _register_fake_nms():
     """A two-round NMS fake driven through the engine hook (``nms_input_info``) + the
     frequency values its ``parse`` attaches to each structure; the generic coordinator does
-    the displacement. ``resolved`` controls which parents' displaced children resolve;
+    the displacement. Each input names the structure it is rendered for, so a test can read
+    whose calculation a canonical input belongs to. ``resolved`` controls which parents'
+    displaced children resolve;
     ``fail_round1`` produce no round-1 output; ``crash_round1`` produce one that says the
     program died; ``submitted`` logs round-1 (parent) submissions and ``nms_seen`` the
     parents that reached the NMS stage."""
@@ -484,7 +486,7 @@ def _register_fake_nms():
                 inp = structure_artifact_path(ctx.step_dir, step, s.id, "inp")
                 out = structure_artifact_path(ctx.step_dir, step, s.id, "out")
                 inp.parent.mkdir(parents=True, exist_ok=True)
-                inp.write_text("in\n", encoding="utf-8")
+                inp.write_text(f"in {s.id}\n", encoding="utf-8")
                 files.append((inp, out, s.id))
             return StepInputs(files=tuple(files))
 
@@ -673,6 +675,48 @@ def test_an_interrupted_nms_step_resumes_by_adopting_round_1(tmp_path: Path):
         ENGINES.pop("fake-nms2", None)
 
 
+@pytest.mark.parametrize("action", [Action.RESUME, Action.RERUN_ERRORS])
+def test_a_resume_leaves_a_promoted_winners_input_beside_its_output(tmp_path: Path, action: Action):
+    """A resume that adopts a resolved parent prepares nothing over the calculation it reads.
+
+    The promote puts the winning child's whole calculation at the canonical path, its input
+    with its output, so the directory describes one job. A row the resume adopts is
+    re-parsed and never prepared: rendered again for the parent, the directory would hold
+    round 1's input beside the child's output. `rerun-errors` takes the same route over a
+    step that has no cache.
+    """
+    from chemrefine import cache
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_fake_nms()
+    try:
+        eng.clean = {"0"}
+        eng.resolved = {"1"}
+        cfg = _seeded_config(tmp_path, [_nms_step(1.0)])
+        step_dir = (cfg.output_dir / "step1_s").resolve()
+        execute(cfg, Action.RESUME)
+        winner = {s.id: s.resolved_from for s in cache.load(step_dir).results.structures}["1"]
+        assert winner is not None, "precondition: the run promotes a winner"
+        attempt = step_dir / "1" / "attempt1"
+        canonical = step_dir / "1" / "step1_1.inp"
+        child_input = (attempt / winner / f"step1_{winner}.inp").read_bytes()
+        assert canonical.read_bytes() == child_input, "precondition: promoted with its output"
+        assert (attempt / "step1_1.inp").read_bytes() != child_input, (
+            "precondition: round 1's input, sealed with it, is another file"
+        )
+        cache.invalidate(step_dir)  # step.json is written last — this is the interruption
+
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        execute(cfg, action, target=1 if action.takes_target else None)
+
+        assert eng.submitted == [] and eng.children_submitted == [], "a re-read, not a re-run"
+        assert canonical.read_bytes() == child_input
+    finally:
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        ENGINES.pop("fake-nms2", None)
+
+
 def test_an_install_stopped_after_its_promote_still_names_the_winner(tmp_path: Path):
     """A driver stopped once the winner's output is at canonical resumes it as the winner.
 
@@ -780,6 +824,58 @@ def test_an_install_stopped_as_it_names_its_winner_keeps_round_1(tmp_path: Path)
         assert {c.split("_m")[0] for c in eng.children_submitted} == {"1"}, "fresh children"
         cached = {s.id: s.resolved_from for s in cache.load(step_dir).results.structures}
         assert cached == expected
+    finally:
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        ENGINES.pop("fake-nms2", None)
+
+
+def test_a_resume_over_a_stopped_install_archives_nothing_and_names_no_child(tmp_path: Path):
+    """Round 1 run again by a resume lands beside the stopped install's record and wears nothing.
+
+    An install stopped as its promote starts leaves only attempts at the canonical path,
+    the latest holding the record, and no cache. The resume adopts the row, since its key
+    still matches, finds no output and runs round 1 there again. Nothing is prepared for
+    an adopted row, so the directory holds nothing to archive: no attempt holds inputs
+    alone, and the attempt with the record stays the latest. A round 1 that lands at the
+    target then passes through beside the record, whose child's output never reached the
+    canonical path.
+    """
+    from unittest.mock import patch
+
+    from chemrefine import attempts, cache
+    from chemrefine.engines.api import ENGINES
+    from chemrefine.ids import is_attempt_dir, latest_attempt_dir
+
+    eng = _register_fake_nms()
+    try:
+        eng.clean = {"0"}
+        eng.resolved = {"1"}
+        cfg = _seeded_config(tmp_path, [_nms_step(1.0)])
+        step_dir = (cfg.output_dir / "step1_s").resolve()
+        with (
+            patch.object(attempts, "promote", side_effect=SystemExit(143)),
+            pytest.raises(SystemExit),
+        ):
+            execute(cfg, Action.RESUME)
+        attempt = latest_attempt_dir(step_dir / "1")
+        assert attempt is not None
+        assert (attempt / "resolution.json").is_file(), (
+            "precondition: the install named its child before moving"
+        )
+        assert all(is_attempt_dir(p) for p in (step_dir / "1").iterdir()), (
+            "precondition: the stop came after the seal and before the promote"
+        )
+        assert cache.load(step_dir) is None, "precondition: no cache, so the rows decide"
+
+        eng.clean = {"0", "1"}  # round 1, run again, lands at the target
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        execute(cfg, Action.RESUME)
+
+        assert eng.submitted == ["1"], "round 1 ran again at the canonical path"
+        assert latest_attempt_dir(step_dir / "1") == attempt, "no attempt of inputs alone"
+        cached = {s.id: s.resolved_from for s in cache.load(step_dir).results.structures}
+        assert cached == {"0": None, "1": None}
     finally:
         eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
         eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []

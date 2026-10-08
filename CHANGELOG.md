@@ -405,9 +405,9 @@ for those and the full map.
   them — less those that choose where or how a job runs, such as its cores or a
   timeout — option-file digests, the parent's content), a **resolution key** for what NMS
   reads (criterion and search), and a step fingerprint composed from the ordered rows.
-  The manifest records that identity per row, and `resume` adopts every row whose
-  stored key matches — re-parsed from disk, never resubmitted — computing only the
-  rest. What that means in practice: turning `nms: true` on over a finished frequency
+  The manifest records that identity per row, and `resume` adopts every row whose stored
+  key matches — re-parsed from disk, never prepared again or resubmitted — computing only
+  the rest. What that means in practice: turning `nms: true` on over a finished frequency
   step submits only the imaginary parents' displacement children (round 1 and the
   clean minima are adopted, byte-identical); follow-up steps recompute only rows whose
   parent actually changed; a search retune re-reads round 1; a criterion change

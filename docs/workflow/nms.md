@@ -71,15 +71,15 @@ A resolved structure ends up with its two calculations kept apart:
 
 ```
 stepN/<id>/
-  stepN_<id>.out .xyz .gbw .hess .opt …   the winning child, promoted whole
+  stepN_<id>.inp .out .xyz .gbw .hess …   the winning child, promoted whole
   attemptK/
     stepN_<id>.out .xyz .gbw .hess …      round 1, archived as it was
     <id>_m6_pos/  <id>_m6_neg/            every child that was tried
     resolution.json                       which child won, under which criterion
 ```
 
-**The canonical location always describes one calculation.** Every file there — output,
-geometry, orbitals, Hessian, restart — comes from the job that produced the surviving
+**The canonical location always describes one calculation.** Every file there — input,
+output, geometry, orbitals, Hessian, restart — comes from the job that produced the surviving
 structure, so parsing any of them agrees with the cached record. Writing back only the
 winning *geometry* would leave a `.xyz` from the resolved minimum beside round 1's `.out`
 for the saddle it started from, with nothing in the directory to show they describe
@@ -133,6 +133,9 @@ reuses the round-1 outputs on disk and recomputes only what the edit actually ch
   winner named, and going back to the earlier criterion names its winner again.
 - **Changing the parents or the template** recomputes exactly the affected rows, like
   any other step.
+
+A structure `resume` reuses is read back, not prepared again: its directory keeps the
+input of the job that wrote its output — the winning child's, for a resolved structure.
 
 ## Turning NMS on over an existing tree
 

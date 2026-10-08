@@ -504,6 +504,16 @@ _BUNDLED: tuple[Mutation, ...] = (
         "it left a checkpoint at the product's path, and every later step computes with it",
     ),
     Mutation(
+        id="resume-prepares-only-what-it-recomputes",
+        path="src/chemrefine/step.py",
+        old="        adopted=(job for job in manifest.files if job[2] in adopted),\n",
+        new="        adopted=(),\n",
+        tests="tests/test_step.py",
+        breaks="resume prepares the rows it adopts again: a tree adopted under file names of "
+        "its own is archived and recomputed, and a resolved structure's directory pairs the "
+        "winning child's output with round 1's input and starting geometry",
+    ),
+    Mutation(
         id="rebuild-cache-provenance",
         path="src/chemrefine/step.py",
         old="if foreign or unproven:",
