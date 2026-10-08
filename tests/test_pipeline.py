@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -10,7 +11,7 @@ from ase import Atoms
 
 from chemrefine import io, pipeline
 from chemrefine.config import Config, StepConfig
-from chemrefine.errors import ChemRefineError, ConfigError
+from chemrefine.errors import ChemRefineError, ConfigError, OutputTreeError
 from chemrefine.quantities import DEFAULT_TEMPERATURE_K
 from chemrefine.step import RunPlan, StepMode
 
@@ -36,8 +37,8 @@ def _config(tmp_path: Path, **overrides) -> Config:
 
 
 def test_bootstrap_from_xyz_file(tmp_path: Path):
-    io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=tmp_path)
     seed = tmp_path / "step0_seed.xyz"
+    io.write_single_xyz(_h2(), seed)
     cfg = _config(tmp_path, input=seed)
     state = pipeline.bootstrap(cfg)
     assert len(state.structures) == 1
@@ -80,7 +81,8 @@ def test_bootstrap_from_xyz_with_trailing_blank_lines(tmp_path: Path):
 
 def test_bootstrap_from_directory(tmp_path: Path):
     seed_dir = tmp_path / "seeds"
-    io.write_xyz([_h2(), _h2()], ["a", "b"], step_number=0, output_dir=seed_dir)
+    for sid in ("a", "b"):
+        io.write_single_xyz(_h2(), seed_dir / f"step0_{sid}.xyz")
     cfg = _config(tmp_path, input=seed_dir)
     state = pipeline.bootstrap(cfg)
     assert len(state.structures) == 2
@@ -211,6 +213,30 @@ def test_bootstrap_from_smiles_csv_empty_raises(tmp_path: Path):
         pipeline.bootstrap(cfg)
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through any mode")
+def test_a_seed_the_output_tree_will_not_take_is_its_refusal_not_a_bad_seed(tmp_path: Path):
+    """A ``_seed/`` the run cannot write is the output tree's refusal, not the seed file's.
+
+    The seed reader's net turns what reading the CSV raises into a ``ConfigError`` naming
+    that file. A ``_seed/`` the run cannot create is no fault of the file, and leaves as
+    ``OutputTreeError`` naming the structure it was writing and the directory refused.
+    """
+    csv = tmp_path / "smiles.csv"
+    csv.write_text("smiles\nC\n", encoding="utf-8")
+    cfg = _config(tmp_path, input=csv)
+    cfg.output_dir.mkdir()
+    cfg.output_dir.chmod(0o555)
+    try:
+        with pytest.raises(OutputTreeError) as excinfo:
+            pipeline.bootstrap(cfg)
+    finally:
+        cfg.output_dir.chmod(0o755)
+    seeds = cfg.output_dir / "_seed"
+    assert str(excinfo.value) == (
+        f"cannot write {seeds / 'structure_0.xyz'}: {seeds}: Permission denied"
+    )
+
+
 def test_run_stops_early_when_a_step_produces_no_survivors(tmp_path: Path):
     """A step whose sample method filters every survivor must halt the pipeline."""
     from chemrefine.engines.api import ENGINES, register
@@ -236,7 +262,7 @@ def test_run_stops_early_when_a_step_produces_no_survivors(tmp_path: Path):
 
     try:
         seed_dir = tmp_path / "seeds"
-        io.write_xyz([_h2()], ["a"], step_number=0, output_dir=seed_dir)
+        io.write_single_xyz(_h2(), seed_dir / "step0_a.xyz")
         cfg = _config(
             tmp_path,
             input=seed_dir,
@@ -260,7 +286,7 @@ def test_run_stops_early_when_a_step_produces_no_survivors(tmp_path: Path):
 
 def test_run_executes_each_step_in_order(tmp_path: Path):
     seed = tmp_path / "step0_seed.xyz"
-    io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=tmp_path)
+    io.write_single_xyz(_h2(), seed)
     cfg = _config(
         tmp_path,
         input=seed,
@@ -277,7 +303,7 @@ def test_run_executes_each_step_in_order(tmp_path: Path):
 def test_run_writes_steps_csv(tmp_path: Path):
     """A full run emits the cumulative ``steps.csv`` energy summary."""
     seed = tmp_path / "step0_seed.xyz"
-    io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=tmp_path)
+    io.write_single_xyz(_h2(), seed)
     cfg = _config(
         tmp_path,
         input=seed,
@@ -308,9 +334,8 @@ def test_run_aligns_csv_and_cache_for_more_than_ten_structures(tmp_path: Path):
     from chemrefine import cache
 
     seed_dir = tmp_path / "seeds"
-    io.write_xyz(
-        [_h2() for _ in range(12)], [str(i) for i in range(12)], step_number=0, output_dir=seed_dir
-    )
+    for i in range(12):
+        io.write_single_xyz(_h2(), seed_dir / f"step0_{i}.xyz")
     cfg = _config(tmp_path, input=seed_dir)
 
     # Seeds bootstrap in natural order (10/11 after 2), not lexical.
@@ -336,7 +361,8 @@ def test_run_aligns_csv_and_cache_for_more_than_ten_structures(tmp_path: Path):
 def test_run_threads_state_between_steps(tmp_path: Path):
     # Two seed files in a directory.
     seed_dir = tmp_path / "seeds"
-    io.write_xyz([_h2(), _h2()], ["a", "b"], step_number=0, output_dir=seed_dir)
+    for sid in ("a", "b"):
+        io.write_single_xyz(_h2(), seed_dir / f"step0_{sid}.xyz")
     cfg = _config(
         tmp_path,
         input=seed_dir,
@@ -358,7 +384,7 @@ def test_run_threads_state_between_steps(tmp_path: Path):
 
 def test_run_second_call_hits_cache(tmp_path: Path):
     seed_dir = tmp_path / "seeds"
-    io.write_xyz([_h2()], ["a"], step_number=0, output_dir=seed_dir)
+    io.write_single_xyz(_h2(), seed_dir / "step0_a.xyz")
     cfg = _config(
         tmp_path,
         input=seed_dir,
@@ -487,7 +513,8 @@ def test_steps_csv_reports_the_energy_the_step_filtered_on(tmp_path: Path):
             ],
         )
         seed_dir = tmp_path / "seeds"
-        io.write_xyz([_h2() for _ in range(3)], ["0", "1", "2"], 0, seed_dir)
+        for i in range(3):
+            io.write_single_xyz(_h2(), seed_dir / f"step0_{i}.xyz")
         cfg = cfg.model_copy(update={"input": seed_dir})
 
         pipeline.run(cfg)
@@ -508,7 +535,7 @@ def test_steps_csv_defaults_to_electronic_without_a_sample(tmp_path: Path):
     import pandas as pd
 
     seed_dir = tmp_path / "seeds"
-    io.write_xyz([_h2()], ["0"], 0, seed_dir)
+    io.write_single_xyz(_h2(), seed_dir / "step0_0.xyz")
     cfg = _config(tmp_path, input=seed_dir)
     pipeline.run(cfg)
     df = pd.read_csv(cfg.output_dir / "steps.csv")
@@ -690,7 +717,8 @@ def test_a_step_that_can_submit_is_still_preflighted(
 def _two_step_seeded(tmp_path: Path) -> Config:
     """A two-seed, two-step fake-engine config, ready for `pipeline.run`."""
     seed_dir = tmp_path / "seeds"
-    io.write_xyz([_h2(), _h2()], ["a", "b"], 0, seed_dir)
+    for sid in ("a", "b"):
+        io.write_single_xyz(_h2(), seed_dir / f"step0_{sid}.xyz")
     return _config(
         tmp_path,
         input=seed_dir,
@@ -816,7 +844,7 @@ def _dead_pid() -> int:
 
 def test_run_lock_is_released_after_a_clean_run(tmp_path: Path):
     seed = tmp_path / "step0_seed.xyz"
-    io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=tmp_path)
+    io.write_single_xyz(_h2(), seed)
     cfg = _config(tmp_path, input=seed)
     pipeline.run(cfg)
     assert not (cfg.output_dir / pipeline.RUN_LOCK_NAME).exists()
@@ -905,7 +933,6 @@ def test_two_reclaimers_cannot_both_acquire(tmp_path: Path, monkeypatch: pytest.
     `unlink()` reclaim this interleaving deleted the winner's fresh lock and both
     acquired — the one state the lock exists to prevent.
     """
-    import os
     import socket
 
     from chemrefine.errors import RunLockError
@@ -942,7 +969,6 @@ def test_a_fresh_lock_swept_up_by_a_reclaim_is_restored(
     (`os.link`, atomic fail-if-exists) and this driver answers to it — instead of
     silently holding a lock that names somebody else.
     """
-    import os
     import socket
 
     from chemrefine.errors import RunLockError
@@ -978,7 +1004,6 @@ def test_a_swept_up_lock_that_cannot_be_restored_is_reported(
     must at least be loud: an error names both drivers, and the claim file survives as
     the only remaining copy of the swept-up record.
     """
-    import os
     import socket
 
     from chemrefine.errors import RunLockError
@@ -1032,7 +1057,6 @@ def test_release_leaves_a_lock_that_is_no_longer_ours(tmp_path: Path):
     against a run that was in fact alive, the unconditional release then removed the
     *new* holder's lock on exit, reopening the tree to a third driver.
     """
-    import os
     import socket
 
     outputs = tmp_path / "outputs"
@@ -1065,8 +1089,6 @@ def test_a_filesystem_that_refuses_hard_links_is_the_locks_own_refusal(
 ):
     """A mount with no hard links cannot hold the lock; that is a RunLockError, not a
     traceback — the exit-code contract holds for the one primitive the lock is built on."""
-    import os
-
     from chemrefine.errors import RunLockError
 
     def refuse(src, dst, **kwargs):
@@ -1130,7 +1152,6 @@ def test_the_lock_is_linked_from_a_complete_record(tmp_path: Path, monkeypatch: 
     guarantee — a lock that exists is a record, never a file waiting for one.
     """
     import json
-    import os
 
     outputs = tmp_path / "outputs"
     real_link = os.link
@@ -1158,7 +1179,6 @@ def test_a_claimant_that_loses_the_link_race_answers_to_the_winner(
     must not reclaim — and refuses naming that pid, leaving the winner's lock and no claim
     residue of its own behind.
     """
-    import os
     import socket
 
     from chemrefine.errors import RunLockError
@@ -1188,7 +1208,6 @@ def test_pid_alive_reads_permission_denied_as_alive(monkeypatch: pytest.MonkeyPa
     Deterministic via monkeypatch: probing a real foreign pid (e.g. 1) answers differently
     for root, and a suite whose verdict depends on who runs it pins nothing.
     """
-    import os
 
     def _deny(pid: int, sig: int) -> None:
         raise PermissionError
@@ -1359,7 +1378,7 @@ def test_a_drained_slurm_jobs_lease_is_swept_and_the_run_proceeds(tmp_path: Path
     from chemrefine import slurm
 
     seed = tmp_path / "step0_seed.xyz"
-    io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=tmp_path)
+    io.write_single_xyz(_h2(), seed)
     cfg = _config(tmp_path, input=seed)
     step_dir = cfg.step_dir(cfg.steps[0])
     _plant_leases(step_dir, {"id": "424242", "host": "cluster-login", "pid": None})
@@ -1388,7 +1407,7 @@ def test_without_squeue_recorded_slurm_jobs_warn_and_the_run_proceeds(
     from chemrefine import slurm
 
     seed = tmp_path / "step0_seed.xyz"
-    io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=tmp_path)
+    io.write_single_xyz(_h2(), seed)
     cfg = _config(
         tmp_path,
         input=seed,
@@ -1435,7 +1454,7 @@ def test_without_squeue_a_mixed_ledger_sheds_its_dead_local_lease_and_keeps_the_
     from chemrefine import slurm
 
     seed = tmp_path / "step0_seed.xyz"
-    io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=tmp_path)
+    io.write_single_xyz(_h2(), seed)
     cfg = _config(
         tmp_path, input=seed, steps=[StepConfig(step=1, engine="fake", operation="opt_sp")]
     )
@@ -1509,7 +1528,7 @@ def test_a_dead_local_lease_alone_is_swept_without_asking_the_queue(tmp_path: Pa
     from chemrefine import slurm
 
     seed = tmp_path / "step0_seed.xyz"
-    io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=tmp_path)
+    io.write_single_xyz(_h2(), seed)
     cfg = _config(tmp_path, input=seed)
     step_dir = cfg.step_dir(cfg.steps[0])
     _plant_leases(step_dir, {"id": "local-1", "host": socket.gethostname(), "pid": _dead_pid()})
@@ -1527,7 +1546,7 @@ def test_a_step_the_scheduler_would_refuse_stops_the_run_before_any_step_runs(tm
     was refused after step 1 had run — hours of compute in a real run, for a refusal the
     config decided before anything started.
     """
-    io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=tmp_path)
+    io.write_single_xyz(_h2(), tmp_path / "step0_seed.xyz")
     (tmp_path / "templates").mkdir()
     for name in ("step2.in", "cpu.slurm.header"):  # everything but the budget is in order
         (tmp_path / "templates" / name).write_text("# starter\n", encoding="utf-8")
@@ -1555,7 +1574,7 @@ def test_a_step_that_cannot_run_from_its_directory_stops_the_run_before_any_step
     for, under a refusal the disk decided before anything started.
     """
     project = tmp_path / "my project"
-    io.write_xyz([_h2()], ["seed"], step_number=0, output_dir=project)
+    io.write_single_xyz(_h2(), project / "step0_seed.xyz")
     (project / "templates").mkdir()
     for name in ("step2.inp", "cpu.slurm.header"):  # everything but the directory is in order
         (project / "templates" / name).write_text("! HF def2-SVP\n", encoding="utf-8")

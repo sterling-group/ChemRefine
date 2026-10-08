@@ -54,6 +54,6 @@ Config → bootstrap → run_step (cache | engine lifecycle) → filtering → P
 - [SLURM](slurm.md) — script generation, submission, array jobs, polling
 - [Throttle](throttle.md) — the CPU+GPU budget throttler
 - [Cache](cache.md) — the per-step fingerprint cache, manifest, and failed-job ledger
-- [Filesystem I/O](io.md) — XYZ read/write, SMILES→3D, CSV reporting
+- [Filesystem I/O](io.md) — the output tree's writes, atomic replacement, XYZ read/write, SMILES→3D, CSV reporting
 - [Identifiers](ids.md) — hierarchical ID allocation and canonical filenames
 - [Job Log](job_log.md) — the per-job runlog header/footer

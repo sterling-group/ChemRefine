@@ -22,11 +22,12 @@ Exit code     Meaning
 ``6``         :class:`OutputParseError` — could not parse engine output,
               and :class:`OutputTerminationError` for the case where the
               reason is that the program died
-``7``         :class:`CacheError` — step cache corrupt / unwritable
+``7``         :class:`CacheError` — step cache corrupt / unreadable
 ``8``         :class:`ThrottleTimeoutError` — wait deadline expired
 ``9``         :class:`BackendProvisionError` — a managed backend env
               could not be built
 ``10``        :class:`RunLockError` — another run holds this output tree
+``11``        :class:`OutputTreeError` — the output tree refused a write
 ============  ============================================
 """
 
@@ -112,7 +113,13 @@ class OutputTerminationError(OutputParseError):
 
 
 class CacheError(ChemRefineError):
-    """A step cache is corrupt, version-mismatched, or unwritable."""
+    """The step cache's verdict on its own state: what it cannot read, trust, prove or store.
+
+    A ``_cache/`` document it cannot read or trust — unreadable, corrupt, written by another
+    version — outputs on disk it cannot prove are this configuration's, a structure it will
+    not store. The filesystem refusing a write under ``_cache/`` is no verdict of the
+    cache's: that is :class:`OutputTreeError`, as it is for every other file of the run.
+    """
 
     exit_code = 7
 
@@ -148,6 +155,34 @@ class RunLockError(ChemRefineError):
     """
 
     exit_code = 10
+
+
+class OutputTreeError(ChemRefineError):
+    """The filesystem refused a write the run makes in its own output tree.
+
+    A full disk or quota, a read-only mount, or a directory under ``output_dir`` this
+    account cannot write. The message names the file the run was writing, and the one the
+    filesystem refused when that was another — a directory it could not create, the source
+    of a copy (:func:`chemrefine.io.tree_write`). Nothing is wrong with the config, the jobs
+    or the cache. Its own code, for the reason :class:`BackendProvisionError` has one: the
+    fix is the machine's, and a script wrapping a run must tell a full disk from a step
+    that halted.
+
+    Free space, remount read-write or fix the permissions, then run the command that
+    stopped again. ``run`` and ``rerun`` begin by discarding caches, so ``resume`` in their
+    place would serve what they were asked to discard; a ``run``, ``resume``, ``rerun`` or
+    ``rerun-errors`` that stopped inside its steps continues with ``chemrefine resume``. For
+    an artifact step whose job already wrote its product, ``chemrefine rebuild-cache N``
+    adopts the product where ``resume`` would run the job again — though a full disk may
+    have cut it short as it was copied back.
+
+    Not an :class:`OSError`, though the filesystem's refusal is its ``__cause__``: every
+    ``except OSError`` between the write and the CLI would take it for one of its own and
+    word it again — the seed reader's net would call a full disk under ``_seed/`` a bad
+    seed file.
+    """
+
+    exit_code = 11
 
 
 EXIT_CODES: dict[str, int] = {

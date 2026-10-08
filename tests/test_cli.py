@@ -18,7 +18,7 @@ from typer.testing import CliRunner
 from chemrefine import __version__
 from chemrefine.cli import SUBCOMMANDS, app
 from chemrefine.cli_legacy import translate_argv
-from chemrefine.errors import CacheError, ChemRefineError, ConfigError
+from chemrefine.errors import CacheError, ChemRefineError, ConfigError, OutputTreeError
 
 runner = CliRunner()
 
@@ -299,13 +299,13 @@ def test_resume_after_run_is_cache_hit(tmp_path: Path):
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
 def test_an_unreadable_cache_document_exits_with_the_cache_error_code(tmp_path: Path):
-    """The "cache corrupt or unwritable" row promises exit 7 — for unreadable too.
+    """The "cache corrupt or unreadable" row promises exit 7, a mode-000 manifest included.
 
-    A rebuild has to read the manifest to know what to re-parse. ``is_file`` is true of
-    a mode-000 one, so the read was reached and ``PermissionError`` escaped the handler
-    that maps a ``ChemRefineError`` to its code: a traceback and exit 1 where the docs
-    promise 7. (An unreadable step document is a different case: ``load_if_valid`` treats
-    it as it treats a corrupt one, a miss, and a resume recomputes the step.)
+    A rebuild has to read the manifest to know what to re-parse, and ``is_file`` is true of
+    a mode-000 one, so the read is reached: its ``PermissionError`` has to reach the handler
+    that maps a ``ChemRefineError`` to its code, not leave as a traceback with exit 1. (An
+    unreadable step document is a different case: ``load_if_valid`` treats it as it treats
+    a corrupt one, a miss, and a resume recomputes the step.)
     """
     config_path = _write_config(tmp_path)
     assert runner.invoke(app, ["run", str(config_path)]).exit_code == 0
@@ -318,6 +318,32 @@ def test_an_unreadable_cache_document_exits_with_the_cache_error_code(tmp_path: 
 
     assert result.exit_code == CacheError.exit_code
     assert not isinstance(result.exception, PermissionError)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through any mode")
+def test_a_cache_run_cannot_discard_exits_with_the_output_trees_code(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    """A cache ``run`` cannot discard stops it with the output tree's code and one line.
+
+    ``run`` discards every step's cache before any step runs, and a ``_cache/`` this account
+    cannot write refuses the removal: exit 11 and the refusal naming the file, not a
+    traceback with the exit 1 a halted step exits with.
+    """
+    config_path = _write_config(tmp_path)
+    assert runner.invoke(app, ["run", str(config_path)]).exit_code == 0
+    cache_dir = (tmp_path / "outputs" / "step1_screen" / "_cache").resolve()
+    cache_dir.chmod(0o555)
+    try:
+        result = runner.invoke(app, ["run", str(config_path)])
+    finally:
+        cache_dir.chmod(0o755)
+
+    assert result.exit_code == OutputTreeError.exit_code == 11
+    assert isinstance(result.exception, SystemExit), f"a typed refusal, not {result.exception!r}"
+    assert (
+        f"OutputTreeError: cannot write {cache_dir / 'step.json'}: Permission denied" in caplog.text
+    )
 
 
 def test_dry_run_does_not_create_outputs(tmp_path: Path):

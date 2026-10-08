@@ -77,7 +77,7 @@ from numpy.typing import NDArray
 from chemrefine import ids
 from chemrefine.config import STEP_OPTION_PATHS, StepConfig
 from chemrefine.errors import CacheError
-from chemrefine.io import atomic_write
+from chemrefine.io import remove_tree_file, write_tree_file
 from chemrefine.state import (
     FailureRecord,
     StepInputs,
@@ -628,22 +628,6 @@ def save_result_records(structures: Sequence[Structure], job_dir: Path, step: in
 _COMPACT_SEPARATORS = (",", ":")
 
 
-def _write_cache_file(path: Path, data: bytes) -> None:
-    """:func:`atomic_write` for a ``_cache/`` document, with a failure named as the cache's.
-
-    ``atomic_write`` itself stays raw: the config writers (:func:`chemrefine.agent_tools.
-    save_config`, the GUI's save) call it for the user's own file and answer their own
-    error. Here the file is the cache's, and the docs promise "cache corrupt or unwritable"
-    the cache's exit code and the ``rebuild-cache`` advice — which a bare ``OSError`` from
-    a read-only ``_cache/`` (another account's tree, a full or read-only mount) would not
-    reach: it would escape every handler as a traceback with exit 1.
-    """
-    try:
-        atomic_write(path, data)
-    except OSError as e:
-        raise CacheError(f"cannot write {path}: {e}") from e
-
-
 def write_json(path: Path, data: Any, *, indent: int | None = 2) -> None:
     """Serialize ``data`` to JSON and write it atomically to ``path``.
 
@@ -663,10 +647,17 @@ def write_json(path: Path, data: Any, *, indent: int | None = 2) -> None:
     parse boundary (:func:`chemrefine.engines._script.output._require_finite`) already
     refuses those values, so this is the assertion that it did — a ``ValueError`` here
     means something upstream let one through.
+
+    Replaced whole through :func:`chemrefine.io.write_tree_file`, so a refusal — a full
+    disk, a read-only ``_cache/`` — is :class:`~chemrefine.errors.OutputTreeError`, the
+    answer every file of the run's tree gives; :class:`CacheError` is this module's verdict
+    on what it reads, proves or stores.
     """
     separators = None if indent is not None else _COMPACT_SEPARATORS
-    _write_cache_file(
-        path, json.dumps(data, indent=indent, separators=separators, allow_nan=False).encode()
+    write_tree_file(
+        path,
+        json.dumps(data, indent=indent, separators=separators, allow_nan=False),
+        atomic=True,
     )
 
 
@@ -679,8 +670,9 @@ def _npz_bytes(arrays: _SidecarArrays) -> bytes:
     stable. Deflating float64 coordinates buys about 5% and costs roughly twenty times the
     encode; the point of this format is that writing it is a memcpy.
 
-    Going through bytes rather than writing the file directly is what lets it reuse
-    :func:`atomic_write`, so a killed run never leaves a half-written sidecar.
+    Going through bytes rather than writing the file directly is what lets it be replaced
+    whole (:func:`chemrefine.io.write_tree_file` with ``atomic=True``), so a killed run never
+    leaves a half-written sidecar.
     """
     buf = io.BytesIO()
     np.savez(buf, **arrays)
@@ -727,7 +719,8 @@ def read_json(path: Path, default: Any, *, label: str) -> Any:
     an empty state. Unreadable is in the net for the reason the lease and sidecar readers
     give: ``is_file`` is true of a mode-000 document or another user's, and left to the
     reader the ``PermissionError`` would escape every handler as a traceback with exit 1,
-    where the docs promise the cache's own code and the ``rebuild-cache`` advice.
+    where the docs promise the cache's own code and say to restore access for an unreadable
+    file.
     """
     if not path.is_file():
         return default
@@ -827,7 +820,7 @@ def save(
     # `_cache/` atomic, and a step is re-saved whenever `resume` repairs one, which leaves the
     # previous document beside the new sidecar. `arrays_digest` is what makes the pair
     # provable rather than merely likely.
-    _write_cache_file(_arrays_path(step_dir), _npz_bytes(arrays))
+    write_tree_file(_arrays_path(step_dir), _npz_bytes(arrays), atomic=True)
     write_json(_cache_path(step_dir), document, indent=None)
     logger.info("saved step %d cache (fingerprint %s)", step_cfg.step, key.fingerprint)
 
@@ -1061,8 +1054,8 @@ def invalidate(step_dir: Path) -> None:
     document goes first: a crash between the two leaves a sidecar with no document, which
     :func:`load` reads as nothing cached.
     """
-    _cache_path(step_dir).unlink(missing_ok=True)
-    _arrays_path(step_dir).unlink(missing_ok=True)
+    remove_tree_file(_cache_path(step_dir))
+    remove_tree_file(_arrays_path(step_dir))
 
 
 def discard_step(step_dir: Path) -> None:
@@ -1078,7 +1071,7 @@ def discard_step(step_dir: Path) -> None:
     re-parse the very outputs it was asked to discard instead of resubmitting them.
     """
     invalidate(step_dir)
-    manifest_path(step_dir).unlink(missing_ok=True)
+    remove_tree_file(manifest_path(step_dir))
 
 
 # ---------------------------------------------------------------------------
@@ -1320,4 +1313,4 @@ def load_failure_records(step_dir: Path) -> list[FailureRecord]:
 
 def clear_failed_jobs(step_dir: Path) -> None:
     """Delete the failed-jobs ledger. No-op if absent."""
-    failed_jobs_path(step_dir).unlink(missing_ok=True)
+    remove_tree_file(failed_jobs_path(step_dir))

@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import csv
+import errno
+import os
+import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import NoReturn
 from unittest.mock import patch
 
 import numpy as np
@@ -15,13 +20,14 @@ from ase import Atoms
 from ase.io import read as ase_read
 
 import chemrefine.io as chemrefine_io
+from chemrefine.errors import OutputTreeError
 from chemrefine.io import (
     gather_output_files,
     natural_key,
     read_xyz_frames,
     save_step_csv,
     write_ensemble_xyz,
-    write_xyz,
+    write_single_xyz,
 )
 from chemrefine.quantities import DEFAULT_TEMPERATURE_K
 from chemrefine.state import Structure
@@ -85,7 +91,7 @@ def test_natural_key_orders_three_digit_ids_numerically():
 
 
 # ---------------------------------------------------------------------------
-# write_xyz round-trip
+# write_single_xyz round-trip
 # ---------------------------------------------------------------------------
 
 
@@ -96,19 +102,8 @@ def _h2o() -> Atoms:
     )
 
 
-def test_write_xyz_writes_one_file_per_structure(tmp_path: Path):
-    # write_xyz is the flat seed writer (directly globbable by bootstrap).
-    paths = write_xyz([_h2o(), _h2o()], ["0", "1"], step_number=3, output_dir=tmp_path)
-    assert len(paths) == 2
-    assert paths[0].name == "step3_0.xyz"
-    assert paths[1].name == "step3_1.xyz"
-    assert all(p.exists() for p in paths)
-    assert all(p.parent == tmp_path for p in paths)  # flat, not nested
-
-
 def test_write_single_xyz_to_input_geometry_path(tmp_path: Path):
     from chemrefine.ids import input_geometry_path
-    from chemrefine.io import write_single_xyz
 
     path = write_single_xyz(_h2o(), input_geometry_path(tmp_path, 2, "0-1"))
     assert path == tmp_path / "0-1" / "step2_0-1_inp.xyz"
@@ -117,26 +112,19 @@ def test_write_single_xyz_to_input_geometry_path(tmp_path: Path):
     assert list(back.get_chemical_symbols()) == ["O", "H", "H"]
 
 
-def test_write_xyz_roundtrips(tmp_path: Path):
+def test_write_single_xyz_roundtrips(tmp_path: Path):
     original = _h2o()
-    [path] = write_xyz([original], ["0"], step_number=1, output_dir=tmp_path)
+    path = write_single_xyz(original, tmp_path / "step1_0.xyz")
     back = ase_read(str(path), format="xyz")
     assert list(back.get_chemical_symbols()) == ["O", "H", "H"]
     np.testing.assert_allclose(back.get_positions(), original.get_positions(), atol=1e-6)
 
 
-def test_write_xyz_accepts_tuple_form(tmp_path: Path):
+def test_write_single_xyz_accepts_tuple_form(tmp_path: Path):
     tuples = [("H", 0.0, 0.0, 0.0), ("H", 0.74, 0.0, 0.0)]
-    [path] = write_xyz([tuples], ["0"], step_number=1, output_dir=tmp_path)
+    path = write_single_xyz(tuples, tmp_path / "step1_0.xyz")
     atoms = ase_read(str(path), format="xyz")
     assert list(atoms.get_chemical_symbols()) == ["H", "H"]
-
-
-def test_write_xyz_length_mismatch_raises(tmp_path: Path):
-    # The explicit refusal's wording; `zip(strict=True)` below it raises the same type,
-    # so an unmatched raise let the documented message be deleted unnoticed.
-    with pytest.raises(ValueError, match="same length"):
-        write_xyz([_h2o()], ["0", "1"], step_number=1, output_dir=tmp_path)
 
 
 # ---------------------------------------------------------------------------
@@ -619,8 +607,6 @@ def test_a_write_that_cannot_re_mode_leaves_nothing_behind(
     nuisance once and an accumulation on the GUI's waitress threads, which write the user's
     config through this same writer.
     """
-    import os
-
     monkeypatch.setattr(os, "fchmod", lambda *a: (_ for _ in ()).throw(OSError("EPERM")))
     target = tmp_path / "doc.json"
     with pytest.raises(OSError, match="EPERM"):
@@ -646,8 +632,6 @@ def test_the_umask_is_read_without_ever_being_written(monkeypatch: pytest.Monkey
     and call ``Path.mkdir``. Linux publishes the value instead (``umask(2)``), so nothing
     here may call ``os.umask`` at all.
     """
-    import os
-
     expected = next(
         int(line.split()[1], 8)
         for line in chemrefine_io._PROC_STATUS.read_text(encoding="utf-8").splitlines()
@@ -669,8 +653,6 @@ def test_the_umask_falls_back_when_the_kernel_does_not_publish_it(
     0 and every file after it world-writable, which is worse than the race it replaces.
     Asking twice is what proves the restore happened.
     """
-    import os
-
     status = tmp_path / "status"
     if published == "a status file without the field":
         status.write_text("Name:\tpython\nPid:\t1\n", encoding="utf-8")
@@ -682,3 +664,275 @@ def test_the_umask_falls_back_when_the_kernel_does_not_publish_it(
         assert chemrefine_io._umask() == 0o027
     finally:
         os.umask(previous)
+
+
+# ---------------------------------------------------------------------------
+# The output tree's write seam — tree_write, its whole-file forms, cleanup
+# ---------------------------------------------------------------------------
+
+_AS_ROOT = os.geteuid() == 0
+
+
+def _refuse(code: int) -> Callable[..., NoReturn]:
+    """A stand-in for a call the filesystem refuses with ``code``, in its own words."""
+
+    def refuse(*_args: object, **_kwargs: object) -> NoReturn:
+        raise OSError(code, os.strerror(code))
+
+    return refuse
+
+
+@pytest.mark.parametrize(
+    "in_the_way",
+    [
+        pytest.param(
+            False,
+            id="unwritable-directory",
+            marks=pytest.mark.skipif(_AS_ROOT, reason="root writes through any mode"),
+        ),
+        pytest.param(True, id="directory-in-the-way"),
+    ],
+)
+def test_atomic_write_names_the_file_it_was_asked_for(tmp_path: Path, in_the_way: bool):
+    """A refusal names ``path``, never the temp file the data was staged in.
+
+    Whoever could not save a config or a template reads the error's filename, and a
+    ``.tmp_*.part`` is a name they never saw and cannot find. Checked where the temp file is
+    created, in a directory this account cannot write, and where it is renamed, over a
+    directory standing where the file should be.
+    """
+    folder = tmp_path / "templates"
+    folder.mkdir()
+    target = folder / "step1.inp"
+    if in_the_way:
+        (target / "kept").mkdir(parents=True)
+    else:
+        folder.chmod(0o555)
+    try:
+        with pytest.raises(OSError) as excinfo:
+            chemrefine_io.atomic_write(target, b"! Opt\n")
+        left = sorted(p.name for p in folder.iterdir())
+    finally:
+        folder.chmod(0o755)
+    assert excinfo.value.filename == str(target)
+    assert ".tmp_" not in str(excinfo.value)
+    assert left == (["step1.inp"] if in_the_way else [])
+
+
+@pytest.mark.skipif(_AS_ROOT, reason="root writes through any mode")
+@pytest.mark.parametrize("atomic", [True, False], ids=["atomic", "plain"])
+def test_a_directory_the_run_cannot_write_is_the_output_trees_refusal(tmp_path: Path, atomic: bool):
+    """A write into a directory this account cannot write is ``OutputTreeError``.
+
+    One class and one sentence whichever way the file is written: the file the run asked
+    for, then the filesystem's reason, with the ``PermissionError`` on ``__cause__`` and
+    nothing left behind.
+    """
+    sealed = tmp_path / "_cache"
+    sealed.mkdir()
+    sealed.chmod(0o555)
+    target = sealed / "step.json"
+    try:
+        with pytest.raises(OutputTreeError) as excinfo:
+            chemrefine_io.write_tree_file(target, "{}", atomic=atomic)
+        left = list(sealed.iterdir())
+    finally:
+        sealed.chmod(0o755)
+    assert str(excinfo.value) == f"cannot write {target}: Permission denied"
+    assert isinstance(excinfo.value.__cause__, PermissionError)
+    assert left == []
+
+
+@pytest.mark.parametrize("atomic", [True, False], ids=["atomic", "plain"])
+def test_a_full_disk_is_named_at_the_file_being_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, atomic: bool
+):
+    """A disk that fills mid-write reads as the file the run was writing and the reason."""
+    monkeypatch.setattr(os, "fsync", _refuse(errno.ENOSPC))
+    monkeypatch.setattr(Path, "write_bytes", _refuse(errno.ENOSPC))
+    target = tmp_path / "step1" / "step1_ensemble.xyz"
+    with pytest.raises(OutputTreeError) as excinfo:
+        chemrefine_io.write_tree_file(target, "frame", atomic=atomic)
+    assert str(excinfo.value) == f"cannot write {target}: No space left on device"
+
+
+def test_an_atomic_tree_write_refused_mid_write_keeps_the_file_it_replaces(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A refused atomic write leaves the previous file whole and no temp file beside it."""
+    target = tmp_path / "_cache" / "step.json"
+    target.parent.mkdir()
+    target.write_text("previous", encoding="utf-8")
+    monkeypatch.setattr(os, "fsync", _refuse(errno.ENOSPC))
+    with pytest.raises(OutputTreeError):
+        chemrefine_io.write_tree_file(target, "next", atomic=True)
+    assert target.read_text(encoding="utf-8") == "previous"
+    assert [p.name for p in target.parent.iterdir()] == ["step.json"]
+
+
+@pytest.mark.skipif(_AS_ROOT, reason="root writes and reads through any mode")
+def test_a_refusal_names_what_refused_it_when_that_is_not_the_file(tmp_path: Path):
+    """The file the filesystem named comes before its reason when it is not the one written.
+
+    A write whose directory cannot be created names that directory; a copy whose source
+    cannot be read names the source. Each is the file to look at, and the sentence still
+    opens with the file the run was writing.
+    """
+    sealed = tmp_path / "step1"
+    sealed.mkdir()
+    source = tmp_path / "attempt1" / "step1_3.out"
+    source.parent.mkdir()
+    source.write_text("x", encoding="utf-8")
+    sealed.chmod(0o555)
+    source.chmod(0)
+    target = sealed / "0" / "step1_0_inp.xyz"
+    destination = tmp_path / "step1_0.out"
+    try:
+        with pytest.raises(OutputTreeError) as made:
+            chemrefine_io.write_tree_file(target, "x")
+        with pytest.raises(OutputTreeError) as copied, chemrefine_io.tree_write(destination):
+            shutil.copy2(source, destination)
+    finally:
+        sealed.chmod(0o755)
+        source.chmod(0o644)
+    assert str(made.value) == f"cannot write {target}: {target.parent}: Permission denied"
+    assert str(copied.value) == f"cannot write {destination}: {source}: Permission denied"
+
+
+def test_a_refusal_with_no_reason_of_its_own_is_given_as_its_text(tmp_path: Path):
+    """An error the filesystem's wording is missing from reads as the text it carries."""
+    target = tmp_path / "step1" / "steps.csv"
+    with pytest.raises(OutputTreeError) as excinfo, chemrefine_io.tree_write(target):
+        raise OSError("the writer gave up")
+    assert str(excinfo.value) == f"cannot write {target}: the writer gave up"
+
+
+@pytest.mark.parametrize("atomic", [True, False], ids=["atomic", "plain"])
+def test_write_tree_file_creates_the_directory_and_writes_text_as_utf8(
+    tmp_path: Path, atomic: bool
+):
+    """Missing parents are created; text lands as its UTF-8 bytes, bytes as they are."""
+    target = tmp_path / "step1" / "0" / "step1_0_inp.xyz"
+    chemrefine_io.write_tree_file(target, "Å 0.0", atomic=atomic)
+    assert target.read_bytes() == "Å 0.0".encode()
+    chemrefine_io.write_tree_file(target, b"NUMPY", atomic=atomic)
+    assert target.read_bytes() == b"NUMPY"
+
+
+def _report(step: int) -> Callable[[Path], object]:
+    """``save_step_csv`` for one structure at ``step``, aimed at the path it is handed."""
+    return lambda target: save_step_csv(
+        [-1.0], ["0"], step, target, temperature_k=DEFAULT_TEMPERATURE_K, energy_type="electronic"
+    )
+
+
+def _ensemble(*structures: Structure) -> Callable[[Path], object]:
+    """``write_ensemble_xyz`` of ``structures`` as step 1, aimed at the path it is handed."""
+    return lambda target: write_ensemble_xyz(
+        structures, target, step=1, energy_attr="energy_hartree", energy_label="E"
+    )
+
+
+@pytest.mark.skipif(_AS_ROOT, reason="root writes through any mode")
+@pytest.mark.parametrize(
+    ("relative", "stale", "write"),
+    [
+        ("step1_0_inp.xyz", False, lambda target: write_single_xyz(_h2o(), target)),
+        ("step1_ensemble.xyz", False, _ensemble(_ensemble_structure("0", energy=-1.0))),
+        ("step1_survivors.xyz", True, _ensemble()),
+        ("steps.csv", False, _report(2)),
+        ("steps.csv", True, _report(1)),
+        ("reports/steps.csv", False, _report(2)),
+    ],
+    ids=["geometry", "ensemble", "stale-ensemble", "report", "stale-report", "report-directory"],
+)
+def test_io_writers_refuse_as_the_output_tree_at_the_file_they_write(
+    tmp_path: Path, relative: str, stale: bool, write: Callable[[Path], object]
+):
+    """Each of io's writers refuses as the output tree: the file it writes, then the reason.
+
+    A sealed directory refuses all three things these writers do — create a file, remove a
+    stale one, create the directory a report goes in — and each refusal is
+    ``OutputTreeError`` naming the file the writer was handed, then the directory when that
+    is what was refused, with a stale file left as it was.
+    """
+    sealed = tmp_path / "step1"
+    sealed.mkdir()
+    target = sealed / relative
+    if stale:
+        target.write_text("stale\n", encoding="utf-8")
+    sealed.chmod(0o555)
+    try:
+        with pytest.raises(OutputTreeError) as excinfo:
+            write(target)
+    finally:
+        sealed.chmod(0o755)
+    refused = "" if target.parent == sealed else f"{target.parent}: "
+    assert str(excinfo.value) == f"cannot write {target}: {refused}Permission denied"
+    assert isinstance(excinfo.value.__cause__, PermissionError)
+    assert not stale or target.read_text(encoding="utf-8") == "stale\n"
+
+
+@pytest.mark.parametrize(
+    "stopping",
+    [
+        lambda: SystemExit(143),
+        KeyboardInterrupt,
+        lambda: OutputTreeError("cannot write /out/step1/_cache/step.json: No space left"),
+    ],
+    ids=["sigterm", "interrupt", "refused-write"],
+)
+def test_cleanup_during_an_unwind_keeps_the_exception_in_flight(
+    stopping: Callable[[], BaseException], caplog: pytest.LogCaptureFixture
+):
+    """A cleanup the filesystem refuses while a run stops is logged; the stop goes on.
+
+    Raised, the refusal would take the place of what was stopping the run — a SIGTERM's
+    143, a Ctrl-C, a refused write — and the run would exit with the cleanup's code and
+    sentence. The very exception in flight is the one that leaves.
+    """
+    in_flight = stopping()
+    with pytest.raises(type(in_flight)) as excinfo:
+        try:
+            raise in_flight
+        finally:
+            with chemrefine_io.cleanup():
+                raise OSError(errno.EROFS, os.strerror(errno.EROFS), "/out/.tmp_x.part")
+    assert excinfo.value is in_flight
+    assert f"could not clean up during {type(in_flight).__name__}" in caplog.text
+    assert "Read-only file system" in caplog.text
+
+
+def test_cleanup_with_nothing_in_flight_raises_its_refusal():
+    """With no exception in flight, a refused cleanup is the caller's failure, raised."""
+    refused = OSError(errno.EROFS, os.strerror(errno.EROFS), "/out/.tmp_x.part")
+    with pytest.raises(OSError) as excinfo, chemrefine_io.cleanup():
+        raise refused
+    assert excinfo.value is refused
+
+
+def test_cleanup_lets_a_bug_through():
+    """Only a refusal is dropped while an exception is in flight; a bug surfaces."""
+    with pytest.raises(TypeError, match="not a refusal"):
+        try:
+            raise SystemExit(143)
+        finally:
+            with chemrefine_io.cleanup():
+                raise TypeError("not a refusal")
+
+
+def test_a_temp_file_that_will_not_go_does_not_hide_why_the_write_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    """A temp file that cannot be removed after a failed write leaves the write's own error.
+
+    The full disk is why the write failed and what the caller words; the removal's I/O
+    error is logged beside it rather than raised in its place.
+    """
+    monkeypatch.setattr(os, "fsync", _refuse(errno.ENOSPC))
+    monkeypatch.setattr(Path, "unlink", _refuse(errno.EIO))
+    with pytest.raises(OSError) as excinfo:
+        chemrefine_io.atomic_write(tmp_path / "doc.json", b"{}")
+    assert excinfo.value.errno == errno.ENOSPC
+    assert "could not clean up during OSError" in caplog.text
+    assert "Input/output error" in caplog.text

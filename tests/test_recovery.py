@@ -17,7 +17,8 @@ from chemrefine.state import FailureKind
 
 def _seeded_config(tmp_path: Path, steps: list[StepConfig]) -> Config:
     seed_dir = tmp_path / "seeds"
-    io.write_xyz([Atoms("H"), Atoms("H")], ["a", "b"], step_number=0, output_dir=seed_dir)
+    for sid in ("a", "b"):
+        io.write_single_xyz(Atoms("H"), seed_dir / f"step0_{sid}.xyz")
     return Config(
         template_dir=tmp_path / "templates",
         scratch_dir=tmp_path / "scratch",
@@ -1487,7 +1488,8 @@ def _register_flaky_convergence(*, streaming: bool = False):
 def _three_seed_config(tmp_path: Path, steps: list[StepConfig]) -> Config:
     """Three seeds, so a retried middle structure is visible as an order change."""
     seed_dir = tmp_path / "seeds"
-    io.write_xyz([Atoms("H")] * 3, ["a", "b", "c"], step_number=0, output_dir=seed_dir)
+    for sid in ("a", "b", "c"):
+        io.write_single_xyz(Atoms("H"), seed_dir / f"step0_{sid}.xyz")
     return Config(
         template_dir=tmp_path / "templates",
         output_dir=tmp_path / "outputs",

@@ -98,8 +98,6 @@ subcommands above:
 
 ## Exit codes
 
-Each failure mode maps to a deterministic exit code (see the
-[Errors API](../api/errors.md)): `2` config invalid, `3` unknown engine,
-`4` job submission refused, `5` job failed, `6` output unparseable, `7` cache
-corrupt, `8` wait deadline expired, `9` backend env could not be built,
-`10` another driver holds the output tree's run lock, `1` generic.
+Every failure exits with a code that names its mode: the
+[exit-code table](when-a-run-fails.md#exit-codes) gives each code's usual cause and what
+to do, and the [Errors API](../api/errors.md) the exception behind it.

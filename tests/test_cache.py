@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import io
 import json
@@ -37,7 +38,7 @@ from chemrefine.cache import (
     structure_record,
 )
 from chemrefine.config import StepConfig
-from chemrefine.errors import CacheError
+from chemrefine.errors import CacheError, OutputTreeError
 from chemrefine.io import atomic_write
 from chemrefine.state import StepInputs, StepResults, Structure
 
@@ -846,9 +847,8 @@ def test_an_unreadable_document_is_the_cache_error_a_corrupt_one_gets(tmp_path: 
     """Present-but-unreadable is the other half of what ``read_json`` promises to refuse.
 
     ``is_file`` is true of a mode-000 document — a colleague's driver, a restored backup —
-    and the ``PermissionError`` from the read escaped every handler as a traceback with
-    exit 1, where the docs promise exit 7 and the ``rebuild-cache`` advice. The lease and
-    sidecar readers already said so; the JSON reader was the one copy without the net.
+    so the read is reached, and its ``PermissionError`` has to leave as the cache's exit 7,
+    not as a traceback with exit 1. The lease and sidecar readers hold the same net.
     """
     step_dir = tmp_path / "step1"
     document = step_dir / "_cache" / "step.json"
@@ -874,19 +874,19 @@ def test_a_document_that_is_not_text_is_unreadable_too(tmp_path: Path):
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root writes through any mode")
-def test_an_unwritable_cache_directory_is_a_cache_error(tmp_path: Path):
-    """The write half of the same promise: "cache corrupt or unwritable" is the cache's code.
+def test_an_unwritable_cache_directory_is_the_output_trees_refusal(tmp_path: Path):
+    """A ``_cache/`` the run cannot write refuses as every other file of the run's tree does.
 
-    A read-only ``_cache/`` — another account's tree, a full or read-only mount — raised
-    the ``OSError`` from the temp-file write straight through ``save`` and every other
-    ``_cache/`` writer, a traceback where the docs promise exit 7.
+    Not a :class:`CacheError`: the cache's code sends the reader to ``rebuild-cache``,
+    which writes the same directory and cannot get past it. The message names the file the
+    save was writing — the sidecar, written first — never the temp file it was staged in.
     """
     step_dir = tmp_path / "step1"
     cache_dir = step_dir / "_cache"
     cache_dir.mkdir(parents=True)
     cache_dir.chmod(0o500)
     try:
-        with pytest.raises(CacheError, match="cannot write"):
+        with pytest.raises(OutputTreeError) as saved:
             save(
                 step_cfg=_cfg(),
                 key=_key("0", step_cfg=_cfg()),
@@ -894,10 +894,76 @@ def test_an_unwritable_cache_directory_is_a_cache_error(tmp_path: Path):
                 step_dir=step_dir,
                 chemrefine_version="2.0.0",
             )
-        with pytest.raises(CacheError, match="cannot write"):
+        with pytest.raises(OutputTreeError) as written:
             cache.write_json(cache_dir / "manifest.json", {"files": []})
     finally:
         cache_dir.chmod(0o755)
+    assert str(saved.value) == f"cannot write {cache_dir / 'arrays.npz'}: Permission denied"
+    assert str(written.value) == f"cannot write {cache_dir / 'manifest.json'}: Permission denied"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through any mode")
+@pytest.mark.parametrize(
+    ("present", "discard"),
+    [
+        ("step.json", cache.discard_step),
+        ("arrays.npz", cache.discard_step),
+        ("manifest.json", cache.discard_step),
+        ("failed_jobs.json", cache.clear_failed_jobs),
+    ],
+    ids=["document", "sidecar", "manifest", "ledger"],
+)
+def test_a_cache_file_the_directory_will_not_let_go_is_the_output_trees_refusal(
+    tmp_path: Path, present: str, discard: Callable[[Path], None]
+):
+    """Removing is writing, and a refused removal names the file that would not go.
+
+    ``run`` discards every step's cache, and ``rerun`` its target's, before any step runs;
+    finishing a clean step clears its ledger. In a ``_cache/`` the run cannot write, the
+    first of those files still there refuses, and it stays where it was.
+    """
+    cache_dir = tmp_path / "step1" / "_cache"
+    cache_dir.mkdir(parents=True)
+    (cache_dir / present).write_bytes(b"{}")
+    cache_dir.chmod(0o500)
+    try:
+        with pytest.raises(OutputTreeError) as refused:
+            discard(tmp_path / "step1")
+    finally:
+        cache_dir.chmod(0o755)
+    assert str(refused.value) == f"cannot write {cache_dir / present}: Permission denied"
+    assert (cache_dir / present).exists()
+
+
+def test_a_cache_write_the_disk_refuses_leaves_the_previous_file_whole(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The cache replaces its files whole: a write refused midway keeps the previous one.
+
+    A cache is what a later run trusts, so a disk that fills mid-write leaves the file as
+    it was and no temp file beside it — for a document ``write_json`` replaces and for the
+    sidecar ``save`` writes first, whose refusal is the one named.
+    """
+    step_dir = _saved(tmp_path)
+    cache_dir = step_dir / "_cache"
+    before = {p.name: p.read_bytes() for p in cache_dir.iterdir()}
+
+    def full(_fd: int) -> None:
+        raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+
+    monkeypatch.setattr(os, "fsync", full)
+    with pytest.raises(OutputTreeError):
+        cache.write_json(cache_dir / "step.json", {"replaced": True})
+    with pytest.raises(OutputTreeError) as saved:
+        save(
+            step_cfg=_cfg(),
+            key=_key("0", "1", step_cfg=_cfg()),
+            results=_results(),
+            step_dir=step_dir,
+            chemrefine_version="2.0.0",
+        )
+    assert str(saved.value) == f"cannot write {cache_dir / 'arrays.npz'}: No space left on device"
+    assert {p.name: p.read_bytes() for p in cache_dir.iterdir()} == before
 
 
 def _saved(tmp_path: Path) -> Path:

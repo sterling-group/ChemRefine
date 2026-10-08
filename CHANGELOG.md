@@ -199,12 +199,14 @@ for those and the full map.
   preflight hook without its sentence.
 - Subcommand CLI — `run`, `resume`, `rerun [step]`, `rerun-errors [step]`,
   `rebuild-cache [step]`, `rebuild-nms [step]` — with documented process
-  exit codes per failure class.
+  exit codes per failure class, among them `11` for a write the run's output
+  tree refuses (a full disk or quota, a read-only mount, a directory this
+  account cannot write); the refusal names the file.
 - Per-step result cache: filter-only (`sample:`) edits refilter cached results
   without re-running calculations, and a step cache that is corrupt or cannot
   be read is treated as missing, where v1.3.1 stopped with a traceback; any
-  other `_cache/` document that cannot be read or written stops the run as a
-  cache error (exit code 7).
+  other `_cache/` document that cannot be read stops the run as a cache error
+  (exit code 7).
 - Per-step failure policy `on_failure: stop | skip | best`. Failures are
   ledgered in `failed_jobs.json`, and `resume` / `rerun-errors` re-attempt only
   the still-failed structures of a `stop` step. Changing a step's `on_failure`

@@ -1,22 +1,32 @@
-"""Filesystem I/O helpers — atomic replacement, XYZ read/write, SMILES → 3D, CSV reporting.
+"""Filesystem I/O — the output tree's writes, atomic replacement, XYZ, SMILES → 3D, CSV reports.
 
 Keeps every concrete file format in one place so individual engine
-modules don't grow their own XYZ-handling code. ``write_xyz`` accepts
-either :class:`ase.Atoms` objects or ``(symbol, x, y, z)`` tuples for
-back-compatibility with parsers that produce raw coordinate lists.
+modules don't grow their own XYZ-handling code. :func:`write_single_xyz` accepts
+either an :class:`ase.Atoms` or ``(symbol, x, y, z)`` rows, which is what
+:func:`embed_smiles` returns.
 
 An engine may keep an XYZ reader of its own only for a stated price, stated where the
 reader lives; the rule for a new engine is "use :func:`read_xyz_frames` /
 :func:`write_single_xyz` unless you can name your price too".
+
+A run's own files and a person's refuse differently. Every write the driver makes under a
+run's ``output_dir`` goes through :func:`tree_write` — :func:`write_tree_file` and
+:func:`remove_tree_file` for a whole file — so a refusal is
+:class:`~chemrefine.errors.OutputTreeError`, whichever file it was. A file a person names
+and ChemRefine replaces — a config, a template — is written with :func:`atomic_write`
+itself, and its caller words a refusal as that file's. A file a job writes for itself is
+outside this seam as well: its refusal comes back as the job's failure.
 """
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import re
+import sys
 import tempfile
-from collections.abc import Iterable, Sequence
+from collections.abc import Generator, Iterable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -24,7 +34,7 @@ import numpy as np
 from ase import Atoms
 from numpy.typing import NDArray
 
-from chemrefine.errors import ConfigError
+from chemrefine.errors import ConfigError, OutputTreeError
 from chemrefine.quantities import HARTREE_TO_KCALMOL, boltzmann_weights
 
 if TYPE_CHECKING:
@@ -134,18 +144,32 @@ def atomic_write(path: Path, data: bytes, *, mode: int | None = None) -> None:
     The mode is set through the open file, inside the ``with``: it is the one step here
     that shared filesystems and FUSE/CIFS mounts refuse, and there a failure still closes
     the descriptor and removes the temp file rather than stranding either.
+
+    Raw by design: a refusal leaves as the :class:`OSError` the filesystem raised, for each
+    caller to word — a person's file as that file's refusal, a run's own tree through
+    :func:`tree_write`. It names ``path``, never the temp file the data was staged in, which
+    no caller ever saw. The temp file is removed under :func:`cleanup`, so failing to remove
+    it never replaces the error that left it behind.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp_", suffix=".part")
     try:
-        with os.fdopen(fd, "wb") as fh:
-            os.fchmod(fh.fileno(), 0o666 & ~_umask() if mode is None else mode)
-            fh.write(data)
-            fh.flush()
-            os.fsync(fh.fileno())
-        Path(tmp).replace(path)
-    finally:
-        Path(tmp).unlink(missing_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp_", suffix=".part")
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                os.fchmod(fh.fileno(), 0o666 & ~_umask() if mode is None else mode)
+                fh.write(data)
+                fh.flush()
+                os.fsync(fh.fileno())
+            Path(tmp).replace(path)
+        finally:
+            with cleanup():
+                Path(tmp).unlink(missing_ok=True)
+    except OSError as e:
+        if e.filename is None:
+            raise
+        # The only file the OS can name in here is the staged one: the name `mkstemp` could
+        # not create, the temp file the rename could not move or the cleanup could not remove.
+        raise OSError(e.errno, e.strerror, os.fspath(path)) from e
 
 
 def read_utf8(path: Path, *, what: str) -> str:
@@ -196,6 +220,103 @@ def expand_user_path(raw: str) -> Path:
     of that text takes for the user's home.
     """
     return Path(expand_home(raw)).absolute()
+
+
+# ---------------------------------------------------------------------------
+# The output tree — every write the driver makes under a run's output_dir
+# ---------------------------------------------------------------------------
+
+
+@contextlib.contextmanager
+def tree_write(path: Path) -> Generator[None]:
+    """Name a write the run's output tree refuses: :class:`~chemrefine.errors.OutputTreeError`.
+
+    The one net for every mutation the driver makes under ``output_dir`` — writing,
+    appending, creating a directory, linking, moving, copying, removing. A full disk or a
+    quota, a read-only mount or another account's directory refuses whichever of them comes
+    next, so the refusal reads the same at each: one class, with the exit code the CLI maps
+    and the typed refusal every other surface shows, where a bare ``OSError`` would leave as
+    a traceback with exit 1, the code a halted step exits with. Removing is in the net
+    because it is a write: a read-only mount refuses even the removal of a file that is not
+    there.
+
+    The message is ``cannot write {path}: {reason}``, with the file the filesystem named
+    before the reason when that is another — a directory a ``mkdir`` could not create, the
+    source a copy could not read. The ``OSError`` stays on ``__cause__``. An ``OSError`` a
+    caller expects as normal flow — a lost race, a file already there — is caught inside
+    the block, before it reaches the net.
+    """
+    try:
+        yield
+    except OSError as e:
+        reason = _refused(path, e)
+        raise OutputTreeError(f"cannot write {path}: {reason}") from e
+
+
+def _refused(path: Path, error: OSError) -> str:
+    """Why the filesystem refused a write of ``path``, after the file it named if another.
+
+    An error with no ``strerror`` — a bare message, an aggregate of several — is given as
+    its own text.
+    """
+    reason = error.strerror or str(error)
+    named = error.filename
+    if not isinstance(named, (str, bytes, os.PathLike)) or Path(os.fsdecode(named)) == path:
+        return reason
+    return f"{os.fsdecode(named)}: {reason}"
+
+
+def write_tree_file(path: Path, data: str | bytes, *, atomic: bool = False) -> None:
+    """Write ``data`` (text as UTF-8) to ``path`` in a run's output tree, parents first.
+
+    ``atomic`` replaces the file whole (:func:`atomic_write`): for a file another process
+    may read while it is rewritten, or a later run trusts — the cache's documents, its
+    ledgers, the records beside each output. Plain, the default, is for what a run writes
+    afresh whenever it reaches it — the per-structure inputs, the step's reports — where an
+    ``fsync`` per file is a metadata round trip per structure on a shared filesystem, and a
+    file a refusal cuts short is written afresh by the next run that reaches it.
+
+    Either way a refusal is :func:`tree_write`'s.
+    """
+    payload = data.encode("utf-8") if isinstance(data, str) else data
+    with tree_write(path):
+        if atomic:
+            atomic_write(path, payload)
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(payload)
+
+
+def remove_tree_file(path: Path) -> None:
+    """Remove ``path`` from a run's output tree if it is there, refusing as :func:`tree_write`."""
+    with tree_write(path):
+        path.unlink(missing_ok=True)
+
+
+@contextlib.contextmanager
+def cleanup() -> Generator[None]:
+    """Run cleanup that must never replace the exception it runs during.
+
+    A ``finally`` that removes a temp file runs while an exception may be on its way out —
+    a refused write, a ``KeyboardInterrupt``, the ``SystemExit(143)`` a SIGTERM is turned
+    into — and an exception raised there takes that one's place: the run exits with the
+    cleanup's code and says the cleanup's sentence. So while an exception is in flight, a
+    refusal in here is logged and dropped, and the one in flight goes on; with none in
+    flight, it is raised like any other.
+
+    In flight means :func:`sys.exception`: the exception an ``except`` or ``finally`` block
+    is running for, in this frame or in any caller's. Cleanup reached from inside a
+    caller's handler therefore counts the handled exception as in flight, which is why only
+    cleanup belongs in here, never a write the run needs. A refusal is an :class:`OSError`;
+    anything else — a bug, a second ``KeyboardInterrupt`` — surfaces.
+    """
+    in_flight = sys.exception()
+    try:
+        yield
+    except OSError as e:
+        if in_flight is None:
+            raise
+        logger.warning("could not clean up during %s: %s", type(in_flight).__name__, e)
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +382,8 @@ def write_single_xyz(geometry: Atoms | CoordList, path: str | Path, *, comment: 
     ``geometry`` may be an :class:`ase.Atoms` or a list of ``(symbol, x, y, z)``
     tuples (coerced on the fly). The parent directory is created if needed — this
     is how a structure's per-id directory comes into being (engines call this with
-    :func:`chemrefine.ids.input_geometry_path`).
+    :func:`chemrefine.ids.input_geometry_path`). Written through :func:`write_tree_file`,
+    so a refusal is :class:`~chemrefine.errors.OutputTreeError`.
     """
     if isinstance(geometry, Atoms):
         atoms = geometry
@@ -271,8 +393,7 @@ def write_single_xyz(geometry: Atoms | CoordList, path: str | Path, *, comment: 
             positions=np.array([row[1:] for row in geometry], dtype=float),
         )
     target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text("\n".join(_xyz_frame_lines(atoms, comment)) + "\n", encoding="utf-8")
+    write_tree_file(target, "\n".join(_xyz_frame_lines(atoms, comment)) + "\n")
     return target
 
 
@@ -309,7 +430,7 @@ def write_ensemble_xyz(
     """
     target = Path(path)
     if not structures:
-        target.unlink(missing_ok=True)
+        remove_tree_file(target)
         return target
 
     def _key(s: Structure) -> tuple[bool, float]:
@@ -321,39 +442,8 @@ def write_ensemble_xyz(
         value = getattr(s, energy_attr)
         caption = f"{energy_label}=n/a" if value is None else f"{energy_label}={value:.8f} Eh"
         lines.extend(_xyz_frame_lines(s.atoms, f"step{step} id={s.id} {caption}"))
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_tree_file(target, "\n".join(lines) + "\n")
     return target
-
-
-def write_xyz(
-    structures: Sequence[Atoms | CoordList],
-    structure_ids: Sequence[str],
-    step_number: int,
-    output_dir: str | Path,
-) -> list[Path]:
-    """Write each structure **flat** to ``output_dir/step{N}_{ID}.xyz``.
-
-    A flat, directly-globbable layout for *seed* sets (a directory of seeds is
-    read back via :func:`gather_output_files` with ``*.xyz``). Per-step engine
-    inputs do **not** use this — they live in per-structure directories via
-    :func:`write_single_xyz` + :func:`chemrefine.ids.input_geometry_path`.
-    Raises :class:`ValueError` if ``structures`` and ``structure_ids`` differ
-    in length.
-    """
-    if len(structures) != len(structure_ids):
-        raise ValueError(
-            f"structures ({len(structures)}) and structure_ids ({len(structure_ids)}) "
-            "must have the same length"
-        )
-    out = Path(output_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    return [
-        write_single_xyz(
-            geometry, out / f"step{step_number}_{sid}.xyz", comment=f"step {step_number} {sid}"
-        )
-        for geometry, sid in zip(structures, structure_ids, strict=True)
-    ]
 
 
 def gather_output_files(directory: str | Path, pattern: str) -> list[Path]:
@@ -451,8 +541,6 @@ def smiles_to_xyz(
     import pandas as pd
 
     out = Path(output_dir)
-    out.mkdir(parents=True, exist_ok=True)
-
     df = pd.read_csv(csv_file)
     if smiles_column not in df.columns:
         raise ValueError(f"column {smiles_column!r} not found in {csv_file}")
@@ -520,13 +608,12 @@ def save_step_csv(
     """
     import pandas as pd
 
-    path.parent.mkdir(parents=True, exist_ok=True)
     if step_number == 1:
         # Step 1 starts a fresh report each run; later steps append to it.
         # Truncate up front so a step 1 with no finite energies (the early
         # return below) can't leave a prior run's stale rows for step 2 to
         # append onto.
-        path.unlink(missing_ok=True)
+        remove_tree_file(path)
 
     df = pd.DataFrame(
         {
@@ -572,6 +659,8 @@ def save_step_csv(
     # on step 1, where the backfills are seeds with no energy yet) leaves step 2 appending
     # header-less to a file that does not exist, so the report opens with a data row and
     # every `read_csv` takes it for the column names.
-    df.to_csv(path, mode="a", index=False, header=not path.exists())
+    with tree_write(path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(path, mode="a", index=False, header=not path.exists())
     logger.info("saved step %d summary to %s", step_number, path)
     return path

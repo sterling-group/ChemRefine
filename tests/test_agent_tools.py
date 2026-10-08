@@ -316,9 +316,9 @@ def test_a_template_write_that_fails_leaves_the_edited_template_intact(
 
     Written in place, a kill or a full disk between the truncate and the write left a
     zero-length ``step1.inp`` where the user's edited one had been, and the next run
-    rendered the stub. The config writer beside it already went through
-    ``cache.atomic_write``; this pins the template writer to the same rule by failing the
-    write at its last step and finding the previous text still there.
+    rendered the stub. The config writer beside it goes through ``io.atomic_write``; this
+    pins the template writer to the same rule by failing the write at its last step and
+    finding the previous text still there.
     """
     path = _write_config(tmp_path, {"step": 1, "engine": "orca"})
     agent_tools.write_template(str(path), 1, "! Mine\n")
@@ -919,6 +919,8 @@ def test_get_failures_carries_the_taxonomy_and_the_next_move(tmp_path: Path):
     # `ChemRefineError.__subclasses__()`, which is direct-only, so a payload advertising
     # the whole taxonomy quietly shipped without the class a died-mid-run parse raises.
     assert everything["exit_codes"]["OutputTerminationError"] == 6
+    # Its own code, not the 1 a halted step exits with: what a wrapper tells a full disk by.
+    assert everything["exit_codes"]["OutputTreeError"] == 11
     assert everything["suggested_action"] == "rerun-errors"
 
     clean = agent_tools.get_failures(str(path), step=2)

@@ -28,7 +28,7 @@ from typing import Any
 
 import pytest
 
-from chemrefine import agent_tools
+from chemrefine import agent_tools, errors
 from chemrefine.engines import known_backend_extras
 from chemrefine.engines.api import ENGINES
 from chemrefine.engines.mlip.registry import registered_backends
@@ -186,18 +186,24 @@ def test_a_directive_inside_prose_is_left_alone():
 
 
 def test_every_exit_code_is_documented():
-    """The hand-written table's one machine-checkable claim: that it covers every code.
+    """The hand-written tables' one machine-checkable claim: that each covers every code.
 
     Not generated — see this module's docstring. ``0`` is documented too and belongs to no
-    exception, so the check runs one way: every code the package can exit with must appear.
+    exception, so the check runs one way: every code the package can exit with must appear,
+    in the page's table and in the one :mod:`chemrefine.errors` carries for the API page.
     """
     text = _RUN_FAILS.read_text(encoding="utf-8")
-    missing = sorted(
-        c for c in set(EXIT_CODES.values()) if not re.search(rf"^\| `{c}` \|", text, re.MULTILINE)
-    )
+    codes = sorted(set(EXIT_CODES.values()))
+    missing = [c for c in codes if not re.search(rf"^\| `{c}` \|", text, re.MULTILINE)]
     assert not missing, (
         f"exit code(s) {missing} are raised by chemrefine.errors but have no row in "
         f"{_RUN_FAILS.name}"
+    )
+    api_table = errors.__doc__ or ""
+    unlisted = [c for c in codes if not re.search(rf"^``{c}``\s", api_table, re.MULTILINE)]
+    assert not unlisted, (
+        f"exit code(s) {unlisted} have no row in the table chemrefine.errors' docstring "
+        f"carries, which is the one the Errors API page shows"
     )
 
 
