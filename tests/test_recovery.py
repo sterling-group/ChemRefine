@@ -1302,8 +1302,8 @@ def test_rebuild_cache_stops_the_tail_where_it_cannot_serve_and_names_the_repair
     Step 2's cache document is deleted while its manifest (whose stamped fingerprint still
     matches this configuration) survives: exactly the state ``rebuild-cache 2`` exists to
     repair, so that is the command the stop must name. A plain ``resume`` would also work
-    here, but for an NMS or artifact step it would *recompute* — the hint exists to steer
-    away from that.
+    here, but for an NMS step it would *recompute* — the hint exists to steer away from
+    that.
     """
     import logging
 

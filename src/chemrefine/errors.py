@@ -175,12 +175,10 @@ class OutputTreeError(ChemRefineError):
     Free space, remount read-write or fix the permissions, then run the command that
     stopped again. ``run`` and ``rerun`` begin by discarding caches, so ``resume`` in their
     place would serve what they were asked to discard; a ``run``, ``resume``, ``rerun`` or
-    ``rerun-errors`` that stopped inside its steps continues with ``chemrefine resume``. For
-    an artifact step whose job already wrote its product, ``chemrefine rebuild-cache N``
-    adopts the product where ``resume`` would run the job again — though a full disk may
-    have cut it short as it was copied back. A message that also names a SLURM job the run
-    could not cancel, or a live run whose lock it could not put back, says what to do about
-    that first.
+    ``rerun-errors`` that stopped inside its steps continues with ``chemrefine resume``,
+    which adopts what the jobs already finished — an artifact step's product among it. A
+    message that also names a SLURM job the run could not cancel, or a live run whose lock
+    it could not put back, says what to do about that first.
 
     Not an :class:`OSError`, though the filesystem's refusal is its ``__cause__``: every
     ``except OSError`` between the write and the CLI would take it for one of its own and

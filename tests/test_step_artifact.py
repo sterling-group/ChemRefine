@@ -33,7 +33,13 @@ from chemrefine.state import (
     StepResults,
     Structure,
 )
-from chemrefine.step import build_context, derive_step_key, rebuild_cache_step, run_step
+from chemrefine.step import (
+    StepMode,
+    build_context,
+    derive_step_key,
+    rebuild_cache_step,
+    run_step,
+)
 
 ARTIFACT_NAME = "model.pt"
 
@@ -391,6 +397,150 @@ def test_resume_reruns_an_artifact_step_that_produced_nothing(tmp_path: Path):
 
     assert retry.submits == 1, "resume must run the step again, not serve a cache"
     assert len(outcome.state.structures) == 3
+
+
+# ---------------------------------------------------------------------------
+# resume adopts a finished product
+# ---------------------------------------------------------------------------
+
+
+def _run_dir(config: Config) -> Path:
+    return _step_dir(config) / _StubArtifactEngine.RUN_DIR_NAME
+
+
+def _product(config: Config) -> str:
+    """Which run's weights stand at the product's path."""
+    return (_run_dir(config) / ARTIFACT_NAME).read_text(encoding="utf-8").strip()
+
+
+def test_resume_adopts_a_finished_product_whose_cache_was_lost(tmp_path: Path):
+    """A training that finished is read back by a resume, as a finished output is.
+
+    The cache is gone the way a driver killed before it could write one leaves it, or one
+    whose write the output tree refused. The manifest's stamp says the product is this
+    configuration's and the job's runlog says the job finished, so nothing is submitted
+    and nothing is moved aside.
+    """
+    config = _config(tmp_path)
+    seeds = _seeds(4)
+    run_step(config, config.steps[0], seeds, engine=_StubArtifactEngine(weights="first"))
+    cache.invalidate(_step_dir(config))
+
+    resumed = _StubArtifactEngine(weights="second")
+    outcome = run_step(config, config.steps[0], seeds, engine=resumed)
+
+    assert resumed.submits == 0
+    assert _product(config) == "first"
+    assert not (_run_dir(config) / "attempt1").exists()
+    assert [s.id for s in outcome.state.structures] == [s.id for s in seeds.structures]
+    assert (_step_dir(config) / "_cache" / "step.json").exists()
+
+
+def test_resume_trains_again_over_another_configurations_product(tmp_path: Path):
+    """A stamp for another key is another training: it is moved aside and the job runs."""
+    config = _config(tmp_path)
+    seeds = _seeds(3)
+    run_step(config, config.steps[0], seeds, engine=_StubArtifactEngine(weights="first"))
+    cache.invalidate(_step_dir(config))
+
+    retuned = _config(tmp_path, options={"epochs": 5})
+    engine = _StubArtifactEngine(weights="second")
+    run_step(retuned, retuned.steps[0], seeds, engine=engine)
+
+    assert engine.submits == 1
+    assert _product(config) == "second"
+    assert (_run_dir(config) / "attempt1" / ARTIFACT_NAME).read_text(encoding="utf-8") == "first\n"
+
+
+@pytest.mark.parametrize(
+    "ended",
+    [{"exit_code": 3}, {"scratch_kept": True}, {"exit_code": None}],
+    ids=["exited non-zero", "results left in scratch", "no runlog"],
+)
+def test_resume_trains_again_over_a_product_its_job_does_not_vouch_for(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, ended: dict[str, object]
+):
+    """A resume adopts on proof alone; what is unproven it runs again, and says why."""
+    config = _config(tmp_path)
+    seeds = _seeds(3)
+    with pytest.raises(JobFailureError):
+        run_step(
+            config, config.steps[0], seeds, engine=_StubArtifactEngine(weights="first", **ended)
+        )
+
+    retry = _StubArtifactEngine(weights="second")
+    with caplog.at_level("WARNING", logger="chemrefine.step"):
+        run_step(config, config.steps[0], seeds, engine=retry)
+
+    assert retry.submits == 1
+    assert _product(config) == "second"
+    assert "running the job again" in caplog.text
+
+
+def _unstamped_tree(config: Config, seeds: PipelineState) -> _StubArtifactEngine:
+    """A finished product under a manifest that carries no stamp, as a hand-written one does."""
+    engine = _StubArtifactEngine(weights="adopted by hand")
+    ctx = build_context(config, config.steps[0], seeds, engine)
+    inputs = engine.prepare(ctx)
+    engine.submit(inputs, ctx)
+    blank = cache.ManifestStamp(fingerprint="", criterion_key="", search_key="", rows={})
+    cache.save_manifest(inputs, ctx.step_dir, operation="opt_sp", engine="fake", stamp=blank)
+    return engine
+
+
+def test_resume_refuses_a_product_under_a_manifest_that_proves_nothing(tmp_path: Path):
+    """Unprovable is never silently trusted and never silently moved aside.
+
+    The refusal names the command that adopts such a tree, as it does for a manifest
+    without row provenance, and the product stays where it is.
+    """
+    config = _config(tmp_path)
+    seeds = _seeds(3)
+    _unstamped_tree(config, seeds)
+
+    fresh = _StubArtifactEngine()
+    with pytest.raises(CacheError, match="rebuild-cache 1"):
+        run_step(config, config.steps[0], seeds, engine=fresh)
+
+    assert fresh.submits == 0
+    assert _product(config) == "adopted by hand"
+    assert not (_run_dir(config) / "attempt1").exists()
+
+
+def test_rebuild_cache_stamps_the_product_it_adopts_so_a_resume_can_prove_it(tmp_path: Path):
+    """An adoption on the caller's word is recorded: the next lost cache costs a resume."""
+    config = _config(tmp_path)
+    seeds = _seeds(3)
+    engine = _unstamped_tree(config, seeds)
+
+    with patch("chemrefine.step.get_engine", return_value=engine):
+        rebuild_cache_step(config, config.steps[0], seeds)
+
+    stamped = cache.load_manifest_provenance(_step_dir(config)).fingerprint
+    assert stamped == _key_for(config, seeds).fingerprint
+    cache.invalidate(_step_dir(config))
+    later = _StubArtifactEngine()
+    run_step(config, config.steps[0], seeds, engine=later)
+    assert later.submits == 0
+    assert _product(config) == "adopted by hand"
+
+
+@pytest.mark.parametrize("command", ["run", "rerun"])
+def test_a_step_asked_to_run_again_runs_its_job_again(tmp_path: Path, command: str):
+    """Adoption is a resume's. ``run`` ignores what is on disk and ``rerun`` discards it."""
+    config = _config(tmp_path)
+    seeds = _seeds(3)
+    run_step(config, config.steps[0], seeds, engine=_StubArtifactEngine(weights="first"))
+
+    again = _StubArtifactEngine(weights="second")
+    if command == "run":
+        run_step(config, config.steps[0], seeds, engine=again, mode=StepMode.EXECUTE)
+    else:
+        cache.discard_step(_step_dir(config))
+        run_step(config, config.steps[0], seeds, engine=again)
+
+    assert again.submits == 1
+    assert _product(config) == "second"
 
 
 # ---------------------------------------------------------------------------

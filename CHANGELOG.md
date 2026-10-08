@@ -464,9 +464,10 @@ for those and the full map.
   A training step's success test is the trained model at its path together with its
   job's own word that it finished, the footer of the job's runlog: a training that was
   stopped or died is a failed step even when it left a checkpoint, and so is one whose
-  results did not all come home. `resume` retrains after a failed training, and a
-  training that completed before the driver died is adopted by `rebuild-cache` without
-  recomputing it. The step's fingerprint includes its training-config template, so
+  results did not all come home. `resume` retrains after a failed training and adopts
+  one that had finished — before the driver died, or before a write the output tree
+  refused — without recomputing it; `rebuild-cache` adopts, on your word, a model
+  nothing vouches for. The step's fingerprint includes its training-config template, so
   retuning epochs or learning rate and resuming re-runs the training and replaces the
   model on disk. v1.3.1 counted a training step done once its job ended, so `--skip`
   passed over a failed training and an edited template alike. The preflight refuses a

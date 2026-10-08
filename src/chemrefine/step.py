@@ -509,9 +509,10 @@ def run_step(
         )
         if cached is not None:
             return cached
-        # No cache this key can serve — but possibly a tree whose rows can vouch for
-        # themselves: an interrupted run, parents that only partially changed, an NMS
-        # search retune, or the nms flag flipped over a finished non-NMS run.
+        # No cache this key can serve — but possibly a tree that can vouch for itself: an
+        # interrupted run, parents that only partially changed, an NMS search retune, the
+        # nms flag flipped over a finished non-NMS run, or an artifact step whose job
+        # finished with no driver left to cache its product.
         incremental = _incremental_step_outcome(
             ctx,
             step_cfg,
@@ -530,7 +531,7 @@ def run_step(
         # provenance test `rebuild_cache_step` and `_incremental_step_outcome` use. A match
         # means the outputs on disk were produced for exactly this configuration and only
         # the cache document cannot serve it, so `rebuild-cache` re-adopts them without
-        # recomputing — which for an NMS or artifact step is what `resume` cannot promise.
+        # recomputing — which for an NMS step is what `resume` cannot promise.
         # A mismatch means `rebuild-cache` would refuse by that same guard, so only the
         # commands that recompute are honest advice. The attempts are asked the same way:
         # a resume killed before its resolution pass leaves a current fingerprint over a
@@ -673,7 +674,8 @@ def _prepare_stamped(
     prepared before the manifest is written, so the manifest describes files that exist;
     the stamp is on disk before any job goes out, so an interrupted run leaves proof of
     what its outputs were computed for — the per-row provenance is that proof at
-    structure grain, for the incremental resume.
+    structure grain, for the incremental resume, and the step stamp is that proof for an
+    artifact step's one product (:func:`_adopt_product`).
 
     Archiving happens here rather than inside ``prepare`` because the retry and NMS paths
     call ``prepare`` too and manage their own attempt directories. ``stamp`` is the full
@@ -739,34 +741,41 @@ def _incremental_step_outcome(
     sight-unseen: their outputs may parse perfectly and still answer a different
     geometry.
 
-    A manifest **without** row provenance is a tree from before the current rules —
-    unprovable, never wrong — and resume refuses it loudly, naming the adoption command,
-    rather than silently archiving finished work (or, worse, trusting it):
-    ``chemrefine rebuild-cache`` re-parses under the current rules, submits nothing, and
-    records the provenance this route needs.
+    An artifact step has one job and no rows, so it is continued at step grain: the
+    manifest's step stamp is its provenance, and :func:`_adopt_product` adopts its product
+    whole or answers ``None``.
+
+    A manifest **without** provenance at its grain (no row keys; for an artifact step, no
+    stamp) is a tree from before the current rules — unprovable, never wrong — and resume
+    refuses it loudly, naming the adoption command, rather than silently archiving
+    finished work (or, worse, trusting it): ``chemrefine rebuild-cache`` adopts it under
+    the current rules, submits nothing, and records the provenance this route needs.
 
     Returns ``None`` — meaning "run the whole step" — when the route does not apply:
 
-    * The step may not submit: continuing means resubmitting whatever is missing.
-    * The step is an artifact step. There is nothing per-structure to continue —
-      :func:`_run_artifact_step` re-runs the one job, and adopting a *finished* product
-      is ``rebuild-cache``'s job, not a resume's.
+    * The step may not submit: a mode that submits nothing is served from a cache or not
+      at all, and adopting from disk is a resume's or ``rebuild-cache``'s to do.
     * No manifest, or one naming no jobs — a step that never prepared anything has
       nothing to continue (an empty manifest is a legitimate value, not a missing one).
+    * An artifact step whose product is another configuration's, or is not a finished
+      job's (:func:`_adopt_product`).
     """
-    if not may_submit or artifact_engine is not None:
+    if not may_submit:
         return None
     manifest = cache.load_manifest(ctx.step_dir)
     if manifest is None or not manifest.files:
         return None
     provenance = cache.load_manifest_provenance(ctx.step_dir)
-    if not provenance.rows:
+    if not (provenance.fingerprint if artifact_engine is not None else provenance.rows):
         raise CacheError(
-            f"step {step_cfg.step}: outputs are on disk but carry no per-row provenance — "
-            f"a tree from before the current cache rules, which resume can neither prove "
-            f"right nor wrong. Run `chemrefine rebuild-cache {step_cfg.step}` to adopt it "
-            f"under the current rules (it re-parses and submits nothing), then resume."
+            f"step {step_cfg.step}: its manifest carries no provenance — a tree from before "
+            f"the current cache rules, whose outputs resume can neither prove right nor "
+            f"wrong. Run `chemrefine rebuild-cache {step_cfg.step}` to adopt it under the "
+            f"current rules (it submits nothing), then resume — or `chemrefine rerun "
+            f"{step_cfg.step}` to compute it again."
         )
+    if artifact_engine is not None:
+        return _adopt_product(ctx, step_cfg, key, artifact_engine, manifest, provenance)
     current = key.manifest_rows()
     changed = sorted(
         sid
@@ -816,6 +825,39 @@ def _incremental_step_outcome(
     results = lifecycle.finalize(ctx, step_cfg, key, successes, failures)
     _restamp(inputs, ctx, step_cfg, key)
     return _step_outcome(ctx, step_cfg, results, cache_hit=False)
+
+
+def _adopt_product(
+    ctx: StepContext,
+    step_cfg: StepConfig,
+    key: cache.StepKey,
+    engine: ArtifactEngine,
+    manifest: StepInputs,
+    provenance: cache.ManifestProvenance,
+) -> StepOutcome | None:
+    """Continue an artifact step by adopting its product; ``None`` runs its job instead.
+
+    The row rule at the one grain an artifact step has, under the two proofs a product
+    needs. It is **this configuration's**: :func:`_prepare_stamped` archives the run
+    directory, then stamps, then the job goes out, so a product beside a stamp equal to
+    this key was written by a job this configuration submitted, or adopted for it by
+    ``rebuild-cache``. And its job **finished**
+    (:func:`_unfinished`, the success test every route shares). With both, the product is
+    cached with nothing submitted: a driver that stops while its job runs on, or a write
+    the output tree refuses once the product exists, costs a resume and not the job again.
+
+    With either missing the job runs, as a step with no manifest runs it. A stamp for
+    another key is another configuration's product — a changed template, option or
+    upstream ensemble. A product its job never finished is a file a later step must not
+    load. :func:`_run_artifact_step` moves both aside, into the next ``attemptK/``.
+    """
+    if provenance.fingerprint != key.fingerprint:
+        return None
+    if (unfinished := _unfinished(engine, ctx, manifest)) is not None:
+        logger.warning("step %d: %s — running the job again", step_cfg.step, unfinished.why)
+        return None
+    logger.info("step %d: adopting the product its finished job left", step_cfg.step)
+    return _finish_artifact_step(ctx, step_cfg, key, engine, manifest)
 
 
 def _run_full_step(
@@ -908,8 +950,9 @@ def _unfinished(engine: ArtifactEngine, ctx: StepContext, inputs: StepInputs) ->
     """Why this step's product is not a finished job's; ``None`` when it is one.
 
     **The one success test of an artifact step**, asked by the run that just submitted the
-    job (:func:`_run_artifact_step`) and by ``rebuild-cache`` (:func:`rebuild_cache_step`).
-    Two things, both needed: the product is on disk, and the job that wrote it says it
+    job (:func:`_run_artifact_step`), by a resume deciding whether to adopt
+    (:func:`_adopt_product`) and by ``rebuild-cache`` (:func:`rebuild_cache_step`). Two
+    things, both needed: the product is on disk, and the job that wrote it says it
     finished — in the footer of its own runlog (:func:`chemrefine.job_log.read_footer`),
     a run block that exited 0 and results that all came home.
 
@@ -946,7 +989,7 @@ def _unfinished(engine: ArtifactEngine, ctx: StepContext, inputs: StepInputs) ->
             unvouched = unvouched or _Unfinished(
                 f"the results of the job that wrote {artifact} did not all come home: "
                 f"{runlog} ends with scratch_kept=true, and the scratch directory its "
-                f"header names was left holding them — copy them home before adopting",
+                f"header names was left holding them",
                 adoptable=True,
             )
     return unvouched
@@ -966,7 +1009,8 @@ def _finish_artifact_step(
     **The success test is :func:`_unfinished`, and failing it raises rather than ledgers.**
     Without it the step caches a model its job never produced, or never finished, and every
     later ``resume`` serves that cache. Raising leaves no cache at all, which is what makes
-    the recovery correct: ``resume`` finds nothing to reuse and runs the job again.
+    the recovery correct: ``resume`` finds nothing to reuse, and runs the job again unless
+    what is on disk has by then been proven a finished job's (:func:`_adopt_product`).
 
     A ledgered failure would not do — it writes a cache with zero structures, which is the
     same wrong state by a longer route. There is nothing per-structure to ledger anyway.
@@ -1040,14 +1084,15 @@ def rebuild_cache_step(
     happened, and the next ``resume`` would serve it rather than compute what was
     asked for.
 
-    A manifest carrying **no** row provenance is not evidence of a mismatch, and this
-    proceeds: it is a hand-written v1 adoption manifest, *unprovable* rather than wrong,
-    and the caller has named the step. The distinction is between proving the outputs
-    wrong and merely being unable to prove them right. It is drawn differently in
-    :func:`_incremental_step_outcome`, which treats an unproven match as a reason to
-    re-run — it can afford to, being an optimisation over doing the work anyway. A
-    successful rebuild then writes the manifest back **with** row provenance, so the
-    adoption is recorded and every later question is answered per row.
+    A manifest carrying **no** provenance at its grain — no row keys, or for an artifact
+    step no stamp — is not evidence of a mismatch, and this proceeds: it is a hand-written
+    v1 adoption manifest, *unprovable* rather than wrong, and the caller has named the
+    step. The distinction is between proving the outputs wrong and merely being unable to
+    prove them right. :func:`_incremental_step_outcome` draws the same line and stops at
+    it: a resume refuses such a tree by name and names this command. A successful rebuild
+    then writes the manifest back **with** its provenance — the row keys, and the step
+    stamp an artifact step's product is proven this configuration's by — so the adoption
+    is recorded.
 
     An artifact step's product is held to the success test every route shares
     (:func:`_unfinished`), drawn along that same line: a run that failed, or left no
@@ -1119,10 +1164,15 @@ def rebuild_cache_step(
                 f"configuration, so re-caching it would describe a training that never "
                 f"happened. Run `chemrefine rerun {step_cfg.step}` to recompute it."
             )
-        # This is the most valuable recovery the command offers for such a step: a
-        # training whose job finished before the driver died is re-cached rather than re-run.
+        # Stamped once the cache is written, as the row branch below is: a later resume
+        # that finds no cache can then prove the product this configuration's. It still
+        # asks the job's own word, so a product adopted here with none is trained again.
         logger.info("step %d: rebuilding cache from the product on disk", step_cfg.step)
-        return _finish_artifact_step(ctx, step_cfg, key, engine, manifest, on_the_callers_word=True)
+        outcome = _finish_artifact_step(
+            ctx, step_cfg, key, engine, manifest, on_the_callers_word=True
+        )
+        _restamp(manifest, ctx, step_cfg, key)
+        return outcome
     logger.info("step %d: rebuilding cache from existing outputs", step_cfg.step)
     successes, failures = lifecycle.parse_and_record(engine, manifest, ctx)
     if step_cfg.nms and isinstance(engine, NmsCapableEngine):

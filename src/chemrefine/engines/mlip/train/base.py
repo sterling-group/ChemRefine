@@ -406,9 +406,9 @@ class TrainerBase(ABC):
         and the step's record cites the model relative to it.
 
         Takes the run's directory and name rather than a whole :class:`TrainingPlan`,
-        because it must be answerable *without* one: ``rebuild-cache`` adopts a product
-        having submitted nothing, and ``chemrefine.step`` asks after a failure, when
-        there is no dataset to split and no launcher to resolve. Both of those are the
+        because it must be answerable *without* one: ``resume`` and ``rebuild-cache`` adopt
+        a product having submitted nothing, and ``chemrefine.step`` asks after a failure,
+        when there is no dataset to split and no launcher to resolve. Those are the
         moments the answer matters most.
         """
 

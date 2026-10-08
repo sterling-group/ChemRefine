@@ -467,6 +467,15 @@ _BUNDLED: tuple[Mutation, ...] = (
         "parent's stale output is served as current and the changed row never computes",
     ),
     Mutation(
+        id="resume-artifact-adoption",
+        path="src/chemrefine/step.py",
+        old="    if provenance.fingerprint != key.fingerprint:\n        return None\n",
+        new="    if False:\n        return None\n",
+        tests="tests/test_step_artifact.py",
+        breaks="resume adopts whatever trained model is on disk under any configuration, so "
+        "a retuned training is never run and later steps compute with the previous model",
+    ),
+    Mutation(
         id="artifact-finished-by-its-jobs-verdict",
         path="src/chemrefine/step.py",
         old="        elif footer.exit_code != 0:\n",

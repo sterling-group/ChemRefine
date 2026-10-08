@@ -18,7 +18,7 @@ wrapper script or a SLURM chain can branch on it without parsing log text.
 | `8` | Wait deadline expired | Nothing finished for `job_timeout_seconds` | The queue has stalled, not merely slowed — a step that keeps completing jobs restarts the clock each time. Check whether the jobs are stuck (`squeue -u $USER`), or raise the limit. Only reachable when you set `job_timeout_seconds`; the default waits indefinitely |
 | `9` | Backend env could not be built | `chemrefine backends install <extra>` failed — no network on the node, a resolver conflict, a full disk, or an env tool that is a shell function rather than a binary on `PATH` | The message quotes the command that failed. Run it on a machine with internet (on HPC: a login node); the half-built env is removed, so a re-run starts clean |
 | `10` | Another run holds this output tree | A second `chemrefine` was pointed at an `output_dir` a first one is still working in — a double-submitted driver script, or a second terminal because the first "looks hung" while waiting on the queue | Wait for the other run. If it is known dead, see [another run holds this output tree](#another-run-holds-this-output-tree) |
-| `11` | Output tree not writable | A full disk or quota, a read-only mount, or a directory under `output_dir` this account cannot write | The message names the file, and the one the filesystem refused when that was another; when it also names a SLURM job the run could not cancel, `scancel` that job, or wait until `squeue -j <id>` no longer lists it, and when it names a run whose lock a reclaim swept up, wait for that run to end or stop it — before anything else. Free space, remount read-write or fix the permissions, then run the command that stopped again: `run` and `rerun` begin by discarding caches, so `resume` in their place would serve what they were asked to discard. A `run`, `resume`, `rerun` or `rerun-errors` that stopped inside its steps continues with `chemrefine resume`. For an artifact step (one job, one product such as a trained model) whose job already wrote its product, `chemrefine rebuild-cache N` adopts the product where `resume` would run the job again — though a full disk may have cut it short as it was copied back |
+| `11` | Output tree not writable | A full disk or quota, a read-only mount, or a directory under `output_dir` this account cannot write | The message names the file, and the one the filesystem refused when that was another; when it also names a SLURM job the run could not cancel, `scancel` that job, or wait until `squeue -j <id>` no longer lists it, and when it names a run whose lock a reclaim swept up, wait for that run to end or stop it — before anything else. Free space, remount read-write or fix the permissions, then run the command that stopped again: `run` and `rerun` begin by discarding caches, so `resume` in their place would serve what they were asked to discard. A `run`, `resume`, `rerun` or `rerun-errors` that stopped inside its steps continues with `chemrefine resume`, which reads back what the jobs had already finished — a trained model included — and runs only the rest |
 
 ## A step halted with pending failures
 
@@ -63,6 +63,14 @@ mixing two configurations — a row is adopted only under proof its job *is* thi
 configuration's job. An NMS step continues the same way: adopted round-1 rows
 feed the resolution, clean parents pass through, and parents not at the target
 fan out fresh displacement children.
+
+A training step continues at its own grain: it has one job and one product. When
+the manifest shows the model on disk was trained for this configuration, and the
+job's own `.runlog` ends with `exit_code=0` and `scratch_kept=false`, `resume`
+adopts the model and trains nothing. A training that was stopped, or whose model
+did not come home whole, is trained again, and the log says which it was. A model
+nothing vouches for — its runlog is gone, or you copied it home from scratch by
+hand — is adopted by `chemrefine rebuild-cache N`, on your word.
 
 One thing deliberately does *not* reuse that work: `chemrefine run` means start
 over, and always does.
@@ -296,9 +304,13 @@ applies wins, and `EXECUTE` skips straight to the full run:
    usable output — are computed. NMS resolution then runs on the assembled round 1:
    clean parents pass through, `attemptK/` resolutions are honoured only under the
    criterion they were written for, and unresolved parents fan out fresh children.
-   A manifest *without* row provenance stops the resume by name: run
-   `chemrefine rebuild-cache N` to adopt the tree under the current rules first.
-   (Artifact steps skip this route — there is nothing per-structure to continue.)
+   An artifact step — one job and one product, such as a trained model — is
+   continued at its own grain: its product is adopted when the manifest's step
+   stamp matches this configuration and its job's runlog says the job finished,
+   and otherwise its job runs. A manifest *without* provenance at its grain —
+   row keys, or for an artifact step the step stamp — stops the resume by name:
+   run `chemrefine rebuild-cache N` to adopt the tree under the current rules
+   first, or `chemrefine rerun N` to compute it again.
 3. **Full run** — prepare, stamp the manifest with its row provenance, submit, retry
    unconverged once, resolve NMS, apply `on_failure`, cache. A mode that may not submit
    raises here instead, naming `resume` and `rerun` as the fixes.

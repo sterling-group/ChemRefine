@@ -1105,10 +1105,12 @@ def save_manifest(
     (:func:`resolution_keys`), stamped separately because ``resume`` and
     ``rebuild-cache`` each ask a different half — the composed key would answer
     neither. Together they are what lets a later ``resume`` prove, structure by
-    structure, that an output on disk is the one this configuration would compute —
-    the manifest with row provenance *is* the current-format marker
-    (:func:`load_manifest_provenance`). A hand-written v1 adoption manifest carries none,
-    and is adoptable only by the explicit ``rebuild-cache``, never silently.
+    structure, that an output on disk is the one this configuration would compute — and,
+    for an artifact step, whose one job is no structure and so carries no row key, by the
+    step stamp that its product is. The manifest with provenance at its step's grain
+    *is* the current-format marker (:func:`load_manifest_provenance`). A hand-written v1
+    adoption manifest carries none, and is adoptable only by the explicit
+    ``rebuild-cache``, never silently.
     """
     path = manifest_path(step_dir)
     provenance = stamp["rows"]
@@ -1141,9 +1143,10 @@ class ManifestProvenance:
     """The provable half of a manifest: the step stamp and each row's job identity.
 
     ``rows`` is ``id -> (row_key, parent_digest)`` for exactly the rows that carry
-    provenance; empty means none does — a hand-written v1 adoption manifest — and the
-    manifest is *unprovable*: never proven wrong, never proven right. Absence of proof
-    routes to the explicit ``rebuild-cache``.
+    provenance; empty means none does — a hand-written v1 adoption manifest, or an
+    artifact step's, whose one product ``fingerprint`` proves instead. A manifest with no
+    provenance at its step's grain is *unprovable*: never proven wrong, never proven
+    right. Absence of proof routes to the explicit ``rebuild-cache``.
     """
 
     fingerprint: str
@@ -1234,9 +1237,12 @@ def load_manifest_provenance(step_dir: Path) -> ManifestProvenance:
 
     Read separately from :func:`load_manifest` so callers that want only the file layout
     are untouched. All-empty covers a missing manifest and a hand-written v1 adoption
-    manifest alike — neither can equal a real stamp, so every reader falls back to the
-    route that recomputes. A manifest of the wrong shape is :func:`_read_manifest`'s
-    :class:`CacheError` — the same one :func:`load_manifest` raises over the same file.
+    manifest alike — neither can equal a real stamp, so no reader adopts on it: a resume
+    runs a step that has no manifest and refuses by name one whose manifest names jobs
+    and proves nothing, and only ``rebuild-cache`` adopts that on the caller's word. A
+    manifest of
+    the wrong shape is :func:`_read_manifest`'s :class:`CacheError` — the same one
+    :func:`load_manifest` raises over the same file.
     """
     manifest = _read_manifest(step_dir)
     if manifest is None:

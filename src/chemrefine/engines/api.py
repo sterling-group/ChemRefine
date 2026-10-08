@@ -624,7 +624,8 @@ class ArtifactEngine(CalculationEngine, Protocol):
     (:func:`chemrefine.step._unfinished`). A run that fails it raises
     :class:`~chemrefine.errors.JobFailureError` **before** any cache is written. No cache is
     the whole point: ``resume`` then runs the job again rather than serving a model that was
-    never produced, or never finished.
+    never produced, or never finished — unless what is on disk has by then been proven a
+    finished job's, which it adopts (:func:`chemrefine.step._adopt_product`).
 
     The job therefore runs through the ordinary scheduler
     (:func:`chemrefine.engines._execution.run_batch`), whose script writes that footer: an
@@ -655,9 +656,9 @@ class ArtifactEngine(CalculationEngine, Protocol):
     def artifact(self, ctx: StepContext) -> Path:
         """Where this step's product lives once its job has run.
 
-        Called both to decide success and — by ``rebuild-cache`` — to adopt a product whose
-        run finished before the driver died, so it must be derivable from ``ctx`` alone
-        rather than from anything the submission returned.
+        Called both to decide success and — by ``resume`` and ``rebuild-cache`` — to adopt a
+        product whose job finished with no driver left to cache it, so it must be derivable
+        from ``ctx`` alone rather than from anything the submission returned.
 
         May sit *inside* :meth:`run_dir` rather than directly in it — a library that names
         its own checkpoint directory puts it there — which is why the two are separate

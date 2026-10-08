@@ -113,7 +113,7 @@ Two situations that look like they need a recompute and do not:
   frequencies): edit the config, `start_run(action="resume")` — round 1 is adopted from
   disk and only the imaginary parents' displacement children are submitted; follow-up
   steps recompute only the rows whose parent the resolution changed.
-- **`resume` refuses naming `rebuild-cache`**: the tree predates per-row provenance.
+- **`resume` refuses naming `rebuild-cache`**: the tree's manifest carries no provenance.
   Run `start_run(action="rebuild-cache")` once (re-parses, submits nothing), then
   resume as usual.
 
