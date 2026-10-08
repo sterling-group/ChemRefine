@@ -15,7 +15,7 @@ tables a sound drawing rather than a pile of numbers:
   4. each mesh family is ordered (attachment x monotonically increasing) and
      free of self-intersections - the families come from one surface grid,
      so same-family curves must never cross
-  5. the silhouette polygon and the flank face gen_logo draws are simple
+  5. the sheet and the flank face gen_logo draws are simple polygons
   6. the fill ramp ascends in luminance, boosted strokes are thicker than
      display strokes, and each stroke and mesh curve has an ink sample clear
      of the other lines, where item 7 reads its ink
@@ -38,6 +38,7 @@ import gen_logo as g
 ATTACH_TOL = 3.5  # px: mesh ends must sit on their stroke
 G1_TOL_DEG = 2.5
 FAMILY_MIN_DIST = 8.0
+CLOSED_TOL = 1e-6  # px: a chain whose end is this near its start has returned to it
 INK_SAMPLE_AT = (0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85)  # fractions of a line's length
 INK_CLEARANCE = 22.0  # px: nearer another line than this, a sample would read that line's ink
 
@@ -97,7 +98,11 @@ def _orient(p, q, r):
 
 
 def polygon_simple(pts):
-    """True when the closed polygon through *pts* has no self-intersections."""
+    """True when the closed polygon through *pts* has no self-intersections.
+
+    A last point within CLOSED_TOL of the first is the closure, not one more vertex."""
+    if math.dist(pts[0], pts[-1]) <= CLOSED_TOL:
+        pts = pts[:-1]
     n = len(pts)
     segs = [(pts[i], pts[(i + 1) % n]) for i in range(n)]
     for i in range(n):
@@ -178,7 +183,7 @@ def main() -> int:
     else:
         bad += fail(f"WEDGE_X inconsistent: stroke gap there is {gap:.1f}px")
 
-    # 3. attachments (H1 peels off A and merges back into A; H2/H3 run B->A)
+    # 3. attachments (the V curves run A->B, the H curves B->A)
     HOSTS = {
         "H1": (b_pts, a_pts, "B->A"),
         "H2": (b_pts, a_pts, "B->A"),
@@ -235,7 +240,7 @@ def main() -> int:
             f"ground line endpoints wrong (start {d_start:.2f}px off ltip, end {d_end:.1f}px off B)"
         )
 
-    # 3b. mesh containment: no curve may poke outside the sheet
+    # 3c. mesh containment: no curve may poke outside the sheet
     def ytop_at(x):
         return min(a_pts, key=lambda q: abs(q[0] - x))[1]
 
@@ -275,21 +280,14 @@ def main() -> int:
         else:
             bad += fail(f"{fam}-family curves cross or touch (gap {worst:.1f}px)")
 
-    # 5. silhouette + face. The fill region's boundary is A from the apex to
-    # the wedge, then B back to the apex - the shared ascent is not part of
-    # the enclosed region's boundary (both strokes traverse it together).
-    a_body = [p for p in a_pts[121:] if p[0] <= g.WEDGE_X]
-    b_body = [p for p in b_pts if p[0] <= g.WEDGE_X]
-    # B rides within a hair of A just after the split (under the stroke
-    # overlap); those coincident points would zigzag the polygon - drop them
-    b_body = [p for p in b_body if min(math.hypot(p[0] - q[0], p[1] - q[1]) for q in a_body) > 2.5]
-    sil = a_body + b_body[::-1]
-    if polygon_simple(sil[::6]):
-        bad += ok("silhouette is simple")
+    # 5. sheet + face, each as gen_logo draws it; sections 1-3 judge where
+    # their pieces join
+    sheet = g.sample_chain(g.sheet_segs())
+    if polygon_simple(sheet):
+        bad += ok("sheet is simple")
     else:
-        bad += fail("silhouette self-intersects")
+        bad += fail("sheet self-intersects")
     x0, y0, x1, y1 = g.mark_extents()
-    # the flank face as gen_logo draws it; sections 1-3 judge where its pieces join
     face = g.sample_chain(g.face_segs())
     if polygon_simple(face):
         bad += ok("flank face is simple")
@@ -474,7 +472,7 @@ def main() -> int:
             rmask = ra.sum(2) < 690
             canvas = Image.new("L", (rim.width, rim.height), 0)
             dd = ImageDraw.Draw(canvas)
-            dd.polygon([tuple(p) for p in sil], fill=255)
+            dd.polygon([tuple(p) for p in sheet], fill=255)
             dd.polygon([tuple(q) for q in face], fill=255)
             for name in g.MESH_ORDER:
                 dd.line(
@@ -499,7 +497,7 @@ def main() -> int:
             # reference's own mesh ink (darker than fill, inside the sheet,
             # away from the strokes) - geometric fit of the weave itself
             dom = Image.new("L", (rim.width, rim.height), 0)
-            ImageDraw.Draw(dom).polygon([tuple(p) for p in sil], fill=255)
+            ImageDraw.Draw(dom).polygon([tuple(p) for p in sheet], fill=255)
             excl = Image.new("L", (rim.width, rim.height), 0)
             de = ImageDraw.Draw(excl)
             for segs, w in (

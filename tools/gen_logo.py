@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """ChemRefine brand kit generator.
 
-Draws the logo from measured cubic-segment tables and writes every asset the
-project needs into docs/assets/.
+Draws the logo from measured cubic-segment tables and writes the kit into
+docs/assets/ and the GUI's subset of it into the package.
 
 Architecture
 ------------
@@ -19,8 +19,9 @@ the fill ramp's rise in luminance) instead of re-deriving them.
 
 Anatomy (paint order)
 ---------------------
-  1. sheet fill: the region between stroke A (top) and stroke B, closed over
-     the shared left ascent; navy -> teal -> green ramp
+  1. sheet fill: the region between stroke A (top) and stroke B, from B's
+     split off A to where the two close again at WEDGE_X; navy -> teal ->
+     green ramp
   2. the seven mesh curves (4 sweeping "verticals", 3 flowing "horizontals"),
      each a single cubic stroked with its own measured ink ramp that begins
      and ends in the host stroke's exact ink (no seam at any junction)
@@ -51,12 +52,11 @@ else, so docs/ is not on the served path, and the builder can only reach a
 brand file that lives inside the package. The GUI subset is GUI_SUBSET - the
 colored mark for its white header bar (the white mono line-art is the same
 framing for the docs' teal one), the lockup its stylesheet washes over the
-page ground, and
-the icon family. No dark variant: the GUI has no dark mode. Both roots are
-written from the same bytes in the same run, so they are byte-identical by
-construction and a test holds them that way. That is a different claim from
-"a rebuild reproduces the committed bytes"; Regenerating says where that one
-holds.
+page ground, and the icon family. No dark variant: the GUI has no dark mode.
+Both roots are written from the same bytes in the same run, so they are
+byte-identical by construction and a test holds them that way. That is a
+different claim from "a rebuild reproduces the committed bytes"; Regenerating
+says where that one holds.
 
 Regenerating
 ------------
@@ -422,8 +422,8 @@ def _subchain(segs, xa, xb):
     return kept
 
 
-def sheet_path():
-    """The closed sheet region between the strokes.
+def sheet_segs():
+    """The outline of the sheet region between the strokes; it ends where it begins.
 
     B splits from A at B's first anchor (its cap sits on A's stroke) and the
     fill closes again where the centerlines come within one stroke width
@@ -431,10 +431,14 @@ def sheet_path():
     sx = B_SEGS[0][0][0]
     a_chain = _subchain(A_SEGS, sx, WEDGE_X)
     b_chain = split_chain_at_x(B_SEGS, WEDGE_X)
-    segs = (
+    return (
         a_chain + [_line_seg(a_chain[-1][3], b_chain[-1][3])] + [_rev(s) for s in reversed(b_chain)]
     )
-    return _d(segs, close=True)
+
+
+def sheet_path():
+    """sheet_segs() as closed path data."""
+    return _d(sheet_segs(), close=True)
 
 
 def face_segs():

@@ -4,12 +4,12 @@ The generator is a developer tool, not the package, and CI never runs inkscape: 
 byte-stable only on the toolchain the generator names under "Regenerating". These cases pin
 what holds everywhere. The SVGs Python draws alone are the committed ones, and no stroke is cut
 into a piece that draws nothing. The tables pass the audit in ``tools/check_logo.py``, which
-never reports a gate it did not run as passed and fails a line it has no clear sample to read
-the ink of. The navy the lockup draws and the GUI's page spells is ``CHEM_NAVY``. A program's
-answer counts as a product only once its own bytes say so, since an exit status of 0 is no
-evidence of success. And publishing replaces no file until every one is staged. Fake programs
-on ``PATH`` and throwaway roots stand in for the toolchain, so none of the cases starts
-inkscape.
+never reports a gate it did not run as passed, judges the sheet and the face as the generator
+draws them, and fails a line it has no clear sample to read the ink of. The navy the lockup
+draws and the GUI's page spells is ``CHEM_NAVY``. A program's answer counts as a product only
+once its own bytes say so, since an exit status of 0 is no evidence of success. And publishing
+replaces no file until every one is staged. Fake programs on ``PATH`` and throwaway roots stand
+in for the toolchain, so none of the cases starts inkscape.
 """
 
 from __future__ import annotations
@@ -163,19 +163,40 @@ def test_the_tables_pass_the_audit_and_its_last_line_says_the_gate_did_not_run(
     assert lines[-1] == "all checks passed (resemblance gate not run)"
 
 
-def test_a_flank_face_that_crosses_itself_fails_the_audit(check_logo, capsys, monkeypatch):
-    """The face is judged as gen_logo draws it, and an outline that crosses itself is no face.
+@pytest.mark.parametrize(
+    ("outline", "failure"),
+    [("sheet_segs", "sheet self-intersects"), ("face_segs", "flank face self-intersects")],
+    ids=["sheet", "face"],
+)
+def test_an_outline_that_crosses_itself_fails_the_audit(
+    check_logo, capsys, monkeypatch, outline, failure
+):
+    """The sheet and the face are judged as gen_logo draws them, and neither may cross itself.
 
     After a failure too, the summary says the gate did not run: a failure claims no more
     than a pass does.
     """
-    # an open chain, as the face's own is: the outline closes from its last point to its first
+    # three straight pieces; the polygon closes from its last point to its first
     corners = [(0.0, 0.0), (100.0, 100.0), (100.0, 0.0), (0.0, 50.0)]
     bow_tie = [(p, p, q, q) for p, q in pairwise(corners)]
-    monkeypatch.setattr(check_logo.g, "face_segs", lambda: bow_tie)
+    monkeypatch.setattr(check_logo.g, outline, lambda: bow_tie)
     status, fails, lines = _audit(check_logo, capsys)
-    assert (status, fails) == (1, ["FAIL  flank face self-intersects"])
+    assert (status, fails) == (1, [f"FAIL  {failure}"])
     assert lines[-1] == "1 check(s) FAILED (resemblance gate not run)"
+
+
+def test_a_chain_that_ends_on_its_start_is_one_polygon(check_logo):
+    """The sheet's chain returns to its first point, and that return is the polygon's closure.
+
+    Counted as one more vertex, it would leave the first and last edges meeting at a point
+    they do not share by index, which reads as a crossing. Rounding may leave the return a
+    hair off the start; it is the closure all the same.
+    """
+    square = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]
+    bow_tie = [(0.0, 0.0), (10.0, 10.0), (10.0, 0.0), (0.0, 10.0)]
+    assert check_logo.polygon_simple([*square, (0.0, 0.0)])
+    assert check_logo.polygon_simple([*square, (1e-12, -1e-12)])
+    assert not check_logo.polygon_simple([*bow_tie, (0.0, 0.0)])
 
 
 @pytest.mark.parametrize(("gap", "read"), [(21.0, 0), (22.0, 8)], ids=["nearer", "clear"])
