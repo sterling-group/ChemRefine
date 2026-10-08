@@ -15,7 +15,7 @@ junctions can never be confused), each then least-squares fitted with a
 minimal number of segments. Generation is pure emission: no fitting, no
 image processing, no randomness at build time. check_logo.py audits the
 tables (G1 joints, attachment of mesh ends to the strokes, family order,
-gradient monotonicity) instead of re-deriving them.
+the fill ramp's rise in luminance) instead of re-deriving them.
 
 Anatomy (paint order)
 ---------------------

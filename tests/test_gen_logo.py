@@ -3,10 +3,11 @@
 The generator is a developer tool, not the package, and CI never runs inkscape: its renders
 are byte-stable only on the authoring toolchain. These cases pin what holds everywhere. The
 SVGs Python draws alone are the committed ones, and no stroke is cut into a piece that draws
-nothing. A program's answer counts as a product only once its own bytes say so, since an
-exit status of 0 is no evidence of success. And publishing replaces no file until every one
-is staged. Fake programs on ``PATH`` and throwaway roots stand in for the toolchain, so none
-of the cases starts inkscape.
+nothing. The tables pass the audit in ``tools/check_logo.py``, which never reports a gate it
+did not run as passed. A program's answer counts as a product only once its own bytes say
+so, since an exit status of 0 is no evidence of success. And publishing replaces no file
+until every one is staged. Fake programs on ``PATH`` and throwaway roots stand in for the
+toolchain, so none of the cases starts inkscape.
 """
 
 from __future__ import annotations
@@ -18,13 +19,15 @@ import re
 import shlex
 import stat
 import sys
+from itertools import pairwise
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 _TOOL = REPO / "tools" / "gen_logo.py"
+_CHECK = REPO / "tools" / "check_logo.py"
 
 # The same reason as tests/test_mutation_gate.py: neither the sdist nor the mutation gate's
 # scratch copy carries tools/.
@@ -39,9 +42,9 @@ _SVG = b'<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg"></svg>\n
 _PNG16 = REPO / "docs" / "assets" / "favicon-16.png"
 
 
-def _load() -> ModuleType:
-    """Import ``tools/gen_logo.py`` by path; ``tools/`` is not a package."""
-    spec = importlib.util.spec_from_file_location("gen_logo", _TOOL)
+def _load(tool: Path = _TOOL) -> ModuleType:
+    """Import a script in ``tools/`` by path, named after its file; ``tools/`` is not a package."""
+    spec = importlib.util.spec_from_file_location(tool.stem, tool)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -55,6 +58,19 @@ def gen_logo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     monkeypatch.setattr(module, "ASSETS", tmp_path / "assets")
     monkeypatch.setattr(module, "GUI_BRAND", tmp_path / "brand")
     return module
+
+
+@pytest.fixture
+def check_logo(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    """The audit over a generator of its own, with no reference raster named.
+
+    Run as a script, the audit imports the generator beside it as the top-level ``gen_logo``.
+    Here a fresh one is registered under that name for the one test, so the tables a test
+    edits are its own.
+    """
+    monkeypatch.delenv("CHEMREFINE_LOGO_REF", raising=False)
+    monkeypatch.setitem(sys.modules, "gen_logo", _load())
+    return _load(_CHECK)
 
 
 def _program(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, script: str) -> None:
@@ -85,6 +101,15 @@ def _tree(gen_logo: ModuleType) -> dict[str, bytes]:
         for path in sorted(root.iterdir())
         if path.is_file()
     }
+
+
+def _audit(
+    check_logo: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> tuple[int, list[str], list[str]]:
+    """The audit's exit status, its FAIL lines, and every line it printed."""
+    status = check_logo.main()
+    lines = capsys.readouterr().out.splitlines()
+    return status, [line for line in lines if line.startswith("FAIL")], lines
 
 
 def test_the_svgs_python_draws_alone_are_the_committed_ones():
@@ -121,6 +146,92 @@ def test_a_stroke_cut_where_a_segment_starts_keeps_none_of_that_segment():
     assert wrong == [], (
         f"cuts at a segment's start that return more or less than the segments before it: {wrong}"
     )
+
+
+@pytest.mark.parametrize("ref", [None, ""], ids=["unset", "empty"])
+def test_the_tables_pass_the_audit_and_its_last_line_says_the_gate_did_not_run(
+    check_logo, capsys, monkeypatch, ref
+):
+    """The suite runs the audit; with no reference named, a pass says which gate did not run."""
+    if ref is not None:
+        monkeypatch.setenv("CHEMREFINE_LOGO_REF", ref)
+    status, fails, lines = _audit(check_logo, capsys)
+    assert (status, fails) == (0, [])
+    assert lines[-1] == "all checks passed (resemblance gate not run)"
+
+
+def test_a_flank_face_that_crosses_itself_fails_the_audit(check_logo, capsys, monkeypatch):
+    """The face is judged as gen_logo draws it, and an outline that crosses itself is no face.
+
+    After a failure too, the summary says the gate did not run: a failure claims no more
+    than a pass does.
+    """
+    # an open chain, as the face's own is: the outline closes from its last point to its first
+    corners = [(0.0, 0.0), (100.0, 100.0), (100.0, 0.0), (0.0, 50.0)]
+    bow_tie = [(p, p, q, q) for p, q in pairwise(corners)]
+    monkeypatch.setattr(check_logo.g, "face_segs", lambda: bow_tie)
+    status, fails, lines = _audit(check_logo, capsys)
+    assert (status, fails) == (1, ["FAIL  flank face self-intersects"])
+    assert lines[-1] == "1 check(s) FAILED (resemblance gate not run)"
+
+
+@pytest.mark.parametrize("kind", ["missing", "directory"])
+def test_a_reference_that_is_not_a_file_fails_the_audit(
+    check_logo, capsys, monkeypatch, tmp_path, kind
+):
+    """A set variable asks for the gate, and a name that is not a file cannot answer it."""
+    ref = tmp_path / "ref.png" if kind == "missing" else tmp_path
+    monkeypatch.setenv("CHEMREFINE_LOGO_REF", str(ref))
+    status, fails, lines = _audit(check_logo, capsys)
+    assert status == 1
+    assert fails == [
+        f"FAIL  resemblance gate: CHEMREFINE_LOGO_REF names {ref}, which is not a file"
+    ]
+    assert lines[-1] == "1 check(s) FAILED"
+
+
+@pytest.mark.parametrize("module", ["numpy", "PIL"])
+def test_a_reference_fails_the_audit_where_numpy_or_pillow_will_not_import(
+    check_logo, capsys, monkeypatch, tmp_path, without_extra, module
+):
+    """The gate needs numpy and Pillow; without either, the failure names it and the interpreter."""
+    ref = tmp_path / "ref.png"
+    ref.touch()
+    monkeypatch.setenv("CHEMREFINE_LOGO_REF", str(ref))
+    without_extra(module)
+    status, fails, lines = _audit(check_logo, capsys)
+    assert status == 1
+    assert fails == [
+        f"FAIL  resemblance gate: {sys.executable}: No module named {module!r}; "
+        "the gate needs numpy and Pillow"
+    ]
+    assert lines[-1] == "1 check(s) FAILED"
+
+
+def test_the_audit_opens_the_file_the_reference_names_and_raises_what_fails_in_the_gate(
+    check_logo, monkeypatch, tmp_path
+):
+    """With numpy and Pillow importable, a file the variable names is what the gate reads.
+
+    The reference raster lives outside the repository, so a stand-in for Pillow stops the
+    gate where it opens the file. What it raises there is an ImportError, and the audit
+    raises it too: only the gate's own imports are guarded, so a failure inside the gate is
+    never reported as a missing module.
+    """
+    ref = tmp_path / "ref.png"
+    ref.touch()
+    monkeypatch.setenv("CHEMREFINE_LOGO_REF", str(ref))
+
+    def opened(path):
+        raise ImportError(f"opened {path}")
+
+    pillow = ModuleType("PIL")
+    pillow.Image = SimpleNamespace(open=opened)
+    pillow.ImageDraw = None
+    monkeypatch.setitem(sys.modules, "PIL", pillow)
+    with pytest.raises(ImportError) as raised:
+        check_logo.main()
+    assert str(raised.value) == f"opened {ref}"
 
 
 def test_inkscape_reads_the_svg_on_stdin_and_is_handed_no_path(gen_logo, tmp_path, monkeypatch):

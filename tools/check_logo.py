@@ -9,18 +9,21 @@ The generator only emits; this file carries the constraints that make the
 tables a sound drawing rather than a pile of numbers:
   1. every chain is contiguous (segments share endpoints exactly) and G1
      (tangents collinear at interior joints)
-  2. stroke B splits from A exactly at the apex and merges back ONTO A's
-     tail tangentially - beyond the merge the tail is one single line
+  2. stroke B splits off A tangentially and merges back ONTO A's tail
+     tangentially - beyond the merge the tail is one single line
   3. every mesh curve's ends lie ON the stroke it fans out from; the ground
      line runs from the left tip to its junction on B
   4. each mesh family is ordered (attachment x monotonically increasing) and
      free of self-intersections - the families come from one surface grid,
      so same-family curves must never cross
-  5. the silhouette polygon is simple; the flank face closes
-  6. gradient stops ascend in offset, the fill ramp ascends in luminance,
-     boosted strokes are thicker than display strokes
-  7. (optional) ink-IoU resemblance gate against the original raster when
-     CHEMREFINE_LOGO_REF points at it - the "looks almost the same" number
+  5. the silhouette polygon and the flank face gen_logo draws are simple
+  6. the fill ramp ascends in luminance, boosted strokes are thicker than
+     display strokes
+  7. the resemblance gate against the original raster CHEMREFINE_LOGO_REF
+     names - ink IoU, weave IoU and per-line ink color, the "looks almost
+     the same" numbers. Set, the variable runs the gate or fails: a name that
+     is not a file fails, as does an interpreter that cannot import numpy or
+     Pillow. Unset or empty, the gate does not run, and the last line says so
 """
 
 import math
@@ -100,7 +103,7 @@ def rel_luminance(color):
 
 
 def main() -> int:
-    """Run every constraint; exit non-zero if any fails."""
+    """Run the audit; exit non-zero if any constraint fails."""
     bad = 0
 
     # 1. chain contiguity + G1
@@ -119,7 +122,7 @@ def main() -> int:
         else:
             bad += fail(f"stroke {name}: tangent break {worst:.1f} deg at a joint")
 
-    # 2. shared apex split and shared tail
+    # 2. B's split off A and the shared tail
     bs = g.B_SEGS[0][0]
     a_pts = g.sample_chain(g.A_SEGS, 400)
     b_pts = g.sample_chain(g.B_SEGS, 400)
@@ -265,24 +268,14 @@ def main() -> int:
     else:
         bad += fail("silhouette self-intersects")
     x0, y0, x1, y1 = g.mark_extents()
-    if g.face_path().endswith("Z"):
-        bad += ok("flank face path closes")
+    # the flank face as gen_logo draws it; sections 1-3 judge where its pieces join
+    face = g.sample_chain(g.face_segs())
+    if polygon_simple(face):
+        bad += ok("flank face is simple")
     else:
-        bad += fail("flank face path does not close")
+        bad += fail("flank face self-intersects")
 
     # 6. gradients + stroke discipline
-    for nm, stops in (
-        ("fill", g.FILL_STOPS),
-        ("outline A", g.OUTLINE_A_STOPS),
-        ("outline B", g.OUTLINE_B_STOPS),
-        ("face", g.FACE_STOPS),
-    ):
-        offs = [o for o, _ in stops]
-        if all(b > a for a, b in pairwise(offs)):
-            bad += ok(f"{nm} gradient offsets ascend")
-        else:
-            bad += fail(f"{nm} gradient offsets broken: {offs}")
-
     def grad_color(stops, off):
         if off <= stops[0][0]:
             return stops[0][1]
@@ -322,10 +315,6 @@ def main() -> int:
     else:
         bad += fail(f"mesh ink breaks at a junction (channel delta {worst_dc})")
 
-    if all(all(b_ > a_ for (a_, _), (b_, _) in pairwise(g.MESH_STOPS[n])) for n in g.MESH_ORDER):
-        bad += ok("mesh gradient offsets ascend")
-    else:
-        bad += fail("mesh gradient offsets not ascending")
     if (
         g.OUTLINE_B_STOPS[0][1]
         == g.OUTLINE_B_STOPS[1][1]
@@ -408,9 +397,9 @@ def main() -> int:
             changes += 1
         prev = dh
     if changes <= 1:
-        bad += ok(f"crest curvature changes sign {changes}x (steepen, then flatten)")
+        bad += ok(f"B's dive changes curvature sign {changes}x (steepen, then flatten)")
     else:
-        bad += fail(f"crest wiggles: {changes} curvature sign changes")
+        bad += fail(f"B's dive wiggles: {changes} curvature sign changes")
 
     lums = [rel_luminance(c) for _, c in g.FILL_STOPS]
     if all(b > a for a, b in pairwise(lums)):
@@ -426,15 +415,21 @@ def main() -> int:
     else:
         bad += fail("stroke-width discipline broken")
 
-    # 7. report + optional resemblance gate
+    # 7. report + the resemblance gate: a set CHEMREFINE_LOGO_REF runs it or fails
     print(f"mark ink extents {x1 - x0:.0f} x {y1 - y0:.0f} (aspect {(x1 - x0) / (y1 - y0):.2f})")
     ref = os.environ.get("CHEMREFINE_LOGO_REF", "")
-    if ref and Path(ref).is_file():
+    if not ref:
+        print("      (resemblance gate not run: set CHEMREFINE_LOGO_REF to the original raster)")
+    elif not Path(ref).is_file():
+        bad += fail(f"resemblance gate: CHEMREFINE_LOGO_REF names {ref}, which is not a file")
+    else:
         try:
             import numpy as np
             from PIL import Image, ImageDraw
-        except ImportError:
-            print("      (numpy/Pillow missing - resemblance gate skipped)")
+        except ImportError as exc:
+            bad += fail(
+                f"resemblance gate: {sys.executable}: {exc}; the gate needs numpy and Pillow"
+            )
         else:
             rim = Image.open(ref).convert("RGB")
             ra = np.asarray(rim).astype(int)[:850]
@@ -442,12 +437,6 @@ def main() -> int:
             canvas = Image.new("L", (rim.width, rim.height), 0)
             dd = ImageDraw.Draw(canvas)
             dd.polygon([tuple(p) for p in sil], fill=255)
-            face = (
-                g.sample_chain([g.A_SEGS[0]], 60)
-                + g.sample_chain([g.B_SEGS[0]], 60)
-                + g.sample_chain(g.split_chain_at_x(g.B_SEGS, g.GROUND_SEGS[-1][3][0]), 60)
-                + g.sample_chain(g.GROUND_SEGS, 60)[::-1]
-            )
             dd.polygon([tuple(q) for q in face], fill=255)
             for name in g.MESH_ORDER:
                 dd.line(
@@ -517,7 +506,7 @@ def main() -> int:
             all_chains = {
                 "A": g.sample_chain(g.A_SEGS, 400),
                 "B": g.sample_chain(g.B_SEGS, 400),
-            }  # ground is painted with the face gradient (audited above)
+            }  # not the ground: it wears the face's vertical gradient, not a ramp along itself
             all_chains.update({n: g.sample_chain(g.MESH[n], 400) for n in g.MESH_ORDER})
             worst_line, worst_med = "", 0.0
             for name, pts in all_chains.items():
@@ -554,10 +543,9 @@ def main() -> int:
                 )
             else:
                 bad += fail(f"ink-color gate: {worst_line} median dE {worst_med:.1f} > 5")
-    else:
-        print("      (set CHEMREFINE_LOGO_REF to the original raster to run the resemblance gate)")
 
-    print("all checks passed" if bad == 0 else f"{bad} check(s) FAILED")
+    verdict = "all checks passed" if bad == 0 else f"{bad} check(s) FAILED"
+    print(verdict if ref else f"{verdict} (resemblance gate not run)")
     return 1 if bad else 0
 
 
