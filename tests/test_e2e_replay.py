@@ -49,7 +49,7 @@ from replay import (
 )
 from test_engines_orca_corpus import CYCLE_LIMIT_RE
 
-from chemrefine import cache, filtering, ids, pipeline
+from chemrefine import cache, filtering, ids, job_log, pipeline
 from chemrefine.config import BoltzmannSample, Config, StepConfig, load_config
 from chemrefine.engines.api import NULL_SINK, ArtifactEngine, get_engine
 from chemrefine.engines.mlip.train.engine import SIDECAR_NAME
@@ -1625,14 +1625,20 @@ def test_an_artifact_steps_product_is_stubbed_only_where_it_is_missing(tmp_path:
         slurm_template="cpu.slurm.header",
     )
     engine = MlipTrainEngine()
-    _stub_artifact(engine, ctx)
+    job = (engine.run_dir(ctx) / "step2_train.yaml", engine.artifact(ctx), "train")
+    inputs = StepInputs(files=(job,))
+    _stub_artifact(engine, ctx, inputs)
     assert engine.artifact(ctx).read_bytes() == ARTIFACT_STUB
+    # ...beside the runlog of a job that ran to its end, which the step asks for too
+    runlog = job_log.runlog_path(job[1].parent, job[0].stem)
+    assert job_log.read_footer(runlog) == job_log.Footer(exit_code=0, scratch_kept=False)
 
     engine.artifact(ctx).write_bytes(b"real weights")
-    _stub_artifact(engine, ctx)
+    _stub_artifact(engine, ctx, inputs)
     assert engine.artifact(ctx).read_bytes() == b"real weights"
 
-    _stub_artifact(get_engine("fake"), ctx)  # not an artifact engine: nothing to stand in for
+    runlog.unlink()
+    _stub_artifact(get_engine("fake"), ctx, inputs)  # not an artifact engine: nothing to do
     assert sorted(p.name for p in engine.artifact(ctx).parent.iterdir()) == ["train.model"]
 
 

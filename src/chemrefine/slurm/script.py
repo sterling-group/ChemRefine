@@ -435,7 +435,7 @@ def build_script(
         ),
         single_node,
     )
-    runlog_path = output_dir / f"{job_name}.runlog"
+    runlog_path = job_log.runlog_path(output_dir, job_name)
     err_path = output_dir / f"{job_name}.err"
 
     header = job_log.bash_header(

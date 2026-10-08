@@ -51,6 +51,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from fake_engine import leave_runlog
 
 from chemrefine import cache, recovery
 from chemrefine.config import Config, load_config
@@ -351,7 +352,7 @@ class ReplaySubmitter:
         while True:
             self.calls.append(batch)
             self._satisfy(batch)
-            _stub_artifact(engine, ctx)
+            _stub_artifact(engine, ctx, batch)
             if sink is None or not (follow := api.sweep(batch, sink)):
                 return JobBatch(jobs={})
             batch = StepInputs(follow)
@@ -398,13 +399,14 @@ class ReplaySubmitter:
 ARTIFACT_STUB = b"replayed-stub-model"
 
 
-def _stub_artifact(engine: object, ctx: StepContext) -> None:
-    """Stand in for an artifact step's product, which no recording holds.
+def _stub_artifact(engine: object, ctx: StepContext, inputs: StepInputs) -> None:
+    """Stand in for an artifact step's product and its job's runlog, which no recording holds.
 
-    A trained model is megabytes of weights nothing offline parses: the pipeline checks it
-    exists and digests its bytes. So it is not archived, and the replay writes stub bytes
-    where the engine looks for it, when it is absent. The steps after it then key the stub
-    consistently; a parse-only rebuild stops before it (:func:`verifiable_prefix`).
+    A trained model is megabytes of weights nothing offline parses: the pipeline checks that
+    it exists and that its job says it finished, and digests its bytes. So neither is
+    archived, and the replay writes stub bytes where the engine looks for the product, when
+    it is absent, and the runlog of a job that ran to its end. The steps after it then key
+    the stub consistently; a parse-only rebuild stops before it (:func:`verifiable_prefix`).
     """
     if not isinstance(engine, ArtifactEngine):
         return
@@ -412,6 +414,8 @@ def _stub_artifact(engine: object, ctx: StepContext) -> None:
     if not product.exists():
         product.parent.mkdir(parents=True, exist_ok=True)
         product.write_bytes(ARTIFACT_STUB)
+    for job in inputs.files:
+        leave_runlog(job)
 
 
 def forbid_run_batch(

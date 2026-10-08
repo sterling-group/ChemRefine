@@ -210,7 +210,8 @@ class MlipTrainEngine(MlipBackend):
         return ctx.step_dir / ids.TRAINING_ID
 
     def artifact(self, ctx: StepContext) -> Path:
-        """The model this step produces — its success test, and what the next step loads.
+        """The model this step produces — what its success test looks for, and what the
+        next step loads.
 
         May sit *inside* the run directory rather than in it: FAIRChem's is at
         ``checkpoints/final/inference_ckpt.pt`` under a directory it names itself. That is why

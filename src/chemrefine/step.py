@@ -26,7 +26,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import assert_never
 
-from chemrefine import attempts, cache, filtering, ids, io, lifecycle, nms, slurm
+from chemrefine import attempts, cache, filtering, ids, io, job_log, lifecycle, nms, slurm
 from chemrefine.config import (
     STEP_OPTION_PATHS,
     Config,
@@ -876,45 +876,125 @@ def _run_artifact_step(
     ``prepare`` writes the job's inputs and ``submit`` runs it through the ordinary scheduler,
     so an artifact step is throttled, headed, scratch-run and copied back like anything else.
 
-    The archive is what makes :func:`_finish_artifact_step`'s success test mean anything. That
-    test is ``artifact.exists()``, which cannot tell this run's product from the last one's —
-    so a re-run (a changed template, a changed dataset) whose job dies having written nothing
-    would find the *previous* model, digest those bytes into the sidecar and cache them under
-    the **new** fingerprint. The consuming step then hashes the same stale file and cache-hits
-    too, leaving a run that is internally consistent and describes a training that never
-    happened. Moving the run directory aside first turns that into the failure it is.
+    The archive is what makes the success test (:func:`_unfinished`) mean anything. A
+    product and a runlog footer at the canonical path cannot say which submission left them
+    — so a re-run (a changed template, a changed dataset) whose job dies having written
+    nothing would find the *previous* run's model and its footer, digest those bytes into the
+    sidecar and cache them under the **new** fingerprint. The consuming step then hashes the
+    same stale file and cache-hits too, leaving a run that is internally consistent and
+    describes a training that never happened. Moving the run directory aside first turns that
+    into the failure it is: what is at the canonical path is this submission's, or nothing.
     """
     inputs = _prepare_stamped(engine, ctx, step_cfg, key, archive=(engine.run_dir(ctx).name,))
     engine.submit(inputs, ctx)
-    return _finish_artifact_step(ctx, step_cfg, key, engine)
+    return _finish_artifact_step(ctx, step_cfg, key, engine, inputs)
+
+
+@dataclass(frozen=True)
+class _Unfinished:
+    """Why an artifact step's product is not a finished job's (:func:`_unfinished`)."""
+
+    why: str
+    """What is missing and where, as a refusal or a log line says it."""
+
+    adoptable: bool
+    """Whether a caller's word can stand in for what is missing. ``True`` when the product
+    is there and its job did not say its run failed: it said nothing, or said only that
+    its results did not all come home. ``False`` when there is no product, or the run
+    itself failed — proven wrong, which no word mends."""
+
+
+def _unfinished(engine: ArtifactEngine, ctx: StepContext, inputs: StepInputs) -> _Unfinished | None:
+    """Why this step's product is not a finished job's; ``None`` when it is one.
+
+    **The one success test of an artifact step**, asked by the run that just submitted the
+    job (:func:`_run_artifact_step`) and by ``rebuild-cache`` (:func:`rebuild_cache_step`).
+    Two things, both needed: the product is on disk, and the job that wrote it says it
+    finished — in the footer of its own runlog (:func:`chemrefine.job_log.read_footer`),
+    a run block that exited 0 and results that all came home.
+
+    The product alone proves neither. A job that leaves the queue having written nothing
+    looks, to the scheduler, like one that worked; and a job that was stopped, or whose
+    program died, can leave a file at the product's path all the same — a best-so-far
+    checkpoint written as the run went, or a copy the output tree cut short. The footer is
+    the job's own account of which it was, and it is the one record of that which is still
+    there when no driver was.
+
+    ``inputs`` names the job, as :func:`_prepare_stamped` prepared it or the manifest
+    recorded it: its runlog sits beside its output, named after its input
+    (:func:`chemrefine.job_log.runlog_path`).
+    """
+    artifact = engine.artifact(ctx)
+    if not artifact.exists():
+        return _Unfinished(f"the job finished without writing {artifact}", adoptable=False)
+    silent = f"nothing says the job that wrote {artifact} finished"
+    unvouched = None if inputs.files else _Unfinished(f"{silent}: its manifest names no job", True)
+    for config, output, _id in inputs.files:
+        runlog = job_log.runlog_path(output.parent, config.stem)
+        footer = job_log.read_footer(runlog)
+        if footer is None:
+            unvouched = unvouched or _Unfinished(
+                f"{silent}: {runlog} is missing or holds no footer of its last run", True
+            )
+        elif footer.exit_code != 0:
+            return _Unfinished(
+                f"the job that wrote {artifact} did not finish: {runlog} ends with "
+                f"exit_code={footer.exit_code}",
+                adoptable=False,
+            )
+        elif footer.scratch_kept:
+            unvouched = unvouched or _Unfinished(
+                f"the results of the job that wrote {artifact} did not all come home: "
+                f"{runlog} ends with scratch_kept=true, and the scratch directory its "
+                f"header names was left holding them — copy them home before adopting",
+                adoptable=True,
+            )
+    return unvouched
 
 
 def _finish_artifact_step(
-    ctx: StepContext, step_cfg: StepConfig, key: cache.StepKey, engine: ArtifactEngine
+    ctx: StepContext,
+    step_cfg: StepConfig,
+    key: cache.StepKey,
+    engine: ArtifactEngine,
+    inputs: StepInputs,
+    *,
+    on_the_callers_word: bool = False,
 ) -> StepOutcome:
-    """Decide an artifact step's outcome from its product, and cache it if there is one.
+    """Decide an artifact step's outcome from its product, and cache a finished job's.
 
-    **The product is the success test, and a missing one raises rather than ledgers.** A job
-    that leaves the scheduler's queue having written nothing looks exactly like one that
-    worked, so without this the step caches a model it never produced and every later
-    ``resume`` serves that cache. Raising leaves no cache at all, which is what makes the
-    recovery correct: ``resume`` finds nothing to reuse and runs the step again.
+    **The success test is :func:`_unfinished`, and failing it raises rather than ledgers.**
+    Without it the step caches a model its job never produced, or never finished, and every
+    later ``resume`` serves that cache. Raising leaves no cache at all, which is what makes
+    the recovery correct: ``resume`` finds nothing to reuse and runs the job again.
 
     A ledgered failure would not do — it writes a cache with zero structures, which is the
     same wrong state by a longer route. There is nothing per-structure to ledger anyway.
 
-    Shared with :func:`rebuild_cache_step` so a product whose job finished before the driver
-    died can be adopted without recomputing it — for a training that ran for days, that is the
-    difference between a rebuild and a week.
+    ``on_the_callers_word`` is ``rebuild-cache``'s: a product nothing vouches for whole —
+    unprovable, never proven wrong — is adopted with a warning, as that command adopts a
+    manifest without provenance. A run that failed is refused there as everywhere.
     """
-    artifact = engine.artifact(ctx)
-    if not artifact.exists():
+    unfinished = _unfinished(engine, ctx, inputs)
+    if unfinished is not None and not (on_the_callers_word and unfinished.adoptable):
         raise JobFailureError(
-            f"step {step_cfg.step} ({step_cfg.engine}) produced no {artifact.name}: "
-            f"the job finished without writing {artifact}. Its log is under {ctx.step_dir}; "
-            f"fix the cause and re-run — nothing was cached, so `chemrefine resume` will "
-            f"redo this step."
+            f"step {step_cfg.step} ({step_cfg.engine}): {unfinished.why}. Nothing was "
+            f"cached; its log is under {ctx.step_dir}. `chemrefine resume` runs the job "
+            f"again"
+            + (
+                f"; `chemrefine rebuild-cache {step_cfg.step}` adopts the product instead, "
+                f"on your word that it is whole."
+                if unfinished.adoptable
+                else ", so fix the cause first."
+            )
         )
+    if unfinished is not None:
+        logger.warning(
+            "step %d: %s — adopting the product on this command's word",
+            step_cfg.step,
+            unfinished.why,
+        )
+    artifact = engine.artifact(ctx)
     logger.info("step %d: produced %s", step_cfg.step, artifact)
     results = engine.parse(StepInputs(files=()), ctx)
     results = lifecycle.finalize(ctx, step_cfg, key, list(results.structures), [])
@@ -968,6 +1048,12 @@ def rebuild_cache_step(
     re-run — it can afford to, being an optimisation over doing the work anyway. A
     successful rebuild then writes the manifest back **with** row provenance, so the
     adoption is recorded and every later question is answered per row.
+
+    An artifact step's product is held to the success test every route shares
+    (:func:`_unfinished`), drawn along that same line: a run that failed, or left no
+    product, is proven wrong and refused; a product nothing vouches for whole — its job
+    said nothing, or said its results did not all come home — is unprovable, and adopted
+    on the caller's word with a warning.
 
     A template-driven step whose template is not there is refused first, by name, as
     the run's t=0 walk refuses it. Its key would derive over an empty template digest,
@@ -1036,7 +1122,7 @@ def rebuild_cache_step(
         # This is the most valuable recovery the command offers for such a step: a
         # training whose job finished before the driver died is re-cached rather than re-run.
         logger.info("step %d: rebuilding cache from the product on disk", step_cfg.step)
-        return _finish_artifact_step(ctx, step_cfg, key, engine)
+        return _finish_artifact_step(ctx, step_cfg, key, engine, manifest, on_the_callers_word=True)
     logger.info("step %d: rebuilding cache from existing outputs", step_cfg.step)
     successes, failures = lifecycle.parse_and_record(engine, manifest, ctx)
     if step_cfg.nms and isinstance(engine, NmsCapableEngine):

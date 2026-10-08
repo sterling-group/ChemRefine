@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 import pytest
+from fake_engine import leave_runlog
 
 from chemrefine import ids, job_log, slurm
 from chemrefine.errors import ConfigError
@@ -216,3 +217,100 @@ def test_the_documented_runlog_path_and_glob_are_both_real(tmp_path: Path):
     assert pattern is not None, "the docstring no longer names a runlog glob"
     found = set((tmp_path / "outputs").glob(pattern.group(1)))
     assert runlog in found, f"the documented glob outputs/{pattern.group(1)} does not find {runlog}"
+
+
+# ---------------------------------------------------------------------------
+# The footer read back: a job's own verdict
+# ---------------------------------------------------------------------------
+
+
+def _job(tmp_path: Path) -> tuple[Path, Path, str]:
+    """A prepared job's triple, for the stand-in that writes the runlog its script would."""
+    return (tmp_path / "step1_0.inp", tmp_path / "step1_0.out", "0")
+
+
+def test_a_jobs_runlog_is_named_after_the_job_in_the_directory_it_writes_into(tmp_path: Path):
+    assert job_log.runlog_path(tmp_path / "0", "step1_0") == tmp_path / "0" / "step1_0.runlog"
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "scratch_kept"),
+    [(0, False), (3, False), (0, True), (143, True)],
+    ids=["ran to its end", "failed", "results left in scratch", "stopped, results left"],
+)
+def test_the_footer_a_script_wrote_is_read_back_as_its_verdict(
+    tmp_path: Path, exit_code: int, scratch_kept: bool
+):
+    """Written by the snippets every generated script embeds, read by the one reader."""
+    runlog = leave_runlog(_job(tmp_path), exit_code=exit_code, scratch_kept=scratch_kept)
+
+    assert job_log.read_footer(runlog) == job_log.Footer(exit_code, scratch_kept)
+
+
+def _whole(tmp_path: Path) -> str:
+    """The text of a runlog whose job ran to its end."""
+    return leave_runlog(_job(tmp_path)).read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        lambda text: None,
+        lambda text: text[: text.rindex("scratch_kept=")],
+        lambda text: text.replace("exit_code=0", "exit_code=zero"),
+        lambda text: text.replace("scratch_kept=false", "scratch_kept=maybe"),
+        lambda text: text + text[: text.index("finished")].rsplit("[", 1)[0],
+        lambda text: text[: text.index("  exit_code=")].rsplit("\n", 2)[0] + "\n",
+    ],
+    ids=[
+        "no runlog",
+        "footer cut short",
+        "an exit code that is no number",
+        "a scratch_kept that is no boolean",
+        "a later run that wrote no footer",
+        "killed before its footer",
+    ],
+)
+def test_a_runlog_without_a_whole_footer_of_its_last_run_gives_no_verdict(tmp_path: Path, damage):
+    """``None`` is no verdict, and never success.
+
+    A scheduler that appends to a job's output file leaves an earlier run's footer above a
+    later run's header, and a later run that was killed wrote none of its own: the footer
+    above it says nothing about what is on disk.
+    """
+    text = damage(_whole(tmp_path))
+    runlog = tmp_path / "step1_0.runlog"
+    if text is None:
+        runlog.unlink()
+    else:
+        runlog.write_text(text, encoding="utf-8")
+
+    assert job_log.read_footer(runlog) is None
+
+
+def test_a_runlog_that_cannot_be_read_gives_no_verdict(tmp_path: Path):
+    """A directory where the runlog belongs is refused by the read, and reads as no verdict."""
+    (tmp_path / "step1_0.runlog").mkdir()
+
+    assert job_log.read_footer(tmp_path / "step1_0.runlog") is None
+
+
+def test_the_footer_is_found_under_a_log_far_longer_than_what_is_read(tmp_path: Path):
+    """Only the end of the file is read; a training's log above the footer can be huge."""
+    whole = _whole(tmp_path)
+    runlog = tmp_path / "step1_0.runlog"
+    banner, rest = whole.split("\n", 1)
+    runlog.write_text(banner + "\n" + "epoch 1 loss 0.5\n" * 20_000 + rest, encoding="utf-8")
+    assert runlog.stat().st_size > 4 * job_log._TAIL_BYTES
+
+    assert job_log.read_footer(runlog) == job_log.Footer(exit_code=0, scratch_kept=False)
+
+
+def test_a_footer_joined_to_a_programs_unterminated_last_line_is_still_read(tmp_path: Path):
+    """A program whose last output carries no newline leaves the footer's line joined to it."""
+    whole = _whole(tmp_path)
+    head, footer = whole[: whole.rindex("[")], whole[whole.rindex("[") :]
+    runlog = tmp_path / "step1_0.runlog"
+    runlog.write_text(head + "last words with no newline" + footer, encoding="utf-8")
+
+    assert job_log.read_footer(runlog) == job_log.Footer(exit_code=0, scratch_kept=False)

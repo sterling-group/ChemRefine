@@ -619,10 +619,17 @@ class ArtifactEngine(CalculationEngine, Protocol):
 
     That hook is what makes the step's outcome decidable. A job that leaves the queue having
     written nothing is indistinguishable, to the scheduler, from one that succeeded — so the
-    existence of :meth:`artifact` is the success test, and its absence raises
+    success test is the product at :meth:`artifact` *and* the job's own word that it finished
+    and brought its results home, the footer of the runlog its script writes
+    (:func:`chemrefine.step._unfinished`). A run that fails it raises
     :class:`~chemrefine.errors.JobFailureError` **before** any cache is written. No cache is
-    the whole point: ``resume`` then re-runs the step rather than serving a model that was
-    never produced.
+    the whole point: ``resume`` then runs the job again rather than serving a model that was
+    never produced, or never finished.
+
+    The job therefore runs through the ordinary scheduler
+    (:func:`chemrefine.engines._execution.run_batch`), whose script writes that footer: an
+    engine that ran its job some other way would leave a product nothing vouches for, and
+    the step would refuse it.
     """
 
     def run_dir(self, ctx: StepContext) -> Path:
@@ -630,11 +637,13 @@ class ArtifactEngine(CalculationEngine, Protocol):
 
         Declared rather than assumed, because the orchestrator needs it and cannot derive it.
         :func:`chemrefine.step._run_artifact_step` moves the previous run aside before
-        re-executing, and that archive is what makes :meth:`artifact` a usable success test:
-        ``artifact.exists()`` cannot tell this run's product from the last one's, so a re-run
+        re-executing, and that archive is what makes the success test usable: a product and
+        a runlog at the canonical path cannot say which submission left them, so a re-run
         whose job dies having written nothing would otherwise find the *previous* model,
         digest it into the sidecar, and cache it under the **new** fingerprint — a run that is
-        internally consistent and describes a training that never happened.
+        internally consistent and describes a training that never happened. The job's
+        runlog lives in this directory for the same reason: archived with the product, the
+        footer at the canonical path is the verdict on the product beside it.
 
         A constant named in ``step.py`` would answer for whichever engine happens to use that
         directory and be silently wrong for any other: its run directory would go unarchived,

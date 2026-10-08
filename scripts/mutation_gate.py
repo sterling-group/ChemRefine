@@ -467,6 +467,15 @@ _BUNDLED: tuple[Mutation, ...] = (
         "parent's stale output is served as current and the changed row never computes",
     ),
     Mutation(
+        id="artifact-finished-by-its-jobs-verdict",
+        path="src/chemrefine/step.py",
+        old="        elif footer.exit_code != 0:\n",
+        new="        elif False:\n",
+        tests="tests/test_step_artifact.py",
+        breaks="a training job that was stopped or died is cached as a trained model whenever "
+        "it left a checkpoint at the product's path, and every later step computes with it",
+    ),
+    Mutation(
         id="rebuild-cache-provenance",
         path="src/chemrefine/step.py",
         old="if foreign or unproven:",

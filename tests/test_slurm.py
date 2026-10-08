@@ -1540,6 +1540,29 @@ def test_files_copied_counts_the_files_that_came_home(tmp_path: Path):
     ]
 
 
+@pytest.mark.parametrize(
+    ("body", "blocked", "verdict"),
+    [
+        ("echo e > result.out", False, job_log.Footer(exit_code=0, scratch_kept=False)),
+        ("echo e > result.out; exit 7", False, job_log.Footer(exit_code=7, scratch_kept=False)),
+        ("echo e > result.out", True, job_log.Footer(exit_code=0, scratch_kept=True)),
+    ],
+    ids=["ran to its end", "failed", "a result left in scratch"],
+)
+def test_the_reader_reads_the_verdict_a_real_script_wrote(
+    tmp_path: Path, body: str, blocked: bool, verdict: job_log.Footer
+):
+    """`job_log.read_footer` over what the exit handler itself wrote, not a stand-in's text."""
+    script = _runnable(tmp_path, body)
+    if blocked:
+        (tmp_path / "out" / "result.out").mkdir(parents=True)
+    runlog = job_log.runlog_path(tmp_path / "out", "step1_structure_0")
+
+    runlog.write_text(_run_generated(script).stdout, encoding="utf-8")
+
+    assert job_log.read_footer(runlog) == verdict
+
+
 def test_a_stopped_job_exits_143_whatever_its_program_made_of_the_signal(tmp_path: Path):
     """A stopped job's script exits with the status its footer reports.
 

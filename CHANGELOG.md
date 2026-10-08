@@ -461,16 +461,18 @@ for those and the full map.
   `operation: MLFF_TRAIN` (or `MLIP_TRAIN`) translates to `engine: mlip-train` with a
   deprecation warning.
 
-  A training step's success test is the trained model's existence: `resume`
-  retrains after a failed training, and a training that completed before the driver
-  died is adopted by `rebuild-cache` without recomputing it. The step's fingerprint
-  includes its training-config template, so retuning epochs or learning rate and
-  resuming re-runs the training and replaces the model on disk. v1.3.1 counted a
-  training step done once its job ended, so `--skip` passed over a failed training
-  and an edited template alike. The preflight refuses a training step whose backend
-  can run but not train — before any step submits — and names which backends can, and
-  one whose library cannot train without a validation set when its `valid_fraction`
-  is `0`.
+  A training step's success test is the trained model at its path together with its
+  job's own word that it finished, the footer of the job's runlog: a training that was
+  stopped or died is a failed step even when it left a checkpoint, and so is one whose
+  results did not all come home. `resume` retrains after a failed training, and a
+  training that completed before the driver died is adopted by `rebuild-cache` without
+  recomputing it. The step's fingerprint includes its training-config template, so
+  retuning epochs or learning rate and resuming re-runs the training and replaces the
+  model on disk. v1.3.1 counted a training step done once its job ended, so `--skip`
+  passed over a failed training and an edited template alike. The preflight refuses a
+  training step whose backend can run but not train — before any step submits — and
+  names which backends can, and one whose library cannot train without a validation set
+  when its `valid_fraction` is `0`.
 
 - **`task_name` is now the only key that selects an MLIP backend.** `model_path` says
   where the named library's weights come from and selects nothing; every library's builder

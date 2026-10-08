@@ -32,12 +32,35 @@ uniform corpus — every attempt included; engine-specific rows extend the
 header without disturbing that shape. (In bash that pattern needs
 ``shopt -s globstar``; without it ``**`` collapses to one level and finds
 only the canonical runlogs. zsh, ``Path.glob`` and ripgrep need nothing.)
+
+The footer is the job's own verdict
+-----------------------------------
+
+It is the one record of how a job ended that outlives the driver which
+submitted it, and :func:`read_footer` is its one reader. Two of its
+fields are the verdict, one fact each:
+
+* ``exit_code`` — how the run block ended: its own status, ``0`` for one
+  that ran to its end, or ``143`` / ``130`` for a job stopped by ``TERM``
+  / ``INT`` (a ``scancel``, a walltime, the driver's own unwind),
+  whatever the program inside made of the signal.
+* ``scratch_kept`` — ``true`` when a result the engine declared could not
+  be copied home. The scratch directory, the only whole copy, is then
+  left at the header's ``scratch`` path on its ``host``, and the script
+  exits :data:`COPY_BACK_FAILED` if its run block had succeeded.
+
+``files_copied`` counts the loose result files that did arrive. A job killed
+outright — ``SIGKILL``, a node that went down — writes no footer at all,
+which is why no footer is never read as success.
 """
 
 from __future__ import annotations
 
+import os
+import re
 from collections.abc import Sequence
 from pathlib import Path
+from typing import NamedTuple
 
 from chemrefine.config import reject_shell_unsafe
 from chemrefine.errors import ConfigError
@@ -60,6 +83,10 @@ _FOOTER_KEYS = (
     "files_copied",
     "scratch_kept",
 )
+
+_STARTING = "starting"
+_FINISHED = "finished"
+"""The word that ends a run's first line, and the one that ends its footer's."""
 
 COPY_BACK_FAILED = 74
 """The status a job exits with when its run block succeeded and a result did not come home.
@@ -144,7 +171,7 @@ def bash_header(
     return (
         'if [ -n "${SLURM_JOB_ID:-}" ]; then __cr_mode=slurm; else __cr_mode=bash; fi\n'
         "cat <<EOF\n"
-        f"[$(date -Iseconds)] ChemRefine {engine} {step_label} starting\n"
+        f"[$(date -Iseconds)] ChemRefine {engine} {step_label} {_STARTING}\n"
         f"{field_lines}\n"
         "EOF\n"
         "start_time=$(date +%s)"
@@ -171,7 +198,89 @@ def bash_footer(*, engine: str, step_label: str) -> str:
         "end_time=$(date +%s)\n"
         "elapsed_seconds=$((end_time - start_time))\n"
         "cat <<EOF\n"
-        f"[$(date -Iseconds)] ChemRefine {engine} {step_label} finished\n"
+        f"[$(date -Iseconds)] ChemRefine {engine} {step_label} {_FINISHED}\n"
         f"{field_lines}\n"
         "EOF"
     )
+
+
+# ---------------------------------------------------------------------------
+# Python side (the driver reads what a job left)
+# ---------------------------------------------------------------------------
+
+
+def runlog_path(output_dir: Path, job_name: str) -> Path:
+    """Where the job named ``job_name`` logs its run: in the directory it writes into.
+
+    The canonical path of this module's docstring, for the writers that are Python and for
+    the reader: the generated script's ``#SBATCH --output``
+    (:func:`chemrefine.slurm.script.build_script`), the local runner's redirect
+    (:func:`chemrefine.slurm.dispatch.submit`, which names the job by its script, written
+    beside its output) and :func:`read_footer`'s callers. An array task redirects to the
+    same path in bash, from its own input and output
+    (:func:`chemrefine.slurm.script.build_array_script`). A job is named after its input,
+    so for a prepared ``(input, output, id)`` triple this is
+    ``runlog_path(output.parent, input.stem)``.
+    """
+    return output_dir / f"{job_name}.runlog"
+
+
+# The stamp is `date -Iseconds`, 25 characters; bounded, so a line full of brackets (a
+# progress bar, colour codes) is not rescanned from each of them.
+_RUN_LINE = r"\[[^\]\n]{0,40}\] ChemRefine [^\n]* "
+_STARTED_RE = re.compile(_RUN_LINE + _STARTING + r"\n")
+_FOOTER_RE = re.compile(
+    _RUN_LINE + _FINISHED + r"\n" + "".join(rf"  {key}=(?P<{key}>[^\n]*)\n" for key in _FOOTER_KEYS)
+)
+"""A footer as :func:`bash_footer` writes it, whole: its line and every field, in order.
+
+Built from ``_FOOTER_KEYS``, so the reader follows the format. Not anchored to a line
+start: a program whose last output carries no newline leaves the footer's line joined to
+it."""
+
+_TAIL_BYTES = 65536
+"""How much of a runlog's end :func:`read_footer` reads. A footer is five short lines and
+the last thing its script writes; a training's log above it can run to gigabytes."""
+
+_BOOLEANS = {"true": True, "false": False}
+
+
+class Footer(NamedTuple):
+    """What a job said about how it ended — the two verdict fields of its footer."""
+
+    exit_code: int
+    """How the run block ended; ``0`` for one that ran to its end."""
+
+    scratch_kept: bool
+    """Whether a declared result could not be copied home, so scratch was left holding it."""
+
+
+def read_footer(runlog: Path) -> Footer | None:
+    """The footer of a job's last run, as it wrote it; ``None`` when it wrote none.
+
+    ``None`` is no verdict at all, and a caller must never read it as success: there is
+    no runlog, it cannot be read, the footer is cut short, or the job was killed before
+    it could write one.
+
+    The verdict is the **last run's**. A scheduler that appends to a job's output file
+    leaves an earlier run's footer above a later run's header, and a later run that was
+    killed leaves no footer of its own — so a footer followed by another start says
+    nothing about the run that produced what is on disk.
+
+    What is read is text in the job's own output, so a program that printed a whole
+    footer of its own and was then killed outright, before the script's handler could
+    write the real one, would be believed. No engine's program prints one.
+    """
+    try:
+        with runlog.open("rb") as handle:
+            handle.seek(max(0, handle.seek(0, os.SEEK_END) - _TAIL_BYTES))
+            tail = handle.read().decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    footers = list(_FOOTER_RE.finditer(tail))
+    if not footers or _STARTED_RE.search(tail, footers[-1].end()):
+        return None
+    try:
+        return Footer(int(footers[-1]["exit_code"]), _BOOLEANS[footers[-1]["scratch_kept"]])
+    except (ValueError, KeyError):
+        return None

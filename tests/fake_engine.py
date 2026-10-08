@@ -18,21 +18,58 @@ yourself.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import ClassVar
 
 import numpy as np
 from ase import Atoms
 
+from chemrefine import job_log
 from chemrefine.engines.api import register
 from chemrefine.ids import structure_artifact_path
 from chemrefine.state import (
     JobBatch,
+    JobTriple,
     StepContext,
     StepInputs,
     StepResults,
     Structure,
 )
+
+
+def leave_runlog(job: JobTriple, *, exit_code: int = 0, scratch_kept: bool = False) -> Path:
+    """Leave the runlog the script of ``job`` leaves when it ends that way; return its path.
+
+    For a stand-in that short-circuits the scheduler and still has to say what a job says:
+    a step that reads the job's own verdict (:func:`chemrefine.job_log.read_footer`) finds
+    none where no script ran. The text is not written here. The header and the footer are
+    the snippets every generated script embeds, run through ``bash`` with the variables the
+    script's exit handler sets — so a change to the format reaches this helper by itself.
+    """
+    inp, out, structure_id = job
+    script = "\n".join(
+        [
+            "WORK_DIR=/a/stand-in/ran/no/scratch",
+            job_log.bash_header(
+                engine="fake",
+                operation="",
+                step=1,
+                structure_id=structure_id,
+                step_label="stand-in",
+                step_dir=out.parent,
+                cores=1,
+            ),
+            f"exit_code={exit_code}",
+            f"scratch_kept={'true' if scratch_kept else 'false'}",
+            job_log.bash_footer(engine="fake", step_label="stand-in"),
+        ]
+    )
+    said = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
+    runlog = job_log.runlog_path(out.parent, inp.stem)
+    runlog.parent.mkdir(parents=True, exist_ok=True)
+    runlog.write_text(said.stdout, encoding="utf-8")
+    return runlog
 
 
 def _fake_energy(structure_id: str) -> float:

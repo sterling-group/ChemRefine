@@ -18,8 +18,9 @@ from unittest.mock import patch
 
 import pytest
 from ase import Atoms
+from fake_engine import leave_runlog
 
-from chemrefine import cache, ids
+from chemrefine import cache, ids, job_log
 from chemrefine.config import Config, StepConfig
 from chemrefine.engines._options import EngineOptions
 from chemrefine.engines.api import ArtifactEngine
@@ -49,7 +50,9 @@ class _StubArtifactEngine:
     ``produces`` is what a real trainer cannot promise: a job can finish having written
     nothing, and telling that apart from success is the whole reason the capability has an
     ``artifact`` hook. ``weights`` distinguishes *which* run wrote the product, which is what
-    the staleness test below reads.
+    the staleness test below reads. ``exit_code`` and ``scratch_kept`` are what the job's own
+    runlog says of how it ended (``exit_code=None``: it left no runlog at all), the other
+    half of the success test.
 
     Everything is written under one directory of its own beneath the step dir — its config,
     its runlog and its product — which is the shape an artifact step's single job has. A stub
@@ -69,9 +72,18 @@ class _StubArtifactEngine:
     name: ClassVar[str] = "fake"
     options_cls: ClassVar[type[EngineOptions]] = _StubTrainOptions
 
-    def __init__(self, *, produces: bool = True, weights: str = "weights") -> None:
+    def __init__(
+        self,
+        *,
+        produces: bool = True,
+        weights: str = "weights",
+        exit_code: int | None = 0,
+        scratch_kept: bool = False,
+    ) -> None:
         self.produces = produces
         self.weights = weights
+        self.exit_code = exit_code
+        self.scratch_kept = scratch_kept
         self.submits = 0
 
     def run_dir(self, ctx: StepContext) -> Path:
@@ -90,10 +102,14 @@ class _StubArtifactEngine:
         return StepInputs(files=((config, self.artifact(ctx), ids.TRAINING_ID),))
 
     def submit(self, inputs: StepInputs, ctx: StepContext) -> JobBatch:
-        """Stand in for the scheduler: count the run, and write the product if it works."""
+        """Stand in for the scheduler: count the run, write the product if it works, and
+        leave the runlog the job's script leaves."""
         self.submits += 1
         if self.produces:
             self.artifact(ctx).write_text(f"{self.weights}\n", encoding="utf-8")
+        if self.exit_code is not None:
+            for job in inputs.files:
+                leave_runlog(job, exit_code=self.exit_code, scratch_kept=self.scratch_kept)
         return JobBatch(jobs={})
 
     def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
@@ -197,6 +213,123 @@ def test_a_missing_product_fails_the_step_and_caches_nothing(tmp_path: Path):
         run_step(config, config.steps[0], _seeds(3), engine=_StubArtifactEngine(produces=False))
 
     assert not (_step_dir(config) / "_cache" / "step.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# A product is a finished job's only when the job says so
+# ---------------------------------------------------------------------------
+
+
+def _runlog(config: Config) -> Path:
+    """Where the stub's one job logs its run."""
+    return job_log.runlog_path(_step_dir(config) / _StubArtifactEngine.RUN_DIR_NAME, "train")
+
+
+@pytest.mark.parametrize(
+    ("ended", "why", "advice"),
+    [
+        ({"exit_code": 3}, "did not finish", "fix the cause first"),
+        ({"scratch_kept": True}, "did not all come home", "rebuild-cache 1"),
+        ({"exit_code": None}, "holds no footer", "rebuild-cache 1"),
+    ],
+    ids=["exited non-zero", "results left in scratch", "no runlog"],
+)
+def test_a_product_its_job_does_not_vouch_for_fails_the_step_and_caches_nothing(
+    tmp_path: Path, ended: dict[str, object], why: str, advice: str
+):
+    """A file at the product's path is not a trained model unless its job says it finished.
+
+    A job that was stopped, or whose program died, can leave a best-so-far checkpoint there
+    all the same, and a copy the output directory cut short is a file too. The job's own
+    runlog footer tells them from a finished training; with no such word the step fails and
+    caches nothing. The refusal offers ``rebuild-cache`` only for what is unprovable, never
+    for a job that said it failed.
+    """
+    config = _config(tmp_path)
+    engine = _StubArtifactEngine(**ended)
+
+    with pytest.raises(JobFailureError, match=why) as refused:
+        run_step(config, config.steps[0], _seeds(3), engine=engine)
+
+    assert advice in str(refused.value)
+    assert str(_runlog(config)) in str(refused.value)
+    assert not (_step_dir(config) / "_cache" / "step.json").exists()
+
+
+@pytest.mark.parametrize(
+    "ended",
+    [{"exit_code": None}, {"scratch_kept": True}],
+    ids=["no runlog", "results left in scratch"],
+)
+def test_rebuild_cache_adopts_a_product_nothing_vouches_for_and_says_so(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, ended: dict[str, object]
+):
+    """The explicit command adopts what is unprovable, on its caller's word, with a warning.
+
+    A tree whose runlog is gone, or whose results were copied home by hand after the job
+    could not, is never proven wrong. ``rebuild-cache`` names the step, so it adopts the
+    product as it adopts a manifest without provenance, and logs what it could not check.
+    """
+    config = _config(tmp_path)
+    seeds = _seeds(3)
+    with pytest.raises(JobFailureError):
+        run_step(config, config.steps[0], seeds, engine=_StubArtifactEngine(**ended))
+
+    rebuilt = _StubArtifactEngine()
+    with (
+        patch("chemrefine.step.get_engine", return_value=rebuilt),
+        caplog.at_level("WARNING", logger="chemrefine.step"),
+    ):
+        outcome = rebuild_cache_step(config, config.steps[0], seeds)
+
+    assert rebuilt.submits == 0
+    assert [s.id for s in outcome.state.structures] == [s.id for s in seeds.structures]
+    assert (_step_dir(config) / "_cache" / "step.json").exists()
+    assert "adopting the product on this command's word" in caplog.text
+
+
+def test_rebuild_cache_refuses_a_product_whose_job_said_it_failed(tmp_path: Path):
+    """A non-zero exit is proof, and no command's word stands against it."""
+    config = _config(tmp_path)
+    seeds = _seeds(3)
+    with pytest.raises(JobFailureError):
+        run_step(config, config.steps[0], seeds, engine=_StubArtifactEngine(exit_code=3))
+
+    with (
+        patch("chemrefine.step.get_engine", return_value=_StubArtifactEngine()),
+        pytest.raises(JobFailureError, match="exit_code=3"),
+    ):
+        rebuild_cache_step(config, config.steps[0], seeds)
+
+    assert not (_step_dir(config) / "_cache" / "step.json").exists()
+
+
+def test_rebuild_cache_adopts_a_product_under_a_manifest_that_names_no_job(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    """A hand-written manifest may name no job; its product then has no runlog to ask."""
+    config = _config(tmp_path)
+    seeds = _seeds(2)
+    engine = _StubArtifactEngine()
+    ctx = build_context(config, config.steps[0], seeds, engine)
+    engine.artifact(ctx).parent.mkdir(parents=True)
+    engine.artifact(ctx).write_text("weights\n", encoding="utf-8")
+    cache.save_manifest(
+        StepInputs(files=()),
+        ctx.step_dir,
+        operation="opt_sp",
+        engine="fake",
+        stamp=_key_for(config, seeds).manifest_stamp(),
+    )
+
+    with (
+        patch("chemrefine.step.get_engine", return_value=engine),
+        caplog.at_level("WARNING", logger="chemrefine.step"),
+    ):
+        rebuild_cache_step(config, config.steps[0], seeds)
+
+    assert "its manifest names no job" in caplog.text
+    assert (_step_dir(config) / "_cache" / "step.json").exists()
 
 
 def _key_for(config: Config, seeds) -> cache.StepKey:

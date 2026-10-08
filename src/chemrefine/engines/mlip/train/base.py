@@ -379,6 +379,13 @@ class TrainerBase(ABC):
         handler that copies results back, and an engine that emits its own would replace
         it.
 
+        **Its exit status is the training's verdict.** The step adopts the model at
+        :meth:`artifact` only when the job's script exited 0, so the command exits 0 when
+        the model there is the finished one and non-zero otherwise. A library that writes
+        that file as it trains, or one whose entry point exits 0 on a signal having saved
+        its state, is safe as long as it does not do both: the first is stopped with a
+        non-zero status, the second leaves no model at the artifact's path.
+
         The config is named by its basename, because the job script copies it into
         ``$WORK_DIR`` and runs there — and **the basename is interpolated bare, not
         quoted**. Under ``slurm_array: true`` the run block is rendered *once* against
@@ -392,7 +399,8 @@ class TrainerBase(ABC):
 
     @abstractmethod
     def artifact(self, run_dir: Path, run_name: str) -> Path:
-        """The trained model — the file whose existence is this step's success test.
+        """The trained model — the file a finished job leaves, and half of this step's
+        success test: the other half is that job's own exit code (:meth:`command`).
 
         It lies under ``run_dir``, directly or nested: the job copies that directory home,
         and the step's record cites the model relative to it.

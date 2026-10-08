@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
-from chemrefine import ids, io
+from chemrefine import ids, io, job_log
 from chemrefine.errors import CacheError, ConfigError, JobSubmissionError, OutputTreeError
 from chemrefine.throttle import GpuBudget, StallDeadline
 
@@ -311,7 +311,7 @@ def _submit_local(script_path: str | Path, *, env: dict[str, str] | None = None)
     # only after a ``ResourceWarning``.
     # ``pop_all`` hands them over on success, where ``_LOCAL_PROCS`` owns them until
     # :func:`_local_is_finished` or :func:`terminate_local_jobs` closes them.
-    runlog = script_path.with_suffix(".runlog")
+    runlog = job_log.runlog_path(script_path.parent, script_path.stem)
     errlog = script_path.with_suffix(".err")
     with contextlib.ExitStack() as stack:
         with io.tree_write(runlog):
