@@ -368,12 +368,11 @@ def test_a_rerun_that_produces_nothing_does_not_adopt_the_previous_run(tmp_path:
     with pytest.raises(JobFailureError, match=ARTIFACT_NAME):
         run_step(changed, changed.steps[0], seeds, engine=_StubArtifactEngine(produces=False))
 
-    # Run 1's cache is still there — untouched, still keyed to run 1. What must *not* have
-    # happened is it being rewritten under run 2's fingerprint, which is what adopting the
-    # stale model would have done and what would then make a `resume` serve it.
-    cached = cache.load(_step_dir(changed))
-    assert cached is not None
-    assert cached.fingerprint == _key_for(config, seeds).fingerprint
+    # Nothing vouches for a model here any more: run 1's cache went when its model was
+    # moved aside, and run 2 produced none to cache. What must *not* have happened is run
+    # 1's bytes being cached under run 2's fingerprint, which adopting the stale model
+    # would have done and a `resume` would then serve.
+    assert not (_step_dir(changed) / "_cache" / "step.json").exists()
 
     run_dir = _step_dir(changed) / _StubArtifactEngine.RUN_DIR_NAME
     assert not (run_dir / ARTIFACT_NAME).exists(), "run 1's model is not left at the canonical path"
@@ -475,6 +474,33 @@ def test_resume_trains_again_over_a_product_its_job_does_not_vouch_for(
     assert retry.submits == 1
     assert _product(config) == "second"
     assert "running the job again" in caplog.text
+
+
+def test_a_training_that_runs_again_drops_the_cache_of_the_model_it_moves_aside(tmp_path: Path):
+    """A cache vouches for the model at the product's path, so it goes when that model does.
+
+    The configuration is edited, its training runs and fails, and the edit is taken back.
+    The first configuration's cache would still match its key, over a product path that
+    holds the second training's file. With the cache gone the first training runs again.
+    """
+    first = _config(tmp_path)
+    second = _config(tmp_path, options={"epochs": 5})
+    seeds = _seeds(3)
+    run_step(first, first.steps[0], seeds, engine=_StubArtifactEngine(weights="first"))
+    with pytest.raises(JobFailureError):
+        run_step(
+            second,
+            second.steps[0],
+            seeds,
+            engine=_StubArtifactEngine(weights="second, unfinished", exit_code=3),
+        )
+
+    again = _StubArtifactEngine(weights="first again")
+    outcome = run_step(first, first.steps[0], seeds, engine=again)
+
+    assert again.submits == 1
+    assert not outcome.cache_hit
+    assert _product(first) == "first again"
 
 
 def _unstamped_tree(config: Config, seeds: PipelineState) -> _StubArtifactEngine:

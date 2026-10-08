@@ -926,7 +926,13 @@ def _run_artifact_step(
     same stale file and cache-hits too, leaving a run that is internally consistent and
     describes a training that never happened. Moving the run directory aside first turns that
     into the failure it is: what is at the canonical path is this submission's, or nothing.
+
+    The cached results go before the archive, for the product is no part of them: a cache
+    says only that the model at the product's path is the one its key trained. Left behind,
+    another configuration's cache would still match its key once the configuration is
+    edited back, over a path this run has since moved that model away from.
     """
+    cache.invalidate(ctx.step_dir)
     inputs = _prepare_stamped(engine, ctx, step_cfg, key, archive=(engine.run_dir(ctx).name,))
     engine.submit(inputs, ctx)
     return _finish_artifact_step(ctx, step_cfg, key, engine, inputs)
