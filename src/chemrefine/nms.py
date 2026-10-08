@@ -880,9 +880,9 @@ def run_nms(
     whose round 1 did not run in this process — :func:`reattempt_nms` and the incremental
     resume read it back off disk — passes nothing, and the fan-out runs here instead: still
     one queue for every parent, just started after round 1 rather than during it. Its
-    children are fresh ones too: an attempt on disk predates the submission this
-    configuration would have made, and a child found there was displaced from a round this
-    run never produced.
+    children are fresh ones too. For the incremental resume, an attempt on disk predates the
+    submission this configuration would have made, and a child found there was displaced
+    from a round this run never produced.
     """
     if round2 is None:
         round2 = child_round(engine, ctx)

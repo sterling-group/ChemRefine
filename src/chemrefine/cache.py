@@ -866,7 +866,7 @@ class StepKey:
     The identity is layered the way the domain is layered. ``row_keys`` (one per parent,
     aligned with ``parent_ids``/``parent_digests``) are the per-structure job identities
     (:func:`row_key`); ``search_key`` is the half of the NMS resolution's identity that
-    says how the ``attemptK/`` children on disk were displaced (:func:`resolution_keys`,
+    says how this configuration displaces a structure's children (:func:`resolution_keys`,
     ``""`` for a step that resolves nothing); and ``fingerprint`` composes the rows and
     the whole resolution with the step number — an exact hit means "the whole step, bit
     for bit", while every finer question is asked of the rows.

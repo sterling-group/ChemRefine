@@ -674,8 +674,9 @@ def _prepare_stamped(
     answering the previous parent's geometry) as the current parent's result — the
     internally-consistent wrong state the provenance exists to prevent. Archived away, the
     same crash re-reads as MISSING_OUTPUT and the row is resubmitted. The inputs are
-    prepared before the manifest is written, so the manifest describes files that exist;
-    the stamp is on disk before any job goes out, so an interrupted run leaves proof of
+    prepared before the manifest is written, so the manifest describes files that exist for
+    every row it prepares; the stamp is on disk before any job goes out, so an interrupted
+    run leaves proof of
     what its outputs were computed for — the per-row provenance is that proof at
     structure grain, for the incremental resume, and the step stamp is that proof for an
     artifact step's one product (:func:`_adopt_product`).

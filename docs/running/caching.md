@@ -109,9 +109,9 @@ support recovery:
   It also carries the step's **provenance** — the fingerprint, the resolution's
   search half, and each row's own key — written *before* any job is submitted. That is
   what lets a later `resume` prove, structure by structure, that an output on disk is
-  the one this configuration would compute: matching rows are **adopted** (re-parsed,
-  never resubmitted, and never prepared again, so each keeps the input files of the job
-  that wrote its output) and only the rest run. A manifest *without* that provenance — one
+  the one this configuration would compute: matching rows are **adopted** (a usable
+  output is re-parsed, and nothing is prepared or submitted for it, so it keeps the
+  input files of the job that wrote it) and only the rest run. A manifest *without* that provenance — one
   hand-written for a v1 adoption — is never silently trusted or silently discarded:
   `resume` stops and names the fix, `chemrefine rebuild-cache N`, which re-parses the
   outputs under the current rules, submits nothing, and records the provenance. A

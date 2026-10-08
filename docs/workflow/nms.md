@@ -89,9 +89,10 @@ Round 1 is not discarded: it moves into the same `attemptK/` its children ran in
 attempt directory holds both the state that triggered the resolution and everything tried
 to resolve it. That is also why `rebuild-cache` stays correct — it re-parses the canonical
 path, finds a structure already at the target, and re-derives the same survivor without
-re-running the exploration. Which child it was comes from `resolution.json`, and only while
-the canonical output is still that child's own, byte for byte: delete the winning child's
-output and the structure is no longer recorded as resolved from it.
+re-running the exploration. Which child it was comes from `resolution.json`, under the
+criterion that record names and only while the canonical output is still that child's
+own, byte for byte: delete the winning child's output and the structure is no longer
+recorded as resolved from it.
 
 A rebuild promotes nothing. Where a child in `attemptK/` reaches the target while the
 canonical output is another calculation's — a run stopped before promoting it, or `target`
@@ -130,7 +131,8 @@ reuses the round-1 outputs on disk and recomputes only what the edit actually ch
   resubmitting a single round-1 job. Each `resolution.json` names the criterion its
   winner was resolved under and is honoured only under that one, by `resume` and
   `rebuild-nms` alike: a structure still at the new target passes through with no
-  winner named, and going back to the earlier criterion names its winner again.
+  winner named, and going back to the earlier criterion names its winner again, as
+  long as no later attempt was made for that structure in between.
 - **Changing the parents or the template** recomputes exactly the affected rows, like
   any other step.
 
