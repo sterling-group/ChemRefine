@@ -185,16 +185,44 @@ def input_geometry_path(step_dir: Path, step: int, structure_id: str) -> Path:
     return step_dir / structure_id / f"{structure_stem(step, structure_id)}_inp.xyz"
 
 
-def _attempt_numbers(structure_dir: Path) -> list[tuple[int, Path]]:
-    """Every ``attempt<n>/`` under a structure's dir as ``(n, path)``, unordered.
+def _attempt_number(entry: Path, is_dir: bool) -> int | None:
+    """The ``n`` of an ``attempt<n>/`` directory of the resolution model, else ``None``.
 
-    Shared by the next-free and most-recent lookups so one scan defines what counts.
-    A non-matching ``attempt*`` entry — a stray file, say — is ignored.
+    The membership test behind every question asked of a structure's directory, so "what
+    counts as an attempt" is decided in one place: the lookups below number the attempts by
+    it, and :func:`canonical_entries` is everything it turns away. A non-matching
+    ``attempt*`` entry — a stray file, say — is no attempt.
+    """
+    match = _ATTEMPT_DIR_RE.fullmatch(entry.name) if is_dir else None
+    return None if match is None else int(match.group(1))
+
+
+def _attempt_numbers(structure_dir: Path) -> list[tuple[int, Path]]:
+    """Every ``attempt<n>/`` under a structure's dir as ``(n, path)``.
+
+    Shared by the next-free and most-recent lookups so one scan defines what counts. The
+    scan is :func:`chemrefine.io.tree_entries`: a structure with no directory yet has no
+    attempts, and a directory that cannot be listed is refused rather than read as one.
     """
     return [
-        (int(m.group(1)), d)
-        for d in structure_dir.glob("attempt*")
-        if d.is_dir() and (m := _ATTEMPT_DIR_RE.fullmatch(d.name))
+        (number, entry)
+        for entry, is_dir in io.tree_entries(structure_dir)
+        if (number := _attempt_number(entry, is_dir)) is not None
+    ]
+
+
+def canonical_entries(structure_dir: Path) -> list[tuple[Path, bool]]:
+    """What a structure's directory holds besides its attempts, each with whether it is a directory.
+
+    Its canonical state — loose files and any engine-written sub-directory — which is what
+    :func:`chemrefine.attempts.seal` moves, :func:`chemrefine.attempts.archive_previous`
+    asks about and :func:`chemrefine.attempts.promote` copies. ``attempt*/`` directories
+    are left out: folding one attempt into another would lose a run's history.
+    """
+    return [
+        (entry, is_dir)
+        for entry, is_dir in io.tree_entries(structure_dir)
+        if _attempt_number(entry, is_dir) is None
     ]
 
 
@@ -210,17 +238,6 @@ def next_attempt_dir(structure_dir: Path) -> Path:
     """
     numbered = _attempt_numbers(structure_dir)
     return structure_dir / f"attempt{max((n for n, _ in numbered), default=0) + 1}"
-
-
-def is_attempt_dir(path: Path) -> bool:
-    """Whether ``path`` is an ``attempt<n>/`` directory of the resolution model.
-
-    The membership test behind the two lookups above, so "what counts as an attempt" is
-    decided in one place. :func:`chemrefine.attempts.seal` asks it to
-    know what *not* to move: everything else in a structure dir is that attempt's output and
-    goes with it, but folding one attempt into another would lose a run's history.
-    """
-    return path.is_dir() and _ATTEMPT_DIR_RE.fullmatch(path.name) is not None
 
 
 def attempt_dirs_newest_first(structure_dir: Path) -> list[Path]:

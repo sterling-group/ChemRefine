@@ -712,14 +712,27 @@ def _is_promoted(
     :func:`chemrefine.attempts.promote` copies the winning child's output there verbatim, so
     the same bytes are what a finished install leaves. Different bytes are another
     calculation — round 1, or an earlier winner — and an output that is gone, the child's
-    or the canonical one, leaves nothing to compare. Both paths are the engine's own
+    or the canonical one, leaves nothing to compare: the read's own ``FileNotFoundError``.
+
+    An output that is there and cannot be read proves nothing either way: worn unproven, a
+    record could name a calculation that never reached the canonical path, and dropped, a
+    promoted child would be cached as an untouched round 1. So that is
+    :class:`~chemrefine.errors.CacheError`, naming the file the filesystem refused. Both
+    paths are the engine's own
     (:meth:`~chemrefine.engines.api.StructureArtifacts.artifact_paths`).
     """
     canonical_output = engine.artifact_paths(ctx, parent_id)[1]
     child_output = engine.artifact_paths(replace(ctx, step_dir=attempt), child_id)[1]
-    if not (child_output.is_file() and canonical_output.is_file()):
+    try:
+        return child_output.read_bytes() == canonical_output.read_bytes()
+    except FileNotFoundError:
         return False
-    return child_output.read_bytes() == canonical_output.read_bytes()
+    except OSError as e:
+        raise CacheError(
+            f"step {ctx.step_cfg.step}: cannot read {e.filename or child_output}: "
+            f"{e.strerror or e} — so which calculation {canonical_output} holds cannot be "
+            f"proven. Restore read access, then run the command again."
+        ) from e
 
 
 def _passthrough(

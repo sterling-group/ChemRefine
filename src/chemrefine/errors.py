@@ -116,9 +116,10 @@ class CacheError(ChemRefineError):
     """The step cache's verdict on its own state: what it cannot read, trust, prove or store.
 
     A ``_cache/`` document it cannot read or trust — unreadable, corrupt, written by another
-    version — outputs on disk it cannot prove are this configuration's, a structure it will
-    not store. The filesystem refusing a write under ``_cache/`` is no verdict of the
-    cache's: that is :class:`OutputTreeError`, as it is for every other file of the run.
+    version — a directory of the run's tree it cannot list, outputs on disk it cannot prove
+    are this configuration's, a structure it will not store. The filesystem refusing a
+    write under ``_cache/`` is no verdict of the cache's: that is :class:`OutputTreeError`,
+    as it is for every other file of the run.
     """
 
     exit_code = 7

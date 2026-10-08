@@ -20,9 +20,10 @@ The invariant for a sealed attempt: **it holds what was at canonical, and canoni
 calculation.** Only ``attempt*/`` is ever left behind by a seal — folding one attempt into
 another would lose a run's history.
 
-Naming lives in :mod:`chemrefine.ids`; this module only moves and copies, each under the
-output tree's net (:func:`chemrefine.io.tree_write`), so one the filesystem refuses names
-its destination, and the source when that is what was refused.
+Naming lives in :mod:`chemrefine.ids`, and so does what a structure's directory holds
+(:func:`chemrefine.ids.canonical_entries`); this module only moves and copies, each under
+the output tree's net (:func:`chemrefine.io.tree_write`), so one the filesystem refuses
+names its destination, and the source when that is what was refused.
 """
 
 from __future__ import annotations
@@ -54,9 +55,7 @@ def seal(structure_dir: Path, attempt_dir: Path) -> None:
     """
     with io.tree_write(attempt_dir):
         attempt_dir.mkdir(parents=True, exist_ok=True)
-    for item in structure_dir.iterdir():
-        if item.is_dir() and ids.is_attempt_dir(item):
-            continue
+    for item, _is_dir in ids.canonical_entries(structure_dir):
         destination = attempt_dir / item.name
         with io.tree_write(destination):
             shutil.move(str(item), str(destination))
@@ -95,7 +94,7 @@ def archive_previous(step_dir: Path, structure_ids: Iterable[str]) -> list[Path]
     archived: list[Path] = []
     for sid in structure_ids:
         struct_dir = step_dir / sid
-        if struct_dir.is_dir() and any(not ids.is_attempt_dir(p) for p in struct_dir.iterdir()):
+        if ids.canonical_entries(struct_dir):
             archived.append(archive(struct_dir))
     return archived
 
@@ -119,10 +118,8 @@ def promote(attempt_dir: Path, *, step: int, source_id: str, target_id: str) -> 
     by the engine, so it is promoted under its own name.
     """
     stem = ids.structure_stem(step, source_id)
-    for item in sorted((attempt_dir / source_id).iterdir()):
-        if ids.is_attempt_dir(item):
-            continue
-        if item.is_dir():
+    for item, is_dir in ids.canonical_entries(attempt_dir / source_id):
+        if is_dir:
             destination = attempt_dir.parent / item.name
             with io.tree_write(destination):
                 shutil.copytree(item, destination, dirs_exist_ok=True)

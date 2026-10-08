@@ -467,16 +467,26 @@ def load_leases(step_dir: Path) -> list[JobLease]:
     every other corrupt ``_cache/`` file — the fence cannot prove such jobs dead, and
     silently reading "no leases" would wave a new driver into the overlap the record
     exists to prevent. The message names the deletion escape, like the lock's.
+
+    "None were" is the read's own ``FileNotFoundError`` and nothing else: asked of
+    ``Path.is_file`` first, a ``_cache/`` this account cannot search is a traceback on one
+    Python and an empty ledger on the next. A pid is read back as the integer it was
+    written as, the way the run lock's record is read, and one that will not be is the same
+    corrupt file.
     """
     path = lease_path(step_dir)
-    if not path.is_file():
-        return []
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-        return [JobLease(str(r["id"]), str(r["host"]), r.get("pid")) for r in raw]
-    except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+        return [
+            JobLease(str(r["id"]), str(r["host"]), None if r.get("pid") is None else int(r["pid"]))
+            for r in raw
+        ]
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError) as e:
         # ``OSError`` is the unreadable half of "present-but-unreadable": a ledger another
-        # user's driver wrote, or one that vanished between the check above and the read.
+        # user's driver wrote, or one under a directory this account cannot search.
+        # ``OverflowError`` is a pid that is no finite number.
         raise CacheError(
             f"corrupt job lease at {path}: {e!r} — delete it if the run that wrote it is known dead"
         ) from e

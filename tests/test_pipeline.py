@@ -1394,6 +1394,74 @@ def test_pid_alive_reads_permission_denied_as_alive(monkeypatch: pytest.MonkeyPa
     assert pipeline._pid_alive(12345) is True
 
 
+@pytest.mark.parametrize("pid", [0, -1, -7], ids=["zero", "every-process", "a-process-group"])
+def test_a_number_that_is_no_processes_pid_is_never_put_to_the_kernel(
+    monkeypatch: pytest.MonkeyPatch, pid: int
+):
+    """``os.kill`` reads a number not above zero as a group or as everyone, so it is not asked.
+
+    Asked, its "no such process" would be about a process group that does not exist, and
+    a lock damaged into naming one would be reclaimed from under whatever driver wrote it.
+    """
+    asked: list[int] = []
+
+    def _gone(pid: int, sig: int) -> None:
+        asked.append(pid)
+        raise ProcessLookupError
+
+    monkeypatch.setattr(os, "kill", _gone)
+    assert pipeline._pid_alive(pid) is None
+    assert asked == []
+
+
+def test_a_number_past_the_kernels_pid_type_proves_nothing():
+    """The kernel cannot be asked about it, which is no proof that a process is gone."""
+    assert pipeline._pid_alive(2**40) is None
+
+
+@pytest.mark.parametrize("pid", [-7, 2**40], ids=["a-process-group", "past-the-pid-type"])
+def test_a_lock_naming_a_number_no_process_can_have_is_held(tmp_path: Path, pid: int):
+    """A lock record damaged from outside is refused by name, never reclaimed.
+
+    This program records only its own pid, so the number says nothing about the driver
+    that wrote the lock, which may be running. The refusal names what the lock holds and
+    how to clear it once that run is known dead.
+    """
+    import socket
+
+    from chemrefine.errors import RunLockError
+
+    lock = _write_lock(tmp_path / "outputs", host=socket.gethostname(), pid=pid)
+    with (
+        pytest.raises(RunLockError, match=rf"names pid {pid} on .*delete the lock file"),
+        pipeline.run_lock(tmp_path / "outputs"),
+    ):
+        pass
+    holder = pipeline._lock_holder(lock)
+    assert holder is not None and holder[1] == pid, "the lock that proves nothing is kept"
+    status = pipeline.lock_status(tmp_path / "outputs")
+    assert (status.held, status.alive) == (True, None)
+
+
+def test_a_lock_whose_pid_is_no_finite_number_is_unreadable_and_held(tmp_path: Path):
+    """An infinity where the pid should be is a damaged record like any other: held."""
+    import socket
+
+    from chemrefine.errors import RunLockError
+
+    outputs = tmp_path / "outputs"
+    outputs.mkdir()
+    lock = outputs / pipeline.RUN_LOCK_NAME
+    lock.write_text(
+        f'{{"pid": Infinity, "host": "{socket.gethostname()}", "started": "then"}}',
+        encoding="utf-8",
+    )
+    assert pipeline._lock_holder(lock) is None
+    assert pipeline.lock_status(outputs).held
+    with pytest.raises(RunLockError, match="exists but is unreadable"), pipeline.run_lock(outputs):
+        pass
+
+
 # ---------------------------------------------------------------------------
 # SIGTERM unwinds — scancel must not strand the lock or the local jobs
 # ---------------------------------------------------------------------------
@@ -1722,6 +1790,27 @@ def test_the_fence_refuses_a_local_lease_with_no_pid(tmp_path: Path):
     )
     with pytest.raises(RunLockError, match="not provably dead"):
         pipeline.run(cfg)
+
+
+@pytest.mark.parametrize("pid", [-7, 2**40], ids=["a-process-group", "past-the-pid-type"])
+def test_the_fence_refuses_a_local_lease_whose_pid_proves_nothing(tmp_path: Path, pid: int):
+    """A lease naming a number no process can have is not proof its job is dead.
+
+    The record is damaged, and the job it was written for may still be copying into the
+    tree. The fence refuses by name and keeps the ledger, as it does for a lease with no
+    pid at all.
+    """
+    import socket
+
+    from chemrefine import slurm
+    from chemrefine.errors import RunLockError
+
+    cfg = _config(tmp_path, input=None)
+    step_dir = cfg.step_dir(cfg.steps[0])
+    _plant_leases(step_dir, {"id": "local-1", "host": socket.gethostname(), "pid": pid})
+    with pytest.raises(RunLockError, match="local-1 is not provably dead"):
+        pipeline.run(cfg)
+    assert slurm.lease_path(step_dir).is_file()
 
 
 def test_a_dead_local_lease_alone_is_swept_without_asking_the_queue(tmp_path: Path):

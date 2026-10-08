@@ -848,9 +848,9 @@ def test_a_template_this_account_cannot_read_keys_as_one_that_is_not_there(tmp_p
 def test_an_unreadable_document_is_the_cache_error_a_corrupt_one_gets(tmp_path: Path):
     """Present-but-unreadable is the other half of what ``read_json`` promises to refuse.
 
-    ``is_file`` is true of a mode-000 document — a colleague's driver, a restored backup —
-    so the read is reached, and its ``PermissionError`` has to leave as the cache's exit 7,
-    not as a traceback with exit 1. The lease and sidecar readers hold the same net.
+    A mode-000 document — a colleague's driver, a restored backup — is there and cannot be
+    read, and the read's ``PermissionError`` has to leave as the cache's exit 7, not as a
+    traceback with exit 1. The lease and sidecar readers hold the same net.
     """
     step_dir = tmp_path / "step1"
     document = step_dir / "_cache" / "step.json"
@@ -864,6 +864,31 @@ def test_an_unreadable_document_is_the_cache_error_a_corrupt_one_gets(tmp_path: 
         assert load_if_valid(key=_key("0", step_cfg=_cfg()), step_dir=step_dir) is None
     finally:
         document.chmod(0o644)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
+def test_a_cache_directory_this_account_cannot_search_is_unreadable_not_empty(tmp_path: Path):
+    """Every document under an unsearchable ``_cache/`` is refused, the same on every Python.
+
+    Asked of ``Path.is_file`` first, this is a traceback on Python 3.11 to 3.13 and, on
+    3.14, a failure ledger and a manifest read as never written: a step with pending
+    failures served as clean, a resume that finds nothing to continue from.
+    """
+    step_dir = _saved(tmp_path)
+    cache.save_failure_records(step_dir, [])
+    save_manifest(StepInputs(files=()), step_dir, operation=None, engine="fake", stamp=_stamp())
+    cache_dir = step_dir / "_cache"
+    cache_dir.chmod(0)
+    try:
+        with pytest.raises(CacheError, match="unreadable failed-jobs ledger"):
+            cache.load_failure_records(step_dir)
+        with pytest.raises(CacheError, match="unreadable manifest"):
+            load_manifest(step_dir)
+        with pytest.raises(CacheError, match="unreadable step cache"):
+            load(step_dir)
+        assert load_if_valid(key=_key("0", "1", step_cfg=_cfg()), step_dir=step_dir) is None
+    finally:
+        cache_dir.chmod(0o755)
 
 
 def test_a_document_that_is_not_text_is_unreadable_too(tmp_path: Path):
@@ -1083,7 +1108,7 @@ def test_a_document_without_its_sidecar_is_an_error_not_a_fallback(tmp_path: Pat
     step_dir = _saved(tmp_path)
     (step_dir / "_cache" / "arrays.npz").unlink()
 
-    with pytest.raises(CacheError, match=r"arrays\.npz"):
+    with pytest.raises(CacheError, match=r"has no arrays\.npz; rebuild the step"):
         load(step_dir)
     assert not load_if_valid(key=_key("0", "1", step_cfg=_cfg()), step_dir=step_dir)
 
@@ -1153,14 +1178,13 @@ def test_a_damaged_sidecar_is_the_caches_own_error_at_every_layer(
     off a cluster reached the user as a traceback with exit 1 where the docs promise the
     cache's own error and its rebuild advice. Held per layer so a numpy that moves a
     refusal between them goes red here rather than back to the traceback. A directory
-    where the file should be is refused one line earlier, by the existence check, with
-    the "has no arrays.npz" wording — the same error type by a shorter route, so the
-    match is on the file every message names.
+    where the file should be is the filesystem layer's own refusal: something is there, so
+    it is never worded as the sidecar a save has yet to write.
     """
     step_dir = _saved(tmp_path)
     damage(cache._arrays_path(step_dir))
 
-    with pytest.raises(CacheError, match=r"arrays\.npz"):
+    with pytest.raises(CacheError, match=r"corrupt coordinate sidecar at .*arrays\.npz"):
         load(step_dir)
     assert load_if_valid(key=_key("0", "1", step_cfg=_cfg()), step_dir=step_dir) is None
 

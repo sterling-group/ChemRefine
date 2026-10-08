@@ -599,6 +599,41 @@ def test_a_release_the_tree_refuses_does_not_replace_the_error_that_unwound_the_
     )
 
 
+def test_a_ledger_the_unwind_cannot_read_back_does_not_replace_the_batchs_error(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    """The unwind reads the ledger to keep its SLURM leases; a refused read is logged.
+
+    A stale handle on a shared filesystem refuses the read as readily as a write. The
+    lease reader words that as the cache's error, which must not take the place of the
+    submission failure in flight any more than a refused write may.
+    """
+    engine = _FakeJobEngine()
+    ctx = _ctx(tmp_path, ids=("0", "1"), dispatch="local")
+    ledger = slurm.lease_path(ctx.step_dir)
+    real_read_text = Path.read_text
+
+    def stale(self: Path, *args: object, **kwargs: object) -> str:
+        if self == ledger:
+            raise OSError(errno.ESTALE, os.strerror(errno.ESTALE), str(self))
+        return real_read_text(self, *args, **kwargs)
+
+    with (
+        patch.object(
+            slurm, "submit", side_effect=["local-1", JobSubmissionError("sbatch refused the job")]
+        ),
+        patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set()),
+        patch.object(slurm, "terminate_local_jobs"),
+        patch.object(Path, "read_text", stale),
+        pytest.raises(JobSubmissionError),
+    ):
+        _execution.run_batch(engine, engine.prepare(ctx), ctx)
+    assert (
+        f"could not clean up during JobSubmissionError: corrupt job lease at {ledger}"
+        in caplog.text
+    )
+
+
 def test_run_batch_touches_nothing_on_the_happy_path(tmp_path: Path):
     """A clean drain sweeps no jobs and leaves no leases behind.
 

@@ -20,6 +20,7 @@ import os
 import shlex
 import subprocess
 import sys
+import threading
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -248,6 +249,42 @@ def test_a_wrapper_that_lost_its_exec_bit_is_written_again(tmp_path: Path):
     out.chmod(0o644)
     protocol.write_wrapper_script(path=out, backend="mlip", url_file=tmp_path / "server.url")
     assert out.stat().st_mode & 0o777 == 0o755
+
+
+def test_a_wrapper_that_does_not_decode_is_written_again(tmp_path: Path):
+    """The wrapper is compared as bytes, so one that is no UTF-8 text is simply not these bytes.
+
+    Compared as text, an executable file of other bytes at the wrapper's path — a binary
+    left by a copy that went wrong — ends every prepare of the step in a
+    ``UnicodeDecodeError``.
+    """
+    out = tmp_path / "mlip_extopt.sh"
+    out.write_bytes(b"\xff\xfe not a script\n")
+    out.chmod(0o755)
+    protocol.write_wrapper_script(path=out, backend="mlip", url_file=tmp_path / "server.url")
+    assert out.read_bytes().startswith(b"#!/usr/bin/env bash\n")
+    assert out.stat().st_mode & 0o777 == 0o755
+
+
+def test_a_wrapper_path_that_holds_no_regular_file_is_replaced_unread(tmp_path: Path):
+    """Only a regular file is read back; a FIFO at the path would hold the read for ever."""
+    out = tmp_path / "mlip_extopt.sh"
+    os.mkfifo(out, 0o755)
+    out.chmod(0o755)
+    written = threading.Thread(
+        target=protocol.write_wrapper_script,
+        kwargs={"path": out, "backend": "mlip", "url_file": tmp_path / "server.url"},
+        daemon=True,
+    )
+    written.start()
+    written.join(timeout=10)
+    blocked = written.is_alive()
+    if blocked:
+        # Let the read go: opening the other end and closing it is its end of file.
+        os.close(os.open(out, os.O_WRONLY | os.O_NONBLOCK))
+        written.join(timeout=10)
+    assert not blocked, "the FIFO was opened for reading"
+    assert out.read_bytes().startswith(b"#!/usr/bin/env bash\n")
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root writes through any mode")

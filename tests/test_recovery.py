@@ -845,7 +845,7 @@ def test_a_resume_over_a_stopped_install_archives_nothing_and_names_no_child(tmp
 
     from chemrefine import attempts, cache
     from chemrefine.engines.api import ENGINES
-    from chemrefine.ids import is_attempt_dir, latest_attempt_dir
+    from chemrefine.ids import canonical_entries, latest_attempt_dir
 
     eng = _register_fake_nms()
     try:
@@ -863,7 +863,7 @@ def test_a_resume_over_a_stopped_install_archives_nothing_and_names_no_child(tmp
         assert (attempt / "resolution.json").is_file(), (
             "precondition: the install named its child before moving"
         )
-        assert all(is_attempt_dir(p) for p in (step_dir / "1").iterdir()), (
+        assert canonical_entries(step_dir / "1") == [], (
             "precondition: the stop came after the seal and before the promote"
         )
         assert cache.load(step_dir) is None, "precondition: no cache, so the rows decide"

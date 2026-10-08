@@ -1810,23 +1810,47 @@ def test_a_corrupt_lease_ledger_is_refused_not_read_as_empty(tmp_path: Path):
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
-def test_an_unreadable_lease_ledger_is_the_same_worded_refusal(tmp_path: Path):
+@pytest.mark.parametrize("locked", ["file", "directory"])
+def test_an_unreadable_lease_ledger_is_the_same_worded_refusal(tmp_path: Path, locked: str):
     """Present but unreadable is what the docstring promises to refuse — not a traceback.
 
     Another account's driver, or a ledger the user is told to inspect from another host:
     the fence cannot prove those jobs dead either, and the message that names the escape
-    is the same one a corrupt file gets.
+    is the same one a corrupt file gets. So is a ledger under a ``_cache/`` this account
+    cannot search, on every Python: asked of ``Path.is_file`` first, that is a traceback on
+    3.11 to 3.13 and "no leases" on 3.14, which waves the fence through over a live job.
     """
     from chemrefine.errors import CacheError
 
     slurm.record_leases(tmp_path, ["local-1"], accepted="local-1")
     path = slurm.lease_path(tmp_path)
-    path.chmod(0)
+    target = path if locked == "file" else path.parent
+    target.chmod(0)
     try:
         with pytest.raises(CacheError, match="delete it"):
             slurm.load_leases(tmp_path)
     finally:
-        path.chmod(0o644)
+        target.chmod(0o755)
+
+
+@pytest.mark.parametrize(
+    "pid",
+    ['"abc"', "[1]", "Infinity", "NaN"],
+    ids=["a-word", "a-list", "infinity", "not-a-number"],
+)
+def test_a_lease_pid_that_is_no_number_is_a_corrupt_ledger(tmp_path: Path, pid: str):
+    """A pid is read back as the integer it was written as, or the ledger is corrupt.
+
+    Handed on as it came, a word reaches the fence's probe as a ``TypeError`` and the run
+    ends in a traceback; an infinity is the one value ``int`` refuses as an overflow.
+    """
+    from chemrefine.errors import CacheError
+
+    path = slurm.lease_path(tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text(f'[{{"id": "local-1", "host": "here", "pid": {pid}}}]', encoding="utf-8")
+    with pytest.raises(CacheError, match="delete it"):
+        slurm.load_leases(tmp_path)
 
 
 def test_the_lease_ledger_is_written_readable_for_the_next_driver(tmp_path: Path):

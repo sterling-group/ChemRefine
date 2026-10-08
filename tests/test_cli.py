@@ -302,9 +302,9 @@ def test_resume_after_run_is_cache_hit(tmp_path: Path):
 def test_an_unreadable_cache_document_exits_with_the_cache_error_code(tmp_path: Path):
     """The "cache corrupt or unreadable" row promises exit 7, a mode-000 manifest included.
 
-    A rebuild has to read the manifest to know what to re-parse, and ``is_file`` is true of
-    a mode-000 one, so the read is reached: its ``PermissionError`` has to reach the handler
-    that maps a ``ChemRefineError`` to its code, not leave as a traceback with exit 1. (An
+    A rebuild has to read the manifest to know what to re-parse, and a mode-000 one is
+    there and cannot be read: its ``PermissionError`` has to reach the handler that maps a
+    ``ChemRefineError`` to its code, not leave as a traceback with exit 1. (An
     unreadable step document is a different case: ``load_if_valid`` treats it as it treats
     a corrupt one, a miss, and a resume recomputes the step.)
     """

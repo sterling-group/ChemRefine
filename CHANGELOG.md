@@ -186,8 +186,9 @@ for those and the full map.
   releasing the lock and terminating its local jobs — only a genuine SIGKILL
   can strand a lock, and the same-host dead-pid reclaim covers that case.
   `run_status`'s holder payload carries a three-valued `alive` field:
-  `true`/`false` for a same-host holder, `null` for a holder on a foreign host
-  no status read can probe.
+  `true`/`false` for a same-host holder, `null` for a holder no status read can
+  probe: one on a foreign host, or one whose lock names a number no process
+  can have.
 - Engine plugin system: a `CalculationEngine` protocol plus a registry, with
   four documented base shapes for new engines (`engines/api.py`). Plugins and
   MLIP backends are **auto-discovered** — a new engine package or backend
@@ -205,8 +206,8 @@ for those and the full map.
 - Per-step result cache: filter-only (`sample:`) edits refilter cached results
   without re-running calculations, and a step cache that is corrupt or cannot
   be read is treated as missing, where v1.3.1 stopped with a traceback; any
-  other `_cache/` document that cannot be read stops the run as a cache error
-  (exit code 7).
+  other `_cache/` document that cannot be read, or a directory of the run's
+  tree that cannot be listed, stops the run as a cache error (exit code 7).
 - Per-step failure policy `on_failure: stop | skip | best`. Failures are
   ledgered in `failed_jobs.json`, and `resume` / `rerun-errors` re-attempt only
   the still-failed structures of a `stop` step. Changing a step's `on_failure`

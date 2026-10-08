@@ -1239,6 +1239,90 @@ def test_a_resolution_is_worn_only_over_the_output_it_names(tmp_path: Path, chil
     assert survivor.resolved_from == ("0_m5_pos" if child == "promoted" else None)
 
 
+def _directory_in_its_place(child_output: Path) -> Path:
+    child_output.unlink()
+    child_output.mkdir()
+    return child_output
+
+
+def _no_access(child_output: Path) -> Path:
+    child_output.chmod(0)
+    return child_output
+
+
+def _directory_it_cannot_search(child_output: Path) -> Path:
+    child_output.parent.chmod(0)
+    return child_output.parent
+
+
+_UNPRIVILEGED = pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
+
+
+@pytest.mark.parametrize(
+    ("refuse", "reason"),
+    [
+        pytest.param(_directory_in_its_place, "Is a directory", id="a-directory-in-its-place"),
+        pytest.param(_no_access, "Permission denied", id="no-access", marks=_UNPRIVILEGED),
+        pytest.param(
+            _directory_it_cannot_search,
+            "Permission denied",
+            id="its-directory",
+            marks=_UNPRIVILEGED,
+        ),
+    ],
+)
+def test_a_record_whose_child_output_cannot_be_read_refuses_the_passthrough(
+    tmp_path: Path, refuse, reason: str
+):
+    """A named child that is there and cannot be read is no proof either way, so it stops.
+
+    Worn unproven, the record could name a calculation that never reached the canonical
+    path; dropped, a promoted winner would be cached as an untouched round 1. The refusal
+    names the step, the file and what to do. Asked ``Path.is_file`` first, the child's
+    directory is a traceback on Python 3.11 to 3.13 and a silently dropped label on 3.14.
+    """
+    engine = _FakeNms(freqs={"0": _Freq(imaginary={}, modes=None)})  # at target: passthrough
+    ctx = _ctx(tmp_path, (_h2("0"),))
+    round1 = _seed_round1(engine, ctx)
+    canonical = engine.artifact_paths(ctx, "0")[1]
+    attempt = _record_beside(engine, ctx, canonical.read_bytes())
+    child_output = engine.artifact_paths(replace(ctx, step_dir=attempt), "0_m5_pos")[1]
+    locked = refuse(child_output)
+    try:
+        with pytest.raises(CacheError) as excinfo:
+            nms.rebuild_nms(engine, round1, [], ctx)
+    finally:
+        locked.chmod(0o755)
+    assert str(excinfo.value) == (
+        f"step 1: cannot read {child_output}: {reason} — so which calculation {canonical} "
+        f"holds cannot be proven. Restore read access, then run the command again."
+    )
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
+def test_a_structure_whose_attempts_cannot_be_listed_is_not_passed_through_unlabelled(
+    tmp_path: Path,
+):
+    """A directory that can be searched and not listed still gives up its canonical output.
+
+    So the structure parses, and its attempts are the question. Read as "none" — which is
+    what a glob answers — the promoted winner inside would be cached as an untouched
+    round 1, on every Python. The listing is refused by name instead.
+    """
+    engine = _FakeNms(freqs={"0": _Freq(imaginary={}, modes=None)})  # at target: passthrough
+    ctx = _ctx(tmp_path, (_h2("0"),))
+    round1 = _seed_round1(engine, ctx)
+    _record_beside(engine, ctx, engine.artifact_paths(ctx, "0")[1].read_bytes())
+    structure_dir = ctx.step_dir / "0"
+    structure_dir.chmod(0o111)
+    try:
+        with pytest.raises(CacheError) as excinfo:
+            nms.rebuild_nms(engine, round1, [], ctx)
+    finally:
+        structure_dir.chmod(0o755)
+    assert str(excinfo.value) == f"cannot read {structure_dir}: Permission denied"
+
+
 @pytest.mark.parametrize("canonical", ["the winner's own", "round 1's"])
 def test_a_rebuild_credits_a_winner_only_over_the_output_it_names(tmp_path: Path, canonical: str):
     """A rebuild caches a winner under its parent's id only over that child's own output.

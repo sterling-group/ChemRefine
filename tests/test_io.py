@@ -21,7 +21,7 @@ from ase import Atoms
 from ase.io import read as ase_read
 
 import chemrefine.io as chemrefine_io
-from chemrefine.errors import OutputTreeError
+from chemrefine.errors import CacheError, OutputTreeError
 from chemrefine.io import (
     gather_output_files,
     natural_key,
@@ -922,8 +922,16 @@ _CLEANUP_REFUSALS = [
         lambda: OutputTreeError("cannot write /out/.chemrefine.lock: Read-only file system"),
         id="tree-write",
     ),
+    pytest.param(
+        lambda: CacheError(
+            "corrupt job lease at /out/step1/_cache/active_jobs.json: "
+            "OSError(30, 'Read-only file system')"
+        ),
+        id="record-read",
+    ),
 ]
-"""What a cleanup can meet: a temp file's raw removal, or a write through the tree's net."""
+"""What a cleanup can meet: a temp file's raw removal, a write through the tree's net, or a
+record it has to read back before it writes."""
 
 
 @pytest.mark.parametrize("refusal", _CLEANUP_REFUSALS)
@@ -946,8 +954,9 @@ def test_cleanup_during_an_unwind_keeps_the_exception_in_flight(
     Raised, the refusal would take the place of what was stopping the run — a SIGTERM's
     143, a Ctrl-C, a refused write — and the run would exit with the cleanup's code and
     sentence. The very exception in flight is the one that leaves, whether the cleanup met
-    the raw ``OSError`` of a temp file's removal or the ``OutputTreeError`` of a lock or a
-    lease ledger released through the output tree's net.
+    the raw ``OSError`` of a temp file's removal, the ``OutputTreeError`` of a lock or a
+    lease ledger released through the output tree's net, or the ``CacheError`` of a lease
+    ledger the release could not read back.
     """
     in_flight = stopping()
     with pytest.raises(type(in_flight)) as excinfo:
@@ -1064,7 +1073,7 @@ def test_a_sqlite_error_that_refuses_no_write_leaves_as_itself(tmp_path: Path, c
 
 
 # ---------------------------------------------------------------------------
-# The output tree's questions — absent
+# The output tree's questions — absent, tree_entries
 # ---------------------------------------------------------------------------
 
 
@@ -1099,3 +1108,76 @@ def test_a_file_this_account_cannot_reach_is_not_called_absent(tmp_path: Path):
     finally:
         locked.chmod(0o755)
     assert answers == [False, False]
+
+
+def test_tree_entries_lists_a_directory_and_says_which_entries_are_directories(tmp_path: Path):
+    """Each entry with whether it is a directory, sorted; a directory never made holds none."""
+    (tmp_path / "step1_0.out").write_text("", encoding="utf-8")
+    (tmp_path / "attempt1").mkdir()
+    (tmp_path / "attempt2").symlink_to(tmp_path / "attempt1", target_is_directory=True)
+    assert chemrefine_io.tree_entries(tmp_path) == [
+        (tmp_path / "attempt1", True),
+        (tmp_path / "attempt2", True),
+        (tmp_path / "step1_0.out", False),
+    ]
+    assert chemrefine_io.tree_entries(tmp_path / "never-made") == []
+
+
+@pytest.mark.parametrize(
+    ("mode", "reason"),
+    [
+        pytest.param(None, "Not a directory", id="a-regular-file-in-its-place"),
+        pytest.param(
+            0o000,
+            "Permission denied",
+            id="no-access",
+            marks=pytest.mark.skipif(_AS_ROOT, reason="root reads through any mode"),
+        ),
+        pytest.param(
+            0o111,
+            "Permission denied",
+            id="search-only",
+            marks=pytest.mark.skipif(_AS_ROOT, reason="root reads through any mode"),
+        ),
+    ],
+)
+def test_a_directory_the_filesystem_will_not_list_is_refused_not_read_as_empty(
+    tmp_path: Path, mode: int | None, reason: str
+):
+    """A listing the filesystem refuses is the cache's error naming the directory.
+
+    ``Path.glob`` answers ``[]`` for each of these, on every Python: a structure that has
+    attempts read as one that has none, whose next attempt would be numbered over the
+    first and whose resolution record would never be found.
+    """
+    structure_dir = tmp_path / "0"
+    if mode is None:
+        structure_dir.write_text("", encoding="utf-8")
+    else:
+        (structure_dir / "attempt1").mkdir(parents=True)
+        structure_dir.chmod(mode)
+    try:
+        with pytest.raises(CacheError) as excinfo:
+            chemrefine_io.tree_entries(structure_dir)
+    finally:
+        structure_dir.chmod(0o755)
+    assert str(excinfo.value) == f"cannot read {structure_dir}: {reason}"
+    assert isinstance(excinfo.value.__cause__, OSError)
+
+
+@pytest.mark.skipif(_AS_ROOT, reason="root reads through any mode")
+def test_a_directory_listed_but_not_searched_still_says_what_it_holds(tmp_path: Path):
+    """Whether an entry is a directory comes with the listing, not from a stat that is refused.
+
+    Asked of ``Path.is_dir``, a directory that can be listed and not searched raises on
+    Python 3.11 to 3.13 and calls every attempt a file on 3.14.
+    """
+    structure_dir = tmp_path / "0"
+    (structure_dir / "attempt1").mkdir(parents=True)
+    (structure_dir / "step1_0.out").write_text("", encoding="utf-8")
+    structure_dir.chmod(0o444)
+    try:
+        entries = chemrefine_io.tree_entries(structure_dir)
+    finally:
+        structure_dir.chmod(0o755)
+    assert entries == [(structure_dir / "attempt1", True), (structure_dir / "step1_0.out", False)]

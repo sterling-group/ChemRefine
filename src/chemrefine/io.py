@@ -21,8 +21,9 @@ outside this module a call that writes a path stands inside :func:`tree_write`, 
 function is listed there with what it writes instead.
 
 What a run reads back from its own tree is asked here too. :func:`absent` is the one
-question whether something is there: it answers the same on every supported Python, and
-never reads what the filesystem refuses as nothing being there.
+question whether something is there, and :func:`tree_entries` the one listing of a
+directory: each answers the same on every supported Python, and neither reads what the
+filesystem refuses as nothing being there.
 """
 
 from __future__ import annotations
@@ -42,7 +43,7 @@ import numpy as np
 from ase import Atoms
 from numpy.typing import NDArray
 
-from chemrefine.errors import ConfigError, OutputTreeError
+from chemrefine.errors import CacheError, ConfigError, OutputTreeError
 from chemrefine.quantities import HARTREE_TO_KCALMOL, boltzmann_weights
 
 if TYPE_CHECKING:
@@ -374,13 +375,15 @@ def cleanup() -> Generator[None]:
     is running for, in this frame or in any caller's. Cleanup reached from inside a
     caller's handler therefore counts the handled exception as in flight, which is why only
     cleanup belongs in here, never a write the run needs. A refusal is an :class:`OSError`,
-    or the :class:`~chemrefine.errors.OutputTreeError` :func:`tree_write` turns one into;
-    anything else — a bug, a second ``KeyboardInterrupt`` — surfaces.
+    or what this package turns one into over a run's own tree — the
+    :class:`~chemrefine.errors.OutputTreeError` of :func:`tree_write`, the
+    :class:`~chemrefine.errors.CacheError` of a record the cleanup reads back before it
+    writes; anything else — a bug, a second ``KeyboardInterrupt`` — surfaces.
     """
     in_flight = sys.exception()
     try:
         yield
-    except (OSError, OutputTreeError) as e:
+    except (OSError, OutputTreeError, CacheError) as e:
         if in_flight is None:
             raise
         logger.warning("could not clean up during %s: %s", type(in_flight).__name__, e)
@@ -404,6 +407,25 @@ def absent(path: Path) -> bool:
     except OSError:
         return False
     return False
+
+
+def tree_entries(directory: Path) -> list[tuple[Path, bool]]:
+    """What a directory of a run's output tree holds: each entry, and whether it is a directory.
+
+    The one listing of the run's own tree, sorted by path; ``[]`` when ``directory`` is
+    not there. A directory the filesystem will not list — another account's mode, a
+    regular file in its place — is :class:`~chemrefine.errors.CacheError`, where
+    ``Path.glob`` answers an empty list and a run would take a structure that has
+    attempts for one that has none. Whether an entry is a directory is read with the
+    listing, so a directory that can be listed and not searched answers too.
+    """
+    try:
+        with os.scandir(directory) as scan:
+            return sorted((Path(entry.path), entry.is_dir()) for entry in scan)
+    except FileNotFoundError:
+        return []
+    except OSError as e:
+        raise CacheError(f"cannot read {directory}: {e.strerror or e}") from e
 
 
 # ---------------------------------------------------------------------------

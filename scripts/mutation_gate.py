@@ -167,8 +167,8 @@ _BUNDLED: tuple[Mutation, ...] = (
     Mutation(
         id="nms-record-worn-only-over-its-output",
         path="src/chemrefine/nms.py",
-        old="    return child_output.read_bytes() == canonical_output.read_bytes()\n",
-        new="    return True\n",
+        old="        return child_output.read_bytes() == canonical_output.read_bytes()\n",
+        new="        return child_output.read_bytes() is not None\n",
         tests="tests/test_nms.py",
         breaks="the record an install writes before its promote is worn by whatever reaches "
         "the canonical path instead — round 1 run again there after a stop is cached as "
@@ -446,6 +446,16 @@ _BUNDLED: tuple[Mutation, ...] = (
         breaks="an output under a directory the run cannot search is ledgered as never "
         "written, so a resume takes the finished job for one that left nothing and runs it "
         "again",
+    ),
+    Mutation(
+        id="unlistable-directory-is-not-empty",
+        path="src/chemrefine/io.py",
+        old='        raise CacheError(f"cannot read {directory}: {e.strerror or e}") from e\n',
+        new="        return []\n",
+        tests="tests/test_io.py",
+        breaks="a structure directory that cannot be listed reads as one with no attempts, "
+        "so a promoted NMS winner is cached as an untouched round 1 and the next attempt is "
+        "numbered over the first",
     ),
     Mutation(
         id="cleanup-keeps-the-exception-in-flight",

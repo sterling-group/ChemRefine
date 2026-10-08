@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
 from chemrefine import ids
-from chemrefine.errors import ConfigError
+from chemrefine.errors import CacheError, ConfigError
 from chemrefine.ids import (
     StepTemplate,
     allocate_child_ids,
@@ -104,7 +105,7 @@ def test_attempt_dirs_are_ordered_by_number_not_by_name_or_clock(tmp_path):
     for name, age in (("attempt2", 0), ("attempt10", 7200), ("attempt9", 3600)):
         (tmp_path / name).mkdir()
         os.utime(tmp_path / name, (now - age, now - age))  # attempt2 is the newest by clock
-    (tmp_path / "attemptX").mkdir()  # not an attempt — ignored, as `is_attempt_dir` says
+    (tmp_path / "attemptX").mkdir()  # not an attempt: no number
     (tmp_path / "attempt3.bak").write_text("", encoding="utf-8")
 
     assert [p.name for p in attempt_dirs_newest_first(tmp_path)] == [
@@ -114,6 +115,61 @@ def test_attempt_dirs_are_ordered_by_number_not_by_name_or_clock(tmp_path):
     ]
     assert latest_attempt_dir(tmp_path) == tmp_path / "attempt10"
     assert attempt_dirs_newest_first(tmp_path / "nothing-here") == []
+
+
+def test_a_structures_canonical_state_is_everything_but_its_attempts(tmp_path):
+    """One membership test splits a structure's directory, so the halves cannot overlap.
+
+    An ``attempt<n>`` directory is an attempt; a file of that name, a directory with no
+    number and an engine-written directory are the calculation's own and move with it.
+    """
+    for name in ("attempt1", "attempt12", "attemptX", "tensors"):
+        (tmp_path / name).mkdir()
+    for name in ("attempt7", "step1_0.out"):
+        (tmp_path / name).write_text("", encoding="utf-8")
+
+    assert ids.canonical_entries(tmp_path) == [
+        (tmp_path / "attempt7", False),
+        (tmp_path / "attemptX", True),
+        (tmp_path / "step1_0.out", False),
+        (tmp_path / "tensors", True),
+    ]
+    assert [p.name for p in ids.attempt_dirs_newest_first(tmp_path)] == ["attempt12", "attempt1"]
+    assert ids.canonical_entries(tmp_path / "nothing-here") == []
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
+@pytest.mark.parametrize("mode", [0o000, 0o111], ids=["no-access", "search-only"])
+def test_a_structure_directory_that_cannot_be_listed_is_not_one_with_no_attempts(tmp_path, mode):
+    """An unlistable directory is refused by name; it does not number its next attempt ``1``.
+
+    Read as empty, the next attempt would be numbered over the first, a rebuild would find
+    no children, and a promoted winner would lose the record that names it.
+    """
+    structure_dir = tmp_path / "0"
+    (structure_dir / "attempt1").mkdir(parents=True)
+    structure_dir.chmod(mode)
+    try:
+        for ask in (ids.next_attempt_dir, ids.latest_attempt_dir, ids.canonical_entries):
+            with pytest.raises(CacheError) as excinfo:
+                ask(structure_dir)
+            assert str(excinfo.value) == f"cannot read {structure_dir}: Permission denied"
+    finally:
+        structure_dir.chmod(0o755)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
+def test_a_directory_listed_but_not_searched_still_numbers_its_attempts(tmp_path):
+    """The same answer on every Python where ``Path.is_dir`` gives two and neither is it."""
+    structure_dir = tmp_path / "0"
+    (structure_dir / "attempt1").mkdir(parents=True)
+    (structure_dir / "attempt2").mkdir()
+    structure_dir.chmod(0o444)
+    try:
+        answers = (ids.next_attempt_dir(structure_dir), ids.latest_attempt_dir(structure_dir))
+    finally:
+        structure_dir.chmod(0o755)
+    assert answers == (structure_dir / "attempt3", structure_dir / "attempt2")
 
 
 def test_the_output_trees_bookkeeping_names():

@@ -693,8 +693,6 @@ def _read_arrays(path: Path) -> Any:
     object array. The cache's promise that loading it can never run code from the file
     therefore holds for the ``.npz`` sidecar too, as a check rather than a convention.
     """
-    if not path.is_file():
-        raise CacheError(f"step cache at {path.parent} has no {path.name}; rebuild the step")
     try:
         # The handle is opened here rather than left to ``np.load``: handed a path, numpy
         # opens the file itself and hands it to the archive reader *after* releasing its
@@ -703,35 +701,45 @@ def _read_arrays(path: Path) -> Any:
         # the handle closes on every exit below.
         with path.open("rb") as handle, np.load(handle, allow_pickle=False) as loaded:
             return {key: loaded[key] for key in loaded.files}
+    except FileNotFoundError:
+        raise CacheError(
+            f"step cache at {path.parent} has no {path.name}; rebuild the step"
+        ) from None
     except (OSError, EOFError, ValueError, zipfile.BadZipFile) as e:
         # The net is the file's layers, not a list of the failures that have been seen. A
         # sidecar is a filesystem entry holding a ZIP container holding ``.npy`` members,
         # and each layer refuses in its own type: the filesystem in ``OSError`` (a
-        # directory, a mode-000 file); an empty file in ``EOFError`` (nothing to sniff);
-        # a torn archive or a member whose CRC no longer matches in ``BadZipFile``; a short
-        # or garbled member in ``ValueError``, which is also numpy's refusal of an object
-        # array. Named by layer the list can be checked complete — one test per layer holds
-        # it — where a list grown from surprises lets the next unlisted failure reach the
-        # user as a traceback with exit 1, in place of this error and its rebuild advice.
+        # directory, a mode-000 file, a ``_cache/`` this account cannot search — a file
+        # that is not there is the absence above); an empty file in ``EOFError`` (nothing
+        # to sniff); a torn archive or a member whose CRC no longer matches in
+        # ``BadZipFile``; a short or garbled member in ``ValueError``, which is also numpy's
+        # refusal of an object array. Named by layer the list can be checked complete — one
+        # test per layer holds it — where a list grown from surprises lets the next unlisted
+        # failure reach the user as a traceback with exit 1, in place of this error and its
+        # rebuild advice.
         raise CacheError(f"corrupt coordinate sidecar at {path}: {e}") from e
 
 
 def read_json(path: Path, default: Any, *, label: str) -> Any:
-    """Return the JSON parsed from ``path``, or ``default`` if it doesn't exist.
+    """Return the JSON parsed from ``path``, or ``default`` if there is no such file.
 
     Raises :class:`CacheError` (naming ``label``) if the file is present but cannot be
     read as JSON — malformed, not text, or not readable by this account — so callers
     treat a corrupt or unreadable sidecar as fatal rather than silently continuing from
     an empty state. Unreadable is in the net for the reason the lease and sidecar readers
-    give: ``is_file`` is true of a mode-000 document or another user's, and left to the
-    reader the ``PermissionError`` would escape every handler as a traceback with exit 1,
-    where the docs promise the cache's own code and say to restore access for an unreadable
-    file.
+    give: a mode-000 document or another user's is there, and left to the reader the
+    ``PermissionError`` would escape every handler as a traceback with exit 1, where the
+    docs promise the cache's own code and say to restore access for an unreadable file.
+
+    Absence is the read's own ``FileNotFoundError``, never a question asked first: under a
+    ``_cache/`` this account cannot search, ``Path.is_file`` raises on one Python and
+    answers ``False`` on the next, where a ledger, a manifest or a resolution record would
+    read as never written.
     """
-    if not path.is_file():
-        return default
     try:
         return json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return default
     except json.JSONDecodeError as e:
         raise CacheError(f"corrupt {label} at {path}: {e}") from e
     except (OSError, ValueError) as e:

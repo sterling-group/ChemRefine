@@ -200,22 +200,33 @@ def _lock_holder(lock: Path) -> tuple[str, int, str] | None:
     try:
         record = json.loads(lock.read_text(encoding="utf-8"))
         return str(record["host"]), int(record["pid"]), str(record["started"])
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, OverflowError):
         return None
 
 
-def _pid_alive(pid: int) -> bool:
-    """Whether ``pid`` names a live process on *this* host.
+def _pid_alive(pid: int) -> bool | None:
+    """Whether ``pid`` names a live process on *this* host; ``None`` where that cannot be asked.
 
     ``PermissionError`` means the process exists and belongs to someone else — alive.
     Only :class:`ProcessLookupError` proves it gone.
+
+    ``None`` is a number the kernel cannot be asked about as one process's: one not above
+    zero, which ``os.kill`` reads as a process group or as every process, and one past its
+    pid type (``OverflowError``). This program records neither, so such a record is
+    damaged from outside, and it proves nothing about the driver or job that wrote it.
+    Three answers rather than two, so no caller takes "cannot be asked" for "gone": a
+    holder is reclaimed, and a lease swept, on ``False`` alone.
     """
+    if pid <= 0:
+        return None
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
         return True
+    except OverflowError:
+        return None
     return True
 
 
@@ -228,10 +239,10 @@ class LockStatus:
     unreadable (every holder field then ``None``: the claim path refuses that file too,
     so held is the answer the two readers must share). ``alive`` is three-valued —
     ``True`` / ``False`` only for a same-host holder, ``None`` when the holder is on
-    another host and liveness cannot be probed from here (still ``held``: the reclaim
-    machinery, not a status read, is the only thing entitled to call a foreign lock
-    stale). Reporting only — claiming the lock remains :func:`run_lock`'s job, with
-    its atomic-rename reclaim dance.
+    another host, or its record names a number no process can have, and liveness cannot
+    be probed from here (still ``held``: the reclaim machinery, not a status read, is the
+    only thing entitled to call a foreign lock stale). Reporting only — claiming the lock
+    remains :func:`run_lock`'s job, with its atomic-rename reclaim dance.
     """
 
     held: bool
@@ -411,7 +422,7 @@ def _link_claim(claim: Path, lock: Path, output_dir: Path) -> None:
         holder = _lock_holder(lock)
         if holder is not None and holder[0] == socket.gethostname():
             host, pid, started = holder
-            if not reclaimed and not _pid_alive(pid):
+            if not reclaimed and _pid_alive(pid) is False:
                 reclaimed = True
                 if _reclaim_stale(lock, holder):
                     logger.warning(
@@ -549,9 +560,10 @@ def require_no_live_jobs(config: Config) -> None:
       harder than the original — so that case warns and proceeds instead of refusing
       on evidence no one there can produce, keeping those ids on record for the next
       run that can ask.
-    * a **local job** is probed by pid on its own host; recorded on another host it
-      cannot be probed from here, and the fence refuses until someone who knows that
-      run is dead deletes the record — the lock's own escape, worded the same way.
+    * a **local job** is probed by pid on its own host, and refused unless the probe
+      proves it gone (:func:`_pid_alive`); recorded on another host it cannot be probed
+      from here, and the fence refuses until someone who knows that run is dead deletes
+      the record — the lock's own escape, worded the same way.
 
     Leases every probe proves dead are garbage from a run that never unwound; the fence
     deletes them (it holds the lock, so they are its to clean), which is also what keeps
@@ -577,16 +589,18 @@ def require_no_live_jobs(config: Config) -> None:
                     f"drivers on one tree archive and resubmit each other's work, so this "
                     f"run stops here. If that run is known dead, delete the record and retry."
                 )
-            elif lease.pid is None or _pid_alive(lease.pid):
-                state = (
-                    f"(pid {lease.pid}) is still running" if lease.pid else "is not provably dead"
-                )
-                raise RunLockError(
-                    f"a previous run's local job {lease.id} {state} on this host "
-                    f"({ledger} records it), and its exit trap will still write into "
-                    f"this tree, so this run stops here. Wait for it to finish — or "
-                    f"kill it, delete the record, and retry."
-                )
+            else:
+                alive = None if lease.pid is None else _pid_alive(lease.pid)
+                if alive is not False:
+                    state = (
+                        f"(pid {lease.pid}) is still running" if alive else "is not provably dead"
+                    )
+                    raise RunLockError(
+                        f"a previous run's local job {lease.id} {state} on this host "
+                        f"({ledger} records it), and its exit trap will still write into "
+                        f"this tree, so this run stops here. Wait for it to finish — or "
+                        f"kill it, delete the record, and retry."
+                    )
         visited.append(step_dir)
     if slurm_ids:
         if not slurm.scheduler_reachable():

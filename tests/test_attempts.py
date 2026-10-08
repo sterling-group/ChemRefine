@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from chemrefine import attempts
-from chemrefine.errors import OutputTreeError
+from chemrefine.errors import CacheError, OutputTreeError
 
 
 def test_archive_numbers_attempts_sequentially(tmp_path: Path):
@@ -33,7 +33,7 @@ def test_archive_numbers_attempts_sequentially(tmp_path: Path):
     # A manually-added higher attempt + a non-matching 'attempt*' dir: K = max+1,
     # the odd dir is ignored, and existing attempt dirs are left in place.
     (sid_dir / "attempt5").mkdir()
-    (sid_dir / "attemptX").mkdir()  # matches the glob but not attempt<digits>
+    (sid_dir / "attemptX").mkdir()  # an attempt by its prefix, not by attempt<digits>
     (sid_dir / "step1_0.out").write_text("fail3", encoding="utf-8")
     assert attempts.archive(sid_dir).name == "attempt6"
     assert (sid_dir / "attempt1").is_dir() and (sid_dir / "attempt5").is_dir()
@@ -272,3 +272,59 @@ def test_a_promoted_directory_it_cannot_copy_whole_names_the_file_that_refused(t
     assert str(excinfo.value) == (
         f"cannot write {destination}: [Errno 13] Permission denied: '{source}'"
     )
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
+@pytest.mark.parametrize("mode", [0o000, 0o111], ids=["no-access", "search-only"])
+def test_a_structure_it_cannot_list_is_not_archived_blind(tmp_path: Path, mode: int):
+    """Archiving starts from what the directory holds, and one it cannot list is refused.
+
+    By name, before anything is created or moved, on every Python.
+    """
+    structure_dir = tmp_path / "0"
+    structure_dir.mkdir()
+    (structure_dir / "step1_0.out").write_text("round 1", encoding="utf-8")
+    structure_dir.chmod(mode)
+    try:
+        with pytest.raises(CacheError) as excinfo:
+            attempts.archive_previous(tmp_path, ["0"])
+    finally:
+        structure_dir.chmod(0o755)
+    assert str(excinfo.value) == f"cannot read {structure_dir}: Permission denied"
+    assert [p.name for p in structure_dir.iterdir()] == ["step1_0.out"]
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
+def test_a_seal_that_cannot_list_its_structure_is_refused_by_name(tmp_path: Path):
+    """A structure the run may write into and not list is not sealed blind.
+
+    The attempt can be created, so the first refusal is the listing of what to move.
+    """
+    structure_dir = tmp_path / "0"
+    structure_dir.mkdir()
+    (structure_dir / "step1_0.out").write_text("round 1", encoding="utf-8")
+    structure_dir.chmod(0o333)
+    try:
+        with pytest.raises(CacheError) as excinfo:
+            attempts.seal(structure_dir, structure_dir / "attempt1")
+    finally:
+        structure_dir.chmod(0o755)
+    assert str(excinfo.value) == f"cannot read {structure_dir}: Permission denied"
+    assert (structure_dir / "step1_0.out").read_text(encoding="utf-8") == "round 1"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
+def test_a_winner_whose_directory_cannot_be_listed_is_not_promoted_blind(tmp_path: Path):
+    """A promote that cannot list its source is refused by name, and copies nothing."""
+    attempt = tmp_path / "0" / "attempt1"
+    child = attempt / "0_m5_pos"
+    child.mkdir(parents=True)
+    (child / "step1_0_m5_pos.out").write_text("the run that won", encoding="utf-8")
+    child.chmod(0)
+    try:
+        with pytest.raises(CacheError) as excinfo:
+            attempts.promote(attempt, step=1, source_id="0_m5_pos", target_id="0")
+    finally:
+        child.chmod(0o755)
+    assert str(excinfo.value) == f"cannot read {child}: Permission denied"
+    assert [p.name for p in (tmp_path / "0").iterdir()] == ["attempt1"]

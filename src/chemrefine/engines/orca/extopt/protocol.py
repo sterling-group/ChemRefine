@@ -207,7 +207,9 @@ def write_wrapper_script(
     convergence retry may prepare the step again. So it is written with its mode through
     :func:`chemrefine.io.write_tree_file`, which replaces a file given one in a single
     rename: executable from its first appearance, and left alone when it already holds
-    these bytes executably — every prepare after the first.
+    these bytes executably — every prepare after the first. The comparison is of bytes, and
+    a wrapper that cannot be read back, or is no regular file, is not provably these bytes:
+    it is written like one that is not there, and the write names any refusal.
     """
     path = Path(path)
     extra = f" {extra_args}" if extra_args else ""
@@ -223,11 +225,13 @@ def write_wrapper_script(
         f"exec {shlex.quote(sys.executable)} -m chemrefine.engines.orca.extopt.bridge "
         f'--backend {backend} --bind "$SERVER_URL"{extra} "$1"\n'
     )
-    if (
-        path.is_file()
-        and stat.S_IMODE(path.stat().st_mode) == _EXECUTABLE
-        and path.read_text(encoding="utf-8") == script
-    ):
-        return path
-    write_tree_file(path, script, mode=_EXECUTABLE)
+    wanted = script.encode("utf-8")
+    try:
+        held = path.stat()
+        runnable = stat.S_ISREG(held.st_mode) and stat.S_IMODE(held.st_mode) == _EXECUTABLE
+        current = path.read_bytes() if runnable else None
+    except OSError:
+        current = None
+    if current != wanted:
+        write_tree_file(path, wanted, mode=_EXECUTABLE)
     return path
