@@ -25,13 +25,20 @@ a run's output tree refuses is the same named error whichever layer made it:
 :func:`test_the_run_tree_is_written_only_through_io` holds that call by call. A function
 whose write is no part of a run's tree — one the job runs, one writing a file a person
 owns — is listed by name, with what it writes.
+
+A boundary holds questions too. What is in a run's tree is asked through
+:func:`chemrefine.io.absent` and :func:`chemrefine.io.tree_entries`, whose answers do not
+depend on the Python version and never read a refusal as nothing being there:
+:func:`test_a_run_tree_is_asked_what_it_holds_only_through_io` holds every ``Path``
+existence question and ``glob`` in the package. A function that asks one of something that
+is no run's tree read by its driver is listed by name, with what it asks about.
 """
 
 from __future__ import annotations
 
 import ast
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import NamedTuple
 
@@ -539,20 +546,21 @@ def _primitive(call: ast.Call, names: dict[str, str], modules: set[str]) -> str 
     return f".{name}" if name in _WRITER_METHODS or one_target else None
 
 
-def _raw_writes(tree: ast.AST) -> Iterator[_RawWrite]:
-    """Every call in ``tree`` that writes a path and stands inside no ``with`` of the net.
+def _calls(
+    tree: ast.AST, net: Callable[[ast.withitem], bool]
+) -> Iterator[tuple[str, bool, ast.Call]]:
+    """Every call in ``tree`` as ``(function, under the net, call)``.
 
-    Lexical: a write is under the net where it stands, not because a caller up the stack
+    The function is the call's enclosing names, dotted — a method under its class, a nested
+    function under the one that defines it — which is how an allowlist names it. Under the
+    net is lexical: a call is under it where it stands, not because a caller up the stack
     holds one. ``with a, b:`` is ``with a: with b:``, so an item after the net stands under
     it, and a ``def`` or ``lambda`` written under the net runs later, outside it.
     """
-    names, modules = _bindings(tree)
 
-    def net(item: ast.withitem) -> bool:
-        call = item.context_expr
-        return isinstance(call, ast.Call) and _resolved(call.func, names) == _NET
-
-    def walk(node: ast.AST, scope: tuple[str, ...], sealed: bool) -> Iterator[_RawWrite]:
+    def walk(
+        node: ast.AST, scope: tuple[str, ...], sealed: bool
+    ) -> Iterator[tuple[str, bool, ast.Call]]:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             scope, sealed = (*scope, node.name), False
         elif isinstance(node, ast.Lambda):
@@ -564,16 +572,25 @@ def _raw_writes(tree: ast.AST) -> Iterator[_RawWrite]:
             for statement in node.body:
                 yield from walk(statement, scope, sealed)
             return
-        if (
-            isinstance(node, ast.Call)
-            and not sealed
-            and (primitive := _primitive(node, names, modules)) is not None
-        ):
-            yield _RawWrite(".".join(scope) or "<module>", node.lineno, primitive)
+        if isinstance(node, ast.Call):
+            yield ".".join(scope) or "<module>", sealed, node
         for child in ast.iter_child_nodes(node):
             yield from walk(child, scope, sealed)
 
     return walk(tree, (), False)
+
+
+def _raw_writes(tree: ast.AST) -> Iterator[_RawWrite]:
+    """Every call in ``tree`` that writes a path and stands inside no ``with`` of the net."""
+    names, modules = _bindings(tree)
+
+    def net(item: ast.withitem) -> bool:
+        call = item.context_expr
+        return isinstance(call, ast.Call) and _resolved(call.func, names) == _NET
+
+    for function, sealed, call in _calls(tree, net):
+        if not sealed and (primitive := _primitive(call, names, modules)) is not None:
+            yield _RawWrite(function, call.lineno, primitive)
 
 
 def _package_raw_writes() -> Iterator[tuple[str, _RawWrite]]:
@@ -743,3 +760,196 @@ def test_every_writer_the_gate_names_is_one_it_finds():
         if [write.primitive for write in _raw_writes(ast.parse(source))] != [primitive]
     ]
     assert missed == []
+
+
+# ---------------------------------------------------------------------------
+# Questions — what a run's tree holds is asked through io
+# ---------------------------------------------------------------------------
+
+#: ``Path`` methods whose answer over a run's tree cannot be taken at its word, by name. Under
+#: a directory the account cannot search, ``exists``, ``is_file`` and ``is_dir`` raise on
+#: Python 3.11 to 3.13 and answer ``False`` on 3.14; ``glob`` and ``rglob`` answer an empty
+#: list for a directory they cannot list, on every Python.
+_ASKING_METHODS = frozenset({"exists", "glob", "is_dir", "is_file", "rglob"})
+
+_A_PERSONS_FILE = "a file or directory a person names: its reader words what it cannot use"
+_A_STATUS_READ = "a status read of a tree it does not drive: it reports, and holds no lock"
+_A_MANAGED_ENVIRONMENT = "a managed environment, outside every run tree"
+_INSIDE_THE_JOB = "a file of the job's own, asked inside the job"
+
+#: Functions that ask one of those of something that is no run's tree read by its driver, as
+#: ``(package-relative path, function)`` like :data:`_RAW_WRITERS`, each with what it asks
+#: about instead. An entry excuses its whole function, so it names one that asks nothing of
+#: a run's tree while driving it.
+_RAW_ASKERS: dict[tuple[str, str], str] = {
+    **dict.fromkeys(
+        [
+            ("agent_tools.py", "_seeds_for_reading"),
+            ("agent_tools.py", "build_structures"),
+            ("agent_tools.py", "read_structure_file"),
+            ("cache.py", "template_digest"),
+            ("config.py", "Config.missing_executables"),
+            ("engines/orca/input.py", "_referenced_file"),
+            ("gui/app.py", "create_app.bootstrap"),
+            ("gui/app.py", "create_app.browse"),
+            ("pipeline.py", "_seed"),
+            ("pipeline.py", "bootstrap"),
+            ("scaffold.py", "plan_templates"),
+            ("step.py", "derive_step_key"),
+            ("validate.py", "_inspect_steps"),
+            ("validate.py", "validate_config_text"),
+        ],
+        _A_PERSONS_FILE,
+    ),
+    **dict.fromkeys(
+        [
+            ("agent_tools.py", "_latest_log"),
+            ("agent_tools.py", "_locate_output"),
+            ("agent_tools.py", "_steps_csv_rows"),
+            ("cache.py", "has_results"),
+            ("pipeline.py", "lock_status"),
+        ],
+        _A_STATUS_READ,
+    ),
+    **dict.fromkeys(
+        [
+            ("cli.py", "backends_install"),
+            ("cli.py", "backends_list"),
+            ("cli.py", "backends_path"),
+            ("engines/_provision.py", "_env_distribution"),
+            ("engines/_provision.py", "_env_lib"),
+            ("engines/_provision.py", "_existing_env_tool"),
+            ("engines/_provision.py", "_install_spec"),
+            ("engines/_provision.py", "build_backend_env"),
+            ("engines/_provision.py", "detect_env_tool"),
+            ("engines/_provision.py", "require_backend"),
+            ("engines/_provision.py", "resolve_launcher"),
+        ],
+        _A_MANAGED_ENVIRONMENT,
+    ),
+    **dict.fromkeys(
+        [
+            ("engines/mlip/backends/chgnet.py", "ChgnetTrainer.train_with_library"),
+            ("engines/mlip/calculator.py", "build_calculator"),
+            ("engines/orca/extopt/bridge.py", "resolve_server_token"),
+        ],
+        _INSIDE_THE_JOB,
+    ),
+}
+
+
+class _RawAsk(NamedTuple):
+    """One call that asks a path what is there through a method io's questions replace."""
+
+    function: str
+    line: int
+    method: str
+
+
+def _raw_asks(tree: ast.AST) -> Iterator[_RawAsk]:
+    """Every call in ``tree`` that asks a path what is there through one of the methods.
+
+    Matched by the method's name on anything that is no imported module: a receiver's type
+    is not in the syntax, and a module's own function of the name — ``glob.glob``,
+    ``os.path.exists`` — is another function with another answer.
+    """
+    _names, modules = _bindings(tree)
+    for function, _sealed, call in _calls(tree, lambda item: False):
+        func = call.func
+        if not isinstance(func, ast.Attribute) or func.attr not in _ASKING_METHODS:
+            continue
+        owner: ast.expr = func.value
+        while isinstance(owner, ast.Attribute):
+            owner = owner.value
+        if not (isinstance(owner, ast.Name) and owner.id in modules):
+            yield _RawAsk(function, call.lineno, f".{func.attr}")
+
+
+def _package_raw_asks() -> Iterator[tuple[str, _RawAsk]]:
+    """Every such question in the package outside io, as ``(package-relative path, call)``."""
+    home = Path(io.__file__)
+    for path in sorted(_PACKAGE_ROOT.rglob("*.py")):
+        if path == home:
+            continue
+        rel = path.relative_to(_PACKAGE_ROOT).as_posix()
+        for ask in _raw_asks(ast.parse(path.read_text(encoding="utf-8"))):
+            yield rel, ask
+
+
+def test_a_run_tree_is_asked_what_it_holds_only_through_io():
+    """Outside io, no call asks a ``Path`` whether something is there, or globs — or is listed.
+
+    Whether a job left its output, whether a record was ever written and which attempts a
+    structure has are each asked in a run's own tree, where another account's mode or a
+    directory that cannot be searched must be a named refusal. ``Path.exists``, ``is_file``
+    and ``is_dir`` raise there on one Python and answer ``False`` on the next, and ``glob``
+    answers an empty list everywhere — a traceback, or work read as never done. So the
+    question is :func:`chemrefine.io.absent`, the listing :func:`chemrefine.io.tree_entries`,
+    and a reader that reads at once takes absence from its own ``FileNotFoundError``. A
+    function asking about something else — :data:`_RAW_ASKERS` says what — is listed.
+    """
+    offences = [
+        f"{rel}:{ask.line}: {ask.function} — {ask.method}"
+        for rel, ask in _package_raw_asks()
+        if (rel, ask.function) not in _RAW_ASKERS
+    ]
+    assert not offences, (
+        "a path asked what is there outside io:\n  "
+        + "\n  ".join(offences)
+        + "\n\nIn a run's tree ask io.absent(path), list with io.tree_entries(directory), or "
+        "read and take absence from FileNotFoundError: Path.exists/is_file/is_dir answer "
+        "differently across Python versions under a directory that cannot be searched, and "
+        "glob reads one it cannot list as empty. A function that asks about something that "
+        "is no run's tree read by its driver is listed in _RAW_ASKERS with what it asks about."
+    )
+
+
+def test_every_listed_asker_still_asks():
+    """An entry whose function asks nothing of the kind has outlived its reason; it goes."""
+    asking = {(rel, ask.function) for rel, ask in _package_raw_asks()}
+    assert [key for key in _RAW_ASKERS if key not in asking] == []
+
+
+@pytest.mark.parametrize(
+    ("source", "found"),
+    [
+        ("def f(p):\n    return p.is_file()\n", [("f", ".is_file")]),
+        (
+            "def f(p):\n    return p.parent.exists() or p.is_dir()\n",
+            [("f", ".exists"), ("f", ".is_dir")],
+        ),
+        (
+            'def f(d):\n    return sorted(d.glob("attempt*")) + list(d.rglob("*"))\n',
+            [("f", ".glob"), ("f", ".rglob")],
+        ),
+        ("class C:\n    def m(self):\n        return self.path.exists()\n", [("C.m", ".exists")]),
+        (
+            "from chemrefine import io\ndef f(p):\n    with io.tree_write(p):\n"
+            "        return p.exists()\n",
+            [("f", ".exists")],
+        ),
+        (
+            "import glob\nimport os\ndef f(p):\n    return glob.glob(p), os.path.exists(p)\n",
+            [],
+        ),
+        (
+            "from chemrefine import io\ndef f(p):\n    return io.absent(p), io.tree_entries(p)\n",
+            [],
+        ),
+        ("def f(p):\n    return p.read_text(), p.stat(), list(p.iterdir())\n", []),
+    ],
+    ids=[
+        "is-file",
+        "exists-and-is-dir",
+        "glob-and-rglob",
+        "method",
+        "the-write-net-is-no-excuse",
+        "a-modules-own-function",
+        "ios-questions",
+        "reads-and-listings-that-raise",
+    ],
+)
+def test_the_question_gate_finds_what_it_is_for(source: str, found: list[tuple[str, str]]):
+    """The gate passes on a clean tree, so its walker is shown trees that are not."""
+    asks = [(ask.function, ask.method) for ask in _raw_asks(ast.parse(source))]
+    assert asks == found
