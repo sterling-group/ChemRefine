@@ -29,6 +29,7 @@ import os
 import re
 import shutil
 import subprocess
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -36,7 +37,8 @@ import pytest
 from chemrefine import io
 from chemrefine.recovery import Action, describe_actions
 
-STATIC = Path(__file__).resolve().parent.parent / "src" / "chemrefine" / "gui" / "static"
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+STATIC = _REPO_ROOT / "src" / "chemrefine" / "gui" / "static"
 INDEX = STATIC / "index.html"
 OURS = ("app.js", "forms.js")
 
@@ -359,7 +361,7 @@ def test_the_guis_brand_files_are_the_kits_own_bytes():
     committed, or a brand file hand-edited in place.
     """
     brand = STATIC / "brand"
-    docs_assets = Path(__file__).resolve().parent.parent / "docs" / "assets"
+    docs_assets = _REPO_ROOT / "docs" / "assets"
     # Everything the generator owns; site.webmanifest is page config, not a drawing, and
     # has no counterpart there — it is covered by the two tests below instead.
     mirrored = sorted(p for p in brand.iterdir() if p.suffix != ".webmanifest")
@@ -422,6 +424,41 @@ def test_the_manifest_starts_the_page_and_not_its_asset_directory():
         "start_url must stay two levels up so it resolves to the page under both the "
         f"Flask app and the docs-site playground, not {manifest['start_url']!r}"
     )
+
+
+def test_every_brand_gradient_paints_the_stops_it_states():
+    """Every gradient stop in a shipped brand SVG lies on its axis, and none steps back.
+
+    SVG paints a stop list that breaks either rule anyway, by clamping it: an offset
+    outside [0, 1] moves to the nearer end, and a stop below an earlier one is raised to
+    meet it. The file then shows a different gradient from the one it spells out, and no
+    renderer says so. Two stops at one offset stay legal; that is how SVG writes a hard
+    edge.
+
+    The shipped bytes are read rather than the generator's output: they are what a
+    browser paints, inkscape's flattened wordmarks included, and they are present wherever
+    the suite runs, the sdist included.
+    """
+    svgs = sorted(
+        [*(_REPO_ROOT / "docs" / "assets").glob("*.svg"), *(STATIC / "brand").glob("*.svg")]
+    )
+    assert svgs, "no SVGs under docs/assets or the GUI's brand directory — have they moved?"
+    checked = 0
+    broken: list[str] = []
+    for svg in svgs:
+        for element in ET.parse(svg).iter():
+            if element.tag.rpartition("}")[2] not in ("linearGradient", "radialGradient"):
+                continue
+            checked += 1
+            offsets = [
+                float(stop.get("offset", "0"))
+                for stop in element
+                if stop.tag.rpartition("}")[2] == "stop"
+            ]
+            if offsets != sorted(offsets) or not all(0 <= o <= 1 for o in offsets):
+                broken.append(f"{svg.relative_to(_REPO_ROOT)} #{element.get('id')}: {offsets}")
+    assert checked, f"no gradient found in {len(svgs)} SVGs — has their markup changed?"
+    assert broken == [], f"gradient stops off their axis or out of order: {broken}"
 
 
 def test_every_handler_the_page_calls_exists():

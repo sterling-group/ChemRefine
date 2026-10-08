@@ -26,9 +26,9 @@ Anatomy (paint order)
      and ends in the host stroke's exact ink (no seam at any junction)
   3. the flank face: the dark seen-from-below triangle bounded by the ascent,
      stroke B's dive, and the ground line; lighter blue up, navy down
-  4. the ground line: the sheet's straight back edge, left tip -> T onto B,
-     painted with the SAME face gradient (extended to TONGUE_INK at the back
-     edge), so face and tongue are one seamless field, not a bordered line
+  4. the ground line: the sheet's straight back edge, left tip -> T onto B;
+     the display mark paints it with the SAME face gradient, so face and
+     tongue are one seamless field, not a bordered line
   5. strokes A and B on top, round caps, measured ink ramps; B wears A's
      exact ink over the apex until the strokes visibly separate
 
@@ -103,8 +103,8 @@ STAGE_PREFIX = ".gen_logo-"
 REFERENCE_URL = "https://github.com/user-attachments/assets/ae7b1ad5-0d90-445c-be83-ddcb76fa85c3"
 
 # --------------------------------------------------------------- palette ----
-# All values measured from the reference raster (cell medians for the fill,
-# windowed stroke-core medians for the inks, in-face samples for the flank).
+# The fill and ink ramps are measured from the reference raster (cell medians
+# for the fill, windowed stroke-core medians for the inks).
 CHEM_NAVY, REFINE_TEAL = "#25567d", "#3f9b93"
 WHITE = "#ffffff"
 
@@ -118,7 +118,11 @@ FILL_STOPS = (
     (1.00, "#5ec69e"),
 )
 
-FACE_STOPS = ((0.00, "#3478a3"), (0.50, "#28608a"), (1.00, "#1d4a73"))
+# The flank face's ramp on gface's own axis, from the apex (0) down to the lower
+# edge of the display mark's ground stroke (1); its offsets are chosen on the
+# rendered mark. Only the top color is measured: the reference's in-face sample
+# at y=126. The two below are darker than the samples at y=280 and y=434.
+FACE_STOPS = ((0.000, "#3478a3"), (0.786, "#28608a"), (1.000, "#1d4a73"))
 
 # Dark-scheme remap: raise only what melts into a slate page.
 DARK_MAP = {"#1d4a75": "#2b689c", "#25567d": "#7fb0d8", "#1d4a73": "#2a659a"}
@@ -448,20 +452,16 @@ def gradients(dark=False):
             f'<linearGradient id="gm{name}" gradientUnits="userSpaceOnUse" '
             f'x1="{sx:.1f}" y1="{sy:.1f}" x2="{ex:.1f}" y2="{ey:.1f}">{rows}</linearGradient>'
         )
-    # the face gradient runs on to the back edge: the tongue is stroked with
-    # the SAME gradient, so face and tongue are one seamless paint field
-    face_pts = sample_chain([A_SEGS[0], B_SEGS[0]])
-    fy0 = min(p[1] for p in face_pts)
-    fy1 = max(p[1] for p in face_pts)
+    # TONGUE_INK is a hard stop at the axis end: it paints only past that end,
+    # where the gradient pads.
     gy1 = max(p[1] for p in sample_chain(GROUND_SEGS)) + SW_GROUND / 2
-    scale = (fy1 - fy0) / (gy1 - fy0)
     rows = "".join(
-        f'<stop offset="{o * scale:.3f}" stop-color="{_color(c, dark)}"/>' for o, c in FACE_STOPS
+        f'<stop offset="{o:.3f}" stop-color="{_color(c, dark)}"/>' for o, c in FACE_STOPS
     )
     rows += f'<stop offset="1" stop-color="{_color(TONGUE_INK, dark)}"/>'
     defs.append(
         f'<linearGradient id="gface" gradientUnits="userSpaceOnUse" '
-        f'x1="0" y1="{fy0:.1f}" x2="0" y2="{gy1:.1f}">{rows}</linearGradient>'
+        f'x1="0" y1="{APEX[1]:.1f}" x2="0" y2="{gy1:.1f}">{rows}</linearGradient>'
     )
     return "<defs>" + "".join(defs) + "</defs>"
 
