@@ -1229,6 +1229,25 @@ def test_a_rebuild_credits_a_winner_only_over_the_output_it_names(tmp_path: Path
         assert failure.best is not None and failure.best.id == "0_m5_pos"
 
 
+def test_no_child_is_promoted_over_a_canonical_output_that_is_not_there(tmp_path: Path):
+    """With either output gone there is nothing to compare, and nothing is called promoted."""
+    engine = _FakeNms(freqs={"0": _Freq(imaginary={}, modes=None)})
+    ctx = _ctx(tmp_path, (_h2("0"),))
+    attempt = ctx.step_dir / "0" / "attempt1"
+    child = engine.artifact_paths(replace(ctx, step_dir=attempt), "0_m5_pos")[1]
+    child.parent.mkdir(parents=True)
+    child.write_bytes(b"the child's output\n")
+
+    assert not nms._is_promoted(engine, ctx, "0", attempt, "0_m5_pos")
+
+    canonical = engine.artifact_paths(ctx, "0")[1]
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    canonical.write_bytes(child.read_bytes())
+    assert nms._is_promoted(engine, ctx, "0", attempt, "0_m5_pos")
+    child.unlink()
+    assert not nms._is_promoted(engine, ctx, "0", attempt, "0_m5_pos")
+
+
 def _resolve(
     route: str, engine: _FakeNms, round1: StepResults, ctx: StepContext
 ) -> nms.NmsResolution:

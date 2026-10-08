@@ -105,7 +105,7 @@ templates.
 | `did not terminate normally` | the program aborted with its own error | read the log tail via `run_status`, fix the input/template, `rerun-errors` |
 | `did not converge` | SCF or geometry unconverged | `rerun-errors` retries from the best geometry; consider a better start or looser thresholds |
 | `NMS: target stationary point not reached` | displacing + rerunning never hit the target imaginary count | inspect with `get_frequencies`/`analyze_mode`; adjust `displacement_value` or the template, then `rebuild-nms` or `rerun-errors` |
-| `NMS: winning child not promoted` | a displaced child reached the target, but the structure's canonical path holds another calculation: a run stopped before promoting it, or a rebuild, which moves no output, chose it | nothing to adjust: `rerun-errors` re-attempts the structure and promotes a winner |
+| `NMS: winning child not promoted` | a displaced child reached the target, but the structure's canonical path holds another calculation: a run stopped before promoting it, or `target` was edited since the children ran; a rebuild reports it and moves no output | nothing to adjust: `rerun-errors` re-attempts the structure and promotes a winner |
 | `failed` | a generic engine-reported failure | read the step's output via `run_status`'s log tail, then `rerun-errors` |
 
 Two situations that look like they need a recompute and do not:

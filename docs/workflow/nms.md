@@ -97,9 +97,10 @@ A rebuild promotes nothing. Where a child in `attemptK/` reaches the target whil
 canonical output is another calculation's — a run stopped before promoting it, or `target`
 edited since the children ran — `rebuild-cache` and `rebuild-nms` ledger the structure as
 `NMS: winning child not promoted`, naming the attempt and the child. They do not record the
-child's energies and frequencies under an id whose directory holds round 1. The step's
-`on_failure` policy then applies as to any failure: under `stop`, the next `resume` or
-`rerun-errors` re-attempts the structure and promotes a winner.
+child's energies and frequencies under an id whose directory holds another calculation's
+output. The step's `on_failure` policy then applies as to any failure: under `stop`, the
+next `resume` or `rerun-errors` re-attempts the structure — its displacement children run
+again — and promotes the winner of that round.
 
 ## Targets
 

@@ -167,9 +167,8 @@ _BUNDLED: tuple[Mutation, ...] = (
     Mutation(
         id="nms-record-worn-only-over-its-output",
         path="src/chemrefine/nms.py",
-        old="return child_output.is_file() and child_output.read_bytes() == "
-        "canonical_output.read_bytes()",
-        new="return child_output.is_file()",
+        old="    return child_output.read_bytes() == canonical_output.read_bytes()\n",
+        new="    return True\n",
         tests="tests/test_nms.py",
         breaks="the record an install writes before its promote is worn by whatever reaches "
         "the canonical path instead — round 1 run again there after a stop is cached as "

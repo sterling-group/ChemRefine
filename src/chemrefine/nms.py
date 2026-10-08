@@ -710,13 +710,15 @@ def _is_promoted(
     The one test of whose calculation the canonical path holds.
     :func:`chemrefine.attempts.promote` copies the winning child's output there verbatim, so
     the same bytes are what a finished install leaves. Different bytes are another
-    calculation — round 1, left there or run again — and a child whose output is gone leaves
-    nothing to hold the canonical one to. Both paths are the engine's own
+    calculation — round 1, or an earlier winner — and an output that is gone, the child's
+    or the canonical one, leaves nothing to compare. Both paths are the engine's own
     (:meth:`~chemrefine.engines.api.StructureArtifacts.artifact_paths`).
     """
     canonical_output = engine.artifact_paths(ctx, parent_id)[1]
     child_output = engine.artifact_paths(replace(ctx, step_dir=attempt), child_id)[1]
-    return child_output.is_file() and child_output.read_bytes() == canonical_output.read_bytes()
+    if not (child_output.is_file() and canonical_output.is_file()):
+        return False
+    return child_output.read_bytes() == canonical_output.read_bytes()
 
 
 def _passthrough(
