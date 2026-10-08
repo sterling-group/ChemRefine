@@ -1,0 +1,5 @@
+{
+  "model": "QiskitExperimentOptions",
+  "examples": ["experiment", "cores", "max_output_bytes"],
+  "tests_only": ["device", "backend_python"]
+}

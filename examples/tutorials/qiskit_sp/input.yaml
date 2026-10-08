@@ -1,0 +1,42 @@
+template_dir: ./templates
+output_dir: ./outputs
+input: ./h2.xyz
+
+charge: 0
+multiplicity: 1
+max_cores: 4
+dispatch: local
+
+steps:
+  - step: 1
+    name: vqe
+    engine: qiskit
+    operation: sp
+    options:
+      basis: sto-3g
+      active_space:
+        electrons: 2
+        orbitals: 2
+      mapper:
+        name: jordan_wigner
+      algorithm:
+        name: vqe
+      ansatz:
+        name: uccsd
+        options:
+          reps: 1
+          preserve_spin: true
+      initial_state:
+        name: hartree_fock
+      estimator:
+        name: statevector
+        options:
+          default_precision: 0.0
+          seed: 1234
+      optimizer:
+        name: slsqp
+        options:
+          maxiter: 500
+      initial_point:
+        name: zeros
+      cores: 1

@@ -24,7 +24,11 @@ One command runs every gate your pull request will face:
 scripts/release-check.sh --pr
 ```
 
-It needs nothing but a `[dev]` install — no ORCA, no MLIP stack — and gates
+It needs `[dev,qiskit-toolkit]` and a Python 3.12 resource worker, but no ORCA
+or MLIP stack. Set `RESOURCE_PY` to the worker interpreter provisioned with
+`chemrefine backends install qiskit-resources --python 3.12`, and install
+`pytest-cov>=7` and `coverage>=7.10` in that worker. The gate combines coverage
+from both interpreters before enforcing 100% lines and branches. It gates
 the checkout you are standing in, refusing to run against a `chemrefine`
 installed anywhere else. If it passes, CI will too, apart from the four
 things no workstation can do (named at the end of the run, and listed under
@@ -34,7 +38,7 @@ For the inner loop, the individual gates are still the fastest way round:
 
 ```bash
 pre-commit run --all-files                    # lint + format + docstring coverage
-pytest --cov=chemrefine --cov-fail-under=100  # 100% coverage; live tier deselected
+pytest --cov --cov-fail-under=0             # local collection; aggregate gate below
 mypy                                          # type check (config in pyproject.toml)
 mkdocs build --strict                         # docs build with no warnings
 python scripts/mutation_gate.py               # critical predicates are *checked*, not just run
@@ -42,7 +46,31 @@ python scripts/mutation_gate.py               # critical predicates are *checked
 
 The coverage gate is real: new code ships with tests that cover every
 line and branch, and every module/class/function carries a docstring
-(`interrogate --fail-under=100`). The suite takes under a minute — run it often.
+(`interrogate --fail-under=100`). Use focused tests in the inner loop; numerical provider jobs take longer.
+The `[test]` and `[dev]` extras include the fermionic quantum stack so numerical
+provider tests run in the main suite. CI also tests Runtime, cutting, RDM and
+resource providers at declared direct-provider floors and selected current
+versions, rejects skipped numerical cases, and combines worker coverage.
+Dependency floors for transitive packages are tested separately in the core job. A regular ChemRefine runtime installation
+still installs quantum libraries only when a Qiskit extra is selected.
+
+Individual provider jobs use `--cov-fail-under=0` to collect compatible worker
+coverage. The mandatory `coverage` job combines those files with the main suite
+and enforces 100% line and branch coverage; `required-checks-pass` requires that
+aggregate job. A successful individual job is not a completed release gate.
+
+Each provider job preserves a `validation-<profile>-<versions>` artifact containing
+the exact package versions, source revision, interpreter/platform, intended test
+command and JUnit execution report. Upload runs even when tests fail, so failed
+numerical cases retain their environment evidence. Resource snapshots come from
+the separately provisioned Python 3.12 interpreter. A provisioning failure can
+precede these files; inspect the job log in that case. The environment snapshot
+does not claim that tests passed: the JUnit report and job status establish that.
+When reporting local checks, distinguish the tested revision and successful
+subsets from a full gate; list baseline/platform failures separately. CI runs on
+pushes or pull requests targeting `main`, or explicit workflow dispatch, so an
+untriggered feature branch can have no Actions runs despite local validation.
+
 The mutation gate is the slow one (~1.5 min) because it runs a suite per mutation;
 it only needs re-running when you touch one of the predicates it lists
 (`python scripts/mutation_gate.py --list`).
@@ -62,10 +90,17 @@ would run every gate green while checking the frontend not at all. Setting
 **Biome is the frontend's ruff.** `pre-commit` runs `biome check --write` over
 `src/chemrefine/gui/static/`: it formats the JavaScript and CSS and lints all
 three languages, with the settings and their reasons in `biome.jsonc`. It is
-the one hook that is not `language: python`, so on a machine with no Node the
+configured with `language: node`, so on a machine with no Node the
 first `pre-commit` run downloads one into `~/.cache/pre-commit`. The vendored
 bundles under `static/vendor/` are excluded — they must stay byte-identical to
 what upstream published.
+
+**Actionlint checks GitHub's workflow syntax and expression contexts.** The
+SHA-pinned pre-commit hook runs locally and through the existing CI lint job;
+pre-commit manages its Go environment. The custom CUDA runner label is declared
+in `.github/actionlint.yaml`. Optional ShellCheck/Pyflakes integrations are
+disabled so workflow validation does not depend on which snippet linters happen
+to be installed. Linting does not dispatch workflows or request a GPU runner.
 
 ### The gates above do not cover the `integration` tier
 

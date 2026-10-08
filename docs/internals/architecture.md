@@ -18,7 +18,7 @@ Three ideas shape the rest, and everything below is a consequence of one of them
 ## Module layering
 
 ```
-cli → recovery → pipeline → step → {cache, filtering}
+cli → recovery → pipeline → step → {cache, filtering, input_files}
                                   → nms (a peer of step, not a leaf under it:
                                          it drives its own two rounds through
                                          lifecycle, cache, attempts, filtering, io)
@@ -52,18 +52,31 @@ digests it from there, so no engine has to hand the cache anything.
 formats (each engine owns its own input format — that is the plugin contract). Engines
 receive a focused `StepContext`, never the whole `Config`.
 
+`input_files` resolves file-valued engine options relative to the configuration
+directory and joins them with engine-declared manifest dependencies. It preserves
+the written references for portable fingerprints while workers receive absolute
+paths. The engine interprets its own bundle format; the cache hashes the resulting
+named files. Inputs produced by earlier steps need not exist during dry-run, but
+must be readable when the consuming step prepares work. See
+[Declared Input Files](../api/input_files.md).
+
 ## Entry points
 
-Three programs live in this package, and only the first is the pipeline:
+The user-facing pipeline and its worker entry points have separate process lifetimes:
 
 | Entry point | Started by | What it is |
 | --- | --- | --- |
 | `chemrefine` (`cli:main`) | the user | the pipeline; the only one that reads `sys.argv` for a *run* or sets its exit code |
 | `python -m chemrefine.engines._backend_server.server` | an ExtOpt step's job script | the gradient server ORCA's wrapper posts to |
 | `chemrefine.engines.orca.extopt.bridge` | ORCA, via `%method ProgExt` | relays one `.extinp.tmp` to that server and writes back `.engrad` |
+| rendered Qiskit molecular script | a `qiskit` step's job script | calls `workflow.run_job` in the selected backend interpreter |
+| rendered quantum experiment script | a `qiskit-experiment` step's job script | calls `experiment.run_experiment` and publishes one native artifact |
+| `python -m chemrefine.engines.qiskit.cutting_worker` | the circuit-cutting planner | constructs cutting experiments in an isolated, bounded subprocess |
 
-The last two run inside a job, one process per step, and exit with the job. They parse their
-own argv because they are separate programs — not because the layering leaks.
+The ExtOpt server runs once per step job; ORCA invokes its bridge for each gradient
+request. Quantum scripts run in scheduled workers, and the cutting subprocess
+exits when planning finishes. Separate programs parse their own argv without
+moving pipeline decisions into those workers.
 
 ## The recovery matrix
 
@@ -150,3 +163,59 @@ flowchart TD
 - `StepInputs` / `JobBatch` / `StepResults` — the engine lifecycle hand-offs.
 
 See the [API Reference](../api/index.md) for the full contracts.
+
+## Qiskit computation and artifacts
+
+The Qiskit package registers two engines behind the same orchestration contracts.
+`qiskit` is a `ScriptEngine` for per-structure single-point energies.
+`qiskit-experiment` implements `ArtifactEngine` and schedules one experiment whose
+scientific output is a bundle; the input structures pass through unchanged.
+Neither provides gradients, geometry optimization, frequencies, or normal-mode
+sampling.
+
+Molecular preparation is independent of solving. A PySCF driver or a validated
+`ElectronicStructureData` integral input supplies the electronic problem;
+freeze-core and active-space transformations record their energy offsets.
+Nature algorithms map the prepared problem and assemble the required components.
+Native fermionic algorithms receive `NativeSolveRequest` and can solve the
+prepared Hamiltonian without mandatory Pauli mapping. Reporting restores scalar
+offsets exactly once and exposes the electronic or total energy convention.
+
+```mermaid
+flowchart LR
+  CONFIG["Typed molecular options"] --> PREP["Driver or saved integrals\n→ prepared problem"]
+  PREP --> CHOICE{"Algorithm execution"}
+  CHOICE -- Nature --> MAP["Mapper → electronic context"]
+  MAP --> ASSEMBLE["Required circuit / pool /\noptimizer / execution resources"]
+  ASSEMBLE --> NATURE["GroundStateEigensolver"]
+  CHOICE -- native --> NATIVE["NativeSolveRequest → NativeOutcome"]
+  NATURE --> RESULT["QiskitRunResult\nenergies + diagnostics"]
+  NATIVE --> RESULT
+  RESULT --> OUTPUT["JSON sidecar + selected\nstate / circuit checkpoints"]
+```
+
+The component registries carry strict option models, capabilities, resource
+requirements, execution modes, and optional backend requirements. Preflight and
+managed-environment selection follow the same declarations, including transitive
+dependencies such as a sampler used by QNSPSA. Estimator and sampler resources own
+their session cleanup and optional transpilers. Registry discovery stays SDK-free;
+provider objects are constructed only inside the selected worker.
+
+Quantum bundles are engine-native outputs: a JSON descriptor names a hashed NPZ
+payload and records array shapes, types, and scientific provenance. Integral,
+state, tensor-factor, circuit, and experiment outputs reuse this container.
+Descriptors are published after their payloads, and local output validators check
+integrity and the selected product during completion, cache consumption, and
+rebuild. Bound-circuit payloads contain QPY data; SDK deserialization occurs in
+the selected worker rather than in generic cache handling.
+
+`checkpoints/` and `provider_jobs/` are preserved through job scratch cleanup.
+Checkpoints support scientific replay; provider journals record submission intent
+and returned identifiers. Ordinary cache recovery validates local outputs without
+retrieving or submitting remote jobs. These records do not serialize optimizer
+state or make interrupted variational calculations automatically resumable.
+
+See [Qiskit Engines](../api/engines_qiskit.md),
+[Quantum data handoffs](../engines/qiskit-handoffs.md), and
+[Quantum provider recovery](../engines/qiskit-recovery.md) for the public interfaces
+and recovery boundaries.

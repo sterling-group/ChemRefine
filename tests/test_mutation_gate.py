@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -229,6 +230,39 @@ def test_the_copy_is_put_ahead_of_an_existing_pythonpath_not_in_its_place(tmp_pa
     assert gate._prepended_path({}, src) == str(src)
     joined = gate._prepended_path({"PYTHONPATH": "/site/deps"}, src)
     assert joined.split(gate.os.pathsep) == [str(src), "/site/deps"]
+
+
+def test_equal_size_edits_with_identical_timestamps_use_current_source(tmp_path, monkeypatch):
+    """A cached pristine module must not hide a mutation sharing its size and timestamp."""
+    gate = _load_gate()
+    source = tmp_path / "src/chemrefine/__init__.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("value = 1\n")
+    timestamp = 1_000_000_000
+    os.utime(source, (timestamp, timestamp))
+    test = tmp_path / "tests/test_probe.py"
+    test.parent.mkdir()
+    test.write_text("from chemrefine import value\ndef test_value():\n    assert value == 1\n")
+    mutation = gate.Mutation(
+        "bytecode-probe",
+        "src/chemrefine/__init__.py",
+        "value = 1",
+        "value = 2",
+        "tests/test_probe.py",
+        "the source returns an incorrect value",
+    )
+    apply = gate._apply
+
+    def apply_with_same_timestamp(work, selected):
+        """Model two same-length writes falling inside a cache timestamp interval."""
+        apply(work, selected)
+        os.utime(work / selected.path, (timestamp, timestamp))
+
+    monkeypatch.setattr(gate, "REPO", tmp_path)
+    monkeypatch.setattr(gate, "_INPUTS", ("src", "tests"))
+    monkeypatch.setattr(gate, "MUTATIONS", (mutation,))
+    monkeypatch.setattr(gate, "_apply", apply_with_same_timestamp)
+    assert gate.main(["-k", "bytecode-probe"]) == 0
 
 
 def test_an_inconclusive_mutation_fails_the_gate_without_being_called_a_survivor(

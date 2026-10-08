@@ -1,0 +1,582 @@
+{
+  "version": 1,
+  "engine": {
+    "examples": [
+      {
+        "path": "examples/tutorials/qiskit_cutting/automatic.yaml",
+        "step": 1,
+        "fields": [
+          "cores",
+          "experiment"
+        ]
+      },
+      {
+        "path": "examples/tutorials/qiskit_experiment/bksf_graph.yaml",
+        "step": 1,
+        "fields": [
+          "max_output_bytes"
+        ]
+      }
+    ],
+    "guards": [
+      {
+        "fields": [
+          "device"
+        ],
+        "reason": "CUDA and unsupported device combinations fail during experiment preflight.",
+        "tests": [
+          "tests/test_engines_qiskit_experiment.py::test_invalid_experiments_fail_before_publication"
+        ]
+      },
+      {
+        "fields": [
+          "backend_python"
+        ],
+        "reason": "A custom worker interpreter uses the shared job-rendering and provisioning contract.",
+        "tests": [
+          "tests/test_engines_qiskit_experiment.py::test_artifact_engine_schedules_real_worker_and_preserves_scratch_payloads"
+        ]
+      }
+    ],
+    "internal": []
+  },
+  "components": {
+    "circuit_cutting": {
+      "examples": [
+        {
+          "path": "examples/tutorials/qiskit_cutting/automatic.yaml",
+          "step": 1,
+          "fields": [
+            "circuit_path",
+            "cutting",
+            "cutting.allow_gate_cuts",
+            "cutting.allow_wire_cuts",
+            "cutting.max_backjumps",
+            "cutting.max_sampling_overhead",
+            "cutting.max_subcircuit_qubits",
+            "cutting.mode",
+            "cutting.num_samples",
+            "cutting.seed",
+            "cutting.shots",
+            "observable",
+            "sampler",
+            "sampler.name",
+            "sampler.options"
+          ]
+        },
+        {
+          "path": "examples/tutorials/qiskit_cutting/manual.yaml",
+          "step": 1,
+          "fields": [
+            "cutting.gate_cuts",
+            "cutting.max_cuts",
+            "max_circuit_bytes"
+          ]
+        },
+        {
+          "path": "examples/tutorials/qiskit_cutting/partition.yaml",
+          "step": 1,
+          "fields": [
+            "cutting.partition_labels"
+          ]
+        },
+        {
+          "path": "examples/tutorials/qiskit_cutting/wire.yaml",
+          "step": 1,
+          "fields": [
+            "cutting.wire_cuts",
+            "cutting.wire_cuts[].before_instruction",
+            "cutting.wire_cuts[].qubit"
+          ]
+        }
+      ],
+      "guards": [
+        {
+          "fields": [
+            "cutting.max_exact_terms",
+            "cutting.max_generated_instructions",
+            "cutting.max_total_shots",
+            "cutting.max_working_bytes"
+          ],
+          "reason": "Allocation and transport limits are tested at rejection and batching boundaries.",
+          "tests": [
+            "tests/test_engines_qiskit_cutting.py::test_prospective_cutting_budget_rejections"
+          ]
+        },
+        {
+          "fields": [
+            "cutting.max_input_instructions",
+            "cutting.max_observables"
+          ],
+          "reason": "Allocation and transport limits are tested at rejection and batching boundaries.",
+          "tests": [
+            "tests/test_engines_qiskit_cutting.py::test_cutting_rejects_embedded_markers_and_remaining_input_limits"
+          ]
+        },
+        {
+          "fields": [
+            "cutting.max_input_qubits"
+          ],
+          "reason": "Allocation and transport limits are tested at rejection and batching boundaries.",
+          "tests": [
+            "tests/test_engines_qiskit_cutting.py::test_original_index_and_domain_guards"
+          ]
+        },
+        {
+          "fields": [
+            "cutting.max_qpy_bytes",
+            "cutting.worker_timeout_seconds"
+          ],
+          "reason": "Allocation and transport limits are tested at rejection and batching boundaries.",
+          "tests": [
+            "tests/test_engines_qiskit_cutting.py::test_planning_timeout_and_failure_are_config_errors"
+          ]
+        },
+        {
+          "fields": [
+            "cutting.max_subexperiments"
+          ],
+          "reason": "Allocation and transport limits are tested at rejection and batching boundaries.",
+          "tests": [
+            "tests/test_engines_qiskit_cutting.py::test_partition_and_record_descriptor_budgets_precede_generation"
+          ]
+        },
+        {
+          "fields": [
+            "cutting.publications_per_job"
+          ],
+          "reason": "Allocation and transport limits are tested at rejection and batching boundaries.",
+          "tests": [
+            "tests/test_engines_qiskit_cutting.py::test_typed_aer_memory_guard_and_publication_batches"
+          ]
+        }
+      ],
+      "internal": []
+    },
+    "double_factorized_evolution": {
+      "examples": [
+        {
+          "path": "examples/tutorials/qiskit_experiment/double_factorized.yaml",
+          "step": 1,
+          "fields": [
+            "evolution",
+            "evolution.energy_shift_hartree",
+            "evolution.exact_reference",
+            "evolution.factorization",
+            "evolution.factorization_tolerance",
+            "evolution.givens_tolerance",
+            "evolution.max_factors",
+            "evolution.max_integral_error",
+            "evolution.max_memory_mb",
+            "evolution.max_operations",
+            "evolution.max_optimizer_iterations",
+            "evolution.max_statevector_qubits",
+            "evolution.optimization_level",
+            "evolution.order",
+            "evolution.seed_transpiler",
+            "evolution.steps",
+            "evolution.z_representation",
+            "integral_bundle_path",
+            "max_input_bytes",
+            "times"
+          ]
+        }
+      ],
+      "guards": [],
+      "internal": []
+    },
+    "factorized_resources": {
+      "examples": [
+        {
+          "path": "examples/tutorials/qiskit_resources/df.yaml",
+          "step": 1,
+          "fields": [
+            "amplitude_bits_inner",
+            "amplitude_bits_outer",
+            "budget",
+            "budget.energy_error_hartree",
+            "budget.failure_probability",
+            "budget.representation_error_hartree",
+            "budget.synthesis_error_hartree",
+            "budget.target_overlap",
+            "coefficient_bits",
+            "factorization_threshold",
+            "initial_cost_guess",
+            "integral_bundle_path",
+            "method",
+            "qualtran_cost_graph",
+            "rotation_bits"
+          ]
+        },
+        {
+          "path": "examples/tutorials/qiskit_resources/thc.yaml",
+          "step": 1,
+          "fields": [
+            "thc_bundle_path"
+          ]
+        }
+      ],
+      "guards": [
+        {
+          "fields": [
+            "budget.max_phase_bits",
+            "budget.max_repetitions"
+          ],
+          "reason": "Factorization storage and QPE allocation guards are tested before provider work.",
+          "tests": [
+            "tests/test_engines_qiskit_resource_estimates.py::test_qpe_allocation_limits"
+          ]
+        },
+        {
+          "fields": [
+            "max_working_bytes"
+          ],
+          "reason": "Factorization storage and QPE allocation guards are tested before provider work.",
+          "tests": [
+            "tests/test_engines_qiskit_resource_estimates.py::test_factorization_preflight_without_optional_imports"
+          ]
+        }
+      ],
+      "internal": []
+    },
+    "fermionic_shadows": {
+      "examples": [
+        {
+          "path": "examples/tutorials/qiskit_experiment/majorana_shadows.yaml",
+          "step": 1,
+          "fields": [
+            "circuit_path",
+            "max_circuit_bytes",
+            "sampler",
+            "sampler.name",
+            "sampler.options",
+            "shadows",
+            "shadows.ensemble",
+            "shadows.max_memory_mb",
+            "shadows.max_order",
+            "shadows.max_total_shots",
+            "shadows.num_settings",
+            "shadows.postselect_particles",
+            "shadows.seed",
+            "shadows.shots_per_setting"
+          ]
+        },
+        {
+          "path": "examples/tutorials/qiskit_experiment/orbital_shadows.yaml",
+          "step": 1,
+          "fields": [
+            "shadows.num_particles"
+          ]
+        }
+      ],
+      "guards": [],
+      "internal": []
+    },
+    "lattice_dynamics": {
+      "examples": [
+        {
+          "path": "examples/tutorials/qiskit_experiment/bksf_graph.yaml",
+          "step": 1,
+          "fields": [
+            "dynamics",
+            "dynamics.encoding",
+            "dynamics.encoding.component_parities",
+            "dynamics.encoding.name",
+            "dynamics.exact_reference",
+            "dynamics.mapping",
+            "dynamics.max_exact_qubits",
+            "dynamics.max_qubits",
+            "dynamics.order",
+            "dynamics.steps",
+            "dynamics.synthesis",
+            "model",
+            "model.edges",
+            "model.edges[].density_interaction",
+            "model.edges[].hopping",
+            "model.edges[].hopping_imag",
+            "model.edges[].source",
+            "model.edges[].target",
+            "model.num_sites",
+            "model.site_potentials",
+            "model.spinful",
+            "occupied_modes",
+            "times"
+          ]
+        },
+        {
+          "path": "examples/tutorials/qiskit_experiment/dk_square.yaml",
+          "step": 1,
+          "fields": [
+            "dynamics.encoding.columns",
+            "dynamics.encoding.rows"
+          ]
+        }
+      ],
+      "guards": [
+        {
+          "fields": [
+            "dynamics.encoding.max_expanded_terms"
+          ],
+          "reason": "Encoding and evolution allocation guards are tested before numerical execution.",
+          "tests": [
+            "tests/test_engines_qiskit_encodings.py::test_mapping_and_reference_failures_are_explicit"
+          ]
+        },
+        {
+          "fields": [
+            "dynamics.encoding.max_generators"
+          ],
+          "reason": "Encoding and evolution allocation guards are tested before numerical execution.",
+          "tests": [
+            "tests/test_engines_qiskit_encodings.py::test_local_encoding_preflight"
+          ]
+        },
+        {
+          "fields": [
+            "dynamics.encoding.max_qubits"
+          ],
+          "reason": "Encoding and evolution allocation guards are tested before numerical execution.",
+          "tests": [
+            "tests/test_engines_qiskit_lattice.py::test_build_qubit_limit_and_unknown_mapping"
+          ]
+        },
+        {
+          "fields": [
+            "dynamics.max_evolution_blocks",
+            "dynamics.max_statevector_bytes"
+          ],
+          "reason": "Encoding and evolution allocation guards are tested before numerical execution.",
+          "tests": [
+            "tests/test_engines_qiskit_lattice.py::test_simulation_limits_are_checked_before_work"
+          ]
+        },
+        {
+          "fields": [
+            "model.onsite_interaction"
+          ],
+          "reason": "Encoding and evolution allocation guards are tested before numerical execution.",
+          "tests": [
+            "tests/test_engines_qiskit_lattice.py::test_lattice_rejects_ambiguous_models"
+          ]
+        }
+      ],
+      "internal": []
+    },
+    "pauli_measurement": {
+      "examples": [
+        {
+          "path": "examples/tutorials/qiskit_experiment/measurement.yaml",
+          "step": 1,
+          "fields": [
+            "circuit_path",
+            "max_circuit_bytes",
+            "measurement",
+            "measurement.grouping",
+            "measurement.max_memory_mb",
+            "measurement.max_terms",
+            "measurement.pilot_shots",
+            "measurement.seed",
+            "measurement.shots",
+            "observable",
+            "sampler",
+            "sampler.name"
+          ]
+        }
+      ],
+      "guards": [
+        {
+          "fields": [
+            "sampler.options"
+          ],
+          "reason": "Selected sampler options are tested through the execution resource contract.",
+          "tests": [
+            "tests/test_engines_qiskit_measurement.py::test_bell_correlators_and_dependent_pauli_signs"
+          ]
+        }
+      ],
+      "internal": []
+    },
+    "pauli_resources": {
+      "examples": [
+        {
+          "path": "examples/tutorials/qiskit_resources/pauli.yaml",
+          "step": 1,
+          "fields": [
+            "budget",
+            "budget.energy_error_hartree",
+            "budget.failure_probability",
+            "budget.representation_error_hartree",
+            "budget.synthesis_error_hartree",
+            "budget.target_overlap",
+            "hamiltonian",
+            "oracle",
+            "oracle.clifford",
+            "oracle.logical_qubits",
+            "oracle.provenance",
+            "oracle.rotations",
+            "oracle.t",
+            "oracle.toffoli"
+          ]
+        }
+      ],
+      "guards": [
+        {
+          "fields": [
+            "budget.max_phase_bits",
+            "budget.max_repetitions"
+          ],
+          "reason": "QPE allocation and Pauli input limits reject unsupported requests.",
+          "tests": [
+            "tests/test_engines_qiskit_resource_estimates.py::test_qpe_allocation_limits"
+          ]
+        },
+        {
+          "fields": [
+            "max_terms"
+          ],
+          "reason": "QPE allocation and Pauli input limits reject unsupported requests.",
+          "tests": [
+            "tests/test_engines_qiskit_resource_estimates.py::test_pauli_input_validation"
+          ]
+        }
+      ],
+      "internal": []
+    },
+    "rdm_reconstruction": {
+      "examples": [
+        {
+          "path": "examples/tutorials/qiskit_experiment/rdm_reconstruction.yaml",
+          "step": 2,
+          "fields": [
+            "hamiltonian_bundle_path",
+            "max_input_bytes",
+            "one_body_weights_array",
+            "rdm_bundle_path",
+            "reconstruction",
+            "reconstruction.accept_inaccurate",
+            "reconstruction.constraints",
+            "reconstruction.energy_weight",
+            "reconstruction.feasibility_tolerance",
+            "reconstruction.loss",
+            "reconstruction.max_iterations",
+            "reconstruction.max_memory_mb",
+            "reconstruction.num_particles",
+            "reconstruction.solver_tolerance",
+            "two_body_weights_array"
+          ]
+        }
+      ],
+      "guards": [],
+      "internal": []
+    },
+    "spacetime_postselection": {
+      "examples": [
+        {
+          "path": "examples/tutorials/qiskit_experiment/spacetime_postselection.yaml",
+          "step": 1,
+          "fields": [
+            "circuit_path",
+            "max_circuit_bytes",
+            "preparation_path",
+            "sampler",
+            "sampler.name",
+            "sampler.options",
+            "spacetime",
+            "spacetime.checks",
+            "spacetime.confidence",
+            "spacetime.diagonal_observables",
+            "spacetime.max_circuit_operations",
+            "spacetime.max_memory_mb",
+            "spacetime.max_qubits",
+            "spacetime.shots"
+          ]
+        }
+      ],
+      "guards": [],
+      "internal": []
+    },
+    "surface_code_resources": {
+      "examples": [
+        {
+          "path": "examples/tutorials/qiskit_resources/surface_code.yaml",
+          "step": 1,
+          "fields": [
+            "ccz_factory",
+            "ccz_factory.count",
+            "ccz_factory.cycles_per_state",
+            "ccz_factory.output_error_probability",
+            "ccz_factory.physical_qubits_per_factory",
+            "ccz_factory.provenance",
+            "ccz_states",
+            "code_distance",
+            "cycle_time_seconds",
+            "failure_budget",
+            "hardware_provenance",
+            "logical_cycles",
+            "logical_error_prefactor",
+            "logical_qubits",
+            "physical_error_probability",
+            "physical_qubits_per_patch_d2",
+            "routing_patch_multiplier",
+            "t_factory",
+            "t_factory.count",
+            "t_factory.cycles_per_state",
+            "t_factory.output_error_probability",
+            "t_factory.physical_qubits_per_factory",
+            "t_factory.provenance",
+            "t_states",
+            "threshold_probability"
+          ]
+        }
+      ],
+      "guards": [],
+      "internal": []
+    },
+    "variational_dynamics": {
+      "examples": [
+        {
+          "path": "examples/tutorials/qiskit_experiment/variational.yaml",
+          "step": 1,
+          "fields": [
+            "circuit_path",
+            "dynamics",
+            "dynamics.integrator",
+            "dynamics.max_memory_mb",
+            "dynamics.max_parameters",
+            "dynamics.max_pauli_terms",
+            "dynamics.max_publications",
+            "dynamics.max_velocity",
+            "dynamics.method",
+            "dynamics.metric_cutoff",
+            "dynamics.numerical_tolerance",
+            "dynamics.regularization",
+            "dynamics.steps",
+            "dynamics.time",
+            "estimator",
+            "estimator.name",
+            "initial_parameters",
+            "max_circuit_bytes",
+            "observable",
+            "observables"
+          ]
+        }
+      ],
+      "guards": [
+        {
+          "fields": [
+            "estimator.options"
+          ],
+          "reason": "Selected estimator options are tested through the gradient execution contract.",
+          "tests": [
+            "tests/test_engines_qiskit_dynamics.py::test_real_aer_estimator_compiles_derivative_ancillas"
+          ]
+        }
+      ],
+      "internal": []
+    }
+  },
+  "delegates": {
+    "sampler.options": "tests/test_engines_qiskit_examples.py::test_qiskit_nested_knob_universe_is_fully_filed",
+    "estimator.options": "tests/test_engines_qiskit_examples.py::test_qiskit_nested_knob_universe_is_fully_filed"
+  }
+}

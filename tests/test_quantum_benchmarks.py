@@ -1,0 +1,410 @@
+"""Benchmark evidence must distinguish unsupported work, failures and warmup costs."""
+
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+
+
+@pytest.fixture
+def benchmark(monkeypatch):
+    """Load the standalone CLI as used from a source checkout."""
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    spec = importlib.util.spec_from_file_location(
+        "quantum_benchmarks", SCRIPTS / "quantum_benchmarks.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_matrix_covers_registered_algorithms_ansatze_mappers_and_optimizers(benchmark):
+    from chemrefine.engines.qiskit.registry import REGISTRIES
+
+    rows = benchmark.cases("molecular")
+    for category in (
+        "algorithm",
+        "ansatz",
+        "mapper",
+        "optimizer",
+        "initial_state",
+        "initial_point",
+    ):
+        assert {row[category] for row in rows} == REGISTRIES[category].names()
+    assert len({benchmark.case_id(row) for row in rows}) == len(rows)
+
+
+def test_tutorial_matrix_covers_every_registered_experiment(benchmark):
+    import yaml
+
+    from chemrefine.engines.qiskit.experiment import EXPERIMENTS
+
+    names = {
+        step["options"]["experiment"]["name"]
+        for case in benchmark.cases("tutorials")
+        for step in yaml.safe_load((benchmark.ROOT / case["path"]).read_text())["steps"]
+    }
+    assert names == EXPERIMENTS.names()
+
+
+def test_local_provider_matrix_includes_only_credential_free_runtime_modes(benchmark):
+    from chemrefine.engines.qiskit.registry import ESTIMATORS, SAMPLERS
+
+    rows = benchmark.cases("primitives") + benchmark.cases("runtime")
+    for family, registry in (("estimator", ESTIMATORS), ("sampler", SAMPLERS)):
+        assert {row["provider"] for row in rows if row["family"] == family} == registry.names()
+    local = benchmark.cases("runtime")
+    assert len(local) == 48
+    assert all(row["fake_backend"] == "FakeManilaV2" for row in local)
+    assert all("backend_name" not in row for row in local)
+
+
+def test_regression_matrix_declares_required_ucc_and_spin_controls(benchmark):
+    rows = benchmark.cases("regressions")
+    explicit = [row for row in rows if row["ansatz"] == "ucc"]
+    assert explicit and all(row["ansatz_options"]["excitations"] for row in explicit)
+    sampled = [row for row in rows if row["algorithm"] == "skqd"]
+    assert len(sampled) == 1 and sampled[0]["algorithm_options"]["symmetrize_spin"] is True
+
+
+@pytest.mark.filterwarnings("ignore::DeprecationWarning:qiskit")
+@pytest.mark.filterwarnings("ignore::PendingDeprecationWarning:qiskit")
+def test_explicit_ucc_benchmark_consumes_recorded_controls(benchmark):
+    pytest.importorskip("qiskit_nature")
+    pytest.importorskip("qiskit_aer")
+    case = next(
+        row
+        for row in benchmark.cases("regressions")
+        if row["ansatz"] == "ucc"
+        and row["mapper"] == "jordan_wigner"
+        and row["optimizer"] == "slsqp"
+    )
+    row = benchmark.worker({"case": case, "device": "cpu", "warmups": 0, "repeats": 1})["rows"][0]
+    assert row["status"] == "ok", row.get("traceback", row)
+    assert row["resolved_options"]["ansatz"]["options"] == case["ansatz_options"]
+    assert row["energy_hartree"] == pytest.approx(-1.1373060358, abs=2e-3)
+
+
+def test_summary_excludes_warmups_and_keeps_failed_repetitions(benchmark):
+    base = {"case_id": "x", "device": "cpu", "family": "sampler", "status": "ok"}
+    rows = [
+        {**base, "phase": "warmup", "seconds": 1000},
+        {**base, "phase": "measure", "seconds": 1},
+        {**base, "phase": "measure", "seconds": 3},
+        {**base, "phase": "failure", "status": "error", "seconds": None},
+    ]
+    summary = benchmark.summarize(rows)[0]
+    assert summary["median_seconds"] == 2
+    assert summary["samples"] == 2
+    assert summary["status"] == "error,ok"
+
+
+def test_worker_does_not_report_failure_as_speed_or_skip(benchmark, monkeypatch):
+    import quantum_workloads
+
+    def prepare(*args):
+        def run():
+            raise AssertionError("wrong quantum answer")
+
+        return run, {}
+
+    monkeypatch.setattr(quantum_workloads, "prepare", prepare)
+    result = benchmark.worker(
+        {"case": {"family": "sampler"}, "device": "cpu", "warmups": 0, "repeats": 2}
+    )
+    assert result["rows"][0]["status"] == "error"
+    assert result["rows"][0]["seconds"] is None
+    assert "wrong quantum answer" in result["rows"][0]["reason"]
+
+
+def test_worker_records_unsupported_gpu_without_claiming_execution(benchmark):
+    result = benchmark.worker(
+        {
+            "case": {"family": "sampler", "provider": "statevector"},
+            "device": "cuda",
+            "warmups": 0,
+            "repeats": 1,
+        }
+    )
+    row = result["rows"][0]
+    assert row["status"] == "unsupported"
+    assert row["seconds"] is None
+
+
+@pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=pytest.mark.gpu)])
+def test_actual_primitive_benchmark_checks_completed_provider_result(benchmark, device):
+    aer = pytest.importorskip("qiskit_aer")
+    requested = "GPU" if device == "cuda" else "CPU"
+    if requested not in aer.AerSimulator().available_devices():
+        pytest.skip(f"{requested} absent from installed Aer build")
+    case = next(
+        c
+        for c in benchmark.cases("primitives")
+        if c["provider"] == "aer_statevector" and c["precision"] == "double"
+    )
+    result = benchmark.worker({"case": case, "device": device, "warmups": 1, "repeats": 2})
+    rows = result["rows"]
+    assert len(rows) == 3
+    assert all(row["status"] == "ok" and row["seconds"] > 0 for row in rows)
+    assert all(row["absolute_error"] <= row["tolerance"] for row in rows)
+    json.dumps(result, allow_nan=False)
+
+
+def test_command_timeout_retains_failed_case(benchmark, monkeypatch, tmp_path):
+    import subprocess
+
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired("worker", 1)
+
+    monkeypatch.setattr(benchmark, "snapshot", lambda: {})
+    monkeypatch.setattr(benchmark, "cases", lambda _: [{"family": "sampler"}])
+    monkeypatch.setattr(benchmark, "run_isolated_worker", timeout)
+    output = tmp_path / "results"
+    monkeypatch.setattr(sys, "argv", ["benchmark", "--output", str(output)])
+    assert benchmark.main() == 1
+    row = json.loads((output / "samples.jsonl").read_text())
+    assert row["status"] == "timeout" and row["seconds"] is None
+    assert (output / "summary.csv").is_file()
+
+
+def test_worker_resource_limits_are_explicit_and_recorded(benchmark, monkeypatch, tmp_path):
+    def execute(command, *, env, **kwargs):
+        assert {env[k] for k in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS")} == {
+            "8"
+        }
+        assert env["QISKIT_NUM_PROCS"] == "2"
+        return 7
+
+    monkeypatch.setattr(benchmark, "snapshot", lambda: {"environment": {"QISKIT_NUM_PROCS": "99"}})
+    monkeypatch.setattr(benchmark, "cases", lambda _: [{"family": "sampler", "cores": 8}])
+    monkeypatch.setattr(benchmark, "run_isolated_worker", execute)
+    output = tmp_path / "limits"
+    monkeypatch.setattr(
+        sys, "argv", ["benchmark", "--output", str(output), "--qiskit-processes", "2"]
+    )
+    assert benchmark.main() == 1
+    manifest = json.loads((output / "manifest.json").read_text())
+    assert manifest["environment"]["QISKIT_NUM_PROCS"] == "2"
+    assert manifest["qiskit_processes"] == 2
+    assert "worker exited 7" in json.loads((output / "samples.jsonl").read_text())["reason"]
+
+
+@pytest.mark.parametrize("finish", [False, True])
+def test_worker_process_group_cleans_up_descendants(benchmark, tmp_path, finish):
+    import os
+    import subprocess
+    import time
+
+    if sys.platform != "linux":
+        pytest.skip("requires Linux process-state inspection")
+    child = "import time; time.sleep(60)"
+    code = (
+        "import subprocess,sys,time; from pathlib import Path; "
+        f"p=subprocess.Popen([sys.executable,'-c',{child!r}]); "
+        "Path(sys.argv[1]).write_text(str(p.pid)); "
+        + ("sys.exit(0)" if finish else "time.sleep(60)")
+    )
+    pid_file = tmp_path / "child.pid"
+    with (tmp_path / "worker.log").open("w") as log:
+        kwargs = {"cwd": tmp_path, "env": dict(os.environ), "log": log, "timeout": 2}
+        command = [sys.executable, "-c", code, str(pid_file)]
+        if finish:
+            assert benchmark.run_isolated_worker(command, **kwargs) == 0
+        else:
+            with pytest.raises(subprocess.TimeoutExpired):
+                benchmark.run_isolated_worker(command, **kwargs)
+    pid = int(pid_file.read_text())
+    state = Path(f"/proc/{pid}/stat")
+    for _ in range(100):
+        try:
+            status = state.read_text().split()[2]
+        except (FileNotFoundError, ProcessLookupError):
+            break
+        if status == "Z":
+            break
+        time.sleep(0.01)
+    else:
+        pytest.fail("timed-out worker left a running descendant")
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "invalid"])
+def test_worker_rejects_invalid_transpiler_process_budget(benchmark, monkeypatch, tmp_path, value):
+    monkeypatch.setattr(
+        sys, "argv", ["benchmark", "--output", str(tmp_path / "new"), "--qiskit-processes", value]
+    )
+    with pytest.raises(SystemExit) as exc:
+        benchmark.main()
+    assert exc.value.code == 2
+    assert not (tmp_path / "new").exists()
+
+
+def test_analysis_rejects_partial_campaign_and_incomplete_repeats(benchmark, tmp_path):
+    from quantum_analysis import load_campaign
+
+    case = {"case_id": "x", "family": "sampler", "qubits": 4}
+    (tmp_path / "manifest.json").write_text(
+        json.dumps({"cases": [case], "repeats": 2, "warmups": 0, "device": "cpu"})
+    )
+    (tmp_path / "samples.jsonl").write_text("")
+    with pytest.raises(ValueError, match="incomplete campaign"):
+        load_campaign(tmp_path)
+    row = {
+        **case,
+        "device": "cpu",
+        "status": "ok",
+        "phase": "measure",
+        "seconds": 1,
+        "iteration": 0,
+    }
+    (tmp_path / "samples.jsonl").write_text(json.dumps(row) + "\n")
+    with pytest.raises(ValueError, match="not finalized"):
+        load_campaign(tmp_path)
+    (tmp_path / "summary.csv").touch()
+    with pytest.raises(ValueError, match="repetition count"):
+        load_campaign(tmp_path)
+    (tmp_path / "samples.jsonl").write_text((json.dumps(row) + "\n") * 2)
+    with pytest.raises(ValueError, match="duplicate"):
+        load_campaign(tmp_path)
+    (tmp_path / "samples.jsonl").write_text(
+        json.dumps(row) + "\n" + json.dumps({**row, "iteration": 1}) + "\n"
+    )
+    _, rows, summaries = load_campaign(tmp_path)
+    assert all(r["requested_qubits"] == 4 for r in rows)
+    assert summaries[0]["samples"] == 2
+
+
+@pytest.mark.parametrize("seconds", [0, -1, float("nan"), float("inf"), None, True, "1"])
+def test_analysis_rejects_invalid_successful_timings(benchmark, seconds):
+    from quantum_analysis import validate_samples
+
+    manifest = {"cases": [{"case_id": "x"}], "device": "cpu", "repeats": 1, "warmups": 0}
+    row = {
+        "case_id": "x",
+        "device": "cpu",
+        "status": "ok",
+        "phase": "measure",
+        "iteration": 0,
+        "seconds": seconds,
+    }
+    with pytest.raises(ValueError, match="finite and positive"):
+        validate_samples(manifest, [row])
+
+
+def test_analysis_validates_warmups_failure_order_and_manifest(benchmark):
+    from quantum_analysis import validate_samples
+
+    manifest: dict = {"cases": [{"case_id": "x"}], "device": "cpu", "repeats": 2, "warmups": 1}
+    warmup = {
+        "case_id": "x",
+        "device": "cpu",
+        "status": "ok",
+        "phase": "warmup",
+        "iteration": 0,
+        "seconds": 1,
+    }
+    failure = {**warmup, "status": "error", "phase": "failure", "seconds": None, "iteration": 1}
+    validate_samples(manifest, [warmup, failure])
+    # Older timeout rows legitimately have no iteration because the worker was killed.
+    validate_samples(manifest, [{k: v for k, v in failure.items() if k != "iteration"}])
+    invalid = [
+        ({**manifest, "cases": manifest["cases"] * 2}, [warmup], "unique"),
+        ({**manifest, "repeats": True}, [warmup], "settings"),
+        (manifest, [{**warmup, "device": "cuda"}], "device"),
+        (manifest, [{**warmup, "phase": "measure"}], "phase"),
+        (manifest, [warmup, failure, failure], "terminal failure"),
+        (manifest, [warmup, {**failure, "seconds": 0}], "no timing"),
+        (manifest, [warmup, {**failure, "iteration": 0}], "failure iteration"),
+        (manifest, [{**warmup, "status": "ignored"}], "unknown"),
+        (manifest, [{**warmup, "iteration": False}], "iteration"),
+    ]
+    for settings, rows, message in invalid:
+        with pytest.raises(ValueError, match=message):
+            validate_samples(settings, rows)
+
+
+def test_analysis_never_pairs_failed_or_partial_cases(benchmark):
+    from quantum_analysis import comparisons
+
+    cpu = [{"case_id": "x", "status": "ok", "median_seconds": 2, "campaign": "cpu"}]
+    gpu = [{"case_id": "x", "status": "ok", "median_seconds": 1, "campaign": "gpu"}]
+    assert comparisons(cpu, gpu)[0]["cpu_over_gpu"] == 2
+    gpu[0]["status"] = "error,ok"
+    assert comparisons(cpu, gpu) == []
+
+
+def test_analysis_distinguishes_cpu_wheel_from_cuda_build(benchmark):
+    from quantum_analysis import provider_versions
+
+    cpu = {"packages": {"qiskit-aer": "0.17.2", "Qiskit": "2.5.2"}}
+    gpu = {
+        **cpu,
+        "conda_packages": [{"name": "qiskit-aer", "build": "cuda129_py312"}],
+    }
+    assert provider_versions(cpu) != provider_versions(gpu)
+    assert provider_versions(cpu)["qiskit"] == "2.5.2"
+
+
+def test_analysis_comparison_requires_matched_science_and_resources(benchmark):
+    import copy
+
+    from quantum_analysis import validate_comparison
+
+    cpu: dict = {
+        "device": "cpu",
+        "source_sha256": {"workflow.py": "abc"},
+        "python": "3.12.14",
+        "platform": "linux",
+        "gpu": "GPU UUID, driver, build",
+        "timing": "completed operation",
+        "packages": {
+            "qiskit": "2.5.2",
+            "qiskit-aer": "0.17.2",
+            "numpy": "2.4.6",
+            "scipy": "1.18.1",
+            "qiskit-algorithms": "0.4.0",
+        },
+        "cpu": json.dumps(
+            {
+                "lscpu": [
+                    {"field": key, "data": value}
+                    for key, value in (
+                        ("Architecture:", "x86_64"),
+                        ("CPU(s):", "32"),
+                        ("Model name:", "7950X"),
+                        ("Socket(s):", "1"),
+                        ("Core(s) per socket:", "16"),
+                    )
+                ]
+            }
+        ),
+        "environment": {"QISKIT_NUM_PROCS": "1", "CUDA_VISIBLE_DEVICES": "0"},
+        "warmups": 1,
+        "repeats": 3,
+    }
+    gpu = {**cpu, "device": "cuda"}
+    validate_comparison(cpu, gpu)
+    for field, value in (
+        ("device", "cpu"),
+        ("source_sha256", {}),
+        ("source_sha256", {"workflow.py": "def"}),
+        ("python", "3.13"),
+        ("gpu", "another GPU"),
+        ("platform", "other"),
+        ("timing", "kernel"),
+        ("packages", {**cpu["packages"], "qiskit-algorithms": "0.4.99"}),
+        ("packages", {}),
+        ("cpu", '{"lscpu": []}'),
+        ("environment", {"QISKIT_NUM_PROCS": "8", "CUDA_VISIBLE_DEVICES": "0"}),
+        ("environment", {}),
+        ("repeats", 4),
+        ("warmups", 2),
+        ("conda_packages", [{"name": "libcutensor", "version": "changed", "build": "cuda"}]),
+    ):
+        changed = copy.deepcopy(gpu)
+        changed[field] = value
+        with pytest.raises(ValueError, match="comparison"):
+            validate_comparison(cpu, changed)

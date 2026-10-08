@@ -1,0 +1,29 @@
+input: ../qiskit_experiment/molecule.xyz
+template_dir: ../qiskit_experiment/templates
+output_dir: outputs-pauli
+charge: 0
+multiplicity: 1
+dispatch: local
+max_cores: 1
+steps:
+  - step: 1
+    engine: qiskit-experiment
+    options:
+      cores: 1
+      experiment:
+        name: pauli_resources
+        options:
+          hamiltonian: {II: -0.5, ZI: 0.8, IZ: -0.4, XX: 0.2}
+          budget:
+            energy_error_hartree: 0.001
+            representation_error_hartree: 0.0
+            synthesis_error_hartree: 0.0001
+            failure_probability: 0.01
+            target_overlap: 0.25
+          oracle:
+            logical_qubits: 8
+            t: 100
+            toffoli: 20
+            clifford: 50
+            rotations: 0
+            provenance: Illustrative supplied controlled-walk cost, not synthesized

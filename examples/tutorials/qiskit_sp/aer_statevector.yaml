@@ -1,0 +1,43 @@
+template_dir: ./templates
+output_dir: ./outputs_aer_statevector
+input: ./h2.xyz
+
+charge: 0
+multiplicity: 1
+max_cores: 4
+dispatch: local
+
+steps:
+  - step: 1
+    name: aer_statevector_vqe
+    engine: qiskit
+    operation: sp
+    options:
+      basis: sto-3g
+      active_space:
+        electrons: 2
+        orbitals: 2
+      mapper: jordan_wigner
+      algorithm: vqe
+      initial_state: hartree_fock
+      ansatz:
+        name: uccsd
+        options:
+          reps: 1
+          preserve_spin: true
+      estimator:
+        name: aer_statevector
+        options:
+          default_precision: 0.0
+          seed_simulator: 7
+          simulation_precision: double
+          optimization_level: 1
+          seed_transpiler: 7
+      optimizer:
+        name: slsqp
+        options:
+          maxiter: 80
+          ftol: 1.0e-9
+      initial_point: zeros
+      device: cpu
+      cores: 2

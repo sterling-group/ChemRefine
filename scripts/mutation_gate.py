@@ -543,6 +543,14 @@ _INPUTS = (
     "CITATION.cff",
     "CONTRIBUTING.md",
     "LICENSE",
+    # Benchmark regression tests import these standalone helpers. Keep the gate
+    # itself absent so its anchor tests cannot count as mutation detections.
+    "scripts/quantum_benchmarks.py",
+    "scripts/quantum_workloads.py",
+    "scripts/quantum_validation.py",
+    "scripts/quantum_audit.py",
+    "scripts/quantum_analysis.py",
+    ".github/workflows/quantum-cuda.yml",
 )
 
 
@@ -553,6 +561,7 @@ def _copy_tree(dest: Path) -> None:
         if source.is_dir():
             shutil.copytree(source, dest / name, ignore=shutil.ignore_patterns("__pycache__"))
         else:
+            (dest / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, dest / name)
 
 
@@ -759,7 +768,13 @@ def main(argv: list[str] | None = None) -> int:
     with tempfile.TemporaryDirectory(prefix="chemrefine-mutation-") as tmp:
         work = Path(tmp)
         _copy_tree(work)
-        env = {**os.environ, "PYTHONPATH": _prepended_path(os.environ, work / "src")}
+        env = {
+            **os.environ,
+            "PYTHONPATH": _prepended_path(os.environ, work / "src"),
+            # Equal-length edits/restores can share Python's one-second cache stamp.
+            # The copy starts without bytecode; keep each subprocess on current source.
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
         _assert_isolated(work, env)
         _assert_baseline_is_green(work, env)
         print(f"baseline green; {len(selected)} mutation(s) to check\n", flush=True)

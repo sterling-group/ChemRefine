@@ -1,0 +1,40 @@
+input: ../qiskit_experiment/molecule.xyz
+template_dir: ../qiskit_experiment/templates
+output_dir: outputs-physical
+charge: 0
+multiplicity: 1
+dispatch: local
+max_cores: 1
+steps:
+  - step: 1
+    engine: qiskit-experiment
+    options:
+      cores: 1
+      experiment:
+        name: surface_code_resources
+        options:
+          logical_qubits: 100
+          logical_cycles: 1000000
+          t_states: 100000
+          ccz_states: 10000
+          code_distance: 25
+          physical_error_probability: 0.001
+          threshold_probability: 0.01
+          logical_error_prefactor: 0.1
+          physical_qubits_per_patch_d2: 2.0
+          routing_patch_multiplier: 1.5
+          cycle_time_seconds: 0.000001
+          failure_budget: 0.01
+          hardware_provenance: Illustrative independent-fault model; not a hardware forecast
+          t_factory:
+            count: 4
+            physical_qubits_per_factory: 10000
+            cycles_per_state: 100
+            output_error_probability: 0.000000001
+            provenance: Illustrative T-state factory assumptions
+          ccz_factory:
+            count: 2
+            physical_qubits_per_factory: 20000
+            cycles_per_state: 200
+            output_error_probability: 0.000000001
+            provenance: Illustrative CCZ-state factory assumptions

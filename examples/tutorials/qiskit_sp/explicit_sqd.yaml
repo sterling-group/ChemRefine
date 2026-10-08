@@ -1,0 +1,26 @@
+template_dir: ./templates
+output_dir: ./outputs_explicit_sqd
+input: ./h2.xyz
+charge: 0
+multiplicity: 1
+max_cores: 1
+dispatch: local
+steps:
+  - step: 1
+    name: explicit_sampled_roots
+    engine: qiskit
+    operation: sp
+    options:
+      basis: sto-3g
+      algorithm:
+        name: sqd
+        options:
+          projection: explicit
+          counts: {"0101": 10, "0110": 10, "1001": 10, "1010": 10}
+          configuration_recovery: false
+          samples_per_batch: 4
+          num_batches: 1
+          num_roots: 4
+          target_root: 0
+          spin_constraint: report
+      cores: 1

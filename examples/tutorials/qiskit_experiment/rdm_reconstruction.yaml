@@ -1,0 +1,46 @@
+input: molecule.xyz
+template_dir: templates
+output_dir: outputs_rdm_reconstruction
+charge: 0
+multiplicity: 1
+max_cores: 2
+dispatch: local
+steps:
+  - step: 1
+    engine: qiskit-experiment
+    options:
+      cores: 2
+      experiment:
+        name: fermionic_shadows
+        options:
+          circuit_path: one_particle.qpy
+          sampler: {name: statevector, options: {seed: 7}}
+          shadows:
+            ensemble: orbital_haar
+            num_particles: 1
+            num_settings: 64
+            shots_per_setting: 8
+            max_order: 2
+            seed: 13
+  - step: 2
+    engine: qiskit-experiment
+    options:
+      cores: 2
+      experiment:
+        name: rdm_reconstruction
+        options:
+          rdm_bundle_path: outputs_rdm_reconstruction/step1/experiment/artifact.json
+          hamiltonian_bundle_path: null
+          max_input_bytes: 268435456
+          one_body_weights_array: null
+          two_body_weights_array: null
+          reconstruction:
+            num_particles: 1
+            constraints: DQG
+            loss: frobenius
+            energy_weight: 0.0
+            solver_tolerance: 1.0e-6
+            feasibility_tolerance: 1.0e-5
+            max_iterations: 10000
+            max_memory_mb: 512
+            accept_inaccurate: false

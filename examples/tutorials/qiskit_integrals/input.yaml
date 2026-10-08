@@ -1,0 +1,18 @@
+template_dir: ../qiskit_sp/templates
+output_dir: ./outputs_integral_source
+input: ../qiskit_sp/h2.xyz
+charge: 0
+multiplicity: 1
+max_cores: 1
+dispatch: local
+steps:
+  - step: 1
+    engine: qiskit
+    operation: sp
+    options:
+      integral_source:
+        bundle_path: ../qiskit_sp/h2_mo.json
+        max_input_bytes: 1048576
+        geometry_tolerance_angstrom: 1.0e-7
+      algorithm: exact
+      cores: 1

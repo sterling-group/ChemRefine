@@ -56,6 +56,11 @@ Decorate the class with `@register("<name>")` and choose the **kind** that match
 | ORCA optimises using *this* engine's gradients | `ExtOptOrcaEngine` | the ClassVars `backend` / `wrapper_filename` / `options_cls` / `calculator_cls`, plus a `ComputeBackend` in `extopt_calc.py` |
 | Not a per-structure job (e.g. a training step) | `CalculationEngine` directly | `prepare` / `submit` / `parse`, plus `artifact` + `run_dir` for `ArtifactEngine`, and the `JobExecutable` members to run through the scheduler |
 
+The Qiskit package demonstrates both shapes: `QiskitEngine` is a script engine
+whose thin worker calls the reusable molecular API, and `QiskitExperimentEngine`
+is an artifact engine that schedules one quantum experiment and passes its input
+structures through unchanged. See their [API reference](../api/engines_qiskit.md).
+
 A `JobEngine` provides only **primitives** — the public provision surface chemrefine requests
 (`build_input` / `run_block` / `parse_one` / `pal` / `gpus`, the `JobExecutable` contract). The
 base owns the lifecycle: `submit` delegates to `engines._execution.run_batch` (the scheduler),
@@ -141,6 +146,34 @@ separate `wait`:
 prepare → submit → parse
 ```
 
+## Extending Qiskit components
+
+A new mapper, ansatz, algorithm, execution provider, or experiment belongs in the
+existing Qiskit engine's component graph. Register it in the matching molecular
+registry or `EXPERIMENTS`, with a frozen, `extra="forbid"` options model and a
+lazy builder. Declare capabilities and requirements accurately; these drive
+preflight, introspection, resource construction, and managed-environment selection.
+
+Nature algorithm builders return `AlgorithmArtifacts`; native algorithm builders
+declare `execution="native"` and return `NativeOutcome`. Native energies exclude
+the scalar offsets in `PreparedProblem.energy_offsets`, which the workflow
+restores exactly once. Estimator and sampler builders return their resource
+wrappers with cleanup callbacks and any required transpiler. A separately
+installed provider declares its `BackendRequirement` on the registry entry.
+
+Registrations must be imported in both the orchestrator and the backend worker.
+In-tree molecular components are imported by `components/__init__.py`; in-tree
+experiment builders are imported by `experiment.py`. Third-party automatic
+entry-point discovery is not implemented. For an experiment, also register its
+artifact kind and local output validator with `register_experiment_output`.
+Preflight refuses an experiment without that contract.
+
+Use the [Qiskit extension recipe](../engines/qiskit.md#extending-the-registries)
+and [component contracts](../api/engines_qiskit.md#component-registries-and-contracts)
+when adding a builder. Cover strict options, graph compatibility, lazy imports,
+provider cleanup, scientific conventions, allocation limits, and failure paths.
+Document supported domains and known limitations alongside the configuration.
+
 ## Supporting NMS
 
 Normal-mode sampling is **engine-independent**: the two-round algorithm lives in
@@ -204,6 +237,47 @@ engine mirrors the *shape* above without importing a line of another engine's pa
 
 ## Tests
 
+### Declared files and artifact validation
+
+Engines with nested file-valued options implement `InputFileOptions` to enumerate
+their dictionary-key/list-index locations. The shared resolver uses the configuration
+directory, retains the written spelling, and supplies absolute paths to workers.
+`InputFileDependencies.input_file_dependencies(options, files)` receives the
+resolved engine options and existing direct files keyed by JSON-pointer option
+location. It enumerates manifest payloads by stable logical name. Interpret each
+format using the selected component's declaration; a similarly named field in
+another registered component must not determine its parser.
+
+The SDK-free `typed_input_references` helper in `engines._input_files` walks
+validated nested Pydantic models, selected union branches, lists, tuples and
+string-keyed dictionaries. Mark required filenames (or optional filenames defaulting
+to `None`) with `Field(json_schema_extra={"input_file": True})`. Mark a filename
+container to declare all its non-`None` leaves. Add `file_format: quantum_bundle`
+for native JSON/NPZ bundles. Each returned reference has its full canonical option
+location and format. Declare fields inside nested models individually; unmarked
+strings remain ordinary data. File-bearing fields and their ancestor containers
+must be explicitly supplied with canonical model field names. The helper rejects
+aliases and non-`None` file defaults because the resolver traverses the original
+option dictionary. It also rejects cycles and nesting beyond 64 option levels.
+
+The step/cache layers digest those files; engines must not import cache machinery.
+Files produced by upstream steps need not exist during preflight, but must exist
+before the consuming step prepares work.
+The public resolver functions are documented in
+[Declared Input Files](../api/input_files.md).
+
+Implement `OutputValidating.validate_outputs(inputs, ctx)` when a native result
+references required payloads. It raises `OutputParseError` for missing or corrupt
+products and must only read local outputs. The lifecycle invokes it on completion,
+cache consumption, and rebuild. It must never fetch provider results or submit jobs.
+
+For nested registry selections, implement `ComponentCatalogDeclaring` and derive
+component schemas and requirements from the same declarations used to validate
+options. Introspection and the GUI consume that catalog without importing SDKs.
+
+Artifact engines file an `artifact_contract.json` naming executable contract tests
+and recorded fixtures. Per-structure engines retain the parsed-result cases below.
+
 Add `tests/test_engines_<name>*.py`, mirroring the existing engine tests. New code ships at 100%
 line+branch coverage with a docstring on every public symbol.
 
@@ -245,7 +319,10 @@ after the bundled list and checked for stale anchors like any other entry.
 ## Documentation
 
 An engine documents itself on a page of its own, `docs/engines/<name>.md`, and adds its nav
-line to `mkdocs.yml` (a page without one fails `mkdocs build --strict`). The drift guard
+line to `mkdocs.yml` (a page without one fails `mkdocs build --strict`). Add its
+Python API page under `docs/api/`, link it from the API index, and register it in
+the Python API navigation. Engines registered by one package may share an API
+page, as the molecular and experiment Qiskit engines do. The drift guard
 (`test_docs_drift`) looks for that page before the shared engines page, so every field of the
 options model must be named on it, and the generated engine table links the engine's row to
 the page the moment the file exists. The engine, backend and extras tables are generated from

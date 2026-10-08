@@ -1,0 +1,215 @@
+{
+  "format_version": 1,
+  "kind": "lattice_trajectory",
+  "payload": "artifact.18511fc54d5849c580bfb591a7f2bfa9.npz",
+  "sha256": "3b11b0ca3edbcf10aced3d03aceebf3c54a26b57855905d94e5673950bf21deb",
+  "arrays": {
+    "times": {
+      "shape": [
+        2
+      ],
+      "dtype": "<f8"
+    },
+    "statevectors": {
+      "shape": [
+        2,
+        4
+      ],
+      "dtype": "<c16"
+    },
+    "occupations": {
+      "shape": [
+        2,
+        2
+      ],
+      "dtype": "<f8"
+    },
+    "energies": {
+      "shape": [
+        2
+      ],
+      "dtype": "<f8"
+    }
+  },
+  "metadata": {
+    "units": {
+      "energy": "model_energy",
+      "time": "hbar/model_energy",
+      "hbar": 1
+    },
+    "mode_order": "site",
+    "model": {
+      "num_sites": 2,
+      "edges": [
+        {
+          "source": 0,
+          "target": 1,
+          "hopping": 1.0,
+          "density_interaction": 0.0
+        }
+      ],
+      "spinful": false,
+      "onsite_interaction": 0.0,
+      "site_potentials": null
+    },
+    "dynamics": {
+      "steps": 1,
+      "order": 2,
+      "mapping": "jordan_wigner",
+      "exact_reference": true,
+      "max_qubits": 16,
+      "max_evolution_blocks": 10000,
+      "max_statevector_bytes": 268435456,
+      "max_exact_qubits": 12
+    },
+    "observations": [
+      {
+        "mode_occupations": [
+          1.0,
+          0.0
+        ],
+        "particle_number": 1.0,
+        "energy_expectation": 0.0,
+        "energy_drift": 0.0,
+        "return_probability": 1.0,
+        "exact_state_fidelity": 1.0,
+        "metadata": {
+          "model": {
+            "num_sites": 2,
+            "edges": [
+              {
+                "source": 0,
+                "target": 1,
+                "hopping": 1.0,
+                "density_interaction": 0.0
+              }
+            ],
+            "spinful": false,
+            "onsite_interaction": 0.0,
+            "site_potentials": null
+          },
+          "options": {
+            "time": 0.0,
+            "steps": 1,
+            "order": 2,
+            "mapping": "jordan_wigner",
+            "exact_reference": true,
+            "max_qubits": 16,
+            "max_evolution_blocks": 10000,
+            "max_statevector_bytes": 268435456,
+            "max_exact_qubits": 12
+          },
+          "occupied_modes": [
+            0
+          ],
+          "num_modes": 2,
+          "num_qubits": 2,
+          "auxiliary_qubits": 0,
+          "stabilizer_constraints": [],
+          "mapping_provider": "qiskit_fermions",
+          "encoding": "jordan_wigner",
+          "spin_orbital_order": "site_order",
+          "evolution_convention": "exp(-i * time * H), hbar=1",
+          "product_formula_split": "number_conserving_hopping_and_density_blocks",
+          "evolution_blocks": 0,
+          "circuit_depth": 1,
+          "gate_counts": {
+            "x": 1
+          },
+          "execution": "ideal_local_statevector",
+          "working_statevector_bytes": 256,
+          "initial_energy": 0.0
+        }
+      },
+      {
+        "mode_occupations": [
+          0.8692342793647942,
+          0.1307657206352062
+        ],
+        "particle_number": 1.0000000000000004,
+        "energy_expectation": 3.664973112661916e-16,
+        "energy_drift": 3.664973112661916e-16,
+        "return_probability": 0.8692342793647942,
+        "exact_state_fidelity": 1.0,
+        "metadata": {
+          "model": {
+            "num_sites": 2,
+            "edges": [
+              {
+                "source": 0,
+                "target": 1,
+                "hopping": 1.0,
+                "density_interaction": 0.0
+              }
+            ],
+            "spinful": false,
+            "onsite_interaction": 0.0,
+            "site_potentials": null
+          },
+          "options": {
+            "time": 0.37,
+            "steps": 1,
+            "order": 2,
+            "mapping": "jordan_wigner",
+            "exact_reference": true,
+            "max_qubits": 16,
+            "max_evolution_blocks": 10000,
+            "max_statevector_bytes": 268435456,
+            "max_exact_qubits": 12
+          },
+          "occupied_modes": [
+            0
+          ],
+          "num_modes": 2,
+          "num_qubits": 2,
+          "auxiliary_qubits": 0,
+          "stabilizer_constraints": [],
+          "mapping_provider": "qiskit_fermions",
+          "encoding": "jordan_wigner",
+          "spin_orbital_order": "site_order",
+          "evolution_convention": "exp(-i * time * H), hbar=1",
+          "product_formula_split": "number_conserving_hopping_and_density_blocks",
+          "evolution_blocks": 2,
+          "circuit_depth": 37,
+          "gate_counts": {
+            "rz": 36,
+            "sx": 16,
+            "cx": 8,
+            "x": 1
+          },
+          "execution": "ideal_local_statevector",
+          "working_statevector_bytes": 256,
+          "initial_energy": 0.0
+        }
+      }
+    ],
+    "resolved_options": {
+      "device": "cpu",
+      "backend_python": null,
+      "cores": 1,
+      "experiment": {
+        "name": "lattice_dynamics",
+        "options": {
+          "model": {
+            "num_sites": 2,
+            "spinful": false,
+            "edges": [
+              {
+                "source": 0,
+                "target": 1
+              }
+            ]
+          },
+          "times": [
+            0,
+            0.37
+          ],
+          "dynamics": {
+            "exact_reference": true
+          }
+        }
+      },
+      "max_output_bytes": 268435456
+    }
+  }
+}

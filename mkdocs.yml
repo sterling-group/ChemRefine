@@ -144,6 +144,7 @@ nav:
       - Transition states: tutorials/ts_finding.md
       - Host-guest docking: tutorials/host_guest.md
       - Training a potential: tutorials/mlip_training.md
+      - Qiskit molecular energies: tutorials/qiskit.md
       - Redox properties: tutorials/redox.md
       - Spin states: tutorials/spin.md
   - Writing a workflow:
@@ -154,6 +155,25 @@ nav:
       - AI agents: workflow/agents.md
   - Engines & backends:
       - engines/index.md
+      - Qiskit molecular calculations: engines/qiskit.md
+      - Qiskit support status: engines/qiskit-status.md
+      - Reproducible quantum checkpoints: engines/qiskit-checkpoints.md
+      - Quantum data handoffs: engines/qiskit-handoffs.md
+      - Quantum experiments: engines/qiskit-experiment.md
+      - Sampled quantum states: engines/qiskit-states.md
+      - Spacetime postselection: engines/qiskit-spacetime.md
+      - Fermionic shadows: engines/qiskit-shadows.md
+      - RDM reconstruction: engines/qiskit-rdm-reconstruction.md
+      - Double-factorized evolution: engines/qiskit-double-factorized.md
+      - Variational dynamics: engines/qiskit-dynamics.md
+      - Quantum spectra: engines/qiskit-spectra.md
+      - Adaptive quantum solvers: engines/qiskit-adaptive.md
+      - Local fermionic encodings: engines/qiskit-encodings.md
+      - Reference-aware tapering: engines/qiskit-tapering.md
+      - Quantum provider recovery: engines/qiskit-recovery.md
+      - IBM Runtime execution: engines/qiskit-runtime.md
+      - Quantum resource estimates: engines/qiskit-resources.md
+      - Circuit cutting: engines/qiskit-cutting.md
       - Installing engines & backends: engines/installing.md
   - Running a workflow:
       - Command line: running/cli.md
@@ -188,6 +208,7 @@ nav:
               - MLIP: api/engines_mlip.md
               - PySCF: api/engines_pyscf.md
               - Q-Chem: api/engines_qchem.md
+              - Qiskit: api/engines_qiskit.md
           - Agent Integration:
               - Agent Tools: api/agent_tools.md
               - MCP Server: api/mcp_server.md
@@ -196,12 +217,14 @@ nav:
               - SLURM: api/slurm.md
               - Throttle: api/throttle.md
               - Cache: api/cache.md
+              - Declared input files: api/input_files.md
               - Filesystem I/O: api/io.md
               - Identifiers: api/ids.md
               - Job Log: api/job_log.md
   - Contributing:
       - Contributing: developer/contributing.md
       - Adding an engine: developer/adding-an-engine.md
+      - Quantum validation: developer/quantum-validation.md
   - About:
       - Changelog: changelog.md
       - Security policy: security-policy.md

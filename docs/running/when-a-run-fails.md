@@ -183,6 +183,25 @@ chemrefine backends install mlip-mace
 chemrefine backends list
 ```
 
+## Quantum provider and artifact failures
+
+For `qiskit` jobs, inspect the native `.json`, `.err` and `.runlog`; for a
+`qiskit-experiment` step, inspect `experiment/` and its artifact descriptor.
+Use [Qiskit support status](../engines/qiskit-status.md) to distinguish a known
+unsupported configuration or provider bug from a solver that finished without
+converging. Single-point quantum jobs do not produce nuclear gradients or frequencies.
+
+Keep bundle descriptors and their referenced NPZ/QPY files together. Missing,
+corrupt or scientifically incompatible artifacts are rejected on completion and
+recovery. `rebuild-cache` reads existing complete outputs; it cannot reconstruct a
+missing quantum preparation or resume an optimizer's internal state.
+
+Remote jobs may leave durable, credential-free provider journals. Follow
+[provider recovery](../engines/qiskit-recovery.md) before rerunning: ordinary pipeline
+`resume` is not sufficient by itself to guarantee remote job reuse. Known CUDA
+tensor-network failures and [Runtime limits](../engines/qiskit-runtime.md) have
+method-specific guidance.
+
 ## How recovery decides
 
 One output tree, one driver ([the run lock](caching.md)), six ways to drive it. Every CLI

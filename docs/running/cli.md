@@ -38,6 +38,14 @@ chemrefine run input.yaml --dry-run          # validate + describe; submit nothi
 A first run usually goes: `chemrefine validate input.yaml` → `chemrefine scaffold
 input.yaml` → edit the starters → `chemrefine run input.yaml`.
 
+For `qiskit` and `qiskit-experiment`, `schema` also describes each component category:
+registered names, option schemas, defaults, capabilities, transitive requirements,
+provider profiles, research status and supported domains. The
+[GUI component editors](../workflow/builder.md#what-the-builder-knows) use that same
+catalog. Validation checks selections and compatibility without importing the quantum
+SDKs; execution requires the selected scientific stack. See
+[Qiskit workflows](../engines/index.md#qiskit-qiskit).
+
 Three more entry points build on the same tooling: [`chemrefine gui`](../workflow/builder.md) (the
 click-through workflow builder — [from a cluster](../workflow/builder.md#from-a-cluster) it prints
 its own SSH forwarding recipe), [`chemrefine mcp`](../workflow/agents.md) (the tool server for AI
@@ -45,7 +53,7 @@ agents) and [`chemrefine agent`](../workflow/agents.md) (a terminal chat over th
 
 ## Backend environments (`chemrefine backends`)
 
-Conflicting MLIP stacks each live in one managed environment, provisioned once and
+MLIP stacks and optional quantum providers can live in managed environments, provisioned once and
 resolved **by name** at run time (see
 [Installation → available backends](../engines/installing.md#available-backends)):
 
@@ -54,6 +62,13 @@ resolved **by name** at run time (see
 | `backends install` | `EXTRA…`, `--python` | Provision managed env(s) (e.g. `mlip-mace mlip-fairchem pyscf`), built with the same tool that created the current env (conda / uv / venv) and on the newest Python each backend supports. `--python` (a version, a command name, or a path) overrides that choice when the env is created. |
 | `backends list` | — | Every known backend extra and whether its env is provisioned. |
 | `backends path` | `EXTRA` | Print the managed env's `python` (exit 1 if not provisioned). |
+
+Qiskit picks its worker profile from the components a workflow actually consumes.
+For example, a local reference workflow can use `qiskit`, while an Aer estimator
+selects `qiskit-aer`. Multiple consumed provider requirements may select a broader
+profile such as `qiskit-toolkit`; an explicit `options.backend_python` overrides the
+managed interpreter choice, but still needs all consumed libraries. See
+[provider installation](../engines/installing.md#qiskit-nature).
 
 ## Global flags
 

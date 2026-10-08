@@ -27,6 +27,156 @@ for the full map.
 
 ### Added
 
+- **Qiskit support and checkpoint guides.** A consolidated feature-status table
+  distinguishes validated execution, known bugs, experimental domains and
+  unverified hardware paths. Reproducibility instructions show how to preserve
+  integral and bound-circuit bundles, reload the same Hamiltonian and reconstruct
+  a final energy independently, while documenting optimizer-restart limitations.
+
+- **Scalable circuit interpretations.** New circuit bundles store Pauli terms and
+  parameter data in bounded NPZ arrays while reading existing inline bundles.
+  Known export sizes fail before provider acquisition, and each root's byte budget
+  includes all arrays during publication and recovery.
+
+- **Reconstructed measurement recovery.** Version 2 measurement artifacts retain
+  signed Clifford certificates and validate configured observables, production
+  counts, covariance and uncertainty independently. Older measurement artifacts
+  require regeneration; validation and cache rebuilding remain provider-free.
+
+- **Structural QPY recovery checks.** Retained circuits now require complete,
+  supported file and circuit headers, consistent counts, dimensions and bounded
+  sections. SDK-free checks cover known formats 10–17; execution still decodes the
+  complete circuit in its worker.
+
+- **Readable boundary-size quantum bundles.** Descriptor limits now count the exact
+  published UTF-8 bytes, including the final newline, and preserve prior outputs
+  when a replacement exceeds that limit.
+
+- **Imported electronic constants.** Integral bundles preserve named scalar offsets
+  through active-space molecular energies and double-factorized evolution. DF/THC
+  resource reports list these constants separately from query costs.
+
+- **Physical spectrum residuals.** VQD and qEOM can measure bounded Hamiltonian
+  residual diagnostics, retaining signed noisy variances and optimizer stopping
+  facts separately from qEOM response-pencil errors.
+
+- **Molecular-to-experiment handoffs.** Circuit-producing solvers can export their
+  retained logical preparations for scheduled measurements and shadows, with
+  nested payload hashing, scratch copy-back and SDK-free cache validation.
+
+- **Portable quantum preparations.** Bound logical circuits retain parameters,
+  mapping, particle sectors, active Hamiltonians, energy offsets and provenance in
+  integrity-checked JSON/NPZ artifacts, using QPY compatible with Qiskit 1.4.
+
+- **Shared quantum provenance.** Molecular results and experiment artifacts record
+  consumed component graphs, selected provider dependency versions, interpreter and
+  platform facts, and sanitized source identifiers through one collector.
+
+- **Runtime restart protection.** Matching unresolved current or archived journal
+  requests refuse resubmission by default. An explicit acknowledgement can permit
+  new work; bounded, serialized intent publication preserves recovery evidence.
+
+- **Molecular integral handoff.** Qiskit YAML can consume portable MO integral
+  bundles, validating molecular geometry, charge, spin and nuclear-energy identity
+  before solving. Both descriptor and numeric payload participate in caching.
+
+- **IBM Runtime providers.** Registered estimators and samplers support layouts,
+  job/batch/session execution, dynamical decoupling, twirling, TREX, ZNE and PEC.
+  Credential-free journals support explicit retrieval; offline provider tests
+  distinguish signed mitigation estimates from physical counts and shot budgets.
+
+- **Quantum resource reports.** General Pauli-LCU/QPE budgets, domain-validated
+  double-factorized and THC estimates, and explicit surface-code/factory assumptions
+  produce versioned artifacts. Resource providers use a separate Python 3.12 worker.
+
+- **Budgeted circuit cutting.** Manual gate/wire cuts, partitions and automated
+  width-constrained plans preserve signed reconstruction and physical measurement
+  records. Planning runs in an isolated worker; artifacts can be reconstructed
+  locally without submitting another experiment.
+
+- **Experimental endpoint Pauli checks.** Clifford payloads support signed,
+  noncommuting user checks with explicit Aer noise. Artifacts preserve physical
+  data/syndrome counts, accepted and rejected samples, Wilson acceptance intervals,
+  conditional observables and the checked circuit.
+
+- **Complex constrained RDM reconstruction.** Experimental D/DQ/DQG fitting keeps
+  raw tensors, supports masked weighted losses and explicit energy regularization,
+  and independently checks SCS feasibility without representability or energy-bound
+  claims. Native artifacts retain solver diagnostics and complex coherences.
+
+- **Durable quantum provider records.** Local and array workers keep credential-free
+  request intents and returned job IDs outside scratch. Bounded, validated journals
+  retain ambiguous submissions and support explicit retrieval from archived attempts.
+
+- **Typed nested quantum inputs.** File dependencies now traverse nested validated
+  models, containers and selected union branches. Bundle payload hashing uses the
+  selected component's format declaration, preserving relocated cache identity
+  without letting unrelated components reinterpret a same-named file.
+
+- **Variational quantum dynamics.** VarQITE and VarQRTE use the selected estimator
+  for observable, gradient and geometric-tensor circuits, including derivative
+  ancillas and routed layouts. Bounded trajectories retain metric diagnostics and
+  support the Qiskit 1.4 core floor and current providers.
+
+- **Adaptive quantum solvers.** TETRIS and coupled-exchange ADAPT support
+  reference-aware tapering, complex exchange quadratures, sector diagnostics,
+  energy-increase rollback and freshly bound QNSPSA resources at each circuit growth.
+
+- **Double-factorized quantum evolution.** Portable complex/unrestricted integral
+  bundles feed domain-validated ffsim factorization and real compiled circuits.
+  Supported complex hopping trajectories retain declared open-shell references,
+  constant phases, tensor-compression diagnostics, independent evolution checks
+  and reusable QPY circuits in native artifacts.
+
+- **Reference-aware Z₂ tapering.** Molecular mappings discover compatible Pauli
+  symmetries and verify sectors against the actual selected reference. Hamiltonians,
+  pools, state preparation and observables share one Clifford transformation;
+  expectation projection remains distinct from strict generator reduction.
+
+- **Distinct fermionic shadow ensembles.** Quantum experiments acquire complex
+  fixed-number orbital Haar shadows or signed Majorana-Clifford shadows with their
+  respective inverse channels. Native datasets preserve settings, physical counts,
+  complex RDMs and uncertainty grouped by randomized setting for provider-free replay.
+
+- **Grouped quantum measurement.** YAML and Python workflows support ungrouped,
+  qubit-wise commuting and general commuting Pauli measurements. Independent pilot
+  allocation, joint-shot covariance, physical counts, input-file cache identity and
+  array artifact validation share the quantum experiment contract.
+
+- **Local fermion encodings.** Graph BKSF and open-square VC/DK mappings include
+  code constraints, actual-reference preparation, complex observables and sample
+  decoding. Flow-set evolution uses verified specialized VC circuits and general
+  commuting synthesis, with particle-number drift and encoded-width budgets.
+
+- **Quantum spectra and natural-gradient optimization.** VQD separates physical
+  root energies from deflation penalties and validates root overlaps. Complex
+  qEOM reports conditioned response spectra and reconstructed-state diagnostics.
+  QNSPSA uses the selected sampler for fidelity, with declared transitive provider
+  requirements and shared resource lifecycle management.
+
+- **Recoverable quantum states.** Molecular workers persist determinant states
+  and orbital frames in validated JSON/NPZ bundles. Scratch copy-back includes
+  numeric payloads and circuit files; cache reuse checks referenced states before
+  accepting a molecular result.
+
+- **Orbital optimization and sampled Krylov states.** Explicit SQD, SqDRIFT,
+  SKQD and extended SQD retain complex determinant amplitudes and orbital frames.
+  SKQD samples powers of one fixed approximate evolution operator, including
+  time zero. Extended SQD expands the actual reference excitation space without
+  a Cartesian determinant closure. Root selection and original-basis observables
+  share the molecular result contract.
+
+- **Declared engine file dependencies and output validation.** Nested input file
+  options and referenced payloads participate in relocation-safe cache identity.
+  Engines can validate required native outputs before cache reuse; missing or
+  corrupt products cannot masquerade as a successful artifact. Cache-only and
+  rebuild operations remain read-only with respect to job submission.
+
+- **Quantum experiment artifacts.** `qiskit-experiment` runs registry-selected
+  workflows through the shared scheduler and preserves molecular structures. Lattice
+  trajectories write versioned JSON/NPZ bundles with allocation limits, integrity
+  checks, relative paths and scratch copy-back support.
+
 - **A per-step gradient timeout for the ExtOpt engines.** `gradient_timeout_seconds`
   (default `600`) bounds one call of the bridge ORCA invokes per geometry. The old bound
   was fixed, and its expiry read as "server unreachable" — or, for a gradient the server
@@ -173,7 +323,27 @@ for the full map.
   MLIP backends are **auto-discovered** — a new engine package or backend
   module is dropped in and registers itself, with no central import list to
   edit. Bundled engines: `orca`, `mlip`, `mlip-extopt`, `mlip-train`,
-  `pyscf`, `pyscf-extopt`, `qchem`.
+  `pyscf`, `pyscf-extopt`, `qchem`, `qiskit`.
+- Modular Qiskit Nature ground-state single points: strict registries make the
+  mapper, algorithm, ansatz/operator pool, initial state, estimator, optimizer,
+  and initial point independently selectable in YAML. Built-ins cover exact
+  diagonalization, fixed VQE, ADAPT-VQE, active-space reduction, UCCSD and
+  EfficientSU2, plus four local estimator modes: reference statevector,
+  lightweight finite shots, exact-expectation Aer, and finite-shot Aer with an
+  optional serialized noise model. The `[qiskit]` extra supplies the core
+  Nature/Algorithms/PySCF stack; `[qiskit-aer]` adds pinned CPU Aer, while a
+  custom Linux GPU environment can select Aer with `device: cuda`. Runs record
+  resolved components, solver diagnostics, and variational evaluations, and a
+  shipped H2 tutorial demonstrates the thin-template architecture.
+- A driver-independent Qiskit electronic-structure API accepts validated real
+  molecular-orbital integrals, preserves explicit active-orbital ordering and
+  freeze-core offsets, and reuses prepared problems across exact, VQE, and
+  ADAPT-VQE solves. Bravyi–Kitaev mapping, supplied UCC excitations, and external
+  mapped operator pools extend the existing component boundaries. Owned results
+  record energy contributions, reference errors, resource metrics, and retained
+  ADAPT operators/gradient history. The optional `[qiskit-core]` dependency group
+  omits PySCF; existing XYZ examples still use `[qiskit]`. The H2 `compare.yaml`
+  tutorial reports all three solver results through the normal CLI outputs.
 - Subcommand CLI — `run`, `resume`, `rerun [step]`, `rerun-errors [step]`,
   `rebuild-cache [step]`, `rebuild-nms [step]` — with documented process
   exit codes per failure class.
@@ -458,6 +628,18 @@ for the full map.
   from the unpacked tarball; `docs/` stays out of the tarball on size.
 
 ### Fixed
+
+- **Tapering at the supported Qiskit floor.** Reference-sector evaluation supports
+  Qiskit 1.4 stabilizer states and preserves the signs of explicit Pauli generators.
+
+- **Quantum artifact completeness.** All eleven experiment products now validate
+  their kind, required arrays, dimensions and scientific metadata during completion,
+  cache reuse and rebuild. Custom experiments declare SDK-free output contracts.
+
+- **Independent quantum acquisition streams.** Shared sampler lifetimes preserve
+  cumulative Runtime budgets and retrieval order across shadows, measurement groups
+  and sampled evolution. Local requests use distinct reproducible child seeds,
+  correcting repeated shot randomness and invalid shadow uncertainty estimates.
 
 - **An API key holding a character HTTP headers cannot carry is refused by name.** A
   curly quote or an em dash pasted into the key made `chemrefine agent --check` blame the

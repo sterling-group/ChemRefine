@@ -22,17 +22,16 @@ import pytest
 
 from chemrefine import cache
 from chemrefine.config import StepConfig
-from chemrefine.engines.api import ENGINES, get_engine
+from chemrefine.engines.api import ENGINES, ArtifactEngine, get_engine
 from chemrefine.io import read_xyz_frames
 from chemrefine.state import PipelineState, StepContext, StepInputs, Structure
 
 DATA = Path(__file__).resolve().parent / "data" / "engines"
-CASES = sorted(path for path in DATA.glob("*/*") if path.is_dir())
+CASES = sorted(path for path in DATA.glob("*/*") if (path / "case.json").is_file())
 CASE_IDS = [f"{path.parent.name}-{path.name}" for path in CASES]
 
 _CONTRACT_EXEMPT = {
     "fake",  # test scaffolding registered by conftest, not a shipped plugin
-    "mlip-train",  # pass-through trainer: parses no calculation output
 }
 
 
@@ -89,6 +88,16 @@ def test_contract_case(case_dir: Path, request: pytest.FixtureRequest) -> None:
 def test_every_registered_engine_ships_a_contract_case() -> None:
     """Registering an engine without its shortened real output fails here."""
     for name in sorted(set(ENGINES) - _CONTRACT_EXEMPT):
+        if isinstance(get_engine(name), ArtifactEngine):
+            contract_path = DATA / name / "artifact_contract.json"
+            assert contract_path.is_file(), f"artifact engine {name!r} needs an artifact contract"
+            contract = json.loads(contract_path.read_text())
+            assert contract["tests"], "artifact contracts must name their executable test suite"
+            for test in contract["tests"]:
+                assert (DATA.parents[2] / test).is_file(), f"missing artifact contract test {test}"
+            for fixture in contract["fixtures"]:
+                assert (DATA / name / fixture).is_file(), f"missing artifact fixture {fixture}"
+            continue
         cases = list((DATA / name).glob("*/expected.json"))
         assert cases, (
             f"engine {name!r} ships no contract fixture under tests/data/engines/{name}/ "

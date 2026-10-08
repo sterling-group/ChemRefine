@@ -1,0 +1,28 @@
+template_dir: ./templates
+output_dir: ./outputs_tetris
+input: ./h2.xyz
+charge: 0
+multiplicity: 1
+max_cores: 1
+dispatch: local
+steps:
+  - step: 1
+    name: tetris_adaptive_h2
+    engine: qiskit
+    operation: sp
+    options:
+      basis: sto-3g
+      algorithm:
+        name: tetris_adapt
+        options:
+          max_iterations: 30
+          max_parameters: 128
+          gradient_norm: l2
+          evolution: exact_commuting
+      ansatz: uccsd
+      estimator: statevector
+      optimizer:
+        name: slsqp
+        options: {maxiter: 200, ftol: 1.0e-12}
+      initial_point: zeros
+      cores: 1

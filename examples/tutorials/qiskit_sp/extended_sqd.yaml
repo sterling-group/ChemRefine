@@ -1,0 +1,25 @@
+template_dir: ./templates
+output_dir: ./outputs_extended_sqd
+input: ./h2.xyz
+charge: 0
+multiplicity: 1
+max_cores: 1
+dispatch: local
+steps:
+  - step: 1
+    name: expanded_sampled_roots
+    engine: qiskit
+    operation: sp
+    options:
+      basis: sto-3g
+      algorithm:
+        name: extended_sqd
+        options:
+          counts: {"0101": 128}
+          num_batches: 1
+          configuration_recovery: false
+          excitation_ranks: [1, 2]
+          num_roots: 4
+          target_root: 1
+          spin_constraint: report
+      cores: 1

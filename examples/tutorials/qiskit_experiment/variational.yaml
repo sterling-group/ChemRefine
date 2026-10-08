@@ -1,0 +1,34 @@
+input: molecule.xyz
+template_dir: templates
+output_dir: outputs_variational
+charge: 0
+multiplicity: 1
+max_cores: 2
+dispatch: local
+steps:
+  - step: 1
+    engine: qiskit-experiment
+    options:
+      cores: 2
+      experiment:
+        name: variational_dynamics
+        options:
+          circuit_path: ry.qpy
+          max_circuit_bytes: 33554432
+          observable: {Z: 1.0}
+          observables: [{X: 1.0}]
+          initial_parameters: [1.5707963267948966]
+          estimator: statevector
+          dynamics:
+            method: varqite
+            time: 0.5
+            steps: 8
+            integrator: rk4
+            metric_cutoff: 1.0e-10
+            regularization: 0.0
+            numerical_tolerance: 1.0e-7
+            max_velocity: 1000000.0
+            max_parameters: 128
+            max_pauli_terms: 4096
+            max_publications: 100000
+            max_memory_mb: 512

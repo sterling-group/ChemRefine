@@ -10,10 +10,11 @@ This section contains full examples of ChemRefine workflows:
   DFT, then explicitly solvated.
 - [Training a potential](mlip_training.md) — generate reference data, fine-tune a model,
   and use it in a later step.
+- [Qiskit molecular energies](qiskit.md) — run the shipped H2 VQE workflow, compare
+  exact and adaptive solvers, and retain quantum inputs for replay.
 - [Redox properties](redox.md) — oxidised and reduced states through one pipeline.
 - [Spin states](spin.md) — multiple multiplicities of the same system.
 
 Each opens with the shipped config, included verbatim from `examples/tutorials/` — the
 same files CI validates on every run. To have a workflow written *for* you instead, see
 the [workflow builder](../workflow/builder.md) and the [AI agents](../workflow/agents.md).
-

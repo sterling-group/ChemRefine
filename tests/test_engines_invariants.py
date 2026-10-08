@@ -68,12 +68,15 @@ def _ctx(tmp_path: Path, engine_name: str, options: dict[str, object]) -> StepCo
         operation="opt_sp",
         options={**_REQUIRED_OPTIONS.get(engine_name, {}), **options},
     )
-    suffix = get_engine(engine_name).template_suffix
-    template = tmp_path / f"step1.{suffix}"
-    if not template.exists():
-        template.write_text(
-            "! Opt\n%pal nprocs 2 end\n" if suffix == "inp" else "", encoding="utf-8"
-        )
+    engine = get_engine(engine_name)
+    template = None
+    if isinstance(engine, TemplateDriven):
+        suffix = engine.template_suffix
+        template = tmp_path / f"step1.{suffix}"
+        if not template.exists():
+            template.write_text(
+                "! Opt\n%pal nprocs 2 end\n" if suffix == "inp" else "", encoding="utf-8"
+            )
     return StepContext(
         step_cfg=step_cfg,
         step_dir=tmp_path,

@@ -1,0 +1,26 @@
+input: molecule.xyz
+template_dir: templates
+output_dir: outputs_measurement
+charge: 0
+multiplicity: 1
+max_cores: 2
+dispatch: local
+steps:
+  - step: 1
+    engine: qiskit-experiment
+    options:
+      cores: 2
+      experiment:
+        name: pauli_measurement
+        options:
+          circuit_path: bell.qpy
+          observable: {XX: 1.0, YY: 1.0, ZZ: 1.0}
+          sampler: statevector
+          max_circuit_bytes: 33554432
+          measurement:
+            grouping: commuting
+            shots: 4096
+            pilot_shots: 64
+            seed: 7
+            max_terms: 4096
+            max_memory_mb: 512

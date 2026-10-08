@@ -1,0 +1,32 @@
+template_dir: ../qiskit_sp/templates
+output_dir: ./outputs_lucj
+input: ../qiskit_sp/h2.xyz
+charge: 0
+multiplicity: 1
+max_cores: 1
+dispatch: local
+
+steps:
+  - step: 1
+    name: lucj_h2
+    engine: qiskit
+    operation: sp
+    options:
+      basis: sto-3g
+      cores: 1
+      algorithm:
+        name: ffsim_vqe
+        options:
+          ansatz: lucj
+          spin_variant: balanced
+          n_reps: 1
+          initialization: random
+          seed: 0
+          initial_scale: 0.1
+          max_statevector_dimension: 1000
+          max_evaluations: 2000
+      optimizer:
+        name: slsqp
+        options:
+          maxiter: 200
+          ftol: 1.0e-10

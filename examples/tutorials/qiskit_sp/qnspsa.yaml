@@ -1,0 +1,32 @@
+template_dir: ./templates
+output_dir: ./outputs_qnspsa
+input: ./h2.xyz
+charge: 0
+multiplicity: 1
+max_cores: 1
+dispatch: local
+steps:
+  - step: 1
+    name: sampler_metric_vqe
+    engine: qiskit
+    operation: sp
+    options:
+      basis: sto-3g
+      algorithm: vqe
+      ansatz: uccsd
+      estimator:
+        name: statevector
+        options: {default_precision: 0.0}
+      sampler:
+        name: statevector
+        options: {seed: 5}
+      optimizer:
+        name: qnspsa
+        options:
+          maxiter: 100
+          learning_rate: 0.1
+          perturbation: 0.1
+          fidelity_shots: 4096
+          seed: 9
+      initial_point: zeros
+      cores: 1

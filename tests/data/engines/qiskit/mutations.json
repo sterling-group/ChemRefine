@@ -1,0 +1,162 @@
+[
+  {
+    "id": "qiskit-particle-sector-filter",
+    "path": "src/chemrefine/engines/qiskit/components/algorithms.py",
+    "old": "not np.isclose(particle_number[0], expected_particles)",
+    "new": "np.isclose(particle_number[0], expected_particles)",
+    "tests": "tests/test_engines_qiskit.py",
+    "breaks": "the exact solver discards eigenstates with the requested electron count and can report a plausible eigenvalue from the wrong particle-number sector"
+  },
+  {
+    "id": "qiskit-spin-sector-filter",
+    "path": "src/chemrefine/engines/qiskit/components/algorithms.py",
+    "old": "np.isclose(angular_momentum[0], expected_angular_momentum)",
+    "new": "not np.isclose(angular_momentum[0], expected_angular_momentum)",
+    "tests": "tests/test_engines_qiskit.py",
+    "breaks": "the exact solver rejects the requested spin sector and can report a state with the wrong multiplicity"
+  },
+  {
+    "id": "qiskit-magnetization-sector-filter",
+    "path": "src/chemrefine/engines/qiskit/components/algorithms.py",
+    "old": "not np.isclose(magnetization[0], expected_magnetization)",
+    "new": "np.isclose(magnetization[0], expected_magnetization)",
+    "tests": "tests/test_engines_qiskit_exact.py",
+    "breaks": "the exact solver returns a state with different alpha and beta electron populations despite matching total particle count and spin"
+  },
+  {
+    "id": "qiskit-aer-noise-is-applied",
+    "path": "src/chemrefine/engines/qiskit/components/estimators.py",
+    "old": "if noise_model is not None:",
+    "new": "if noise_model is None:",
+    "tests": "tests/test_engines_qiskit.py",
+    "breaks": "an explicitly requested Aer noise model is silently ignored, producing an ideal-simulator energy that looks valid but models a different experiment"
+  },
+  {
+    "id": "qiskit-artifact-digest",
+    "path": "src/chemrefine/engines/qiskit/bundles.py",
+    "old": "_digest(payload) != descriptor.sha256",
+    "new": "_digest(payload) == descriptor.sha256",
+    "tests": "tests/test_engines_qiskit_bundles.py",
+    "breaks": "corrupt state or trajectory payloads are accepted during cache reuse"
+  },
+  {
+    "id": "qiskit-orbital-shadow-inversion",
+    "path": "src/chemrefine/engines/qiskit/shadows.py",
+    "old": "one = (m + 1) * normal - num_particles * np.eye(m)",
+    "new": "one = m * normal - num_particles * np.eye(m)",
+    "tests": "tests/test_engines_qiskit_shadows.py",
+    "breaks": "number-conserving orbital shadow estimates use the wrong inverse measurement channel"
+  },
+  {
+    "id": "qiskit-independent-shadow-shot-streams",
+    "path": "src/chemrefine/engines/qiskit/sampling.py",
+    "old": "self._streams.spawn(1)",
+    "new": "np.random.SeedSequence(1).spawn(1)",
+    "tests": "tests/test_engines_qiskit_shadows.py",
+    "breaks": "restarting the same outcome RNG for every random shadow setting invalidates acquisition convergence and setting-level uncertainty"
+  },
+  {
+    "id": "qiskit-majorana-shadow-inversion",
+    "path": "src/chemrefine/engines/qiskit/shadows.py",
+    "old": "inverse_four_majoranas = comb(2 * m, 4) / comb(m, 2)",
+    "new": "inverse_four_majoranas = comb(m, 2) / comb(2 * m, 4)",
+    "tests": "tests/test_engines_qiskit_shadows.py",
+    "breaks": "Majorana two-body coherences receive a biased inversion weight"
+  },
+  {
+    "id": "qiskit-variational-metric-sector",
+    "path": "src/chemrefine/engines/qiskit/dynamics.py",
+    "old": "eigenvalues[0] < -options.numerical_tolerance",
+    "new": "eigenvalues[0] > -options.numerical_tolerance",
+    "tests": "tests/test_engines_qiskit_dynamics.py",
+    "breaks": "invalid negative quantum geometric tensors pass the metric positivity guard"
+  },
+  {
+    "id": "qiskit-pauli-lcu-normalization",
+    "path": "src/chemrefine/engines/qiskit/resources.py",
+    "old": "if label != \"I\" * width and value != 0",
+    "new": "if label == \"I\" * width and value != 0",
+    "tests": "tests/test_engines_qiskit_resource_estimates.py",
+    "breaks": "LCU costs count constant offsets while dropping physical Hamiltonian terms"
+  },
+  {
+    "id": "qiskit-projected-residual",
+    "path": "src/chemrefine/engines/qiskit/determinants.py",
+    "old": "residual > max(1e-8, 100 * tolerance)",
+    "new": "residual < max(1e-8, 100 * tolerance)",
+    "tests": "tests/test_engines_qiskit_determinants.py",
+    "breaks": "a projected eigensystem is accepted or rejected using the wrong residual criterion"
+  },
+  {
+    "id": "qiskit-spacetime-check-order",
+    "path": "src/chemrefine/engines/qiskit/spacetime.py",
+    "old": "for index in reversed(range(count)):",
+    "new": "for index in range(count):",
+    "tests": "tests/test_engines_qiskit_spacetime.py",
+    "breaks": "noncommuting endpoint checks change the ideal payload unitary and spuriously reject valid inputs"
+  },
+  {
+    "id": "qiskit-spacetime-output-sign",
+    "path": "src/chemrefine/engines/qiskit/spacetime.py",
+    "old": "_controlled_pauli(circuit, outgoing[index], modes + index)",
+    "new": "_controlled_pauli(circuit, outgoing[index].lstrip(\"-\"), modes + index)",
+    "tests": "tests/test_engines_qiskit_spacetime.py",
+    "breaks": "discarding a conjugated output-check sign changes physical check syndromes even when unsigned Pauli conjugation is correct"
+  },
+  {
+    "id": "qiskit-rdm-primal-feasibility",
+    "path": "src/chemrefine/engines/qiskit/rdm_reconstruction.py",
+    "old": "max(residuals) > tolerance",
+    "new": "max(residuals) < tolerance",
+    "tests": "tests/test_engines_qiskit_rdm_provider.py",
+    "breaks": "a solver status can pass RDMs violating particle trace, contraction, Hermiticity or antisymmetry constraints"
+  },
+  {
+    "id": "qiskit-input-energy-offsets",
+    "path": "src/chemrefine/engines/qiskit/problem.py",
+    "old": "{f\"input:{name}\": value for name, value in data.energy_offsets.items()}",
+    "new": "{f\"input:{name}\": 0.0 for name, value in data.energy_offsets.items()}",
+    "tests": "tests/test_engines_qiskit_energy_offsets.py",
+    "breaks": "supplied inactive-space electronic constants disappear from molecular canonical energies and every reported physical root"
+  },
+  {
+    "id": "qiskit-physical-residual-variance",
+    "path": "src/chemrefine/engines/qiskit/spectra.py",
+    "old": "complex(second - energy**2)",
+    "new": "complex(second + energy**2)",
+    "tests": "tests/test_engines_qiskit_spectral_residuals.py",
+    "breaks": "a second Hamiltonian moment is converted into a spurious physical residual even for exact eigenstates"
+  },
+  {
+    "id": "qiskit-measurement-streamed-covariance",
+    "path": "src/chemrefine/engines/qiskit/measurement.py",
+    "old": "(samples.shots - 1)",
+    "new": "samples.shots",
+    "tests": "tests/test_engines_qiskit_measurement.py",
+    "breaks": "streamed production statistics use a population covariance and understate finite-shot uncertainty"
+  },
+  {
+    "id": "qiskit-measurement-configured-coefficients",
+    "path": "src/chemrefine/engines/qiskit/measurement_validation.py",
+    "old": "value == expected[label]",
+    "new": "True",
+    "tests": "tests/test_engines_qiskit_measurement_validation.py",
+    "breaks": "self-consistent altered coefficients replace the configured observable during artifact recovery"
+  },
+  {
+    "id": "qiskit-measurement-clifford-sign",
+    "path": "src/chemrefine/engines/qiskit/measurement_validation.py",
+    "old": "0 if sign == 1 else 2",
+    "new": "0",
+    "tests": "tests/test_engines_qiskit_measurement_validation.py",
+    "breaks": "negative Pauli images lose their conjugation phase and legitimate measurement frames are misinterpreted"
+  },
+  {
+    "id": "qiskit-measurement-reconstructed-covariance",
+    "path": "src/chemrefine/engines/qiskit/measurement_validation.py",
+    "old": "(shots - 1)",
+    "new": "shots",
+    "tests": "tests/test_engines_qiskit_measurement_validation.py",
+    "breaks": "independent artifact reconstruction uses the wrong covariance denominator and cannot certify empirical uncertainty"
+  }
+]

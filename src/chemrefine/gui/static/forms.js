@@ -10,6 +10,12 @@
  */
 "use strict";
 
+/** Whether a YAML value can serve as an options mapping without discarding its shape. */
+// biome-ignore lint/correctness/noUnusedVariables: app.js calls this shared helper
+function optionMapping(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 /** Numeric bounds from the schema (pydantic's ge/gt/le/lt), inclusive for the input. */
 function numericBounds(p) {
   let min = null;

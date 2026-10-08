@@ -1,8 +1,8 @@
 # Installing engines & backends
 
 ORCA and Q-Chem are programs you install yourself and point ChemRefine at with
-`executables:`. Everything else — the machine-learned potentials and PySCF — is a Python
-stack, and ChemRefine can install it for you.
+`executables:`. Everything else — the machine-learned potentials, PySCF, and Qiskit —
+is a Python stack, and ChemRefine can install it for you.
 
 ## One environment, or one per backend
 
@@ -52,8 +52,8 @@ first (or let the extra resolve the default build). FAIRChem's default checkpoin
 deliberately share one, because the GPU extra is a strict superset and two would duplicate
 a large libcint/libxc tree for nothing.
 
-`task_name` is the only key that selects a backend. To run a model you fine-tuned
-yourself, name the library that trained it and point `model_path` at the checkpoint —
+For MLIP engines, `task_name` is the only key that selects a backend. To run a model you
+fine-tuned yourself, name the library that trained it and point `model_path` at the checkpoint —
 there is no `custom_<library>` task for any of them. (`custom_mace` still resolves, as a
 MACE alias kept for v1 configs.)
 
@@ -133,8 +133,8 @@ steps:
 Step 1 runs each structure with the `mlip-mace` environment's Python, step 2 with
 `mlip-fairchem`'s — the conflicting stacks never share a process. The same works for
 `mlip-extopt` steps (the gradient server launches from the step's environment) and for
-`pyscf`. The `options.backend_python` knob overrides the resolution with an explicit
-interpreter (an escape hatch — normally environments are resolved by name only).
+`pyscf` and `qiskit`. The `options.backend_python` knob overrides the resolution with an
+explicit interpreter (an escape hatch — normally environments are resolved by name only).
 
 ## Every pip extra
 
@@ -148,6 +148,182 @@ in. `[gui]` is the [workflow builder](../workflow/builder.md), `[mcp]` and `[age
 two [AI agent](../workflow/agents.md) routes; `[dev]`, `[docs]` and `[test]` are for
 working on ChemRefine itself. `[pyscf-gpu]` targets CUDA 12 — CUDA-11 hosts swap in the
 `-cuda11x` wheels.
+
+## Qiskit Nature
+
+Use the [support status](qiskit-status.md) to distinguish working local paths,
+known failures and integrations still awaiting hardware validation. Installing a
+provider profile makes its dependencies available; it does not establish that a
+calculation converged or that every provider method works on that machine.
+
+The [Qiskit engine](qiskit.md) can share the main environment:
+
+```bash
+pip install "chemrefine[qiskit]"
+# Integral-input Python API without the optional PySCF adapter:
+pip install "chemrefine[qiskit-core]"
+# Or include Aer:
+pip install "chemrefine[qiskit-aer]"
+```
+
+For a source checkout, use:
+
+```bash
+pip install -e ".[qiskit]"
+# Integral-input Python API without PySCF:
+pip install -e ".[qiskit-core]"
+# Or include Aer:
+pip install -e ".[qiskit-aer]"
+```
+
+Or provision it as a managed backend so the scientific stack stays isolated:
+
+```bash
+chemrefine backends install qiskit
+# Use this backend name for Aer estimators:
+chemrefine backends install qiskit-aer
+chemrefine backends list
+```
+
+The `[qiskit-core]` extra supplies Qiskit `>=1.4,<2.6`, Qiskit Nature
+`>=0.8,<0.9`, Qiskit Algorithms `>=0.4,<0.5`, and SciPy `>=1.13.0` for direct
+numerical operations. The core provider CI job tests this SciPy floor. It supports upstream integral
+inputs without requiring PySCF. The existing `[qiskit]` extra adds PySCF for
+XYZ-driven calculations and the CLI examples; `[qiskit-aer]` additionally
+supplies CPU Aer `>=0.17,<0.18`. The managed backend names remain `qiskit` and
+`qiskit-aer`.
+
+The optional `[qiskit-fermionic]` environment includes the Aer stack, Qiskit
+`>=2.5,<2.6`, ffsim `>=0.0.84,<0.0.85`, Qiskit Fermions `>=0.1,<0.2`, and
+Qiskit Addon SQD `>=0.13.1,<0.14`. Install with
+`pip install "chemrefine[qiskit-fermionic]"`, or
+`chemrefine backends install qiskit-fermionic`. Native algorithms select that
+complete worker environment; mixing unrelated provider environments fails
+preflight rather than dropping a dependency. The core remains usable with
+Qiskit 1.4. The Fermions integrations require the 2.5 stack.
+
+Optional provider profiles declare their complete dependency sets:
+
+| Managed backend / install extra | Additional provider requirements | Included base profile |
+| --- | --- | --- |
+| `qiskit-runtime` | IBM Runtime `>=0.50,<0.51`, Qiskit Mitigation `>=0.1.1,<0.2`, Samplomatic `>=0.21,<0.22` | `qiskit-aer` |
+| `qiskit-cutting` | Qiskit Addon Cutting `>=0.10,<0.11` | `qiskit-aer` |
+| `qiskit-rdm` | CVXPY `>=1.6.5,<2`, SCS `>=3.2.7.post2,<4` | `qiskit` |
+| `qiskit-toolkit` | Fermionic, Runtime, cutting and RDM profiles together | Their complete dependency sets |
+| `qiskit-resources` | OpenFermion resources `>=1.8.1,<2`, Qualtran `>=0.7.0,<0.8`; Python `>=3.12` | `qiskit`, in a separate resource worker |
+
+The component graph selects one profile containing all consumed providers.
+The catalog exposes these inclusion relationships without importing SDKs.
+ChemRefine chooses the smallest declared compatible profile; it does not combine
+separately provisioned interpreters into one process. A custom combination needs
+a declared profile that owns its complete dependency set.
+Resource estimation uses a separate worker; install it explicitly with
+`chemrefine backends install qiskit-resources --python 3.12`. Its packaging
+minimum-version marker excludes older interpreters but does not select Python.
+
+The four baseline estimators all run locally and need no cloud credentials:
+`statevector`, the lightweight shot-based `basic_backend`, exact-expectation
+`aer_statevector`, and finite-shot `aer_shots`. The first two use `[qiskit]`;
+the Aer estimators require `[qiskit-aer]`. ChemRefine resolves their managed
+backend names accordingly, so a mixed pipeline may provision both `qiskit` and
+`qiskit-aer`. The optional `ibm_runtime` estimator and sampler use
+`qiskit-runtime`; see [Runtime execution](qiskit-runtime.md) for explicit
+provider selection and credential-free recovery.
+
+### Aer CUDA: working paths and known failures
+
+Aer GPU simulation requires a CUDA-enabled Aer build within the declared
+`>=0.17,<0.18` range. The `qiskit-aer-gpu==0.15.1` build is outside
+that range and was found incompatible with Qiskit 2.5. CPU `qiskit-aer` and a
+GPU-wheel distribution both own the `qiskit_aer` import directory. Use one Aer
+distribution per environment; installing one over the other can leave a mixed
+installation even when package metadata appears valid.
+
+A tested Linux alternative is Conda Forge's CUDA build of Aer 0.17.2:
+
+```bash
+conda create -n chemrefine-cuda -c conda-forge python=3.12 'qiskit-aer=0.17.2=*cuda*' cuda-version=12
+conda activate chemrefine-cuda
+python -m pip install -e '.[qiskit-toolkit]'
+python -m pip check
+python -c 'from qiskit_aer import AerSimulator; print(AerSimulator().available_devices())'
+```
+
+These commands install the current source checkout. The existing Conda Aer
+distribution satisfies the pip requirement; do not force-reinstall Aer from
+PyPI afterward. Keep a Conda explicit environment export as well as `pip freeze`
+because pip does not inventory the CUDA libraries. Verify an actual GPU job,
+not just device discovery, before scheduling production calculations.
+See the [Aer build instructions](https://github.com/Qiskit/qiskit-aer/blob/main/CONTRIBUTING.md)
+for building another compatible CUDA variant.
+
+**Working in local validation:** the compatible Linux CUDA build ran statevector
+and density-matrix simulation. This observation applies to the validated build
+and workloads; it does not certify every GPU or circuit.
+
+**Known bug in the validated build:** local validation found intermittent
+`CUTENSORNET_STATUS_INTERNAL_ERROR` failures in `tensor_network` sampling,
+followed by missing-shot-memory errors.
+Use `statevector` or, within its memory budget, `density_matrix` for affected
+sampling workloads until the chosen CUDA/Aer build passes a real circuit check.
+Do not silently replace a failed configured method or report it as a successful
+GPU measurement.
+ChemRefine checks Aer's job and per-experiment status before primitive result
+decoding. Failures retain the provider status, requested method/device/precision,
+Aer version and available Conda build identity in CLI logs and GUI failure records.
+This improves diagnostics; it does not repair or certify the upstream method.
+
+**Hosted CUDA validation remains unverified:** the optional
+`.github/workflows/quantum-cuda.yml` workflow is dispatched manually and accepts
+reviewed `main` only. It requires a dedicated Linux CUDA runner, the
+`quantum-cuda` environment, `CHEMREFINE_CUDA_CI_ENABLED=true`, and
+`CHEMREFINE_CUDA_PYTHON` pointing to a provisioned compatible interpreter.
+The workflow rejects missing, skipped and failed required GPU checks. Its
+presence in the repository is not evidence of a successful hosted run.
+
+A custom environment needs the same pinned
+Qiskit, Nature, Algorithms, PySCF, and ChemRefine source/version as the main
+installation. Point a step at its interpreter only when it cannot be
+provisioned under the normal `qiskit-aer` backend name:
+
+```yaml
+steps:
+  - step: 1
+    engine: qiskit
+    operation: sp
+    options:
+      estimator: aer_statevector
+      device: cuda
+      backend_python: /absolute/path/to/qiskit-gpu-env/bin/python
+```
+
+`device: cuda` makes ChemRefine request GPU capacity and tells Aer to use its
+GPU device. It needs a consumed Aer estimator or sampler with CUDA support.
+GPU simulation changes where the classical simulator runs; it does not connect
+the job to quantum hardware.
+
+### Keep the executing environment with the checkpoint
+
+The version ranges above define compatible dependencies, rather than an exact
+environment lock. Record the resolved environment from the **worker interpreter**
+that ran the calculation, which can differ from the orchestrator:
+
+```bash
+python -m pip check
+python -m pip freeze > checkpoint-python-packages.txt
+python -c 'import platform, sys; print(sys.version); print(platform.platform())' > checkpoint-platform.txt
+# Also retain native package builds for a Conda CUDA environment:
+conda list --explicit > checkpoint-conda-explicit.txt
+```
+
+Keep the ChemRefine commit or installed package artifact, CUDA driver and GPU
+identity, Aer build, execution options and random seeds beside those inventories.
+Provider validation records retain environment manifests and execution reports;
+a manifest documents setup, while the accompanying report establishes whether
+the checks ran and passed. Numerical checkpoints additionally need the actual
+integrals, energy constants and supported bound circuits described in
+[reproducible checkpoints](qiskit-checkpoints.md). A package inventory or a dirty
+Git flag cannot recover the prepared Hamiltonian or uncommitted source changes.
 
 ## FAIRChem model access
 

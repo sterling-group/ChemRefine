@@ -42,6 +42,13 @@ steps:
     anywhere finds `proj/templates` and writes `proj/outputs`. Absolute paths are
     used as-is.
 
+    Declared quantum file inputs follow the same rule, including
+    `options.problem.path` and nested experiment `circuit_path` or integral-bundle
+    references. They resolve when the config loads, but are required only when their
+    consuming step prepares, so an upstream step can produce them first. Bundle payload
+    names resolve against their descriptor's directory. See
+    [quantum handoffs](../engines/qiskit-handoffs.md).
+
 !!! warning "ORCA steps cannot run from a path containing whitespace"
     ORCA reads each geometry through `* xyzfile <path>`, which is whitespace-delimited and
     **not** a quotable field — it truncates the path at the first space — and it runs an
@@ -74,7 +81,7 @@ steps:
 | `slurm_array` | bool | `False` | Submit each step as SLURM job array(s) instead of one job per structure (ignored when running locally). |
 | `dispatch` | `auto` / `local` / `slurm` | `auto` | How jobs are executed. `auto` submits via `sbatch` when it is on PATH and runs the generated scripts locally via `bash` otherwise. `local` forces the local runner even when an `sbatch` binary exists (e.g. a workstation with SLURM client tools but no reachable cluster); `slurm` requires `sbatch` and fails fast when it is missing. |
 | `job_timeout_seconds` | float > 0 / `None` | `None` (wait forever) | How long a step may go with **nothing finishing** before giving up with exit code `8`. The clock restarts on every completed job, so a batch that keeps draining never trips it however long the whole step takes — size it against the longest *single* job, not the step. `None` is right under SLURM: the partition's own time limit already bounds the job. Set it when nothing else will — a `dispatch: local` run, or a cluster where a job can sit in `PD` indefinitely. It bounds *waiting*, not compute, and means the same thing on the per-job and `slurm_array` paths. |
-| `executables` | map | `{}` | Tool → path map for external-binary engines, e.g. `{ orca: /opt/orca/orca }`. Importable backends (mlip, pyscf) need no entry. An engine may document extra keys: the qchem engine reads `qc` and `qcaux` as install roots — see [its section on the engines page](../engines/index.md#q-chem-qchem). |
+| `executables` | map | `{}` | Tool → path map for external-binary engines, e.g. `{ orca: /opt/orca/orca }`. Importable backends (mlip, pyscf, qiskit) need no entry. An engine may document extra keys: the qchem engine reads `qc` and `qcaux` as install roots — see [its section on the engines page](../engines/index.md#q-chem-qchem). |
 | `steps` | list | — | **Required.** The ordered pipeline stages; `step:` numbers must form a contiguous `1..N`. |
 
 ## Per-step keys
@@ -85,13 +92,18 @@ steps:
 | `name` | str | `None` | Optional filesystem-safe label (letters/digits/`_`/`-`, not all-digits). Directory becomes `stepN_name/`; usable as a CLI target. |
 | `engine` | str | — | **Required.** Any name in the [engine table](../engines/index.md) below. |
 | `operation` | str | `None` | Engine-defined — the [engine table](../engines/index.md) lists each engine's vocabulary, and an engine with none treats this as a free label. (`mlip_train` is a legacy spelling: it named a step *kind*, which `engine: mlip-train` already says. Old configs are still translated.) **Optional** — when omitted, an engine that can read the run type from its template infers it (what each engine reads is in its section of the [engines page](../engines/index.md)), defaulting to a single point when the template names no run type. An explicit value always wins — give it when inspection can't decide. |
-| `template` | str |  `stepN.<suffix>` | Engine input template basename (relative to `template_dir` if not absolute); each engine's suffix is in the [engine table](../engines/index.md). |
+| `template` | str |  `stepN.<suffix>` | Engine input template basename (relative to `template_dir` if not absolute); each engine's suffix is in the [engine table](../engines/index.md). Engines without a template, such as `qiskit-experiment`, generate their worker instead. |
 | `slurm_template` | str | global | Per-step SLURM header override. |
 | `charge` / `multiplicity` | int / int ≥ 1 | global | Per-step overrides of the global values, held to the same bounds. |
-| `options` | map | `{}` | Engine-specific knobs (see below). |
+| `options` | map | `{}` | Engine-specific knobs from the [engine guides](../engines/index.md). Molecular Qiskit choices and experiment selections are nested named components; their options are validated against their own schemas. |
 | `sample` | map | `None` | Survivor filter (see below). `None` keeps every structure. |
 | `nms` | bool | `False` | Opt-in normal-mode sampling (honoured only for an NMS-capable engine — the `NMS` column of the [engine table](../engines/index.md) says which). Requires a frequency calc: an NMS step whose template computes no frequencies is rejected before any job is submitted — and an explicit `operation` does not bypass the check, since `operation` never changes the generated input (it only picks the parser). The `target` (`minimum`/`ts`) is inferred from the template — `OptTS` → `ts`, else `minimum` — unless `options.target` is set. |
 | `on_failure` | `stop`/`skip`/`best` | `stop` | What to do when some structures fail (after the convergence auto-retry below): `stop` (default) caches the successes then halts so failures are never silently dropped; `skip` drops them and continues; `best` keeps all, backfilling a failed structure with the best geometry obtained for it or, failing that, the input it was submitted with — as a geometry alone, carrying no energy from the step that produced it, so it is never ranked or reported on a number this step did not compute (a step-1 seed arrives the same way). A structure that *did not converge* is first retried once from its best geometry — the failed attempt is archived under `stepN/<id>/attemptK/` — before this policy applies. An `mlip-train` step refuses `skip`/`best` outright: a training step has no per-structure failures for either to act on. |
+
+Single-artifact engines (`mlip-train`, `qiskit-experiment`) require `on_failure: stop`;
+they have no per-structure failures for `skip` or `best` to act on. A quantum experiment
+passes the incoming structures through unchanged and records its numerical product in
+an artifact, rather than replacing their molecular energies.
 
 ## Sample (survivor filter)
 

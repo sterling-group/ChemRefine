@@ -80,6 +80,28 @@ a cache hit (re-filter), not a re-computation. `on_failure` is likewise excluded
 it has its own repair path. The `executables` map is a machine-local fact and is not
 part of a step's identity.
 
+### Quantum inputs and artifacts
+
+For Qiskit steps, declared integral bundles, circuit checkpoints and experiment inputs
+contribute their descriptor and referenced payload bytes to the cache identity.
+Changing only an NPZ or QPY payload invalidates its consumers even when the descriptor
+filename stays the same. Relative authored paths retain their spelling in the portable
+identity; absolute external paths retain their basename and content digest. See
+[declared input files](../api/input_files.md) for the shared contract.
+
+Molecular outputs can reference reusable state or circuit bundles. Completion, adoption,
+cache reuse and `rebuild-cache` validate those references; experiment outputs also have
+their scientific product checked. Keep each descriptor together with its payloads when
+moving or archiving a run. A missing or corrupt artifact must be repaired or recomputed;
+the generic geometry cache alone cannot replace it.
+
+`resume` reuses complete results or reruns unfinished work. It does not restore an
+optimizer, an ADAPT growth loop or a partially integrated trajectory. Reusing final
+integrals or a bound preparation is a separate, explicit
+[quantum checkpoint handoff](../engines/qiskit-checkpoints.md). Remote-provider recovery
+additionally uses [provider journals](../engines/qiskit-recovery.md); backend options
+control whether saved jobs can be reused.
+
 ## Auto-retry on non-convergence
 
 Before the `on_failure` policy runs, a structure whose job **did not converge**

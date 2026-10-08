@@ -1,0 +1,23 @@
+{
+  "model": "QiskitOptions",
+  "examples": [
+    "basis",
+    "integral_source",
+    "circuit_export",
+    "active_space",
+    "mapper",
+    "algorithm",
+    "ansatz",
+    "initial_state",
+    "estimator",
+    "sampler",
+    "optimizer",
+    "initial_point",
+    "cores"
+  ],
+  "tests_only": [
+    "freeze_core",
+    "device",
+    "backend_python"
+  ]
+}

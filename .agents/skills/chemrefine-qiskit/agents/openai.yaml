@@ -1,0 +1,4 @@
+interface:
+  display_name: "ChemRefine Qiskit"
+  short_description: "Operate and extend the modular Qiskit engine"
+  default_prompt: "Use $chemrefine-qiskit to configure, diagnose, or extend ChemRefine's modular Qiskit engine."

@@ -200,6 +200,46 @@ def test_validate_returns_the_structured_report(client: Any, tmp_path: Path):
     assert report["issues"][0]["kind"] == "engine"
 
 
+@pytest.mark.parametrize("example", ["qiskit_sp/input.yaml", "qiskit_experiment/measurement.yaml"])
+def test_quantum_examples_round_trip_and_validate_through_gui(client: Any, example: str):
+    """The GUI accepts the same real molecular and artifact configs as the CLI."""
+    path = Path(__file__).resolve().parents[1] / "examples/tutorials" / example
+    config = yaml.safe_load(path.read_text())
+    emitted = _post(client, "/api/yaml", {"config": config}).get_json()["yaml_text"]
+    assert _post(client, "/api/parse", {"yaml_text": emitted}).get_json()["config"] == config
+    report = _post(
+        client,
+        "/api/validate",
+        {
+            "yaml_text": emitted,
+            "base_dir": str(path.parent),
+        },
+    ).get_json()
+    assert report["ok"], report
+    engine = config["steps"][0]["engine"]
+    catalog = _get(client, "/api/bootstrap").get_json()["schema"]["engines"][engine][
+        "component_catalog"
+    ]
+    assert catalog
+
+
+@pytest.mark.parametrize("mapper", ["parity", "bravyi_kitaev", "z2_tapered"])
+def test_quantum_gui_preflights_excitation_preserving_encoding(client: Any, mapper: str):
+    """A known incompatible component pairing is visible in the editor's validation report."""
+    path = Path(__file__).resolve().parents[1] / "examples/tutorials/qiskit_sp/input.yaml"
+    config = yaml.safe_load(path.read_text())
+    config["steps"][0]["options"].update(
+        algorithm="vqe", ansatz="excitation_preserving", mapper=mapper
+    )
+    report = _post(
+        client,
+        "/api/validate",
+        {"yaml_text": yaml.safe_dump(config), "base_dir": str(path.parent)},
+    ).get_json()
+    assert report["ok"] is False
+    assert any("unreduced Jordan-Wigner" in issue["message"] for issue in report["issues"])
+
+
 # ---------------------------------------------------------------------------
 # Filesystem: browse + save
 # ---------------------------------------------------------------------------
@@ -405,6 +445,27 @@ def test_dashboard_status_results_failures(client: Any, tmp_path: Path):
     failures = _post(client, "/api/failures", {"config_path": str(config)}).get_json()
     assert failures["failures"][0]["structure_id"] == "2"
     assert failures["suggested_action"] == "rerun-errors"
+
+
+def test_dashboard_preserves_aer_provider_failure_and_remediation(client: Any, tmp_path: Path):
+    """The existing failure panel exposes the original provider error without another schema."""
+    from chemrefine.cache import save_failure_records
+    from chemrefine.engines.qiskit.aer_diagnostics import AerRun
+    from chemrefine.state import FailureKind, FailureRecord
+
+    config = _reported_tree(tmp_path)
+    reason = str(
+        AerRun(None, "tensor_network", "cuda", "double").failure(
+            "CUTENSORNET_STATUS_INTERNAL_ERROR"
+        )
+    )
+    save_failure_records(
+        tmp_path / "outputs/step1_screen",
+        [FailureRecord(structure_id="2", kind=FailureKind.MISSING_OUTPUT, reason=reason)],
+    )
+    response = _post(client, "/api/failures", {"config_path": str(config)})
+    assert response.status_code == 200
+    assert response.get_json()["failures"][0]["reason"] == reason
 
 
 @pytest.mark.parametrize(
