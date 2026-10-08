@@ -231,3 +231,19 @@ exact diagonalization, exercise nonzero imaginary qEOM matrix elements using a
 complex hopping Hamiltonian, and check finite-shot VQD against an analytic
 one-electron spectrum. They also cover overlap failures, conditioning, spin
 constraints, compilation/layout handling, budget failures, and resource cleanup.
+
+## Spectral checkpoints
+
+VQD supports `circuit_export: {}` at the molecular step-options level. It retains
+one bound logical preparation per returned root in measured physical-energy
+order, matching `root_energies_hartree`. The shipped worker writes each root's
+JSON descriptor and referenced NPZ payload; Python callers can persist
+`result.circuits` with `save_circuit`. Preserve all root files and the original
+integral bundle when reproducing overlap, energy or excited-state comparisons.
+
+qEOM currently rejects `circuit_export`: its reconstructed response states are
+operator expansions, and no corresponding executable state-preparation circuit
+is produced. Its complex response matrices, coefficients and diagnostics remain
+in the molecular result metadata. Neither spectral method persists an in-progress
+optimizer/fidelity state for an automatic interrupted-solve restart. See
+[checkpoint boundaries](qiskit-checkpoints.md#archive-and-recovery-boundaries).

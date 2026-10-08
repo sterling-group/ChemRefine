@@ -30,6 +30,8 @@ not universal applicability. The [spectra](qiskit-spectra.md),
 Start with [support status and known bugs](qiskit-status.md) before choosing a
 provider or research method. Use [reproducible checkpoints](qiskit-checkpoints.md)
 to retain the actual Hamiltonian and final preparation for independent replay.
+The [Python API reference](../api/engines_qiskit.md) documents the engine classes,
+typed options, public solver functions, provider resources and artifact interfaces.
 
 ## Choose a workflow
 
@@ -271,11 +273,11 @@ values; `ComponentSelection(name="exact", options={})` is equivalent to
 | --- | --- | --- |
 | `basis` | `sto-3g` | PySCF orbital basis passed to `PySCFDriver`. |
 | `integral_source` | `None` | Optional portable MO bundle with checked molecular identity; bypasses the PySCF geometry driver. |
-| `circuit_export` | `None` | Optional bound logical circuit bundles from supported variational algorithms; `max_bytes` limits each retained QPY payload. Preserves mapper, orbital, parameter and energy conventions for downstream experiments. |
+| `circuit_export` | `None` | Optional bound logical circuit bundles from supported variational algorithms; `max_bytes` limits the combined uncompressed QPY, Hamiltonian and parameter arrays per root. Preserves mapper, orbital, parameter and energy conventions for downstream experiments. |
 | `active_space` | `None` | Optional `{electrons, orbitals, active_orbitals}` reduction applied before mapper construction. `electrons` may be a total integer or `[n_alpha, n_beta]`; optional `active_orbitals` gives explicit zero-based input spatial-orbital indices. |
 | `freeze_core` | `False` | Freeze the conventional doubly occupied atomic core before any explicit active-space reduction. Requires molecular element metadata. |
 | `mapper` | `ComponentSelection(name='jordan_wigner', options={})` | Fermion-to-qubit mapping component. |
-| `algorithm` | `ComponentSelection(name='exact', options={})` | Minimum-eigensolver algorithm component. |
+| `algorithm` | `ComponentSelection(name='exact', options={})` | Molecular solver, including ground-state, excited-state and sampled-subspace methods. |
 | `ansatz` | `ComponentSelection(name='uccsd', options={})` | Fixed circuit and/or adaptive operator-pool provider. |
 | `initial_state` | `ComponentSelection(name='hartree_fock', options={})` | Circuit prepended to a variational ansatz or used as ADAPT's starting state. |
 | `estimator` | `ComponentSelection(name='statevector', options={})` | Qiskit V2 estimator implementation. |
@@ -301,6 +303,26 @@ inactive occupied orbitals must be doubly occupied. No orbital-selection
 algorithm runs inside this engine.
 
 ## Built-in components
+
+The tables below describe the baseline solvers and local components. Additional
+registered choices have their own method-specific guides:
+
+| Category | Additional registered names | Guide |
+| --- | --- | --- |
+| Algorithm | `tetris_adapt`, `ceo_adapt` | [Adaptive quantum solvers](qiskit-adaptive.md) |
+| Algorithm | `vqd`, `qeom` | [Molecular spectra](qiskit-spectra.md) |
+| Algorithm | `ffsim_vqe`, `sqd`, `sqdrift` | [Fermionic research workflows](#fermionic-research-workflows) |
+| Algorithm | `skqd`, `extended_sqd` | [Sampled quantum states](qiskit-states.md) |
+| Mapper | `z2_tapered` | [Reference-aware tapering](qiskit-tapering.md) |
+| Reference, ansatz and optimizer | `determinant`, `ucc_ranks`, `real_amplitudes`, `excitation_preserving`, `l_bfgs_b`, `powell`, `nelder_mead`, `cg`, `bfgs` | [Additional circuit and search choices](#additional-circuit-and-search-choices) |
+| Operator pool | `qe`, `ceo` | [Adaptive quantum solvers](qiskit-adaptive.md) |
+| Optimizer | `qnspsa` | [Quantum natural SPSA](qiskit-spectra.md#qnspsa) |
+| Estimator and sampler | `ibm_runtime` | [IBM Runtime execution](qiskit-runtime.md) |
+
+`qe` and `ceo` are selections in the `ansatz` registry that supply operator
+pools; they do not supply a fixed VQE circuit. UCJ/LUCJ is selected inside
+`ffsim_vqe.options`, rather than through the `ansatz` registry. Inspect
+`chemrefine schema` for the complete strict option schemas and declared domains.
 
 ### Algorithms
 
@@ -399,6 +421,48 @@ At the default shot precision, the target is approximately 4096 shots because
 `ceil(1 / 0.015625^2) = 4096`. Smaller positive precision requests more shots;
 for example, `0.01` implies about 10,000. The actual work can be higher when
 the observable is split into multiple commuting groups.
+
+### Samplers
+
+Samplers return physical integer counts from a requested number of shots. The
+`statevector` sampler therefore performs finite-shot sampling even though the
+same-named estimator can return exact expectations. Estimator options such as
+`default_precision` do not set sampler shots.
+
+| Name | Options | Execution model |
+| --- | --- | --- |
+| `statevector` | `seed=null` | Ideal local terminal measurements through Qiskit's reference `StatevectorSampler`; CPU only. |
+| `basic_backend` | `seed_simulator=null`, `seed_transpiler=null`, `optimization_level=1` | Ideal finite-shot measurements through `BackendSamplerV2` and the bundled `BasicSimulator`; CPU only. |
+| `aer` | Basic sampler controls plus `method=automatic`, `simulation_precision=double`, `noise_model=null` | Aer finite-shot measurements; the same method, CUDA and serialized-noise-model restrictions as `aer_shots` apply. The selection name is `aer`, not `aer_shots`. |
+| `ibm_runtime` | Required `fake_backend` or `backend_name`; `implementation=executor`, `default_shots=4096`, plus typed execution, compilation and journal controls | Explicit local fake-backend or remote Runtime execution. See [Runtime configuration](qiskit-runtime.md#configure-a-local-provider). |
+
+For example, a sampler component for an Aer-backed SQD or measurement workflow is:
+
+```yaml
+sampler:
+  name: aer
+  options:
+    method: statevector
+    simulation_precision: double
+    seed_simulator: 1234
+    seed_transpiler: 1234
+    optimization_level: 1
+```
+
+Set the shot budget in the consuming algorithm or experiment options, such as
+`algorithm.options.shots` for SQD; a sampler selection alone performs no work.
+VQD and QNSPSA use their own `fidelity_shots` controls. `sample_circuit` requires
+an explicit `shots` argument and returns a validated `SampleBatch` in logical
+qubit order, with qubit zero on the right.
+
+Use `SamplingSession` for multiple Python requests. It owns one provider resource
+and carries its cumulative budgets and retrieval cursor across the requests.
+Local sampling uses a fresh reproducible child seed per call, derived from the
+configured sampler seed and optional session seed. The result records the child
+seed and request index. Preserve the same request order when replaying a session;
+opening a new session with the same seeds restarts its sequence. Hardware randomness remains
+provider-managed, and a session must not be shared across concurrent threads.
+See [the sampling API](../api/engines_qiskit.md#sampling-measurement-and-providers).
 
 ### Optimizers
 
@@ -876,6 +940,9 @@ integrals into molecular orbitals. The input validates dimensions, finite real o
 values, Hermitian symmetries, electron counts, and reference occupations.
 For unrestricted inputs, supply the beta one-electron block, beta-beta and
 beta-alpha two-electron blocks, and `overlap_alpha_beta` for the spin observable.
+The overlap is currently a real array; arbitrary complex alpha/beta orbital
+overlaps are unsupported. [Integral field conventions](qiskit-handoffs.md#integral-field-conventions)
+give the dimensions, occupation defaults and complete input contract.
 Optional orbital energies, molecular geometry, and provenance travel with the
 prepared problem. `freeze_core=True` needs all-electron `MolecularMetadata`;
 explicit active-space transformations do not require geometry or PySCF.
@@ -967,6 +1034,7 @@ illustrated below, plus the structured result under `engine_metadata.result`:
         "name": "statevector",
         "options": {"default_precision": 0.0, "seed": null}
       },
+      "sampler": {"name": "statevector", "options": {"seed": null}},
       "optimizer": {
         "name": "slsqp",
         "options": {"maxiter": 100, "ftol": 1e-6, "disp": false}
@@ -1326,6 +1394,26 @@ These components work with the existing VQE workflow and the core optional stack
 | Optimizer | `l_bfgs_b`, `powell`, `nelder_mead` | Additional quasi-Newton and derivative-free searches for the quantum objective. |
 | Optimizer | `cg`, `bfgs` | Additional gradient-based classical searches for the quantum objective. |
 
+Their additional option defaults are:
+
+| Registered name | Options and defaults |
+| --- | --- |
+| `determinant` | Required `alpha` and `beta` occupied-orbital lists, including an empty list for an empty spin population. |
+| `ucc_ranks` | `ranks=[1, 2]`, plus the same `reps`, `generalized`, `preserve_spin` and `include_imaginary` controls as UCCSD. |
+| `real_amplitudes` | `reps=2`, `entanglement=reverse_linear`, `skip_final_rotation_layer=false`. |
+| `excitation_preserving` | `reps=2`, `mode=iswap`, `entanglement=linear`, `preserve_spin=true`, `skip_final_rotation_layer=false`. |
+| `l_bfgs_b` | `maxiter=1000`, `maxfun=15000`, `ftol=1e-9`, `gtol=1e-5`, `eps=1e-8`, `maxls=20`. |
+| `powell` | `maxiter=1000`, `maxfev=10000`, `xtol=1e-4`, `ftol=1e-4`. |
+| `nelder_mead` | `maxiter=1000`, `maxfev=10000`, `xatol=1e-4`, `fatol=1e-4`, `adaptive=false`. |
+| `cg`, `bfgs` | `maxiter=1000`, `gtol=1e-5`, `eps=1.4901161193847656e-8`. |
+
+The fixed-circuit `entanglement` choices in this table are `full`, `linear`,
+`reverse_linear` and `circular`. With `excitation_preserving`, setting
+`preserve_spin: false` permits alpha/beta transfer while still conserving total
+particle number. None of these circuits independently guarantees total spin.
+[QNSPSA](qiskit-spectra.md#qnspsa) additionally uses sampled fidelities and its own
+seed and shot controls.
+
 Optimizer options are strict and reflect the supported Qiskit Algorithms controls. Rank-selected UCC with
 ADAPT requires `reps: 1`, just like UCCSD. Explicit `determinant` metadata is used
 by UCCSD and rank-selected UCC when generating occupied-to-virtual excitations.
@@ -1370,14 +1458,9 @@ a convergence flag, the result preserves `converged: null`.
 
 ### Sampling and SQD
 
-The `sampler` registry offers `statevector`, `basic_backend`, `aer`, and
-[`ibm_runtime`](qiskit-runtime.md).
-`statevector` has a `seed`; backend samplers have `seed_simulator`,
-`seed_transpiler`, and `optimization_level`. Aer additionally offers
-`method: automatic|statevector|density_matrix|matrix_product_state|tensor_network`,
-`simulation_precision`, and a serialized `noise_model`. The existing GPU
-constraints apply. These providers generate actual integer counts from finite
-shots. They do not return mitigation quasiprobabilities.
+Choose a [sampler](#samplers): `statevector`, `basic_backend`, `aer`, or
+[`ibm_runtime`](qiskit-runtime.md). These providers generate actual integer
+counts from finite shots. They do not return mitigation quasiprobabilities.
 
 `sample_circuit(circuit, selection, shots=..., parameter_values=...)` returns a
 `SampleBatch`. Input circuits have no classical registers. The helper binds a

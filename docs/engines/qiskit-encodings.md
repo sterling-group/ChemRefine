@@ -123,6 +123,15 @@ without loading a quantum SDK. The experiment engine uses this value for both
 per-state and aggregate trajectory budgets. Molecular single-point mapper
 registries remain separate from this lattice encoding API.
 
+`build_lattice_dynamics` provides a circuit-only route through its returned
+`LatticeCircuit.circuit`; `simulate_lattice_dynamics` additionally allocates the
+bounded statevector. The YAML lattice artifact retains states and diagnostics,
+but does not automatically export that evolution circuit as QPY. Archive the
+model, reference occupations, encoding/parity choices, integrator options and
+provider versions for reconstruction. Its reported encoded statevector is in
+the encoding's gauge/sector frame and is not an unreduced Jordan–Wigner
+preparation for molecular shadow acquisition.
+
 ## Examples and validation
 
 Complete runnable pipelines share the existing `qiskit_experiment` tutorial's

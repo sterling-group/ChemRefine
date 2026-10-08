@@ -120,6 +120,15 @@ signed generators, actual eigenvalues, discovered and used symmetry counts,
 retained width, and the Clifford tableau. These records describe the scientific
 sector restriction; they do not claim convergence of a variational solver.
 
+For algorithms supporting `circuit_export`, the saved preparation bundle records
+the reduced logical register, mapping metadata, active Hamiltonian and energy
+offsets. Reuse an observable in that same reduced frame or project it with the
+same transform; an unreduced Jordan–Wigner operator is not interchangeable by
+name alone. In particular, [fermionic shadows](qiskit-shadows.md) require an
+unreduced Jordan–Wigner preparation and reject a tapered molecular checkpoint.
+Keep the original integrals and initial-state/mapper options to reproduce the
+sector selection or compute roots in another sector.
+
 `examples/tutorials/qiskit_sp/tapered.yaml` is a complete H₂ VQE pipeline using the
 existing thin template. Validate it with:
 

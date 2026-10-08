@@ -37,6 +37,30 @@ Paths resolve against the YAML file. The scheduler/cache layer hashes both the
 descriptor and its referenced payload, so changing only the numeric data changes
 the input identity. Copy the whole input/output tree when relocating a run.
 
+### Integral field conventions
+
+For `n = num_spatial_orbitals`, the public input contract is:
+
+| Field | Convention |
+| --- | --- |
+| `one_body_integrals`, `two_body_integrals` | Required finite arrays of shape `(n, n)` and `(n, n, n, n)` in orthonormal MO space. Real or complex Hamiltonian coefficients are accepted with the checked Hermitian symmetries. |
+| `two_body_order` | Explicit `chemist` or `physicist` ordering; the default is `chemist`. No AO-to-MO or tensor-order inference is performed. |
+| `num_alpha`, `num_beta` | Integer populations from zero through `n`; spin orbitals are all alpha orbitals followed by all beta orbitals. |
+| `one_body_integrals_beta`, `two_body_integrals_beta_beta`, `two_body_integrals_beta_alpha` | Supply all three for unrestricted inputs, or omit all three for shared spatial integrals. They use the same dimensions and declared two-body ordering. |
+| `overlap_alpha_beta` | Required for unrestricted inputs to construct the spin observable. Currently restricted to a finite **real** `(n, n)` array; general complex alpha/beta overlaps are unsupported. |
+| `orbital_occupations`, `orbital_occupations_beta` | Real length-`n` arrays of `0` or `1` whose sums match the respective spin populations. If omitted, each spin fills its lowest-index orbitals. Retain explicit occupations for a non-prefix reference. |
+| `orbital_energies`, `orbital_energies_beta` | Optional finite real length-`n` arrays; they do not replace the Hamiltonian tensors. |
+| `multiplicity` | An allowed target spin multiplicity. If omitted, it defaults to `abs(num_alpha - num_beta) + 1`; provide it explicitly for another allowed total-spin sector. |
+| `molecular_metadata` | Ordered element symbols, coordinates in angstrom and integer charge. Required by the molecular pipeline and frozen-core preparation; optional for a standalone model. |
+| `nuclear_repulsion_energy`, `energy_offsets` | Hartree constants, retained separately and added once. Nuclear repulsion may be unknown for a standalone model, but is required by the molecular pipeline. |
+| `provenance`, `metadata` | JSON-compatible producer and interpretation details. Record the basis and source calculation here; the schema does not require a particular basis label. |
+
+The unrestricted interface does not make every downstream solver support every
+complex input. Cartesian SQD, grouped SqDRIFT preparation and provider
+factorizations have narrower real/shared-integral domains. Select a compatible
+solver before treating a successfully loaded bundle as an executable workflow.
+See the [typed data API](../api/engines_qiskit.md#preparing-molecular-problems).
+
 ## Bound preparation circuits
 
 `bound_circuit(context, circuit, parameters, root=0)` binds a logical circuit using

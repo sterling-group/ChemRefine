@@ -1,9 +1,23 @@
 # Sampled quantum states and observables
 
-The `sqd` and `sqdrift` molecular algorithms retain the determinant basis and
-complex amplitudes of their selected subspace states. These states describe the
+The `sqd`, `sqdrift`, `skqd` and `extended_sqd` molecular algorithms retain the
+determinant basis and complex amplitudes of their returned subspace states.
+These states describe the
 projected quantum-sampled subspace; their RDMs are not direct experimental
 measurements or guarantees of exact electronic structure.
+
+Install the `qiskit-fermionic` backend for these algorithms. They all require
+the untapered `jordan_wigner` mapper. Supplied-count SQD and extended SQD run on
+CPU without submitting samples; acquisition uses the selected sampler and can
+use supported Aer CUDA execution. None of these methods consumes an estimator
+or optimizer, so leave those components at their defaults.
+
+| Algorithm | Sampling input | Consumed preparation components |
+| --- | --- | --- |
+| `sqd` | Positive physical `counts`, or one fixed ansatz circuit. | With acquisition: `ansatz`, `initial_state`, `initial_point`, `sampler`. Supplied counts leave all four at their defaults. |
+| `sqdrift` | Grouped-qDRIFT circuits from the shared real spatial integrals. | `sampler`; it uses the actual molecular reference and does not consume `ansatz`, `initial_state` or `initial_point`. |
+| `skqd` | Reference plus powers of one fixed evolution step. | `initial_state`, `sampler`; leave `ansatz` and `initial_point` at their defaults. |
+| `extended_sqd` | SQD counts/acquisition followed by explicit excitation expansion. | The same acquisition components as SQD. Expansion uses actual reference occupations. |
 
 ## Select a projection and excited root
 
@@ -43,6 +57,13 @@ sampling of explicit determinants. Seeds, sampling budgets, and iteration record
 remain available. Small projected matrices use dense diagonalization; larger
 ones use a matrix-free Hermitian eigensolver with residual validation.
 
+The Cartesian projector supports a single spin-validated root and the released
+real shared-orbital PySCF/SQD domain. Multiple roots, `spin_constraint: report`
+and orbital optimization require `projection: explicit`. Cartesian processing
+also requires at least one alpha and one beta electron and at most 63 spatial
+orbitals. Explicit supplied-count processing supports the broader
+complex/unrestricted integral domain and sectors with an empty spin population.
+
 ## Use retained states
 
 The Python result exposes `result.states`, one immutable `DeterminantState` per
@@ -57,6 +78,15 @@ are complex numeric arrays and determinant integers use unsigned 64-bit limbs.
 Missing or corrupt referenced states invalidate a cached molecular result.
 Calling `run_problem` does not write files; `run_job(..., artifact_dir=...)`
 explicitly enables persistence at the pipeline boundary.
+
+State bundles preserve the final determinant basis, amplitudes and orbital
+rotation. Molecular acquisition metadata records budgets, seeds and circuit
+summaries; it does not archive the raw sampled count dictionary or each
+acquisition circuit. Save those separately in a custom acquisition workflow if
+you need to repeat the subspace selection exactly. Supplied counts remain in
+the resolved algorithm options. These algorithms do not support
+`circuit_export`; their retained CI states do not provide a compiled quantum
+state-preparation circuit. See [checkpoint boundaries](qiskit-checkpoints.md#archive-and-recovery-boundaries).
 
 ```python
 state = result.states[result.target_root]
@@ -118,6 +148,28 @@ formula error changes the sampled subspace rather than the reported operator.
 The ordinary sampler, initial-state selection, shot budgets, recovery controls,
 root controls, and orbital optimization remain available.
 
+`skqd` defaults to `time_step: 0.1`, `num_steps: 4`, `product_formula: suzuki`,
+`suzuki_order: 2`, `repetitions: 1` and `max_circuits: 256`. It always uses the
+explicit projector. There are `num_steps + 1` circuits, each with `shots` shots;
+that total must fit `max_total_shots`. With `product_formula: lie`, leave
+`suzuki_order` at its default because that option is unused by the Lie formula.
+
+```yaml
+algorithm:
+  name: skqd
+  options:
+    time_step: 0.1
+    num_steps: 4
+    shots: 4096
+    configuration_recovery: false
+    samples_per_batch: 100
+    num_batches: 1
+initial_state: hartree_fock
+sampler:
+  name: statevector
+  options: {seed: 7}
+```
+
 ## Expand sampled states for excitations
 
 `algorithm: extended_sqd` applies occupied-to-virtual excitations defined by the
@@ -133,3 +185,27 @@ Physical shot counts retain the source circuit's acquisition totals; generated
 basis elements are reported separately. This method defaults to
 `spin_constraint: report`, exposing roots across total-spin sectors at fixed
 alpha/beta population. Root zero remains the scalar molecular-energy default.
+
+`max_excitation_operators` (default 10000) bounds the excitation pool,
+`max_generated_determinants` (100000) bounds the expanded configuration union,
+and the inherited `max_subspace_dimension` (10000) bounds the final solve.
+`max_total_diagonalizations` accounts for the additional expansion solve.
+
+```yaml
+algorithm:
+  name: extended_sqd
+  options:
+    counts: {"0101": 20, "1010": 20}
+    configuration_recovery: false
+    samples_per_batch: 2
+    num_batches: 1
+    excitation_ranks: [1, 2]
+    num_roots: 2
+    target_root: 1
+```
+
+The snippets are molecular step `options` fragments for a compatible supplied
+or prepared problem. Keep the integral bundle, resolved configuration and full
+state descriptor/payload together for replay. Loading a state supports later
+property analysis; it does not resume sampling, configuration recovery or an
+interrupted orbital optimizer.

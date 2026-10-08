@@ -138,3 +138,20 @@ rejects QNSPSA because that driver does not provide this rebuilding contract.
 Runnable examples: `examples/tutorials/qiskit_sp/tetris_adapt.yaml`,
 `ceo_adapt.yaml`, and `ceo_qnspsa.yaml`. The QNSPSA example is a stochastic experiment;
 it does not promise the deterministic SLSQP example's final accuracy.
+
+## Retain the final circuit
+
+Both owned adaptive drivers accept the molecular option `circuit_export: {}`.
+The final bound logical preparation uses the retained circuit and parameters,
+including after an energy-increase rollback. `run_problem` returns it through
+`result.circuits`; the shipped worker persists a per-root JSON/NPZ checkpoint.
+The checkpoint includes mapping, active Hamiltonian, parameter bindings and
+energy offsets. See [circuit handoffs](qiskit-handoffs.md) for sampling or cutting
+that same state without rerunning optimization.
+
+Iteration diagnostics and a final circuit do not store optimizer Hessians,
+random-generator state or a partly grown solve for automatic continuation.
+Archive the original integrals, configuration, seeds and full checkpoint for
+reproducible analysis; pipeline resume reuses a completed molecular result or
+starts a new solve. `initial_point` must remain `zeros` because these drivers
+start from an empty adaptive parameter set.

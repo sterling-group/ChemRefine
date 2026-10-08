@@ -78,6 +78,10 @@ save_integrals(checkpoint_dir / "molecule.integrals.json", data)
 This producer example is for real restricted orbitals. The integral API also
 supports complex Hermitian and unrestricted inputs; unrestricted data requires
 all beta integral blocks and the alpha-beta orbital overlap for spin observables.
+The overlap array is currently real; general complex alpha/beta orbital overlaps
+are outside the supported input contract. Occupations are `0`/`1` per spin,
+rather than PySCF's restricted `0`/`2` total occupations; the example divides the
+RHF occupations accordingly.
 Declare `two_body_order` explicitly and preserve alpha-then-beta spin-orbital
 ordering, occupations, particle counts and multiplicity.
 

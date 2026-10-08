@@ -22,6 +22,62 @@ belong in IBM's account storage, never in ChemRefine YAML or job journals. Hardw
 jobs consume provider resources; this adapter does not submit during configuration
 validation, catalog inspection or result parsing.
 
+## Configure a local provider
+
+Install the complete profile with `chemrefine backends install qiskit-runtime`,
+or `python -m pip install "chemrefine[qiskit-runtime]"` in the executing
+environment. From a source checkout, use `python -m pip install -e ".[qiskit-runtime]"`.
+`ibm_runtime` is the component name; `qiskit-runtime` is the install extra and
+managed backend name.
+
+This is an `options` fragment for a molecular `qiskit` VQE step using the shipped
+single-point template. Its fake backend simulates the released device noise
+model, so its energy is a noisy estimate even with mitigation disabled:
+
+```yaml
+options:
+  algorithm: vqe
+  ansatz: uccsd
+  initial_state: hartree_fock
+  initial_point: zeros
+  estimator:
+    name: ibm_runtime
+    options:
+      implementation: executor
+      fake_backend: FakeManilaV2
+      mode: job
+      default_shots: 1024
+      resilience_level: 0
+      seed_simulator: 1234
+      seed_transpiler: 1234
+      max_jobs: 1000
+      max_nominal_shots: 10000000
+  optimizer:
+    name: spsa
+    options:
+      maxiter: 50
+      learning_rate: 0.05
+      perturbation: 0.1
+      seed: 1234
+  device: cpu
+```
+
+The worker supplies a durable journal path automatically. A standalone Python
+caller must set an absolute `journal_dir` in the component options or provide
+`CHEMREFINE_PROVIDER_JOURNAL_DIR`. To use Runtime sampling instead, select
+`sampler: {name: ibm_runtime, options: {...}}` and supply the shared execution
+controls plus `default_shots`; estimator-only `resilience_level`, `trex`, `zne`,
+`pec` and `noise_learning` are rejected by its strict sampler schema. Explicit
+shots in the consuming workflow override `default_shots`.
+
+For hardware, remove `fake_backend` **and** `seed_simulator`, choose
+`backend_name`, and use the existing saved account selectors as needed. Exactly
+one of `fake_backend` and `backend_name` is required. `device` describes the local
+worker allocation; Runtime components use `device: cpu`, including when they
+submit to a quantum device. Configuration validation does not contact that
+device. The [typed Runtime API](../api/engines_qiskit.md#sampling-measurement-and-providers)
+and `chemrefine schema` list every supported control and default.
+
 ## Circuits, execution and limits
 
 Both primitives provide a transpiler with the backend target, `initial_layout`,
