@@ -17,7 +17,8 @@ tables a sound drawing rather than a pile of numbers:
      so same-family curves must never cross
   5. the silhouette polygon and the flank face gen_logo draws are simple
   6. the fill ramp ascends in luminance, boosted strokes are thicker than
-     display strokes
+     display strokes, and each stroke and mesh curve has an ink sample clear
+     of the other lines, where item 7 reads its ink
   7. the resemblance gate against the original raster CHEMREFINE_LOGO_REF
      names - ink IoU, weave IoU and per-line ink color, the "looks almost
      the same" numbers. Set, the variable runs the gate or fails: a name that
@@ -25,6 +26,7 @@ tables a sound drawing rather than a pile of numbers:
      Pillow. Unset or empty, the gate does not run, and the last line says so
 """
 
+import bisect
 import math
 import os
 import sys
@@ -36,6 +38,8 @@ import gen_logo as g
 ATTACH_TOL = 3.5  # px: mesh ends must sit on their stroke
 G1_TOL_DEG = 2.5
 FAMILY_MIN_DIST = 8.0
+INK_SAMPLE_AT = (0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85)  # fractions of a line's length
+INK_CLEARANCE = 22.0  # px: nearer another line than this, a sample would read that line's ink
 
 
 def fail(msg):
@@ -67,6 +71,24 @@ def angdiff(a, b):
 def poly_dist(p, pts):
     """Distance from point p to a polyline given as a point list."""
     return min(math.hypot(p[0] - q[0], p[1] - q[1]) for q in pts)
+
+
+def ink_samples(lines):
+    """Per line, the points where its ink can be read off the reference raster.
+
+    One point at each of INK_SAMPLE_AT along the line's length, less those nearer
+    another line than INK_CLEARANCE. *lines* maps a line's name to its polyline."""
+    samples = {}
+    for name, pts in lines.items():
+        others = [q for other, line in lines.items() if other != name for q in line]
+        arc = [0.0]
+        for a, b in pairwise(pts):
+            arc.append(arc[-1] + math.hypot(b[0] - a[0], b[1] - a[1]))
+        along = (
+            pts[min(bisect.bisect_left(arc, t * arc[-1]), len(pts) - 1)] for t in INK_SAMPLE_AT
+        )
+        samples[name] = [p for p in along if poly_dist(p, others) >= INK_CLEARANCE]
+    return samples
 
 
 def _orient(p, q, r):
@@ -413,6 +435,23 @@ def main() -> int:
         bad += ok("stroke-width discipline holds")
     else:
         bad += fail("stroke-width discipline broken")
+    # the lines whose ink is read. Not the ground: it wears the face's vertical
+    # gradient, not a ramp along itself
+    lines = {"A": a_pts, "B": b_pts}
+    lines.update({n: g.sample_chain(g.MESH[n], 400) for n in g.MESH_ORDER})
+    ink_points = ink_samples(lines)
+    unread = [name for name, points in ink_points.items() if not points]
+    if not unread:
+        fewest = min(ink_points, key=lambda name: len(ink_points[name]))
+        bad += ok(
+            "each stroke and mesh curve has an ink sample clear of the other lines "
+            f"(fewest: {fewest}, {len(ink_points[fewest])} of {len(INK_SAMPLE_AT)})"
+        )
+    else:
+        bad += fail(
+            f"{', '.join(unread)}: none of the {len(INK_SAMPLE_AT)} ink samples is clear "
+            "of the other lines"
+        )
 
     # 7. report + the resemblance gate: a set CHEMREFINE_LOGO_REF runs it or fails
     print(f"mark ink extents {x1 - x0:.0f} x {y1 - y0:.0f} (aspect {(x1 - x0) / (y1 - y0):.2f})")
@@ -502,46 +541,48 @@ def main() -> int:
             def hex_rgb(h):
                 return [int(h[i : i + 2], 16) for i in (1, 3, 5)]
 
-            all_chains = {
-                "A": g.sample_chain(g.A_SEGS, 400),
-                "B": g.sample_chain(g.B_SEGS, 400),
-            }  # not the ground: it wears the face's vertical gradient, not a ramp along itself
-            all_chains.update({n: g.sample_chain(g.MESH[n], 400) for n in g.MESH_ORDER})
             worst_line, worst_med = "", 0.0
-            for name, pts in all_chains.items():
-                others = np.vstack([np.array(p) for k, p in all_chains.items() if k != name])
-                arr = np.array(pts)
-                arc = np.concatenate([[0], np.cumsum(np.hypot(*np.diff(arr, axis=0).T))])
+            outside = []
+            for name, points in ink_points.items():
+                if not points:
+                    continue  # failed in section 6: no sample to read this line at
                 des = []
-                for t in np.linspace(0.15, 0.85, 8):
-                    i = int(np.searchsorted(arc, t * arc[-1]).clip(0, len(arr) - 1))
-                    p = arr[i]
-                    if np.min(np.hypot(*(others - p).T)) < 22:
-                        continue
+                for p in points:
                     win = ra[
                         max(0, int(p[1]) - 7) : int(p[1]) + 7, max(0, int(p[0]) - 7) : int(p[0]) + 7
                     ].reshape(-1, 3)
+                    if not len(win):
+                        outside.append(name)
+                        break
                     core = np.median(win[np.argsort(win.sum(1))[: max(6, len(win) // 3)]], 0)
                     ramp: tuple[tuple[float, str], ...]
                     if name in ("A", "B"):
                         off = (p[0] - g.LTIP[0]) / (g.RTIP[0] - g.LTIP[0])
                         ramp = g.OUTLINE_A_STOPS if name == "A" else g.OUTLINE_B_STOPS
                     else:
-                        P0, P1 = arr[0], arr[-1]
+                        P0, P1 = np.array(lines[name][0]), np.array(lines[name][-1])
                         d_ = P1 - P0
-                        off = float(np.clip((p - P0) @ d_ / (d_ @ d_), 0, 1))
+                        off = float(np.clip((np.array(p) - P0) @ d_ / (d_ @ d_), 0, 1))
                         ramp = g.MESH_STOPS[name]
                     have = hex_rgb(grad_color(ramp, off))
                     des.append(float(np.linalg.norm(lab(core) - lab(have))))
-                med = float(np.median(des)) if des else 0.0
-                if med > worst_med:
-                    worst_med, worst_line = med, name
-            if worst_med <= 5.0:
+                else:  # every sample of the line was read
+                    med = float(np.median(des))
+                    if med > worst_med:
+                        worst_med, worst_line = med, name
+            if outside:
+                bad += fail(
+                    f"ink-color gate: a sample of {', '.join(outside)} lies outside the part "
+                    "of the raster the gate reads"
+                )
+            if worst_med > 5.0:
+                bad += fail(f"ink-color gate: {worst_line} median dE {worst_med:.1f} > 5")
+            elif unread:
+                print(f"      (ink-color gate: no verdict; {', '.join(unread)} not read)")
+            elif not outside:
                 bad += ok(
                     f"ink-color gate: worst per-line median dE {worst_med:.1f} ({worst_line}) <= 5"
                 )
-            else:
-                bad += fail(f"ink-color gate: {worst_line} median dE {worst_med:.1f} > 5")
 
     verdict = "all checks passed" if bad == 0 else f"{bad} check(s) FAILED"
     print(verdict if ref else f"{verdict} (resemblance gate not run)")

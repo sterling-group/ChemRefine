@@ -1,14 +1,15 @@
 """``tools/gen_logo.py`` takes no answer on trust and replaces no file until the kit is staged.
 
-The generator is a developer tool, not the package, and CI never runs inkscape: its renders
-are byte-stable only on the toolchain the generator names under "Regenerating". These cases
-pin what holds everywhere. The SVGs Python draws alone are the committed ones, and no stroke
-is cut into a piece that draws nothing. The tables pass the audit in ``tools/check_logo.py``,
-which never reports a gate it did not run as passed. The navy the lockup draws and the GUI's
-page spells is ``CHEM_NAVY``. A program's answer counts as a product only once its own bytes
-say so, since an exit status of 0 is no evidence of success. And publishing replaces no file
-until every one is staged. Fake programs on ``PATH`` and throwaway roots stand in for the
-toolchain, so none of the cases starts inkscape.
+The generator is a developer tool, not the package, and CI never runs inkscape: its renders are
+byte-stable only on the toolchain the generator names under "Regenerating". These cases pin
+what holds everywhere. The SVGs Python draws alone are the committed ones, and no stroke is cut
+into a piece that draws nothing. The tables pass the audit in ``tools/check_logo.py``, which
+never reports a gate it did not run as passed and fails a line it has no clear sample to read
+the ink of. The navy the lockup draws and the GUI's page spells is ``CHEM_NAVY``. A program's
+answer counts as a product only once its own bytes say so, since an exit status of 0 is no
+evidence of success. And publishing replaces no file until every one is staged. Fake programs
+on ``PATH`` and throwaway roots stand in for the toolchain, so none of the cases starts
+inkscape.
 """
 
 from __future__ import annotations
@@ -175,6 +176,34 @@ def test_a_flank_face_that_crosses_itself_fails_the_audit(check_logo, capsys, mo
     status, fails, lines = _audit(check_logo, capsys)
     assert (status, fails) == (1, ["FAIL  flank face self-intersects"])
     assert lines[-1] == "1 check(s) FAILED (resemblance gate not run)"
+
+
+@pytest.mark.parametrize(("gap", "read"), [(21.0, 0), (22.0, 8)], ids=["nearer", "clear"])
+def test_a_lines_ink_is_sampled_only_clear_of_every_other_line(check_logo, gap, read):
+    """Eight samples along a line's length, less those nearer another line than the clearance.
+
+    Two level lines stand *gap* px apart, so every point of one has the other exactly that
+    far away: one px short of the clearance no sample is kept, and at the clearance all
+    are. Their points bunch toward one end, so a sample placed by a fraction of the point
+    count would land elsewhere than one placed by that fraction of the length.
+    """
+    low = [(x * x / 1000, 0.0) for x in range(1001)]
+    high = [(x, gap) for x, _ in low]
+    samples = check_logo.ink_samples({"low": low, "high": high})
+    assert {name: len(points) for name, points in samples.items()} == {"low": read, "high": read}
+    assert [round(x / 1000, 2) for x, _ in samples["low"]] == list(check_logo.INK_SAMPLE_AT)[:read]
+
+
+def test_a_line_with_no_clear_ink_sample_fails_the_audit(check_logo, capsys, monkeypatch):
+    """A stroke or mesh curve none of whose ink samples is clear of the others fails by name.
+
+    V2 drawn over V1 leaves neither a clear sample. The family's own checks fail on such
+    tables too; this failure names the lines whose ink the gate has nowhere to read.
+    """
+    monkeypatch.setitem(check_logo.g.MESH, "V2", check_logo.g.MESH["V1"])
+    status, fails, _ = _audit(check_logo, capsys)
+    assert status == 1
+    assert "FAIL  V1, V2: none of the 8 ink samples is clear of the other lines" in fails
 
 
 @pytest.mark.parametrize("kind", ["missing", "directory"])
