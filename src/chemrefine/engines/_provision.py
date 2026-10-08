@@ -819,7 +819,9 @@ def build_backend_env(
     as "run once on a login node with internet", so running it without one is the first
     mistake anybody makes. ``FileNotFoundError`` is the second: :func:`detect_env_tool`
     reports ``conda`` from ``$CONDA_PREFIX``, but the build shells out to a ``conda``
-    *binary*, which on many clusters is only a shell function.
+    *binary*, which on many clusters is only a shell function. The directory the envs live
+    in is created inside the same net: a home this account cannot write, or a disk with no
+    room for one more directory, is the build's refusal too, saying what it was doing.
 
     A half-built env is removed on the way out, because leaving it is worse than not
     building it: an env whose *create* succeeded and whose *install* failed would be served
@@ -844,26 +846,30 @@ def build_backend_env(
         _require_supported_env(extra, env_path)
         base = BasePython(this_python(), _existing_env_tool(env_path, detected))
     create, install = _build_commands(base, env_path, extra)
-    env_path.parent.mkdir(parents=True, exist_ok=True)
-    # try/finally with a success flag, not an except-clause: Ctrl-C during a multi-GB
-    # torch install is the *common* interruption, and KeyboardInterrupt/SystemExit slip
-    # past any (OSError, CalledProcessError) net — leaving `<env>/bin/python` present
-    # with the install half-done, which `require_backend` then accepts by name on every
-    # later run. Exactly the state the docstring above says must not exist, reachable
-    # only through exceptions such a net does not catch.
+    # The sweep is a `finally` with a success flag, not part of the except-clause: Ctrl-C
+    # during a multi-GB torch install is the *common* interruption, and
+    # KeyboardInterrupt/SystemExit slip past any (OSError, CalledProcessError) net — leaving
+    # `<env>/bin/python` present with the install half-done, which `require_backend` then
+    # accepts by name on every later run. Exactly the state the docstring above says must
+    # not exist, reachable only through exceptions such a net does not catch.
     built = False
+    # What the build is doing, for the one sentence that says what failed. The directory the
+    # envs live in is its first write, and a disk that refuses that one is the disk that
+    # refuses pip a moment later: one command, one refusal.
+    doing = f"creating {env_path.parent}"
     try:
+        env_path.parent.mkdir(parents=True, exist_ok=True)
         for argv in [create, install] if fresh else [install]:
-            try:
-                # this install's own metadata; no shell, no user-supplied string.
-                subprocess.run(argv, check=True)  # noqa: S603
-            except (OSError, subprocess.CalledProcessError) as e:
-                raise BackendProvisionError(
-                    f"could not build the managed env for {extra!r}: `{shlex.join(argv)}` "
-                    f"failed ({e}). Re-run `chemrefine backends install {extra}` once the "
-                    f"cause is fixed, or install `chemrefine[{extra}]` into this environment."
-                ) from e
+            doing = f"`{shlex.join(argv)}`"
+            # this install's own metadata; no shell, no user-supplied string.
+            subprocess.run(argv, check=True)  # noqa: S603
         built = True
+    except (OSError, subprocess.CalledProcessError) as e:
+        raise BackendProvisionError(
+            f"could not build the managed env for {extra!r}: {doing} failed ({e}). Re-run "
+            f"`chemrefine backends install {extra}` once the cause is fixed, or install "
+            f"`chemrefine[{extra}]` into this environment."
+        ) from e
     finally:
         if fresh and not built:
             shutil.rmtree(env_path, ignore_errors=True)

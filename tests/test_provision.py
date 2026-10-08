@@ -8,6 +8,7 @@ so these tests also pin the end-to-end wiring: managed env → server command / 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tomllib
@@ -997,6 +998,33 @@ def test_a_failed_build_carries_an_exit_code(monkeypatch, tmp_path: Path, failur
     with pytest.raises(BackendProvisionError, match="mlip-mace") as excinfo:
         provision.build_backend_env("mlip-mace", tool="venv")
     assert excinfo.value.exit_code == 9
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through any mode")
+def test_a_home_the_build_cannot_create_is_the_builds_own_refusal(monkeypatch, tmp_path: Path):
+    """The directory the envs live in is the build's first write, and refuses as the build.
+
+    A ``$CHEMREFINE_HOME`` this account cannot write, or a disk with no room for one more
+    directory, is the full disk that would refuse pip a moment later: one command, one
+    class and code, saying what it was doing — and nothing is started.
+    """
+    sealed = tmp_path / "sealed"
+    sealed.mkdir()
+    monkeypatch.setenv("CHEMREFINE_HOME", str(sealed / "home"))
+    _supports(monkeypatch, (provision.this_python(),))  # mlip-mace installs here
+    monkeypatch.setattr(provision, "_direct_url", lambda: None)
+    monkeypatch.setattr(provision.subprocess, "run", lambda *_a, **_k: pytest.fail("no build"))
+    sealed.chmod(0o555)
+    try:
+        with pytest.raises(BackendProvisionError) as refusal:
+            provision.build_backend_env("mlip-mace", tool="venv")
+    finally:
+        sealed.chmod(0o755)
+    assert refusal.value.exit_code == 9
+    assert f"creating {sealed / 'home' / 'backends'} failed" in str(refusal.value)
+    assert "Permission denied" in str(refusal.value)
+    assert "`chemrefine backends install mlip-mace`" in str(refusal.value)
+    assert isinstance(refusal.value.__cause__, PermissionError)
 
 
 def test_a_half_built_env_is_not_left_behind(monkeypatch, tmp_path: Path):

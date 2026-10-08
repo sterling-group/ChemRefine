@@ -451,7 +451,8 @@ _RAW_WRITERS: dict[tuple[str, str], str] = {
     "token, written inside the job",
     ("engines/_backend_server/sidecar.py", "write_server_url"): "the gradient server's "
     "address, written inside the job",
-    ("engines/_provision.py", "build_backend_env"): "a managed environment, outside every run tree",
+    ("engines/_provision.py", "build_backend_env"): "a managed environment, outside every "
+    "run tree: a BackendProvisionError says what the build could not do",
     ("engines/mlip/backends/chgnet.py", "ChgnetTrainer.train_with_library"): "the trained "
     "model, written by the training job",
     ("engines/mlip/backends/orb.py", "OrbTrainer.train_with_library"): "the checkpoints and "
