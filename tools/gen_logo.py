@@ -43,9 +43,11 @@ apple-touch icon and the 192/512 launcher tiles rasterize from the display
 mark, or they wear tab-sized stroke weights at tile size.
 logo-header.svg is the white mono line-art for the docs header bar.
 Requires inkscape (text->path + PNG export; authored with Inkscape 1.4.4),
-Pillow (favicon.ico) and real Arial Bold for the wordmark.
-Regenerated assets are byte-stable only on the authoring toolchain; CI never
-regenerates.
+Pillow (favicon.ico) and real Arial Bold for the wordmark, as fontconfig's
+fc-match resolves it; main() checks all of them before anything renders.
+inkscape's renders are byte-stable only on the authoring toolchain, so CI never
+runs inkscape; the SVGs Python draws alone (drawn_svgs) need no toolchain, and
+the suite holds the committed ones to them.
 
 Two output roots, one writer
 ----------------------------
@@ -57,10 +59,10 @@ colored mark for its white header bar (the white mono line-art is the same
 framing for the docs' teal one), the lockup its stylesheet washes over the
 page ground, and
 the icon family. No dark variant: the GUI has no dark mode. Both roots are
-written from the same values in the same run, so they are byte-identical by
+written from the same bytes in the same run, so they are byte-identical by
 construction and a test holds them that way. That is a different claim from
-"a rebuild reproduces the committed bytes", which is only true on the
-authoring toolchain and is why CI never rebuilds.
+"a rebuild reproduces the committed bytes", which CI can check only for the
+SVGs Python draws alone.
 
 Regenerating
 ------------
@@ -70,11 +72,13 @@ Regenerating
 
 from __future__ import annotations
 
+import importlib
 import math
-import shutil
+import shlex
 import subprocess
 import sys
-import tempfile
+from collections.abc import Callable
+from io import BytesIO
 from itertools import pairwise
 from pathlib import Path
 
@@ -93,6 +97,9 @@ GUI_SUBSET = (
     "icon-192.png",
     "icon-512.png",
 )
+# publish() stages each file beside its target under this prefix, so the rename that
+# replaces the target stays inside one directory.
+STAGE_PREFIX = ".gen_logo-"
 REFERENCE_URL = "https://github.com/user-attachments/assets/ae7b1ad5-0d90-445c-be83-ddcb76fa85c3"
 
 # --------------------------------------------------------------- palette ----
@@ -118,10 +125,10 @@ DARK_MAP = {"#1d4a75": "#2b689c", "#25567d": "#7fb0d8", "#1d4a73": "#2a659a"}
 
 FONT = "Arial"  # real Arial Bold required; _require_font() refuses lookalikes
 FONT_WEIGHT = "bold"
-# Every subprocess here is a local render of a file this run wrote. A snap-managed inkscape
-# that stops to ask something, or a fontconfig scan of a cold cache, otherwise hangs the
-# build rather than failing it.
-INKSCAPE_TIMEOUT_SECONDS = 600
+# Bounds every subprocess here: a render of SVG this run drew, or a one-line question
+# (inkscape's version, fontconfig's match). One that runs this long has hung; the bound is
+# generous because a fontconfig scan of a cold cache is slow without being stuck.
+SUBPROCESS_TIMEOUT_SECONDS = 600
 LS = "-0.01em"
 
 GRAD_RISE = 140.0  # fill-ramp axis climb tip-to-tip (lightens up-right)
@@ -492,8 +499,8 @@ def mark_group(dark=False, mono=False, boost=False):
     return "\n".join(parts)
 
 
-def icon_svg(dark=False, boost=False, pad=20):
-    """Square 512-box mark: logo.svg, logo-dark.svg and (boosted) favicon.svg."""
+def icon_svg(boost=False, pad=20):
+    """The mark centred on a square 512 canvas, the shape an icon needs."""
     sw = SW_OUTLINE_BOOST if boost else SW_OUTLINE
     x0, y0, x1, y1 = mark_extents(sw)
     s = (512 - 2 * pad) / (x1 - x0)
@@ -502,7 +509,7 @@ def icon_svg(dark=False, boost=False, pad=20):
     return (
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" '
         f'width="512" height="512">\n<g transform="translate({tx:.2f},{ty:.2f}) '
-        f'scale({s:.4f})">\n{mark_group(dark=dark, boost=boost)}\n</g>\n</svg>'
+        f'scale({s:.4f})">\n{mark_group(boost=boost)}\n</g>\n</svg>'
     )
 
 
@@ -552,30 +559,72 @@ def _wordmark_text(x, y, size, dark=False):
     )
 
 
-def fit_wordmark(wd: Path):
-    """Measure 'ChemRefine' at size 100 and fit it under the mark."""
-    probe = wd / "probe.svg"
-    probe.write_text(
-        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2000 600">'
-        + _wordmark_text(0, 300, 100)
-        + "</svg>",
-        encoding="utf-8",
-    )
-    out = subprocess.run(  # noqa: S603 - fixed args, probe file we just wrote
-        ["inkscape", str(probe), "--query-all"],  # noqa: S607 - snap-managed, not on a fixed path
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=INKSCAPE_TIMEOUT_SECONDS,
-    ).stdout
+class KitError(Exception):
+    """Why the kit was not built or not published; main() prints it and exits 1."""
+
+
+def _run(argv: list[str], stdin: bytes, valid: Callable[[bytes], bool]) -> bytes:
+    """The stdout of *argv* fed *stdin*, refused unless *valid* accepts it.
+
+    An exit status of 0 is no evidence of success: inkscape exits 0 with nothing, or with
+    blank lines, on stdout when it cannot parse its input. So the answer is judged as well,
+    and every refusal quotes what the program printed on stderr."""
+    try:
+        # No shell, and argv is this module's own words and numbers; the program is the one
+        # PATH names.
+        done = subprocess.run(  # noqa: S603
+            argv,
+            input=stdin,
+            capture_output=True,
+            timeout=SUBPROCESS_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise KitError(f"{argv[0]} is required and is not on PATH") from exc
+    except subprocess.TimeoutExpired as exc:
+        why = f"gave no answer in {SUBPROCESS_TIMEOUT_SECONDS} s"
+        stderr = exc.stderr
+    else:
+        if done.returncode == 0 and valid(done.stdout):
+            return done.stdout
+        why = f"exited {done.returncode} with {len(done.stdout)} bytes of output"
+        stderr = done.stderr
+    said = (stderr or b"").decode("utf-8", "replace").strip() or "(nothing)"
+    raise KitError(f"`{shlex.join(argv)}` {why}; on stderr:\n{said}")
+
+
+def _inkscape(svg: bytes, *args: str, valid: Callable[[bytes], bool]) -> bytes:
+    """inkscape's answer for *args* over *svg*.
+
+    The SVG goes in on stdin and the answer comes back on stdout, so inkscape is handed no
+    path: a confined build (the snap) has a /tmp of its own and no access to hidden
+    directories, and exits 0 when it cannot open its input."""
+    return _run(["inkscape", "--pipe", *args], svg, valid)
+
+
+def _boxes(answer: bytes) -> list[tuple[float, float, float, float]]:
+    """Every (x, y, w, h) in an `inkscape --query-all` answer."""
     boxes = []
-    for line in out.strip().splitlines():
+    for line in answer.decode("utf-8", "replace").splitlines():
         parts = line.split(",")
         if len(parts) == 5:
             _, x, y, w, h = parts
-            boxes.append((float(x), float(y), float(w), float(h)))
-    if not boxes:
-        raise RuntimeError(f"inkscape --query-all reported no boxes for {probe}:\n{out}")
+            try:
+                boxes.append((float(x), float(y), float(w), float(h)))
+            except ValueError:
+                return []  # five fields that are not numbers: no measurement at all
+    return boxes
+
+
+def fit_wordmark():
+    """Measure 'ChemRefine' at size 100 and fit it under the mark."""
+    probe = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2000 600">'
+        + _wordmark_text(0, 300, 100)
+        + "</svg>"
+    )
+    answer = _inkscape(probe.encode("utf-8"), "--query-all", valid=lambda out: bool(_boxes(out)))
+    boxes = _boxes(answer)
     px0 = min(b[0] for b in boxes)
     py0 = min(b[1] for b in boxes)
     px1 = max(b[0] + b[2] for b in boxes)
@@ -608,118 +657,172 @@ def lockup_svg(fit, dark=False):
     )
 
 
-def text_to_path(src: Path, dst: Path):
-    """Flatten *src*'s live text to outlines via inkscape, so no font ships."""
-    subprocess.run(  # noqa: S603 - fixed args over files this run created
-        ["inkscape", str(src), "--export-text-to-path", "--export-plain-svg", "-o", str(dst)],  # noqa: S607 - snap-managed, not on a fixed path
-        check=True,
-        capture_output=True,
-        timeout=INKSCAPE_TIMEOUT_SECONDS,
+def text_to_path(svg: bytes) -> bytes:
+    """*svg* with its live text flattened to outlines, so no font ships."""
+    return _inkscape(
+        svg,
+        "--export-text-to-path",
+        "--export-plain-svg",
+        "--export-type=svg",
+        "-o",
+        "-",
+        valid=lambda out: out.startswith(b"<?xml") and out.rstrip().endswith(b"</svg>"),
     )
-    if not dst.exists():
-        raise RuntimeError(f"inkscape produced no output: {dst}")
 
 
-def export_png(svg: Path, png: Path, width: int, height: int | None = None):
-    """Rasterize *svg* to PNG via inkscape: square by default, else by width.
+def _png_fits(png: bytes, width: int, height: int | None) -> bool:
+    """Whether *png* is one whole PNG *width* px wide and, unless *height* is None, that high.
 
-    height=None keeps the SVG's own aspect (used for the lockup raster the
-    README serves to PyPI, where raw SVG does not render)."""
+    Whole means it opens with the signature and its header, and ends with the empty IEND
+    chunk and that chunk's CRC, as every PNG does."""
+    return (
+        png.startswith(b"\x89PNG\r\n\x1a\n")
+        and png[12:16] == b"IHDR"
+        and png.endswith(b"\x00\x00\x00\x00IEND\xaeB`\x82")
+        and int.from_bytes(png[16:20], "big") == width
+        and (height is None or int.from_bytes(png[20:24], "big") == height)
+    )
+
+
+def export_png(svg: bytes, width: int, height: int | None = None) -> bytes:
+    """*svg* rasterized to a PNG *width* px wide and *height* px high or, when that is None,
+    as high as the SVG's own aspect makes it (the lockup raster the README serves to
+    PyPI, where raw SVG does not render)."""
     dims = ["-w", str(width)] + ([] if height is None else ["-h", str(height)])
-    subprocess.run(  # noqa: S603 - fixed args over files this run created
-        ["inkscape", str(svg), *dims, "-o", str(png)],  # noqa: S607 - snap-managed, not on a fixed path
-        check=True,
-        capture_output=True,
-        timeout=INKSCAPE_TIMEOUT_SECONDS,
+    return _inkscape(
+        svg, *dims, "--export-type=png", "-o", "-", valid=lambda png: _png_fits(png, width, height)
     )
-    if not png.exists():
-        raise RuntimeError(f"inkscape produced no output: {png}")
+
+
+def favicon_ico(png48: bytes) -> bytes:
+    """favicon.ico: 16, 32 and 48 px frames, all scaled from the 48 px render."""
+    from PIL import Image
+
+    ico = BytesIO()
+    with Image.open(BytesIO(png48)) as img:
+        img.save(ico, format="ICO", sizes=[(16, 16), (32, 32), (48, 48)])
+    return ico.getvalue()
 
 
 def _require_font():
-    """Abort unless fontconfig resolves Arial Bold to real Arial."""
-    out = subprocess.run(  # noqa: S603 - fixed args, diagnostic query
-        ["fc-match", f"{FONT}:{FONT_WEIGHT}"],  # noqa: S607 - fontconfig on PATH by design
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=INKSCAPE_TIMEOUT_SECONDS,
-    ).stdout
-    if f'"{FONT}"' not in out:
-        raise RuntimeError(f"fontconfig resolves {FONT} {FONT_WEIGHT} to: {out.strip()}")
+    """Refuse unless fontconfig resolves the wordmark's font to FONT itself, in FONT_WEIGHT."""
+    query = f"{FONT}:{FONT_WEIGHT}"
+    wanted = FONT_WEIGHT.capitalize()
+    answer = _run(["fc-match", "--format=%{family}|%{style}", query], b"", valid=bool)
+    families, _, styles = answer.decode("utf-8", "replace").partition("|")
+    if FONT not in families.split(",") or wanted not in styles.split(","):
+        found = f"{families} {styles.split(',')[0]}"
+        raise KitError(f"fontconfig resolves {query} to {found}, not {FONT} {wanted}")
+
+
+def _preflight() -> str:
+    """Refuse unless Pillow imports, fontconfig has real Arial Bold and inkscape runs;
+    return inkscape's version line."""
+    try:
+        importlib.import_module("PIL.Image")
+    except ImportError as exc:
+        raise KitError(f"Pillow is required (favicon.ico); {sys.executable}: {exc}") from exc
+    _require_font()
+    return _run(["inkscape", "--version"], b"", valid=bool).decode("utf-8", "replace").strip()
+
+
+def drawn_svgs() -> dict[str, str]:
+    """The kit's SVGs that Python draws from the tables alone, by name.
+
+    Every other file of the kit needs inkscape: the rasters and the flattened wordmarks are
+    its renders, and the lockup source is drawn around its measurement of the wordmark.
+    These need nothing but this module, so the suite holds the committed files to them."""
+    return {
+        "logo.svg": mark_svg(),
+        "logo-dark.svg": mark_svg(dark=True),
+        "favicon.svg": icon_svg(boost=True),
+        "logo-header.svg": header_svg(),
+    }
+
+
+def build_kit() -> dict[str, bytes]:
+    """Every file of the kit by name, rendered and checked in memory; nothing is written."""
+    kit = {name: text.encode("utf-8") for name, text in drawn_svgs().items()}
+    fit = fit_wordmark()
+    kit["logo-wordmark-src.svg"] = lockup_svg(fit).encode("utf-8")
+    kit["logo-wordmark.svg"] = text_to_path(kit["logo-wordmark-src.svg"])
+    kit["logo-wordmark-dark.svg"] = text_to_path(lockup_svg(fit, dark=True).encode("utf-8"))
+    kit["logo-wordmark-1200.png"] = export_png(kit["logo-wordmark.svg"], 1200)
+    # The square display canvas is a raster source and nothing else - no page or
+    # stylesheet wants a mark with a third of its height empty - so it feeds the exports
+    # below and is not part of the kit.
+    icon = icon_svg().encode("utf-8")
+    # Two optical sizes, so two sources. The boost is a 16-48 px treatment and the
+    # docstring says so; rasterizing everything from it would put stroke widths meant
+    # for a 16 px tab onto a 512 px launcher tile, where the drawing reads as a heavier
+    # mark than the one on every other surface. Above the boosted range the display mark
+    # is the source, which is what makes "for 16-48 px legibility only" true of the code.
+    sizes = {
+        "favicon-16.png": (16, kit["favicon.svg"]),
+        "favicon-32.png": (32, kit["favicon.svg"]),
+        "favicon-48.png": (48, kit["favicon.svg"]),
+        "apple-touch-icon.png": (180, icon),
+        "icon-192.png": (192, icon),
+        "icon-512.png": (512, icon),
+    }
+    for name, (px, source) in sizes.items():
+        kit[name] = export_png(source, px, px)
+    kit["favicon.ico"] = favicon_ico(kit["favicon-48.png"])
+    return kit
+
+
+def publish(kit: dict[str, bytes]) -> None:
+    """Write *kit* to ASSETS and its GUI_SUBSET to GUI_BRAND: stage every file, then rename.
+
+    First what a killed run left under STAGE_PREFIX goes from both roots. Then each file is
+    written beside its target under that prefix, in the mode any new file gets; a refusal
+    there removes what was staged, before anything is replaced. Last, each rename swaps one
+    whole file over its target. Nothing this run stages outlives it unless it is killed."""
+    roots = {ASSETS: tuple(kit), GUI_BRAND: GUI_SUBSET}
+    staged: list[tuple[Path, Path]] = []  # (staged file, its target), in rename order
+    done = 0
+    try:
+        for root in roots:
+            root.mkdir(parents=True, exist_ok=True)
+            for leftover in list(root.glob(f"{STAGE_PREFIX}*")):
+                leftover.unlink()
+        for root, names in roots.items():
+            for name in names:
+                stage = root / f"{STAGE_PREFIX}{name}"
+                staged.append((stage, root / name))
+                # Like any new file, it gets 0o666 less the umask.
+                stage.write_bytes(kit[name])
+        for stage, target in staged:
+            stage.replace(target)
+            done += 1
+    except OSError as exc:
+        if not done:
+            raise KitError(f"{exc}; nothing was replaced") from exc
+        new = ", ".join(f"{target.parent.name}/{target.name}" for _, target in staged[:done])
+        raise KitError(
+            f"{exc}; {done} of {len(staged)} files are new: {new}. Every other file is as it "
+            "was; rerun once the cause is fixed, or restore both roots with git."
+        ) from exc
+    finally:
+        for stage, _target in staged[done:]:
+            stage.unlink(missing_ok=True)
 
 
 def main() -> int:
-    """Regenerate the whole brand kit into docs/assets/, mirroring GUI_SUBSET to the package."""
-    if shutil.which("inkscape") is None:
-        print("error: inkscape is required (text->path, PNG export)")
+    """Rebuild the brand kit and publish it to both roots.
+
+    A run that fails in the preflight or while rendering, validating or staging replaces
+    nothing; a rename that fails leaves every file whole, old or new, and the error names
+    the new ones."""
+    try:
+        print(f"rendering with {_preflight()}")
+        kit = build_kit()
+        publish(kit)
+    except KitError as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 1
-    _require_font()
-    ASSETS.mkdir(parents=True, exist_ok=True)
-    GUI_BRAND.mkdir(parents=True, exist_ok=True)
-    # A directory of its own, made and removed here: a fixed name under `$HOME` would adopt
-    # whatever was already there and then delete it with the build's own files.
-    with tempfile.TemporaryDirectory(prefix="chemrefine_logo_") as scratch:
-        wd = Path(scratch)
-        (wd / "favicon.svg").write_text(icon_svg(boost=True), encoding="utf-8")
-        # The square display canvas is a raster source and nothing else - no page or
-        # stylesheet wants a mark with a third of its height empty - so it lives
-        # here for the export and is not part of the kit.
-        (wd / "icon.svg").write_text(icon_svg(), encoding="utf-8")
-
-        fit = fit_wordmark(wd)
-        (wd / "light.svg").write_text(lockup_svg(fit), encoding="utf-8")
-        (wd / "dark.svg").write_text(lockup_svg(fit, dark=True), encoding="utf-8")
-        text_to_path(wd / "light.svg", wd / "logo-wordmark.svg")
-        text_to_path(wd / "dark.svg", wd / "logo-wordmark-dark.svg")
-        shutil.copy2(wd / "logo-wordmark.svg", ASSETS / "logo-wordmark.svg")
-        shutil.copy2(wd / "logo-wordmark-dark.svg", ASSETS / "logo-wordmark-dark.svg")
-
-        # Two optical sizes, so two sources. The boost is a 16-48 px treatment and the
-        # docstring says so; rasterizing everything from it would put stroke widths meant
-        # for a 16 px tab onto a 512 px launcher tile, where the drawing reads as a heavier
-        # mark than the one on every other surface. Above the boosted range the display mark
-        # is the source, which is what makes "for 16-48 px legibility only" true of the code.
-        sizes = {
-            "favicon-16.png": (16, "favicon.svg"),
-            "favicon-32.png": (32, "favicon.svg"),
-            "favicon-48.png": (48, "favicon.svg"),
-            "apple-touch-icon.png": (180, "icon.svg"),
-            "icon-192.png": (192, "icon.svg"),
-            "icon-512.png": (512, "icon.svg"),
-        }
-        for name, (px, source) in sizes.items():
-            export_png(wd / source, wd / name, px, px)
-            shutil.copy2(wd / name, ASSETS / name)
-
-        export_png(wd / "logo-wordmark.svg", wd / "logo-wordmark-1200.png", 1200)
-        shutil.copy2(wd / "logo-wordmark-1200.png", ASSETS / "logo-wordmark-1200.png")
-
-        # The hand-written SVGs land last, once every inkscape step has succeeded: written
-        # first, a failed text-to-path would leave the kit half new and half old, which no
-        # check can tell from a finished one.
-        (ASSETS / "logo.svg").write_text(mark_svg(), encoding="utf-8")
-        (ASSETS / "logo-dark.svg").write_text(mark_svg(dark=True), encoding="utf-8")
-        (ASSETS / "favicon.svg").write_text(icon_svg(boost=True), encoding="utf-8")
-        (ASSETS / "logo-header.svg").write_text(header_svg(), encoding="utf-8")
-        (ASSETS / "logo-wordmark-src.svg").write_text(lockup_svg(fit), encoding="utf-8")
-
-        try:
-            from PIL import Image
-
-            img = Image.open(ASSETS / "favicon-48.png")
-            img.save(ASSETS / "favicon.ico", sizes=[(16, 16), (32, 32), (48, 48)])
-            print("wrote favicon.ico (16/32/48)")
-        except ImportError:
-            print("Pillow not found - skipped favicon.ico")
-
-        # Last, from the files just written rather than from a second render: the two
-        # roots have to be the same bytes, and copying is the only way to say that
-        # without depending on the export being deterministic.
-        for name in GUI_SUBSET:
-            shutil.copy2(ASSETS / name, GUI_BRAND / name)
-    print(f"brand kit written to {ASSETS}")
-    print(f"GUI subset mirrored to {GUI_BRAND} ({len(GUI_SUBSET)} files)")
+    print(f"brand kit written to {ASSETS} ({len(kit)} files)")
+    print(f"GUI subset written to {GUI_BRAND} ({len(GUI_SUBSET)} files)")
     return 0
 
 

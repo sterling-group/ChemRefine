@@ -351,11 +351,12 @@ def test_the_guis_brand_files_are_the_kits_own_bytes():
     ``tools/gen_logo.py`` therefore writes both roots in one run and mirrors ``GUI_SUBSET``
     across — which makes them identical by construction, and this the check that says so.
 
-    Byte-identity is the right assertion *here* and would be the wrong one against a fresh
-    build: ``c819ba2`` records that regeneration is byte-stable only on the authoring
-    toolchain, which is why CI never rebuilds the kit. Two copies of one run are a
-    different claim from two runs. What this catches is the ordinary accident — the kit
-    regenerated and only one root committed, or a brand file hand-edited in place.
+    Byte-identity is the right assertion *here*. Against a fresh build it is right only for
+    the SVGs Python draws alone, which ``tests/test_gen_logo.py`` holds to the generator:
+    inkscape's renders are byte-stable only on the authoring toolchain, which is why CI
+    never runs inkscape. Two copies of one run are a different claim from two runs. What
+    this catches is the ordinary accident — the kit regenerated and only one root
+    committed, or a brand file hand-edited in place.
     """
     brand = STATIC / "brand"
     docs_assets = Path(__file__).resolve().parent.parent / "docs" / "assets"
