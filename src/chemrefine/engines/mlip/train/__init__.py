@@ -32,6 +32,7 @@ from chemrefine.engines.mlip.train.base import (
     placeholders_for,
     render_config,
     split_structures,
+    write_labelled_db,
     write_labelled_extxyz,
 )
 from chemrefine.engines.mlip.train.engine import MlipTrainEngine
@@ -49,5 +50,6 @@ __all__ = [
     "placeholders_for",
     "render_config",
     "split_structures",
+    "write_labelled_db",
     "write_labelled_extxyz",
 ]

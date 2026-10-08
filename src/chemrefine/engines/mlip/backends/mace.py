@@ -27,6 +27,7 @@ from ase import Atoms
 
 from chemrefine.engines.mlip.registry import CalculatorSpec, MlipLibrary
 from chemrefine.engines.mlip.train.base import DatasetFiles, TrainerBase, TrainingPlan
+from chemrefine.io import tree_write
 from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import Structure
 
@@ -171,7 +172,9 @@ class MaceTrainer(TrainerBase):
         from ase.io import write as ase_write
 
         path = plan.run_dir / f"{name}.xyz"
-        ase_write(str(path), [_to_atoms(s, plan) for s in structures], format="extxyz")
+        frames = [_to_atoms(s, plan) for s in structures]
+        with tree_write(path):
+            ase_write(str(path), frames, format="extxyz")
         return path
 
     def placeholders(self, plan: TrainingPlan, data: DatasetFiles) -> dict[str, str]:

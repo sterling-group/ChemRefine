@@ -242,6 +242,11 @@ class JobEngine(abc.ABC):
 
         ``template`` is the step's template as :meth:`prepare` read it: once, for every
         structure of the step.
+
+        The file goes through :func:`chemrefine.io.write_tree_file`, as everything the
+        orchestrator writes under ``output_dir`` does, so a write the output tree refuses
+        stops the run as :class:`~chemrefine.errors.OutputTreeError`, the same for every
+        engine.
         """
 
     @abc.abstractmethod

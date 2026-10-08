@@ -6,6 +6,7 @@ import csv
 import errno
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 from collections.abc import Callable
@@ -43,6 +44,46 @@ def test_importing_io_does_not_pull_pandas():
         timeout=120,
     )
     assert out.stdout.strip() == "False"
+
+
+def test_the_net_names_a_refusal_in_a_process_that_never_loaded_sqlite(tmp_path: Path):
+    """sqlite3 is never imported for the output tree's net, which works without it.
+
+    Importing :mod:`chemrefine.io` is how every process in the package starts — the ExtOpt
+    wrapper spawned once per optimizer step among them — and most never touch a database,
+    so the net reads sqlite's error class off the loaded module rather than importing it.
+    Run where nothing has loaded sqlite: the refused write is named, and sqlite3 is still
+    not loaded after it. The child starts without the variables a coverage plugin uses to
+    load itself into child interpreters, since coverage brings sqlite3 with it.
+    """
+    target = tmp_path / "missing" / "step1_0.inp"
+    probe = (
+        "import sys\n"
+        "from pathlib import Path\n"
+        "from chemrefine.errors import OutputTreeError\n"
+        "from chemrefine.io import tree_write\n"
+        f"target = Path({str(target)!r})\n"
+        "try:\n"
+        "    with tree_write(target):\n"
+        "        target.write_text('x', encoding='utf-8')\n"
+        "except OutputTreeError as e:\n"
+        "    print(e)\n"
+        "print('sqlite3' in sys.modules)\n"
+    )
+    plain = {
+        name: value
+        for name, value in os.environ.items()
+        if not name.startswith(("COV_CORE_", "COVERAGE_PROCESS_"))
+    }
+    out = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=120,
+        env=plain,
+    )
+    assert out.stdout.splitlines() == [f"cannot write {target}: No such file or directory", "False"]
 
 
 # ---------------------------------------------------------------------------
@@ -977,3 +1018,46 @@ def test_a_copy_that_gathers_its_refusals_is_named_by_the_first(tmp_path: Path):
         raise shutil.Error(rows[:1])
     assert str(two.value) == f"cannot write {destination}: {rows[0][2]} (and 1 more)"
     assert str(one.value) == f"cannot write {destination}: {rows[0][2]}"
+
+
+@pytest.mark.parametrize(
+    ("code", "sentence"),
+    [
+        (sqlite3.SQLITE_CANTOPEN, "unable to open database file"),
+        (sqlite3.SQLITE_FULL, "database or disk is full"),
+        (sqlite3.SQLITE_IOERR_WRITE, "disk I/O error"),
+        (sqlite3.SQLITE_READONLY_DIRECTORY, "attempt to write a readonly database"),
+        (sqlite3.SQLITE_PERM, "access permission denied"),
+    ],
+    ids=["cantopen", "full", "ioerr-write", "readonly-directory", "perm"],
+)
+def test_a_sqlite_refusal_is_the_output_trees(tmp_path: Path, code: int, sentence: str):
+    """sqlite refuses a write in an exception of its own, and the net names it all the same.
+
+    A database in a full or read-only tree says so through :class:`sqlite3.OperationalError`,
+    no ``OSError``: named by its code's family — a write cut short and a read-only directory
+    arrive as extended codes — with sqlite's own sentence as the reason.
+    """
+    refusal = sqlite3.OperationalError(sentence)
+    refusal.sqlite_errorcode = code
+    target = tmp_path / "train.db"
+    with pytest.raises(OutputTreeError) as named, chemrefine_io.tree_write(target):
+        raise refusal
+    assert str(named.value) == f"cannot write {target}: {sentence}"
+    assert named.value.__cause__ is refusal
+
+
+@pytest.mark.parametrize(
+    "code", [sqlite3.SQLITE_ERROR, sqlite3.SQLITE_BUSY, None], ids=["sql", "busy", "no-code"]
+)
+def test_a_sqlite_error_that_refuses_no_write_leaves_as_itself(tmp_path: Path, code: int | None):
+    """A SQL mistake, a busy lock, an error with no code: none is the filesystem's refusal."""
+    error = sqlite3.OperationalError("no such table: systems")
+    if code is not None:
+        error.sqlite_errorcode = code
+    with (
+        pytest.raises(sqlite3.OperationalError) as passed,
+        chemrefine_io.tree_write(tmp_path / "train.db"),
+    ):
+        raise error
+    assert passed.value is error

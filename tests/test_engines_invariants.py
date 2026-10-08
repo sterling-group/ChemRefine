@@ -48,7 +48,9 @@ from chemrefine.engines.api import (
     resolve_operation,
 )
 from chemrefine.engines.mlip.registry import requirement_from_options
-from chemrefine.errors import ConfigError
+from chemrefine.errors import ConfigError, OutputTreeError
+from chemrefine.ids import input_geometry_path
+from chemrefine.io import write_single_xyz
 from chemrefine.slurm import script
 from chemrefine.state import PipelineState, StepContext, Structure
 
@@ -992,6 +994,33 @@ def test_prepare_reads_the_template_once_whatever_the_structure_count(
     )
     assert len(get_engine(engine_name).prepare(ctx).files) == 3
     assert text_reads.count(ctx.template) == 1
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through any mode")
+@pytest.mark.parametrize("engine_name", _job_engines())
+def test_every_job_engines_input_refuses_as_the_output_tree(engine_name: str, tmp_path: Path):
+    """An input the tree will not take stops the run as exit 11, named, for every job engine.
+
+    ``build_input`` is where each engine writes the per-structure input of its own format.
+    The structure's directory is sealed around the geometry already in it — a file the step
+    may rewrite while nothing new may join it — so the first write refused is that input.
+    """
+    engine = get_engine(engine_name)
+    ctx = replace(
+        _ctx(tmp_path, engine_name, {}),
+        prev_state=PipelineState(structures=(Structure(id="0", atoms=Atoms("H")),)),
+    )
+    input_path, _ = engine.artifact_paths(ctx, "0")
+    geometry = input_geometry_path(ctx.step_dir, ctx.step_cfg.step, "0")
+    write_single_xyz(Atoms("H"), geometry)
+    geometry.parent.chmod(0o555)
+    try:
+        with pytest.raises(OutputTreeError) as refused:
+            engine.prepare(ctx)
+    finally:
+        geometry.parent.chmod(0o755)
+    assert str(refused.value) == f"cannot write {input_path}: Permission denied"
+    assert isinstance(refused.value.__cause__, PermissionError)
 
 
 @pytest.mark.parametrize("engine_name", _job_engines())

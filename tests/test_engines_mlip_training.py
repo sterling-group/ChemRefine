@@ -8,7 +8,11 @@ engine that drives both is ``test_engines_mlip_train_engine.py``.
 from __future__ import annotations
 
 import inspect
+import os
+import sqlite3
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -31,8 +35,10 @@ from chemrefine.engines.mlip.train.base import (
     placeholders_for,
     render_config,
     split_structures,
+    write_labelled_db,
+    write_labelled_extxyz,
 )
-from chemrefine.errors import ConfigError
+from chemrefine.errors import ConfigError, OutputTreeError
 from chemrefine.ids import StepTemplate
 from chemrefine.state import Structure
 
@@ -176,6 +182,23 @@ def test_rendering_leaves_a_placeholder_it_does_not_supply(tmp_path: Path):
     text = dest.read_text(encoding="utf-8")
     assert "${data.lr}" in text
     assert "$UNKNOWN" in text
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through any mode")
+def test_a_config_the_run_directory_refuses_is_the_output_trees_refusal(tmp_path: Path):
+    """The rendered config is the training job's input, refused as any file of the run is."""
+    template = StepTemplate(tmp_path / "step1.yaml", "train_file: $TRAIN_SET\n")
+    sealed = tmp_path / "train"
+    sealed.mkdir()
+    sealed.chmod(0o555)
+    dest = sealed / "step1_train.yaml"
+    try:
+        with pytest.raises(OutputTreeError) as refused:
+            render_config(template, {"TRAIN_SET": "/d/t.xyz"}, dest=dest)
+    finally:
+        sealed.chmod(0o755)
+    assert str(refused.value) == f"cannot write {dest}: Permission denied"
+    assert isinstance(refused.value.__cause__, PermissionError)
 
 
 def test_a_template_that_never_names_the_dataset_is_refused_before_submitting(tmp_path: Path):
@@ -463,6 +486,46 @@ def test_every_trainer_writes_its_dataset_in_the_orchestrators_process(tmp_path:
     assert files.valid is not None and files.valid.is_file()
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through any mode")
+@pytest.mark.parametrize("task", sorted(registered_trainers()))
+def test_every_trainers_dataset_refuses_as_the_output_tree(tmp_path: Path, task: str):
+    """A dataset the run directory will not take stops the run as exit 11, named by file.
+
+    ``write_split`` is each library's own writer — extxyz through ase, an ASE sqlite
+    database — and sqlite refuses in an exception of its own: here a real
+    ``SQLITE_CANTOPEN``, named like any ``OSError``. The training split is written first, so
+    it is the file the refusal names, wherever this library keeps it.
+    """
+    trainer = trainer_for(task)()
+    opened = _plan(tmp_path / "open")
+    train = trainer.write_dataset(opened, _full_split()).train.relative_to(opened.run_dir)
+    plan = _plan(tmp_path / "sealed")
+    plan.run_dir.mkdir(parents=True)
+    plan.run_dir.chmod(0o555)
+    try:
+        with pytest.raises(OutputTreeError) as refused:
+            trainer.write_dataset(plan, _full_split())
+    finally:
+        plan.run_dir.chmod(0o755)
+    assert str(refused.value).startswith(f"cannot write {plan.run_dir / train}: ")
+    assert isinstance(refused.value.__cause__, (PermissionError, sqlite3.OperationalError))
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through any mode")
+@pytest.mark.parametrize("task", sorted(registered_trainers()))
+def test_a_run_directory_the_tree_will_not_create_is_its_refusal(tmp_path: Path, task: str):
+    """The training run's directory is the first thing its dataset writes, for every library."""
+    plan = _plan(tmp_path / "sealed")
+    plan.run_dir.parent.mkdir()
+    plan.run_dir.parent.chmod(0o555)
+    try:
+        with pytest.raises(OutputTreeError) as refused:
+            trainer_for(task)().write_dataset(plan, _full_split())
+    finally:
+        plan.run_dir.parent.chmod(0o755)
+    assert str(refused.value) == f"cannot write {plan.run_dir}: Permission denied"
+
+
 @pytest.mark.parametrize("task", sorted(registered_trainers()))
 def test_every_trainer_covers_its_required_placeholders(tmp_path: Path, task: str):
     """What a trainer *requires* of a template, it must also *supply* to the render.
@@ -673,8 +736,53 @@ def test_the_shared_writer_refuses_an_unlabelled_structure(tmp_path: Path):
     structures that never went through the split's label check, and an unlabelled frame
     written silently would surface as a library-side KeyError an hour into the job.
     """
-    from chemrefine.engines.mlip.train.base import write_labelled_extxyz
-
     bare = Structure(id="9", atoms=Atoms("H"))
     with pytest.raises(ConfigError, match="structure 9 is missing"):
         write_labelled_extxyz(tmp_path / "train.xyz", [bare])
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through any mode")
+@pytest.mark.parametrize(
+    ("write", "name"),
+    [(write_labelled_extxyz, "train.xyz"), (write_labelled_db, "train.db")],
+    ids=["extxyz", "db"],
+)
+def test_a_shared_writer_names_the_directory_it_could_not_create(
+    tmp_path: Path, write: Callable[..., Path], name: str
+):
+    """Each shared writer makes its file's directory first, and a refusal there names both."""
+    sealed = tmp_path / "train"
+    sealed.mkdir()
+    sealed.chmod(0o555)
+    path = sealed / "data" / name
+    try:
+        with pytest.raises(OutputTreeError) as refused:
+            write(path, [_labelled("0")])
+    finally:
+        sealed.chmod(0o755)
+    assert str(refused.value) == f"cannot write {path}: {path.parent}: Permission denied"
+
+
+def test_a_full_disk_under_a_labelled_database_is_the_output_trees_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """sqlite says the disk is full in an exception of its own; the refusal names the file.
+
+    A real ``SQLITE_FULL``: the connection to this database is given a page budget the
+    database outgrows with its first table, which sqlite answers as it answers a disk with
+    no room left.
+    """
+    path = tmp_path / "train" / "train.db"
+    real_connect = sqlite3.connect
+
+    def cramped(database: str, *args: Any, **kwargs: Any) -> sqlite3.Connection:
+        connection: sqlite3.Connection = real_connect(database, *args, **kwargs)
+        if Path(database) == path:
+            connection.execute("PRAGMA max_page_count = 1")
+        return connection
+
+    monkeypatch.setattr(sqlite3, "connect", cramped)
+    with pytest.raises(OutputTreeError) as refused:
+        write_labelled_db(path, [_labelled("0")])
+    assert str(refused.value) == f"cannot write {path}: database or disk is full"
+    assert isinstance(refused.value.__cause__, sqlite3.OperationalError)

@@ -133,10 +133,10 @@ def atomic_write(path: Path, data: bytes, *, mode: int | None = None) -> None:
     """Replace ``path`` with ``data`` whole — a temp file, its mode, fsync, then one rename.
 
     The one writer for every file this package replaces: the caches, the configs and
-    templates it saves, the SLURM lease ledger, the ExtOpt sidecars and wrapper. A process
-    that opens or executes ``path`` at any moment gets the old file or the new one, never a
-    truncated one, and the ``fsync`` orders the rename after the data, so a machine crash
-    (not only a killed process) cannot leave it empty either.
+    templates it saves, the SLURM lease ledger, the ExtOpt sidecars and wrapper, the record
+    beside a trained model. A process that opens or executes ``path`` at any moment gets the
+    old file or the new one, never a truncated one, and the ``fsync`` orders the rename after
+    the data, so a machine crash (not only a killed process) cannot leave it empty either.
 
     ``mode`` is the file's permission bits, set on the temp file before the rename so the
     file never appears under ``path`` with other ones: ``None`` gives what a plain
@@ -246,25 +246,70 @@ def tree_write(path: Path) -> Generator[None]:
     source a copy could not read. The ``OSError`` stays on ``__cause__``. An ``OSError`` a
     caller expects as normal flow — a lost race, a file already there — is caught inside
     the block, before it reaches the net.
+
+    A library that keeps its data in a sqlite file — ``ase.db`` — reports a refused write
+    through sqlite's own exception, never an ``OSError``. The net names that one too when its
+    code says the file could not be opened or written — a full disk or quota, a read-only
+    mount or directory, a write cut short — with sqlite's sentence as the reason and the
+    sqlite error on ``__cause__``. Any other sqlite error, a SQL mistake or a busy lock,
+    leaves as itself.
     """
     try:
         yield
-    except OSError as e:
+    except _refusal_types() as e:
         reason = _refused(path, e)
+        if reason is None:
+            raise
         raise OutputTreeError(f"cannot write {path}: {reason}") from e
 
 
-def _refused(path: Path, error: OSError) -> str:
+def _refusal_types() -> tuple[type[Exception], ...]:
+    """What :func:`tree_write` catches: :class:`OSError`, and sqlite's error once loaded.
+
+    ``ase.db`` keeps a dataset in a sqlite file, and sqlite refuses a write through
+    :class:`sqlite3.OperationalError`, which is no ``OSError``. The class is read off the
+    loaded module rather than imported: until a writer has imported :mod:`sqlite3` no sqlite
+    error can exist, and importing it here would load sqlite into every process in the
+    package — the ExtOpt wrapper's, once per optimizer step — for the few that write a
+    database. An ``except`` clause's expression is evaluated only when an exception reaches
+    it, so this is asked then and not before.
+    """
+    sqlite_error = getattr(sys.modules.get("sqlite3"), "OperationalError", None)
+    return (OSError,) if sqlite_error is None else (OSError, sqlite_error)
+
+
+_SQLITE_REFUSALS = frozenset({3, 8, 10, 13, 14})
+"""The sqlite result codes that say the filesystem refused a write, by primary code.
+
+``SQLITE_PERM`` (3) and ``SQLITE_READONLY`` (8) for a database sqlite may not create or
+change, ``SQLITE_IOERR`` (10) for a write the filesystem cut short, ``SQLITE_FULL`` (13) for
+a full disk or quota, ``SQLITE_CANTOPEN`` (14) for a directory this account cannot write or
+a read-only mount. Numbers, since :mod:`sqlite3` and its constants are not imported here
+(:func:`_refusal_types`); the primary code, since an error carries its extended one, whose
+low byte is its family's — ``SQLITE_READONLY_DIRECTORY`` is 1544, 8 in its low byte — so an
+extended code this Python's :mod:`sqlite3` has no name for counts all the same. The
+exception class these arrive in also carries a SQL mistake and a busy lock, which refuse no
+write.
+"""
+
+
+def _refused(path: Path, error: Exception) -> str | None:
     """Why the filesystem refused a write of ``path``, after the file it named if another.
 
     An error with no ``strerror``, a bare message, is given as its own text. The aggregate
     :func:`shutil.copytree` raises once it has tried every file is given as the first
-    refusal it gathered, which names its file, and how many more there were.
+    refusal it gathered, which names its file, and how many more there were. A sqlite error
+    whose code is of a family :data:`_SQLITE_REFUSALS` holds is given as sqlite's own
+    sentence; any other is ``None``, no refusal of the filesystem's at all.
     """
     rows = error.args[0] if isinstance(error, shutil.Error) and error.args else None
     if isinstance(rows, list) and rows:
         first = str(rows[0][2])
         return first if len(rows) == 1 else f"{first} (and {len(rows) - 1} more)"
+    if not isinstance(error, OSError):
+        code = getattr(error, "sqlite_errorcode", None)
+        refused = isinstance(code, int) and (code & 0xFF) in _SQLITE_REFUSALS
+        return str(error) if refused else None
     reason = error.strerror or str(error)
     named = error.filename
     if not isinstance(named, (str, bytes, os.PathLike)) or Path(os.fsdecode(named)) == path:
@@ -272,7 +317,9 @@ def _refused(path: Path, error: OSError) -> str:
     return f"{os.fsdecode(named)}: {reason}"
 
 
-def write_tree_file(path: Path, data: str | bytes, *, atomic: bool = False) -> None:
+def write_tree_file(
+    path: Path, data: str | bytes, *, atomic: bool = False, mode: int | None = None
+) -> None:
     """Write ``data`` (text as UTF-8) to ``path`` in a run's output tree, parents first.
 
     ``atomic`` replaces the file whole (:func:`atomic_write`): for a file another process
@@ -282,12 +329,16 @@ def write_tree_file(path: Path, data: str | bytes, *, atomic: bool = False) -> N
     ``fsync`` per file is a metadata round trip per structure on a shared filesystem, and a
     file a refusal cuts short is written afresh by the next run that reaches it.
 
+    ``mode`` is the permission bits the file has from its first appearance — a script a job
+    executes the moment it is there. Only a file replaced whole has them from its first
+    byte, so a file given a ``mode`` is written as ``atomic`` writes it.
+
     Either way a refusal is :func:`tree_write`'s.
     """
     payload = data.encode("utf-8") if isinstance(data, str) else data
     with tree_write(path):
-        if atomic:
-            atomic_write(path, payload)
+        if atomic or mode is not None:
+            atomic_write(path, payload, mode=mode)
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(payload)

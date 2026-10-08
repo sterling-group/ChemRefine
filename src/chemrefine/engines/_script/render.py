@@ -41,6 +41,7 @@ from string import Template
 
 from chemrefine.engines._options import EngineOptions
 from chemrefine.engines._script.contract import SCRIPT_OUTPUT, OutputField
+from chemrefine.io import write_tree_file
 
 
 def json_placeholder(payload: object) -> str:
@@ -163,6 +164,5 @@ def build_input(
     substitutions.update({k: str(v) for k, v in (extra_vars or {}).items()})
     rendered = Template(template_text).safe_substitute(substitutions)
     rendered = rendered.rstrip() + _build_output_footer(output_json_path.name, fields)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(rendered, encoding="utf-8")
+    write_tree_file(output_path, rendered)
     return output_path

@@ -35,7 +35,7 @@ from chemrefine.engines._backend_server.base import (
     CalculationData,
 )
 from chemrefine.engines.orca.extopt import bridge, protocol
-from chemrefine.errors import JobFailureError
+from chemrefine.errors import JobFailureError, OutputTreeError
 
 _TOKEN = "s3cret"
 
@@ -248,6 +248,26 @@ def test_a_wrapper_that_lost_its_exec_bit_is_written_again(tmp_path: Path):
     out.chmod(0o644)
     protocol.write_wrapper_script(path=out, backend="mlip", url_file=tmp_path / "server.url")
     assert out.stat().st_mode & 0o777 == 0o755
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through any mode")
+def test_a_wrapper_the_step_directory_refuses_is_named(tmp_path: Path):
+    """A step directory that will not take the wrapper refuses as the output tree, by name.
+
+    The wrapper is staged in a temp file and renamed, and the refusal names the file ORCA
+    executes, never the temp it was staged in.
+    """
+    sealed = tmp_path / "step1"
+    sealed.mkdir()
+    sealed.chmod(0o555)
+    out = sealed / "mlip_extopt.sh"
+    try:
+        with pytest.raises(OutputTreeError) as refused:
+            protocol.write_wrapper_script(path=out, backend="mlip", url_file=tmp_path / "u")
+    finally:
+        sealed.chmod(0o755)
+    assert str(refused.value) == f"cannot write {out}: Permission denied"
+    assert isinstance(refused.value.__cause__, PermissionError)
 
 
 def test_write_wrapper_script_threads_extra_args(tmp_path: Path):

@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 from chemrefine.engines._backend_server.base import CalculationData
 from chemrefine.errors import JobFailureError
-from chemrefine.io import atomic_write
+from chemrefine.io import write_tree_file
 
 if TYPE_CHECKING:
     import numpy as np
@@ -204,9 +204,10 @@ def write_wrapper_script(
     interpreter without chemrefine installed.
 
     Every job of the step executes this one file, once per optimiser step, while a
-    convergence retry may prepare the step again. So it is replaced in one rename
-    (:func:`chemrefine.io.atomic_write`), executable from its first appearance, and left
-    alone when it already holds these bytes executably — every prepare after the first.
+    convergence retry may prepare the step again. So it is written with its mode through
+    :func:`chemrefine.io.write_tree_file`, which replaces a file given one in a single
+    rename: executable from its first appearance, and left alone when it already holds
+    these bytes executably — every prepare after the first.
     """
     path = Path(path)
     extra = f" {extra_args}" if extra_args else ""
@@ -228,5 +229,5 @@ def write_wrapper_script(
         and path.read_text(encoding="utf-8") == script
     ):
         return path
-    atomic_write(path, script.encode("utf-8"), mode=_EXECUTABLE)
+    write_tree_file(path, script, mode=_EXECUTABLE)
     return path

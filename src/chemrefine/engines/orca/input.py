@@ -27,6 +27,7 @@ from pathlib import Path
 from chemrefine.engines.api import require_whitespace_free
 from chemrefine.engines.orca.inspect import PAL_PATTERNS
 from chemrefine.ids import StepTemplate
+from chemrefine.io import write_tree_file
 
 _XYZFILE_DIRECTIVE_RE = re.compile(r"^\s*\*\s+xyzfile.*$", re.MULTILINE)
 
@@ -202,6 +203,5 @@ def build_input(
     lines.append(f"* xyzfile {charge} {multiplicity} {xyz_path}")
     lines.append("")
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text("\n".join(lines), encoding="utf-8")
+    write_tree_file(output_path, "\n".join(lines))
     return output_path

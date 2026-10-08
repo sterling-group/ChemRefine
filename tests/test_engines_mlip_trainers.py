@@ -18,8 +18,10 @@ process is also what production does, and it keeps a backend's own import-time w
 
 from __future__ import annotations
 
+import errno
 import json
 import logging
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -31,7 +33,7 @@ from ase import Atoms
 from ase.io import read as ase_read
 
 from chemrefine.engines import _provision
-from chemrefine.engines.mlip.backends.fairchem import _METADATA_NAME, FairchemTrainer
+from chemrefine.engines.mlip.backends.fairchem import _DATA_DIR, _METADATA_NAME, FairchemTrainer
 from chemrefine.engines.mlip.backends.mace import (
     CHARGE_KEY,
     ENERGY_KEY,
@@ -49,7 +51,7 @@ from chemrefine.engines.mlip.registry import (
     requirement_from_options,
 )
 from chemrefine.engines.mlip.train.base import DatasetSplit, TrainingPlan
-from chemrefine.errors import ConfigError
+from chemrefine.errors import ConfigError, OutputTreeError
 from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import Structure
 
@@ -536,6 +538,22 @@ def test_a_rerun_does_not_stack_duplicate_rows(tmp_path: Path):
 
     with connect(str(data.train)) as db:
         assert db.count() == 4
+
+
+def test_metadata_the_disk_refuses_is_the_output_trees_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The ``metadata.npz`` beside each database is the run's to write, named when refused."""
+
+    def full(*args: object, **kwargs: object) -> None:
+        raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+
+    monkeypatch.setattr(np, "savez", full)
+    plan = _fc_plan(tmp_path)
+    with pytest.raises(OutputTreeError) as refused:
+        FairchemTrainer().write_dataset(plan, _fc_split())
+    metadata = plan.run_dir / _DATA_DIR / "train" / _METADATA_NAME
+    assert str(refused.value) == f"cannot write {metadata}: No space left on device"
 
 
 def test_the_device_placeholder_is_uppercased_for_fairchem(tmp_path: Path):

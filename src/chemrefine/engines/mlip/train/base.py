@@ -9,14 +9,16 @@ step selects is :mod:`chemrefine.engines.mlip.registry`.
 Generic and never written twice: the train/valid/test split (:func:`split_structures`), the
 placeholders every config may use (:func:`base_placeholders`), the template's rules
 (:meth:`TrainerBase.require_placeholders`), the rendering (:func:`render_config`), and the
-calculator-labelled extxyz writer (:func:`write_labelled_extxyz`) for the libraries that read
-labels off ``atoms.calc``.
+calculator-labelled dataset writers — extxyz (:func:`write_labelled_extxyz`) and an ASE
+sqlite database (:func:`write_labelled_db`) — for the libraries that read labels off
+``atoms.calc``.
 Library-specific, and so a :class:`TrainerBase` hook:
 
 ===================  ==========================================================
 ``write_split``      the dataset in the library's own format; a library that
                      reads labels off ``atoms.calc`` reuses
-                     :func:`write_labelled_extxyz`. There is no common file.
+                     :func:`write_labelled_extxyz` or
+                     :func:`write_labelled_db`. There is no common file.
 ``command``          the library's own training entry point, and its own
                      multi-GPU idiom.
 ``artifact``         where the trained model lands.
@@ -66,6 +68,7 @@ import numpy as np
 
 from chemrefine import ids
 from chemrefine.errors import ConfigError
+from chemrefine.io import tree_write, write_tree_file
 from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import Structure
 
@@ -360,6 +363,12 @@ class TrainerBase(ABC):
         A format that genuinely needs the backend (SevenNet's graph pre-build, AIMNet2's
         HDF5 packer) is expressed as an extra line in :meth:`command`, where the library
         is importable.
+
+        What it writes goes through :func:`chemrefine.io.write_tree_file`, or inside
+        :func:`chemrefine.io.tree_write` when ``ase`` or ``numpy`` does the writing, as
+        :func:`write_labelled_extxyz` and :func:`write_labelled_db` do, so a write the
+        output tree refuses stops the run as :class:`~chemrefine.errors.OutputTreeError`,
+        whichever library trains.
         """
 
     @abstractmethod
@@ -461,7 +470,8 @@ class TrainerBase(ABC):
                 plan.charge,
                 plan.multiplicity,
             )
-        plan.run_dir.mkdir(parents=True, exist_ok=True)
+        with tree_write(plan.run_dir):
+            plan.run_dir.mkdir(parents=True, exist_ok=True)
         written: dict[str, Path | None] = {"train": None, "valid": None, "test": None}
         for name, structures in split.items():
             if not structures:
@@ -724,8 +734,7 @@ def render_config(
     every one of them. What the template must reference is the trainer's rule, asked before
     this renders (:meth:`TrainerBase.require_placeholders`).
     """
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(Template(template.text).safe_substitute(placeholders), encoding="utf-8")
+    write_tree_file(dest, Template(template.text).safe_substitute(placeholders))
     return dest
 
 
@@ -765,8 +774,32 @@ def write_labelled_extxyz(path: Path, structures: Sequence[Structure]) -> Path:
     """Write ``structures`` as calculator-labelled extxyz frames at ``path``."""
     from ase.io import write as ase_write
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    ase_write(str(path), [labelled_atoms(s) for s in structures], format="extxyz")
+    frames = [labelled_atoms(s) for s in structures]
+    with tree_write(path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        ase_write(str(path), frames, format="extxyz")
+    return path
+
+
+def write_labelled_db(
+    path: Path, structures: Sequence[Structure], *, data: Mapping[str, object] | None = None
+) -> Path:
+    """Write ``structures`` to ``path`` as a fresh ASE sqlite database of labelled rows.
+
+    The database form of :func:`write_labelled_extxyz`, for the libraries whose dataset
+    loader opens an ASE database: each row's labels ride on the calculator
+    :func:`labelled_atoms` attaches, and ``data``, when given, rides in every row's ``data=``
+    mapping. Fresh each time (``append=False``): ``connect`` appends by default, and a rerun
+    would stack its rows on the last one's.
+    """
+    from ase.db import connect
+
+    rows = [labelled_atoms(s) for s in structures]
+    with tree_write(path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with connect(str(path), append=False) as db:
+            for row in rows:
+                db.write(row, data=dict(data or {}))
     return path
 
 

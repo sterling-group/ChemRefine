@@ -58,6 +58,7 @@ from chemrefine.engines.mlip.train.base import (
     split_structures,
 )
 from chemrefine.errors import ConfigError
+from chemrefine.io import write_tree_file
 from chemrefine.state import JobBatch, StepContext, StepInputs, StepResults, Structure
 
 logger = logging.getLogger(__name__)
@@ -372,13 +373,15 @@ class MlipTrainEngine(MlipBackend):
         return StepResults(structures=ctx.prev_state.structures)
 
     def _write_sidecar(self, ctx: StepContext) -> None:
-        """Write :data:`SIDECAR_NAME` beside the model.
+        """Write :data:`SIDECAR_NAME` beside the model, whole or not at all.
 
-        Written with the standard library rather than through :mod:`chemrefine.cache`'s
+        Through :func:`chemrefine.io.write_tree_file` rather than :mod:`chemrefine.cache`'s
         ``write_json``: an engine records what it produced, and caching is not its concern —
-        a rule the subsystem is held to by test. Every path in it is relative
-        (:data:`TRAINED_MODEL_FORMAT`), so a tree copied off the machine it trained on
-        still cites its own model.
+        a rule the subsystem is held to by test. Replaced whole (``atomic``): it is the one
+        record of which run produced the model, read long after the run by whoever uses the
+        model, so a disk that fills mid-write leaves no part of a record behind. Every path
+        in it is relative (:data:`TRAINED_MODEL_FORMAT`), so a tree copied off the machine
+        it trained on still cites its own model.
         """
         opts = self._opts(ctx)
         model = self.artifact(ctx)
@@ -398,8 +401,8 @@ class MlipTrainEngine(MlipBackend):
             "multiplicity": ctx.multiplicity,
             "n_structures": len(ctx.prev_state.structures),
         }
-        (self.run_dir(ctx) / SIDECAR_NAME).write_text(
-            json.dumps(record, indent=2) + "\n", encoding="utf-8"
+        write_tree_file(
+            self.run_dir(ctx) / SIDECAR_NAME, json.dumps(record, indent=2) + "\n", atomic=True
         )
         logger.info("step %d: trained model at %s", ctx.step_cfg.step, model)
 

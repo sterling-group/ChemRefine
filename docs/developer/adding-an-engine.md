@@ -341,6 +341,7 @@ from chemrefine.engines._job import JobEngine
 from chemrefine.engines.api import ParsedResult, RunBlock, register
 from chemrefine.engines.demoqm.options import DemoqmOptions
 from chemrefine.ids import StepTemplate
+from chemrefine.io import write_tree_file
 from chemrefine.state import StepContext
 
 
@@ -370,9 +371,9 @@ class DemoqmEngine(JobEngine):
     ) -> None:
         """Render this structure's ``.inp`` from the step template + its geometry."""
         opts = DemoqmOptions.from_raw(ctx.step_cfg.options)
-        input_path.write_text(
+        write_tree_file(
+            input_path,
             template.text.replace("$BASIS", opts.basis).replace("$XYZ", xyz_path.name),
-            encoding="utf-8",
         )
 
     def pal(self, ctx: StepContext) -> int:
@@ -401,6 +402,14 @@ class DemoqmEngine(JobEngine):
             )
         ]
 ```
+
+Everything an engine writes in the orchestrator's process — `build_input`'s file, a
+`CalculationEngine`'s `prepare` and `parse`, an MLIP trainer's `write_split` — goes through
+[`chemrefine.io.write_tree_file`](../api/io.md), never `Path.write_text`, or runs inside
+`with chemrefine.io.tree_write(path):` where a library does the writing (ase, numpy, sqlite
+through `ase.db`), so a write the output tree refuses stops the run as `OutputTreeError`,
+[exit `11`](../running/when-a-run-fails.md#exit-codes), naming the file, the same for every
+engine.
 
 `gpus` defaults to `0` (CPU); a GPU engine overrides it.
 

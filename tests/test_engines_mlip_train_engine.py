@@ -8,7 +8,9 @@ scheduler, and recording what came out. The library-specific half is
 
 from __future__ import annotations
 
+import errno
 import json
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -26,7 +28,7 @@ from chemrefine.engines.api import (
 )
 from chemrefine.engines.mlip.registry import registered_trainers, trainer_for
 from chemrefine.engines.mlip.train.engine import SIDECAR_NAME, MlipTrainEngine
-from chemrefine.errors import ConfigError
+from chemrefine.errors import ConfigError, OutputTreeError
 from chemrefine.state import JobBatch, PipelineState, StepContext, StepInputs, Structure
 
 _TEMPLATE = """\
@@ -449,6 +451,35 @@ def test_the_record_cites_nothing_a_copied_tree_lacks(tmp_path: Path):
     assert sidecar["started_from"] == "foundation.model"
     assert sidecar["model_path"] == "train.model"
     assert not [v for v in sidecar.values() if isinstance(v, str) and str(tmp_path) in v]
+
+
+def test_a_record_the_disk_refuses_leaves_the_last_one_whole(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The record beside a model is replaced whole: a disk that fills mid-write keeps the last.
+
+    It is the one record of which run produced the model, read long after the run, so a
+    refused write leaves the record that was there, whole, with no temp file beside it, and
+    the refusal names the record.
+    """
+    ctx = _ctx(tmp_path)
+    engine = MlipTrainEngine()
+    engine.prepare(ctx)
+    engine.artifact(ctx).write_bytes(b"weights")
+    engine.parse(StepInputs(files=()), ctx)
+    record = engine.run_dir(ctx) / SIDECAR_NAME
+    last = record.read_bytes()
+    engine.artifact(ctx).write_bytes(b"retrained weights")
+
+    def full(fd: int) -> None:
+        raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+
+    monkeypatch.setattr(os, "fsync", full)
+    with pytest.raises(OutputTreeError) as refused:
+        engine.parse(StepInputs(files=()), ctx)
+    assert str(refused.value) == f"cannot write {record}: No space left on device"
+    assert record.read_bytes() == last
+    assert not list(record.parent.glob(".tmp_*"))
 
 
 def test_the_artifact_is_answerable_without_an_ensemble(tmp_path: Path):

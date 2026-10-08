@@ -23,8 +23,9 @@ from chemrefine.engines.mlip.train.base import (
     DatasetFiles,
     TrainerBase,
     TrainingPlan,
-    labelled_atoms,
+    write_labelled_db,
 )
+from chemrefine.io import tree_write
 from chemrefine.state import Structure
 
 _METADATA_NAME = "metadata.npz"
@@ -73,7 +74,8 @@ def _write_ase_db(
 ) -> Path:
     """Write one split as an ASE database plus its ``metadata.npz``; return the database.
 
-    Labels ride on the :class:`~ase.calculators.singlepoint.SinglePointCalculator` that
+    The rows are :func:`~chemrefine.engines.mlip.train.base.write_labelled_db`'s: labels ride
+    on the :class:`~ase.calculators.singlepoint.SinglePointCalculator` that
     :func:`~chemrefine.engines.mlip.train.base.labelled_atoms` attaches, because that is
     where ``AseDBDataset`` reads them from — there are no named info or array keys to match.
 
@@ -88,18 +90,13 @@ def _write_ase_db(
     ``np.issubdtype(dtype, np.integer)`` and a float column fails there rather than anywhere
     informative.
     """
-    from ase.db import connect
-
-    directory.mkdir(parents=True, exist_ok=True)
-    path = directory / f"{name}.db"
-    path.unlink(missing_ok=True)  # `connect` appends, and a re-run must not stack duplicates
-    with connect(str(path)) as db:
-        for struct in structures:
-            db.write(labelled_atoms(struct), data={"charge": charge, "spin": spin})
-    np.savez(
-        directory / _METADATA_NAME,
-        natoms=np.array([len(s.atoms) for s in structures], dtype=np.int64),
+    path = write_labelled_db(
+        directory / f"{name}.db", structures, data={"charge": charge, "spin": spin}
     )
+    natoms = np.array([len(s.atoms) for s in structures], dtype=np.int64)
+    metadata = directory / _METADATA_NAME
+    with tree_write(metadata):
+        np.savez(metadata, natoms=natoms)
     return path
 
 

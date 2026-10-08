@@ -30,7 +30,7 @@ from pathlib import Path
 
 from chemrefine.errors import ConfigError
 from chemrefine.ids import StepTemplate
-from chemrefine.io import read_xyz_frames
+from chemrefine.io import read_xyz_frames, write_tree_file
 
 # Both markers are anchored to their own lines, which is where Q-Chem reads them. Matched
 # anywhere, the literal text ``$molecule`` inside a ``$comment`` block starts the match and
@@ -123,7 +123,8 @@ def build_input(
     job 1 when it declares none — see the module docstring for why job 1 and only job 1.
     Everything else in the template, every later job of a ``@@@`` chain and its
     ``$molecule read $end`` included, passes through byte-for-byte. The template has been
-    held to :func:`require_fillable` before it reaches here, so this refuses nothing.
+    held to :func:`require_fillable` before it reaches here, so the one refusal left is the
+    output tree's, a write it will not take (:func:`chemrefine.io.write_tree_file`).
     """
     text = template.text
     block = _molecule_block(xyz_path, charge, multiplicity)
@@ -134,6 +135,5 @@ def build_input(
     else:
         rendered_job1 = f"{block}\n\n{job1.lstrip()}"
     rendered = rendered_job1 + later_jobs
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(rendered.rstrip() + "\n", encoding="utf-8")
+    write_tree_file(output_path, rendered.rstrip() + "\n")
     return output_path

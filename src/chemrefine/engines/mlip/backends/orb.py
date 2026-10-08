@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from chemrefine.engines.mlip.registry import CalculatorSpec, MlipLibrary
-from chemrefine.engines.mlip.train.base import ApiTrainerBase, TrainingPlan
+from chemrefine.engines.mlip.train.base import ApiTrainerBase, TrainingPlan, write_labelled_db
 from chemrefine.errors import ConfigError
 from chemrefine.state import Structure
 
@@ -170,21 +170,11 @@ class OrbTrainer(ApiTrainerBase):
 
         ``AseSqliteDataset`` is constructed on a database path ("you must convert your
         data into this format" — the script's own words), and the labels ride on each
-        row's calculator exactly as :func:`~chemrefine.engines.mlip.train.base.
-        labelled_atoms` attaches them. The valid/test splits are written when present so the
-        data a user held out stays visible on disk, but orb's loop reads only the training
-        set.
+        row's calculator, as :func:`~chemrefine.engines.mlip.train.base.write_labelled_db`
+        writes them. The valid/test splits are written when present so the data a user held
+        out stays visible on disk, but orb's loop reads only the training set.
         """
-        from ase.db import connect
-
-        from chemrefine.engines.mlip.train.base import labelled_atoms
-
-        path = plan.run_dir / f"{name}.db"
-        path.unlink(missing_ok=True)  # ase.db appends; a rerun must not stack rows
-        with connect(str(path)) as db:
-            for struct in structures:
-                db.write(labelled_atoms(struct))
-        return path
+        return write_labelled_db(plan.run_dir / f"{name}.db", structures)
 
     # -- the backend-side half (runs under the mlip-orb env's interpreter) -------------
 

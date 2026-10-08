@@ -192,3 +192,48 @@ def test_the_engine_guides_primitives_take_what_the_base_passes(method: str):
     for node in defined:
         spelled = [a.arg for a in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)]
         assert spelled == base, f"the guide's {method} takes {spelled}; JobEngine's takes {base}"
+
+
+def test_the_engine_guides_imports_resolve():
+    """Every name the worked engine imports from the package is one the package has.
+
+    Compiling cannot tell: an import is checked only when it runs, and the next engine is
+    written by copying this one. The engine the guide has its reader create is the one name
+    it may import that does not exist yet; it is read off the fences' ``@register`` lines.
+    """
+    import ast
+    import importlib
+
+    fences = _engine_guide_python()
+    created = {
+        f"chemrefine.engines.{name}"
+        for fence in fences
+        for name in re.findall(r'@register\("([^"]+)"\)', fence)
+    }
+    # `(module, name)` per imported name; a plain `import a.b` has no name beside its module.
+    imports = [
+        (node.module or "", alias.name) if isinstance(node, ast.ImportFrom) else (alias.name, None)
+        for fence in fences
+        for node in ast.walk(ast.parse(fence))
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for alias in node.names
+    ]
+    ours = [
+        (module, name)
+        for module, name in imports
+        if (module == "chemrefine" or module.startswith("chemrefine."))
+        and not any(module == c or module.startswith(f"{c}.") for c in created)
+    ]
+    assert created and ours, "the scanner found no engine or no import — renamed fences?"
+
+    def resolves(module: str, name: str | None) -> bool:
+        try:
+            imported = importlib.import_module(module)
+            if name is not None and not hasattr(imported, name):
+                importlib.import_module(f"{module}.{name}")  # a submodule, until imported
+        except ImportError:
+            return False
+        return True
+
+    missing = [f"{m}.{n}" if n else m for m, n in ours if not resolves(m, n)]
+    assert not missing, f"the guide imports names the package does not have: {missing}"
