@@ -40,6 +40,8 @@ Config → bootstrap → run_step (cache | engine lifecycle) → filtering → P
 - [MLIP](engines_mlip.md) — direct / ExtOpt / training engines + backend dispatcher
 - [PySCF](engines_pyscf.md) — direct / ExtOpt engines + the SCF runtime
 - [Q-Chem](engines_qchem.md) — input generation, output parsing, the NMS hooks
+- [Qiskit](engines_qiskit.md) — molecular and quantum experiment engines, reusable
+  solving APIs, component registries, provider resources, and scientific checkpoints
 
 ## Agent Integration
 
@@ -55,5 +57,7 @@ Config → bootstrap → run_step (cache | engine lifecycle) → filtering → P
 - [Throttle](throttle.md) — the CPU+GPU budget throttler
 - [Cache](cache.md) — the per-step fingerprint cache, manifest, and failed-job ledger
 - [Filesystem I/O](io.md) — XYZ read/write, SMILES→3D, CSV reporting
+- [Declared Input Files](input_files.md) — configuration-relative engine inputs,
+  manifest payload dependencies, and portable content-sensitive identity
 - [Identifiers](ids.md) — hierarchical ID allocation and canonical filenames
 - [Job Log](job_log.md) — the per-job runlog header/footer
