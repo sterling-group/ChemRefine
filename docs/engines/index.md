@@ -10,7 +10,9 @@ That table is generated from the registry when these docs are built, so it canno
 behind the code. Reading it:
 
 - **Step template** — the file the engine reads for each step, `templates/stepN.<suffix>`,
-  and the format it is written in. This is where a QM engine's real settings live.
+  and the format it is written in. ORCA and Q-Chem read scientific settings from this
+  template; Qiskit reads them from `options:` and uses a thin Python worker template.
+  An engine showing *none* generates its own worker and needs no authored step template.
 - **`operation:`** — the vocabulary that engine interprets. An engine listing *any* treats
   the field as a free label; an engine whose template inspection can decide the run type
   infers it when `operation:` is omitted, and an explicit value always wins — each
@@ -22,10 +24,15 @@ behind the code. Reading it:
 
 An engine that documents itself on a page of its own is linked from its row in the table.
 
-`options:` is a free per-engine dict and each engine validates its own keys — an
-undeclared key is reported by `chemrefine validate`, and logged when a run starts, as a
-silent no-op rather than ignored. The sections below are those keys, one engine family at
-a time, for the engines documented on this page.
+`options:` is a per-engine mapping. `chemrefine validate` reports undeclared keys;
+strict engine option models refuse them at execution. Qiskit also validates each named
+component's nested options and compatibility before submission. The sections below
+introduce each engine family, with its option reference here or on a linked guide.
+
+For quantum work, start with [Qiskit molecular calculations](#qiskit-qiskit) or
+[quantum experiments](#quantum-experiments-qiskit-experiment). The
+[Qiskit support status](qiskit-status.md) separates working paths, experimental methods,
+known bugs and integrations still awaiting validation.
 
 ## ORCA (`orca`)
 
@@ -290,6 +297,56 @@ rather than accepted and ignored.
 | `cores` | `1` | Per-structure core budget. |
 | `backend_python` | `None` | Explicit interpreter for the backend (escape hatch). Normally unset: the `pyscf` managed env is resolved by name. |
 | `extra` *(direct only)* | `{}` | Free knobs for your own `stepN.py`, as a mapping: validated only as a mapping, rendered as `$EXTRA` (a Python dict literal) and inside `$OPTIONS_JSON`. Declared, so a key you invent is deliberate while a typo of a real knob still warns; `pyscf-extopt` renders no template and refuses it. |
+
+## Qiskit (`qiskit`)
+
+The molecular engine computes a single-point electronic energy for each input structure
+using Qiskit Nature. The scientific choices live in `options:`: basis and molecular
+problem source, active space, mapper, solver, reference state, ansatz, estimator,
+optimizer and initial point. A thin `templates/stepN.py` calls the shared runner;
+`chemrefine scaffold` creates a starter. Setting `operation: sp` labels the calculation;
+it does not select the solver or enable geometry optimisation.
+
+Start with [exact, VQE and ADAPT-VQE calculations](qiskit.md), or follow the
+[H2 tutorial](../tutorials/qiskit.md). Additional solvers, adaptive pools, spectra,
+sampling and fermionic workflows have dedicated guides linked from the molecular page.
+
+The engine writes the total molecular energy into the usual pipeline records. Its native
+JSON also retains component selections, solver diagnostics and quantum metadata. It has
+no geometry optimisation, gradients, frequencies or normal-mode sampling. GPU simulation
+requires a compatible CUDA Aer build; IBM hardware uses the separate Runtime provider.
+See [working paths and limitations](qiskit-status.md).
+
+Install `qiskit` for the PySCF-backed molecular path; consumed optional components select
+an appropriate managed environment such as `qiskit-aer`, `qiskit-fermionic` or
+`qiskit-runtime`. Not every backend in the table is needed for every job. See
+[installation and provider selection](installing.md#qiskit-nature).
+
+To save reusable integrals, bound circuits and determinant states, follow
+[reproducible quantum checkpoints](qiskit-checkpoints.md) and
+[quantum data handoffs](qiskit-handoffs.md). For Python callers and extensions, use the
+[Qiskit API reference](../api/engines_qiskit.md).
+
+## Quantum experiments (`qiskit-experiment`)
+
+This engine schedules one configured quantum experiment per step and publishes a native
+artifact bundle under `<output_dir>/stepN[_name]/experiment/`. It generates its worker,
+so it needs no `stepN.py` template. Choose the workflow through `options.experiment`, rather than
+`operation:`. The pipeline's input structures pass through unchanged; model energies or
+measurement estimates in the artifact are not new molecular energies in `steps.csv`.
+Ordinary `sample:` filtering still applies to the structures after the experiment.
+
+The [experiment guide](qiskit-experiment.md) covers the available workflows and their
+options, including lattice dynamics, measurements, shadows, reconstruction, molecular
+evolution, resource estimation and cutting. Like molecular Qiskit steps, the experiment
+selects its managed backend from the components it consumes. It requires
+`on_failure: stop` and does not support NMS.
+
+Preserve `artifact.json` together with its referenced payloads. Bundle integrity and
+scientific output contracts are checked during completion and recovery. See
+[outputs and recovery](qiskit-experiment.md#outputs-and-recovery),
+[checkpoint formats](qiskit-checkpoints.md) and the
+[Python API](../api/engines_qiskit.md).
 
 ## The ExtOpt engines (`mlip-extopt`, `pyscf-extopt`)
 

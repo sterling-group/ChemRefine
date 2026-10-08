@@ -18,6 +18,10 @@ accuracy certificate. Installation and package ranges are documented in
 
 The following interfaces are implemented and have local validation. Research
 methods remain experimental even when their numerical and artifact checks pass.
+The table's scientific limitations are distinct from the catalog's component
+interface status: for example, `ffsim_vqe`, `sqd` and `sqdrift` expose a
+`standard` registry contract while their use as research workflows still needs
+the documented convergence, sector and approximation checks.
 
 | Capability | What works | Status and practical limits | Guide |
 | --- | --- | --- | --- |
@@ -45,6 +49,11 @@ methods remain experimental even when their numerical and artifact checks pass.
 | Artifacts, cache and GUI | Portable integrals, bound logical circuits, determinant states and experiment bundles; payload-integrity checks, cache invalidation, provenance and schema-driven GUI editing/errors. | Working local contracts and public CPU/CUDA pipeline paths. Preserve whole bundles; GUI validation is not visual browser acceptance or hardware certification. | [Handoffs](qiskit-handoffs.md), [Artifacts](qiskit-experiment.md#outputs-and-recovery) |
 
 ## Validation and performance tools
+
+Use [Quantum validation](../developer/quantum-validation.md) for the release gate,
+separate CPU integration, cache-performance and CUDA checks, worker interpreter
+selection, and the evidence expected before merging. The default pytest suite
+does not replace the deliberately separate integration, performance or GPU runs.
 
 Provider compatibility jobs exercise selected lower-bound and current package
 stacks, retain environment and execution reports, and reject missing or skipped
@@ -129,6 +138,12 @@ selected-CI reference and DMRG workflows are deferred; the exact and projected
 diagonalizations inside quantum workflows remain available. Third-party automatic
 entry-point discovery is not implemented: registration modules must load in both
 the orchestrator and worker.
+
+Complex Hamiltonian tensors are accepted by the integral interface, including
+spin-resolved blocks. Its alpha/beta orbital-overlap array remains real, so a
+general complex unrestricted orbital overlap is unsupported. Downstream methods
+also retain their own narrower integral domains; loading a bundle successfully
+does not establish that Cartesian SQD or a factorization provider can consume it.
 
 Known unsupported configurations fail explicitly. Examples include CUDA with a
 non-GPU reference/basic provider, upstream ADAPT with QNSPSA, incompatible QE/CEO

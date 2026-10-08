@@ -2,8 +2,9 @@
 
 ChemRefine is a **light orchestrator core** plus optional **compute backends**. The core
 — the pipeline, ORCA and Q-Chem driving, SLURM submission — installs anywhere in seconds
-and needs no backend environment of its own. Machine-learned potentials and PySCF are
-added afterwards; see [Installing engines & backends](../engines/installing.md).
+and needs no backend environment of its own. Machine-learned potentials, PySCF,
+and the Qiskit molecular and quantum-experiment engines are added afterwards;
+see [Installing engines & backends](../engines/installing.md).
 
 ## Requirements
 
@@ -69,6 +70,61 @@ pip install -e ".[dev]"   # every tool the gates call — pytest, mypy, mkdocs,
 pre-commit install        # REQUIRED — installs the hook itself, which the line
                           # above does not; CI runs these same hooks
 ```
+
+Installing the contributor tools does not select every quantum provider. For
+the Qiskit examples, add the relevant backend profile as described below.
+
+## Add Qiskit
+
+The molecular `qiskit` engine and the artifact-producing `qiskit-experiment`
+engine are discoverable in a core installation; executing their computations
+requires the selected optional stack. The common local choices are:
+
+| Calculation | Install in the active environment | Managed backend |
+| --- | --- | --- |
+| Molecular exact/VQE/ADAPT with the XYZ/PySCF driver | `python -m pip install "chemrefine[qiskit]"` | `chemrefine backends install qiskit` |
+| Local Aer expectation values or finite shots | `python -m pip install "chemrefine[qiskit-aer]"` | `chemrefine backends install qiskit-aer` |
+| UCJ/LUCJ, SQD and fermionic preparation | `python -m pip install "chemrefine[qiskit-fermionic]"` | `chemrefine backends install qiskit-fermionic` |
+
+For a checkout, replace the pip package specifier with `-e ".[qiskit]"`,
+`-e ".[qiskit-aer]"` or the corresponding extra. The driver-independent Python
+integral API can use `[qiskit-core]` without PySCF. Runtime, cutting, RDM fitting
+and resource estimation have their own profiles; the
+[provider installation guide](../engines/installing.md#qiskit-nature) lists
+their complete dependencies, Python requirements and compatible CUDA recipe.
+The normal Aer extra supplies CPU Aer.
+
+Start with [Qiskit calculations](../engines/qiskit.md) or
+[quantum experiments](../engines/qiskit-experiment.md), and check the
+[support status](../engines/qiskit-status.md) for known bugs and unverified
+hardware paths. For repeatable calculations, preserve
+[integral and circuit checkpoints](../engines/qiskit-checkpoints.md).
+
+## Preview the documentation
+
+From a source checkout, install the docs extra and start the local preview:
+
+```bash
+python -m pip install -e ".[docs]"
+python -m mkdocs serve -a 127.0.0.1:8000
+```
+
+Open `http://localhost:8000` on that computer. Use the Python interpreter from
+the environment where the docs extra was installed; changing directories does
+not switch an already active virtual environment. To validate the rendered
+documentation without starting a server, run `python -m mkdocs build --strict`.
+
+For a preview running on a remote server, leave MkDocs running there and run
+this command in a terminal on the computer with the browser:
+
+```bash
+ssh -N -L 8000:127.0.0.1:8000 user@SERVER_HOST
+```
+
+Replace the username and `SERVER_HOST` with the server's SSH login, then open
+`http://localhost:8000` locally. If local port 8000 is occupied, use
+`-L 8001:127.0.0.1:8000` and open `http://localhost:8001`. The preview reads the
+checkout where MkDocs runs; update that checkout to preview new branch changes.
 
 ## Check it works
 

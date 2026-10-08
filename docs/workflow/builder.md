@@ -94,6 +94,13 @@ validates with — so every knob, enum and default is current by construction:
   per-step charge/multiplicity.
 - **Engine options**: a subform from the engine's own declared options model. Engines
   configured through their template (ORCA) say so instead of showing an invented form.
+- **Quantum components**: `qiskit` exposes mapper, algorithm, ansatz, reference,
+  estimator, sampler, optimizer and initial-point selectors. `qiskit-experiment`
+  exposes its experiment selector. Each component has its own option fields,
+  research-status label and declared supported domains. **Edit all component options
+  as YAML** handles nested mappings, arrays and file inputs; **Edit all engine options
+  as YAML** handles the whole option mapping. Changing a component preserves its
+  existing settings, so validate afterward and repair incompatible fields.
 - **Sampling**: method dropdown (`boltzmann` / `min` / `max`) with exactly that
   method's fields.
 - **NMS**: toggling `nms` reveals the NMS knobs.
@@ -103,6 +110,12 @@ validates with — so every knob, enum and default is current by construction:
   workflow value): the spinner steps from them like real values, but they stay out of
   the YAML until you change them — the file carries only your deviations. Setting a
   field back to its default removes it from the YAML again.
+
+Quantum file paths are relative to the saved config's directory, not the browser.
+The builder edits references to integrals, circuits and bundles; it does not upload
+their contents or certify quantum hardware execution. See the
+[Qiskit overview](../engines/index.md#qiskit-qiskit) and
+[checkpoint formats](../engines/qiskit-checkpoints.md).
 
 ## The right column is the file
 

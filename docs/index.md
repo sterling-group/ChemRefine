@@ -20,11 +20,16 @@ cached so unchanged steps skip automatically.
 
 - **Step-based pipeline** driven by a single Pydantic-validated YAML
   config — every knob lives in one place.
-- **Engine plugins** behind a narrow Protocol — each a direct engine or an
-  ORCA-driven `-extopt` gradient server. The
+- **Engine plugins** behind a narrow Protocol — direct calculations, an
+  ORCA-driven `-extopt` gradient server, or a step producing one artifact. The
   [engine table](engines/index.md) is generated from the
   registry, so it is never out of date; new engines drop in via a registry
   decorator (see [Adding an Engine](developer/adding-an-engine.md)).
+- **Quantum workflows** with [Qiskit Nature](engines/qiskit.md) for molecular
+  single-point energies and [quantum experiments](engines/qiskit-experiment.md)
+  for measurement, dynamics and resource artifacts. Save integrals and preparations
+  as [reproducible checkpoints](engines/qiskit-checkpoints.md); check the
+  [support status](engines/qiskit-status.md) for working paths and known limitations.
 - **Filtering** by Boltzmann cumulative weight, or the lowest / highest
   structures by count or energy window (`min` / `max`, the latter PES-style),
   with optional per-parent grouping.
@@ -58,6 +63,8 @@ pip install chemrefine
 | see a complete study, start to finish | **[Tutorials](tutorials/index.md)** |
 | know what can go in the YAML | **[Writing a workflow](workflow/configuration.md)** |
 | know which engines and backends there are | **[Engines & backends](engines/index.md)** |
+| compute quantum molecular energies | **[Qiskit tutorial](tutorials/qiskit.md)** |
+| save quantum inputs and preparations for replay | **[Reproducible checkpoints](engines/qiskit-checkpoints.md)** |
 | run it on a cluster, or fix a run that failed | **[Running a workflow](running/cli.md)** |
 | understand how it works inside | **[Internals](internals/architecture.md)** |
 | move a v1 project to v2 | **[Upgrading from v1](get-started/upgrading-from-v1.md)** |

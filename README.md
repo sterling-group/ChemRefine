@@ -20,8 +20,9 @@
 <!-- --8<-- [start:hero] -->
 Automated, interoperable manager for computational-chemistry workflows.
 ChemRefine chains quantum-chemistry and machine-learned-potential steps into a
-single YAML-described pipeline — ORCA and Q-Chem among the QM engines, FAIRChem
-and MACE among the potentials — with SLURM submission, fingerprint caching, and
+single YAML-described pipeline — ORCA, Q-Chem and PySCF among the QM engines,
+Qiskit Nature for quantum molecular energies, FAIRChem and MACE among the
+potentials — with SLURM submission, fingerprint caching, and
 resumable runs built in.
 
 Potentials whose dependency stacks cannot share a Python process still share a
@@ -38,12 +39,15 @@ pip install chemrefine
 
 # With the default potential backend (FAIRChem / UMA):
 pip install "chemrefine[mlip]"
+
+# With the molecular Qiskit Nature stack:
+pip install "chemrefine[qiskit]"
 ```
 
 <!-- --8<-- [start:requirements] -->
 - **Python 3.11–3.14.**
 - **Whatever each step needs to compute.** ORCA for `orca` and the ExtOpt
-  engines, Q-Chem for `qchem`; potential and PySCF steps need only a Python
+  engines, Q-Chem for `qchem`; potential, PySCF and Qiskit steps need a Python
   backend, which `chemrefine backends install` provisions for you.
 - **SLURM is optional** — the generated `.slurm` script runs unchanged under
   `bash` for local execution.
@@ -51,6 +55,15 @@ pip install "chemrefine[mlip]"
 
 The [install guide](https://sterling-group.github.io/ChemRefine/get-started/install/)
 lists every engine, backend and extra, and covers GPU setup.
+
+The [Qiskit guide](https://sterling-group.github.io/ChemRefine/engines/qiskit/)
+covers single-point solvers and quantum experiments. Its
+[support status](https://sterling-group.github.io/ChemRefine/engines/qiskit-status/)
+lists working paths and known bugs, and
+[checkpoint guide](https://sterling-group.github.io/ChemRefine/engines/qiskit-checkpoints/)
+shows how to retain integrals and final preparations for replay. Optional providers
+are installed separately; CUDA Aer is a classical simulator, while IBM hardware
+uses the Runtime provider.
 
 ## Run
 

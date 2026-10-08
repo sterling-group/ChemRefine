@@ -73,6 +73,31 @@ structure — one queue entry for a step with 200 conformers rather than 200. It
 when running locally. The throttle, the cache and the failure ledger behave identically
 either way.
 
+## Qiskit workers
+
+Both `qiskit` molecular jobs and the single worker of a `qiskit-experiment` step use
+the same local/SLURM dispatch and total CPU/GPU budgets. `options.cores` requests
+threaded CPUs; the worker receives the scheduler's granted budget, which can be less
+than requested when `max_cores` is smaller.
+
+Provision the [selected provider profile](../engines/installing.md#qiskit-nature) on
+the login node, with its environment visible to compute nodes. `backend_python` can
+instead name a compatible custom worker interpreter. Every declared integral, circuit
+and payload input must also be visible to the worker; config-relative paths are
+resolved before submission, rather than relative to its scratch directory.
+
+`device: cuda` requests a GPU and uses the CUDA header, but the selected estimator or
+sampler must actually support CUDA. A compatible Aer build and a header allocating
+the requested GPU are required; provider device discovery alone is not an execution
+test. See [Aer CUDA support and known failures](../engines/installing.md#aer-cuda-working-paths-and-known-failures).
+IBM Runtime is a separate remote execution path, not a CUDA job; provide credentials
+through the worker's environment or account store as described in the
+[Runtime guide](../engines/qiskit-runtime.md).
+
+The [checkpoint guide](../engines/qiskit-checkpoints.md) explains which integrals,
+preparations and metadata to archive. Multi-node and distributed multi-GPU quantum
+execution remain [unverified](../engines/qiskit-status.md#unverified-and-unsupported-scope).
+
 ## Q-Chem on a cluster
 
 A threaded Q-Chem job cannot span nodes, so carry `#SBATCH --nodes=1` in the header your
