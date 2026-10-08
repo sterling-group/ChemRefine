@@ -221,7 +221,9 @@ scattered through the parser:
   match wins* (an `opt`'s repeated prints resolve to the final one); *finite refusal at the
   boundary* (a value that cannot be read raises `OutputParseError`, an abnormal ending
   `OutputTerminationError` with the `.err` tail — never a silent `NaN`); and every case ships
-  a *trimmed real* contract fixture.
+  a *trimmed real* contract fixture. A file the filesystem will not let the run read is
+  not yours to word: let the `OSError` of your read leave `parse_one`, and the lifecycle
+  files it as that structure's `unreadable` failure, the same for every engine.
 
 For **method-dependent scalars** — "the" energy differs between a plain SCF and a correlated
 run that prints both — declare a priority chain over the *output text*: rows tried highest

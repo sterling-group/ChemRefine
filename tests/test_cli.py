@@ -16,6 +16,7 @@ import yaml
 from typer.testing import CliRunner
 
 from chemrefine import __version__
+from chemrefine.cache import load, load_failure_records
 from chemrefine.cli import SUBCOMMANDS, app
 from chemrefine.cli_legacy import translate_argv
 from chemrefine.errors import CacheError, ChemRefineError, ConfigError, OutputTreeError
@@ -318,6 +319,62 @@ def test_an_unreadable_cache_document_exits_with_the_cache_error_code(tmp_path: 
 
     assert result.exit_code == CacheError.exit_code
     assert not isinstance(result.exception, PermissionError)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
+def test_an_output_the_run_cannot_read_is_not_run_again_and_is_read_once_it_can_be(
+    tmp_path: Path,
+):
+    """An unreadable output fails its structure, halts its step and costs no job.
+
+    Through the CLI: the re-parse ledgers the structure ``unreadable`` under its file's
+    name and caches the other two; a ``resume`` over the pending failure leaves the output
+    where it is — no ``attemptK/``, no resubmission; and once it can be read, the same
+    ``resume`` reads it and the step is whole. The file is the one the first run wrote.
+    """
+    seed = tmp_path / "seeds.xyz"
+    seed.write_text(
+        "".join(f"2\nH2 {i}\nH 0 0 0\nH {0.74 + 0.01 * i} 0 0\n" for i in range(3)),
+        encoding="utf-8",
+    )
+    config_path = _write_config(
+        tmp_path,
+        input=str(seed),
+        steps=[{"step": 1, "name": "screen", "engine": "fake", "operation": "opt_sp"}],
+    )
+    assert runner.invoke(app, ["run", str(config_path)]).exit_code == 0
+    step_dir = tmp_path / "outputs" / "step1_screen"
+    output = step_dir / "1" / "step1_1.out"
+    written = (output.stat().st_ino, output.stat().st_mtime_ns)
+
+    def tree() -> tuple[list[tuple[str, str]], list[str], list[str]]:
+        cached = load(step_dir)
+        assert cached is not None
+        return (
+            [(r.structure_id, r.reason) for r in load_failure_records(step_dir)],
+            [s.id for s in cached.results.structures],
+            sorted(p.name for p in output.parent.iterdir()),
+        )
+
+    held = tree()[2]
+    output.chmod(0)
+    try:
+        reread = runner.invoke(app, ["rebuild-cache", str(config_path), "screen"])
+        after_reread = tree()
+        resumed = runner.invoke(app, ["resume", str(config_path)])
+        after_resume = tree()
+    finally:
+        output.chmod(0o644)
+
+    unreadable = [("1", "unreadable: 1/step1_1.out: Permission denied")]
+    assert reread.exit_code == resumed.exit_code == ChemRefineError.exit_code
+    assert isinstance(reread.exception, SystemExit)
+    assert isinstance(resumed.exception, SystemExit)
+    assert after_reread == after_resume == (unreadable, ["0", "2"], held)
+
+    assert runner.invoke(app, ["resume", str(config_path)]).exit_code == 0
+    assert tree() == ([], ["0", "1", "2"], held)
+    assert (output.stat().st_ino, output.stat().st_mtime_ns) == written, "read, not run again"
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root writes through any mode")

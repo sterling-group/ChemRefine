@@ -27,7 +27,7 @@ from ase import Atoms
 
 from chemrefine.engines.mlip.registry import CalculatorSpec, MlipLibrary
 from chemrefine.engines.mlip.train.base import DatasetFiles, TrainerBase, TrainingPlan
-from chemrefine.io import tree_write
+from chemrefine.io import absent, tree_write
 from chemrefine.quantities import HARTREE_TO_EV
 from chemrefine.state import Structure
 
@@ -214,4 +214,4 @@ class MaceTrainer(TrainerBase):
         step to name in its own YAML before the training has run.
         """
         stage_two = run_dir / f"{run_name}_stagetwo.model"
-        return stage_two if stage_two.is_file() else run_dir / f"{run_name}.model"
+        return run_dir / f"{run_name}.model" if absent(stage_two) else stage_two

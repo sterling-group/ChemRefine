@@ -253,7 +253,13 @@ class JobEngine(abc.ABC):
     def parse_one(
         self, output_path: Path, structure_id: str, ctx: StepContext
     ) -> list[ParsedResult]:
-        """Parse one output into ``ParsedResult``(s) — ≥2 for an ensemble fan-out."""
+        """Parse one output into ``ParsedResult``(s) — ≥2 for an ensemble fan-out.
+
+        What the output holds that cannot be used is
+        :class:`~chemrefine.errors.OutputParseError`. A read the filesystem refuses leaves as
+        the ``OSError`` it is: :func:`chemrefine.lifecycle._parse_job` files it as the
+        structure's ``unreadable`` failure, the same for every engine.
+        """
 
     @abc.abstractmethod
     def run_block(self, ctx: StepContext, inp_path: Path, out_path: Path) -> RunBlock:

@@ -30,12 +30,13 @@ run leaves proof of what its outputs were computed for — and that composition 
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Protocol
 
-from chemrefine import __version__, attempts, cache
+from chemrefine import __version__, attempts, cache, ids, io
 from chemrefine.config import StepConfig
 from chemrefine.engines.api import CalculationEngine, StreamingSubmit, sweep
 from chemrefine.errors import ChemRefineError, OutputParseError, OutputTerminationError
@@ -82,8 +83,8 @@ def _parse_job(
 ) -> tuple[list[Structure], Failure | None]:
     """Parse one job: the structures it produced, and its failure if it has one.
 
-    A job is a *failure* when its output is missing, unparseable, or parses to a structure
-    the engine marks unconverged / not-terminated. A fan-out job (a GOAT ensemble, a PES
+    A job is a *failure* when its output is missing, unreadable, unparseable, or parses to a
+    structure the engine marks unconverged / not-terminated. A fan-out job (a GOAT ensemble, a PES
     scan) yields several structures and at most one failure, described by the best geometry
     among the bad frames — the reason has to describe the geometry carried forward, because
     :func:`retry_unconverged` routes on it.
@@ -92,9 +93,16 @@ def _parse_job(
     :attr:`~chemrefine.state.FailureKind.NOT_TERMINATED_NORMALLY` rather than ``UNPARSEABLE``: both
     describe an unusable output, but only one of them points at the job. A ledger full of
     "unparseable" sends a reader to the parser for what is a cluster or input problem.
+
+    *Missing* is the filesystem's own "no such file" (:func:`chemrefine.io.absent`). An
+    output that is there, or cannot be ruled out, and that the filesystem will not let this
+    account read is :attr:`~chemrefine.state.FailureKind.UNREADABLE`. An engine's parse reads
+    the job's files and nothing else, so an ``OSError`` out of it is the refusal of one of
+    them — the output, a sidecar beside it — and it is filed here, once for every engine,
+    under the file the filesystem named (:func:`_refused_file`).
     """
     _inp, out, sid = triple
-    if not out.is_file():
+    if io.absent(out):
         return [], Failure(sid, FailureKind.MISSING_OUTPUT, None)
     try:
         parsed = list(engine.parse(StepInputs(files=(triple,)), ctx).structures)
@@ -102,11 +110,26 @@ def _parse_job(
         return [], Failure(sid, FailureKind.NOT_TERMINATED_NORMALLY, None, detail=str(e))
     except OutputParseError as e:
         return [], Failure(sid, FailureKind.UNPARSEABLE, None, detail=str(e))
+    except OSError as e:
+        detail = _refused_file(e, out, ctx.step_dir)
+        return [], Failure(sid, FailureKind.UNREADABLE, None, detail=detail)
     bad = [s for s in parsed if not succeeded(s)]
     if not bad:
         return parsed, None
     best = min(bad, key=lambda s: (s.energy_hartree is None, s.energy_hartree or 0.0))
     return parsed, Failure(sid, failure_kind(best), best)
+
+
+def _refused_file(error: OSError, out: Path, step_dir: Path) -> str:
+    """Which of a job's files the filesystem would not let the parse read, and why.
+
+    The file the error names, the job's output when it names none, spelled relative to the
+    step (:func:`chemrefine.ids.step_relative`) so the reason still points at the file once
+    the tree is copied or moved, then the system's own reason.
+    """
+    named = error.filename
+    refused = Path(os.fsdecode(named)) if isinstance(named, (str, bytes, os.PathLike)) else out
+    return f"{ids.step_relative(refused, step_dir)}: {error.strerror or error}"
 
 
 def parse_with_failures(
@@ -158,6 +181,18 @@ def submit_and_parse(
     return parse_and_record(engine, inputs, run_ctx)
 
 
+_NOT_RESUBMITTED = frozenset({FailureKind.NOT_CONVERGED, FailureKind.UNREADABLE})
+"""The failures :func:`resubmit_unusable` spends no job on: each has a remedy a re-run is not.
+
+A structure that did not converge restarts from the geometry it reached
+(:func:`retry_unconverged`); resubmitting the identical input would only fail the same way.
+An output this account cannot read may hold a whole calculation, and what restores it is
+access to the file — archiving it and running the job again would spend the job's cost on a
+permission. It stays a failure for the step's ``on_failure`` policy, and the next parse
+reads it.
+"""
+
+
 def resubmit_unusable(
     engine: CalculationEngine,
     ctx: StepContext,
@@ -174,15 +209,17 @@ def resubmit_unusable(
 
     *Unusable* means the job did not leave a result this step can stand behind: no output at
     all, an output that will not parse, or one whose engine says it did not terminate
-    normally. A structure that merely failed to **converge** is excluded and left to
-    :func:`retry_unconverged`, which restarts it from the geometry it did reach —
-    resubmitting the identical input would only fail the same way.
+    normally. Two failures are excluded (:data:`_NOT_RESUBMITTED`), each because a re-run is
+    not its remedy: a structure that merely failed to **converge** is left to
+    :func:`retry_unconverged`, and an output this account **cannot read** is left a failure
+    for the step's ``on_failure`` policy.
 
     Judging by what parsed rather than by which files exist is what closes the window every
     re-run opens: preparing one archives the previous attempt and writes a fresh input, so a
     run killed in between leaves an output that is present but truncated.
-    A caller that asked ``out.is_file()`` would call that finished and hand the structure to
-    the failure policy with an unused attempt and a good geometry sitting in ``attemptK/``.
+    A caller that asked only whether the output is there would call that finished and hand
+    the structure to the failure policy with an unused attempt and a good geometry sitting in
+    ``attemptK/``.
 
     Prior artifacts are archived into ``attemptK/`` and inputs are **regenerated** rather than
     reused: archiving is what stops a job that dies without producing output from re-reading
@@ -206,7 +243,7 @@ def resubmit_unusable(
     ledger.absorb_all(engine, ctx, inputs)
     _successes, failures = ledger.emit()
 
-    unusable = {f.sid for f in failures if f.kind is not FailureKind.NOT_CONVERGED} | condemned
+    unusable = {f.sid for f in failures if f.kind not in _NOT_RESUBMITTED} | condemned
     seeds = tuple(s for s in ctx.prev_state.structures if s.id in unusable)
     if not seeds:
         return ledger.emit()

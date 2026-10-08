@@ -746,7 +746,10 @@ for those and the full map.
   docking ensemble that way. 2.0 ledgers the structure as a parse failure, caches the
   step's other results and lets the step's `on_failure` policy decide what follows; its
   GOAT, docking and solvation readers skip a frame they cannot read and fail the
-  structure only when no frame is left.
+  structure only when no frame is left. An output the filesystem will not let the run
+  read (another account's file, a directory it cannot search) is ledgered `unreadable`
+  and left where it is: `resume` and `rerun-errors` do not run its job again, and `resume`
+  reads it once access is restored.
 - **An ORCA executable whose path contains a space runs.** v1.3.1 wrote the ORCA
   executable and the step's output directory into its job scripts unquoted, so a space
   in the executable's path broke every job of every ORCA and MLFF step. 2.0 quotes both,

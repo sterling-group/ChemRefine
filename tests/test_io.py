@@ -1061,3 +1061,41 @@ def test_a_sqlite_error_that_refuses_no_write_leaves_as_itself(tmp_path: Path, c
     ):
         raise error
     assert passed.value is error
+
+
+# ---------------------------------------------------------------------------
+# The output tree's questions — absent
+# ---------------------------------------------------------------------------
+
+
+def test_only_no_such_file_proves_that_nothing_is_there(tmp_path: Path):
+    """``absent`` is the filesystem's own "no such file or directory" and nothing else.
+
+    A path through a regular file is a tree out of shape, not an output that was never
+    written: the read that follows names it.
+    """
+    held = tmp_path / "step1_0.out"
+    held.write_text("", encoding="utf-8")
+    assert chemrefine_io.absent(tmp_path / "step1_1.out")
+    assert chemrefine_io.absent(tmp_path / "1" / "step1_1.out")
+    assert not chemrefine_io.absent(held)
+    assert not chemrefine_io.absent(tmp_path)
+    assert not chemrefine_io.absent(held / "step1_0.out")
+
+
+@pytest.mark.skipif(_AS_ROOT, reason="root reads through any mode")
+def test_a_file_this_account_cannot_reach_is_not_called_absent(tmp_path: Path):
+    """Under a directory it cannot search the run cannot tell, and says so on every Python.
+
+    ``Path.is_file`` raises there on Python 3.11 to 3.13 and answers ``False`` on 3.14;
+    both a file that is there and a name that is not are "not provably absent" here.
+    """
+    locked = tmp_path / "0"
+    locked.mkdir()
+    (locked / "step1_0.out").write_text("", encoding="utf-8")
+    locked.chmod(0)
+    try:
+        answers = [chemrefine_io.absent(locked / name) for name in ("step1_0.out", "never.out")]
+    finally:
+        locked.chmod(0o755)
+    assert answers == [False, False]

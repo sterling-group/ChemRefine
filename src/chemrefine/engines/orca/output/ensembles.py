@@ -22,6 +22,7 @@ import numpy as np
 from chemrefine.engines.api import ParsedResult
 from chemrefine.engines.orca.output import energy, status
 from chemrefine.errors import OutputParseError
+from chemrefine.io import absent
 
 # Per-frame energy-header regex + the ``<base>.<suffix>`` sidecar filename ORCA writes the
 # ensemble to — the single source for these external-contract names.
@@ -42,13 +43,15 @@ def ensemble_sidecar(out_path: str | Path, suffix: str, *fallbacks: str) -> Path
     (the ``.out`` stem), not into the ``.out`` log — e.g. ``step1_0.finalensemble.xyz``. The
     SLURM ``*.xyz`` glob copies it back beside the ``.out``. ``fallbacks`` are alternative
     suffixes for operations whose filename changed across ORCA releases (e.g. Docker's
-    ``allopt`` → ``all.optimized`` in 6.1.1); the first existing candidate wins. Raises
-    :class:`OutputParseError` naming every candidate if none exists.
+    ``allopt`` → ``all.optimized`` in 6.1.1); the first candidate the filesystem does not
+    say is missing wins (:func:`chemrefine.io.absent`), and one that is there and cannot be
+    read is refused by the read. Raises :class:`OutputParseError` naming every candidate if
+    all are missing.
     """
     out_path = Path(out_path)
     candidates = [out_path.with_name(f"{out_path.stem}.{s}") for s in (suffix, *fallbacks)]
     for sidecar in candidates:
-        if sidecar.is_file():
+        if not absent(sidecar):
             return sidecar
     names = " or ".join(c.name for c in candidates)
     raise OutputParseError(

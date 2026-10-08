@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import time
 from pathlib import Path
@@ -24,6 +25,8 @@ from chemrefine.engines.orca.output import (
     status,
 )
 from chemrefine.engines.orca.output.ensembles import (
+    GOAT_SUFFIX,
+    ensemble_sidecar,
     parse_docker,
     parse_goat_ensemble,
     parse_pes,
@@ -1028,6 +1031,26 @@ def test_parse_output_falls_back_to_the_611_docker_sidecar(tmp_path: Path):
     """With no legacy ``allopt`` file, dispatch finds 6.1.1's renamed pose file."""
     out = _with_sidecar(tmp_path, "docker.struc1.all.optimized.xyz", DOCKER_611_FIXTURE)
     assert len(parse_output(out, "docker")) == 3  # nothing dropped
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
+def test_an_ensemble_sidecar_that_cannot_be_ruled_out_is_handed_to_the_read(tmp_path: Path):
+    """Under a directory this account cannot search the sidecar is not called missing.
+
+    Whether it is there cannot be told, so it is the read's to refuse, by name. Asked of
+    ``Path.is_file`` this is a ``PermissionError`` on Python 3.11 to 3.13 and, on 3.14, the
+    "not found (did the run produce it?)" of a run that wrote no ensemble at all.
+    """
+    out = tmp_path / "0" / "step1_0.out"
+    out.parent.mkdir()
+    sidecar = out.with_name(f"step1_0.{GOAT_SUFFIX}")
+    sidecar.write_text("1\n-1.0\nH 0 0 0\n", encoding="utf-8")
+    out.parent.chmod(0)
+    try:
+        found = ensemble_sidecar(out, GOAT_SUFFIX)
+    finally:
+        out.parent.chmod(0o755)
+    assert found == sidecar
 
 
 def test_missing_ensemble_sidecar_error_names_every_candidate(tmp_path: Path):

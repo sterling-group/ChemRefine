@@ -102,6 +102,7 @@ templates.
 |---|---|---|
 | `output missing` | crashed, killed, or never started (OOM and walltime look like this) | fix resources, then `rerun-errors` |
 | `unparseable` | an output exists but is truncated/corrupt | inspect the file, then `rerun-errors` |
+| `unreadable` | an output is there but the account running ChemRefine cannot read it; the reason names the file and the system's error | never re-run while it is unreadable: have read access restored, then `resume` (a `stop` step) or `rebuild-cache` |
 | `did not terminate normally` | the program aborted with its own error | read the log tail via `run_status`, fix the input/template, `rerun-errors` |
 | `did not converge` | SCF or geometry unconverged | `rerun-errors` retries from the best geometry; consider a better start or looser thresholds |
 | `NMS: target stationary point not reached` | displacing + rerunning never hit the target imaginary count | inspect with `get_frequencies`/`analyze_mode`; adjust `displacement_value` or the template, then `rebuild-nms` or `rerun-errors` |

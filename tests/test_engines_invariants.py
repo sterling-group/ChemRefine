@@ -49,10 +49,10 @@ from chemrefine.engines.api import (
 )
 from chemrefine.engines.mlip.registry import requirement_from_options
 from chemrefine.errors import ConfigError, OutputTreeError
-from chemrefine.ids import input_geometry_path
+from chemrefine.ids import input_geometry_path, step_relative
 from chemrefine.io import write_single_xyz
 from chemrefine.slurm import script
-from chemrefine.state import PipelineState, StepContext, Structure
+from chemrefine.state import FailureKind, PipelineState, StepContext, Structure
 
 # Options each engine needs before it will validate at all (no defaults on purpose).
 _REQUIRED_OPTIONS: dict[str, dict[str, object]] = {
@@ -1051,6 +1051,40 @@ def test_parse_reads_no_template_whatever_the_output_count(
     _, failures = lifecycle.parse_with_failures(engine, inputs, ctx)
     assert len(failures) == 3
     assert ctx.template not in text_reads
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
+@pytest.mark.parametrize("locked", ["output", "directory"])
+@pytest.mark.parametrize("engine_name", _job_engines())
+def test_an_output_no_job_engine_can_read_is_filed_unreadable_under_its_own_name(
+    engine_name: str, locked: str, tmp_path: Path
+):
+    """An output the filesystem refuses is the same failure whichever engine would read it.
+
+    No engine words it: each lets the ``OSError`` of its own read out of ``parse``, and the
+    lifecycle files the structure ``unreadable`` under the output's step-relative name. Held
+    for every job engine, so one that nets the refusal and words its own goes red here.
+    """
+    from chemrefine import lifecycle
+
+    engine = get_engine(engine_name)
+    inferred = None if isinstance(engine, OperationInferring) else "opt_sp"
+    ctx = replace(
+        _ctx(tmp_path, engine_name, {}, operation=inferred),
+        prev_state=PipelineState(structures=(Structure(id="0", atoms=Atoms("H")),)),
+    )
+    inputs = engine.prepare(ctx)
+    ((_inp, output, _sid),) = inputs.files
+    output.write_text("no program wrote this\n", encoding="utf-8")
+    target = output if locked == "output" else output.parent
+    target.chmod(0)
+    try:
+        successes, failures = lifecycle.parse_with_failures(engine, inputs, ctx)
+    finally:
+        target.chmod(0o755)
+    assert successes == []
+    assert [(f.sid, f.kind) for f in failures] == [("0", FailureKind.UNREADABLE)]
+    assert failures[0].detail == f"{step_relative(output, ctx.step_dir)}: Permission denied"
 
 
 def _operation_inferring() -> list[str]:

@@ -197,15 +197,22 @@ _BUNDLED: tuple[Mutation, ...] = (
     Mutation(
         id="resubmit-skips-unconverged",
         path="src/chemrefine/lifecycle.py",
-        old=(
-            "    unusable = {f.sid for f in failures if f.kind is not FailureKind.NOT_CONVERGED}"
-            " | condemned"
-        ),
-        new="    unusable = {f.sid for f in failures} | condemned",
+        old="_NOT_RESUBMITTED = frozenset({FailureKind.NOT_CONVERGED, FailureKind.UNREADABLE})",
+        new="_NOT_RESUBMITTED = frozenset({FailureKind.UNREADABLE})",
         tests="tests/test_recovery.py",
         breaks="every resume re-runs each unconverged structure twice — once from the seed, "
         "discarding the geometry it had reached, and once more from best — so a structure "
         "that needs one more step costs two jobs per resume and converges a resume late",
+    ),
+    Mutation(
+        id="resubmit-skips-unreadable",
+        path="src/chemrefine/lifecycle.py",
+        old="_NOT_RESUBMITTED = frozenset({FailureKind.NOT_CONVERGED, FailureKind.UNREADABLE})",
+        new="_NOT_RESUBMITTED = frozenset({FailureKind.NOT_CONVERGED})",
+        tests="tests/test_lifecycle.py",
+        breaks="a resume archives every finished output it may not read and runs its job "
+        "again, so a colleague's step is computed a second time by whoever resumes it "
+        "without read access, where restoring the access would have read it",
     ),
     Mutation(
         id="convert-direction",
@@ -429,6 +436,16 @@ _BUNDLED: tuple[Mutation, ...] = (
         "traceback with exit 1, the code a halted step exits with, so a wrapper that resumes "
         "on 1 resubmits into the same disk, and the GUI and an agent get a crash where they "
         "would show a refusal naming the file",
+    ),
+    Mutation(
+        id="absent-only-on-no-such-file",
+        path="src/chemrefine/io.py",
+        old="    except OSError:\n        return False\n    return False\n",
+        new="    except OSError:\n        return True\n    return False\n",
+        tests="tests/test_io.py",
+        breaks="an output under a directory the run cannot search is ledgered as never "
+        "written, so a resume takes the finished job for one that left nothing and runs it "
+        "again",
     ),
     Mutation(
         id="cleanup-keeps-the-exception-in-flight",

@@ -11,6 +11,7 @@ minima, ``random`` fan-out, round-1/round-2 auto-retry, rebuild + reattempt).
 from __future__ import annotations
 
 import json
+import os
 from collections import namedtuple
 from dataclasses import replace
 from pathlib import Path
@@ -737,6 +738,56 @@ def test_rebuild_nms_reads_existing_children(tmp_path: Path):
     assert [(f.sid, f.kind, f.detail) for f in rebuilt.failures] == [
         (f.sid, f.kind, f.detail) for f in ran.failures
     ]
+
+
+class _ReadingFakeNms(_FakeNms):
+    """:class:`_FakeNms`, reading each output off disk before it answers, as a real engine does."""
+
+    def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
+        for _inp, out, _sid in inputs.files:
+            out.read_text(encoding="utf-8")
+        return super().parse(inputs, ctx)
+
+
+@pytest.mark.parametrize(
+    "child",
+    [
+        "gone",
+        pytest.param(
+            "unreadable",
+            marks=pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode"),
+        ),
+    ],
+)
+def test_a_rebuild_leaves_out_a_child_it_cannot_read(tmp_path: Path, child: str):
+    """A child whose output is gone, or there and unreadable, is left out; the rebuild goes on.
+
+    Each parses to a failure the rebuild does not keep, so the parent resolves from the
+    children it can read. Asked ``Path.is_file`` of every child first, a child directory
+    this account cannot search ends the rebuild in a ``PermissionError`` on Python 3.11
+    to 3.13.
+    """
+    engine = _ReadingFakeNms(
+        freqs={
+            "0": _Freq(imaginary={5: -42.0}, modes=_modes(6)),
+            "0_m5_pos": _Freq(imaginary={}, modes=None),
+            "0_m5_neg": _Freq(imaginary={}, modes=None),
+        }
+    )
+    ctx = _ctx(tmp_path, (_h2("0"),))
+    round1 = _seed_round1(engine, ctx)
+    nms.run_nms(engine, round1, [], ctx)
+    winner = ctx.step_dir / "0" / "attempt1" / "0_m5_pos"
+    if child == "gone":
+        (winner / "step1_0_m5_pos.out").unlink()
+    else:
+        winner.chmod(0)
+    try:
+        rebuilt = nms.rebuild_nms(engine, round1, [], ctx)
+    finally:
+        winner.chmod(0o755)
+
+    assert [(s.id, s.resolved_from) for s in rebuilt.survivors] == [("0", "0_m5_neg")]
 
 
 def test_rebuild_reproduces_the_resolution_after_the_winner_was_promoted(tmp_path: Path):

@@ -10,6 +10,7 @@ not twice.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -495,6 +496,32 @@ def test_an_undecodable_document_is_refused_as_a_parse_failure(tmp_path: Path):
     out.write_bytes(b'{"energy_hartree": -1.0, "note": "\xe5"}')
     with pytest.raises(OutputParseError, match=r"not a UTF-8 JSON document.*0xe5"):
         parse_output(out, label="MLIP", fallback=seed)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
+def test_a_document_is_called_not_found_only_by_the_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A document under a directory this account cannot search is not "not found".
+
+    The reader asks no question before it reads. ``Path.is_file`` answers ``False`` there on
+    Python 3.14, as it is made to here on every Python, and a question asked first would
+    word a document that is there as one the script never wrote; the read refuses it as the
+    ``PermissionError`` it is, for the lifecycle to file.
+    """
+    monkeypatch.setattr(Path, "is_file", lambda self: False)
+    seed = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
+    folder = tmp_path / "0"
+    folder.mkdir()
+    out = _write_output(folder, '{"energy_hartree": -1.0}')
+    folder.chmod(0)
+    try:
+        with pytest.raises(PermissionError):
+            parse_output(out, label="MLIP", fallback=seed)
+    finally:
+        folder.chmod(0o755)
+    with pytest.raises(OutputParseError, match="MLIP output not found"):
+        parse_output(folder / "step1_1.json", label="MLIP", fallback=seed)
 
 
 # ---------------------------------------------------------------------------

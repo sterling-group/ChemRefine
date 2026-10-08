@@ -98,13 +98,17 @@ def _load_output_json(
     of these — the trigger is a template that writes its output document itself, which the
     script engines document as the user's right.
 
-    ``src`` is what the messages call the document — ``out_path`` itself when ``None``.
+    ``src`` is what the messages call the document — ``out_path`` itself when ``None``. A
+    document that is not there is refused from the read's own ``FileNotFoundError``, never
+    from a question asked first, whose answer under a directory this account cannot search
+    depends on the Python version; any other refusal of the filesystem's leaves as the
+    ``OSError`` it is, for :func:`chemrefine.lifecycle._parse_job` to file.
     """
     name = src or str(out_path)
-    if not out_path.is_file():
-        raise OutputParseError(f"{label} output not found: {name}")
     try:
         data: dict[str, Any] = json.loads(out_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise OutputParseError(f"{label} output not found: {name}") from None
     except (UnicodeDecodeError, json.JSONDecodeError) as e:
         # One contract, UTF-8 JSON, and one refusal for whichever half a document breaks:
         # the decode error is a `ValueError` raised before `json.loads` sees a byte, and

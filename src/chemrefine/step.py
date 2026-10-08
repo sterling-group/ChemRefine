@@ -761,7 +761,7 @@ def _incremental_step_outcome(
 
     The row provenance is what makes continuing *safe* rather than merely cheap: a
     stored key that matches proves the output on disk is the one this configuration
-    would compute for this parent — the distinction ``out.is_file()`` cannot make, and
+    would compute for this parent — the distinction an output's presence cannot make, and
     the reason archiving is otherwise unconditional. Stale rows (changed or new
     parents) are handed to :func:`~chemrefine.lifecycle.resubmit_unusable` as condemned
     sight-unseen: their outputs may parse perfectly and still answer a different
@@ -1004,7 +1004,7 @@ def _unfinished(engine: ArtifactEngine, ctx: StepContext, inputs: StepInputs) ->
     (:func:`chemrefine.job_log.runlog_path`).
     """
     artifact = engine.artifact(ctx)
-    if not artifact.exists():
+    if io.absent(artifact):
         return _Unfinished(f"the job finished without writing {artifact}", adoptable=False)
     silent = f"nothing says the job that wrote {artifact} finished"
     unvouched = None if inputs.files else _Unfinished(f"{silent}: its manifest names no job", True)
@@ -1237,7 +1237,7 @@ def _resubmit_failed(
     supplies the results for everything it did not select. A ledger of what failed *last* time
     would be a second opinion about the same tree, and the two disagree exactly when it
     matters: a run killed while a re-run was being prepared leaves an output that exists and
-    is worthless, which no ledger records and ``out.is_file()`` cannot see.
+    is worthless, which no ledger records and its presence cannot show.
 
     The whole step is re-parsed, so fan-out lineage stays consistent and the ledger is
     refreshed (cleared if all now succeeded). Convergence failures are handled after, by

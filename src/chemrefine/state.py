@@ -325,6 +325,12 @@ class FailureKind(StrEnum):
     UNPARSEABLE = "unparseable"
     """An output exists but the engine could not read it (truncated, corrupt)."""
 
+    UNREADABLE = "unreadable"
+    """An output is there, or cannot be ruled out, and the filesystem will not let this
+    account read it: another account's mode, a directory it cannot search, an I/O error.
+    The calculation may be whole, so re-attempting a step's failures never runs it again —
+    the remedy is access to the file, and the next parse reads it."""
+
     NOT_TERMINATED_NORMALLY = "did not terminate normally"
     """The program ran but did not exit cleanly.
 
@@ -360,7 +366,8 @@ class Failure:
     best: Structure | None
     detail: str = ""
     """Extra context for kinds that have some (the parser message for
-    ``UNPARSEABLE``); empty otherwise."""
+    ``UNPARSEABLE``, the file and the system's reason for ``UNREADABLE``); empty
+    otherwise."""
 
     @property
     def reason(self) -> str:

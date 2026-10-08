@@ -531,14 +531,15 @@ class _RebuildAttempt:
     ) -> list[Structure]:
         """Parse already-on-disk child outputs under ``attempt`` — no submission.
 
-        The engine says where its files are; a child whose output is absent is simply left
-        out, so its parent stays unresolved rather than the rebuild failing.
+        The engine says where its files are. A child whose output is absent, or there and
+        not readable, parses to a failure that is not kept, so its parent stays unresolved
+        rather than the rebuild failing.
         """
         child_ctx = replace(
             ctx, step_dir=attempt, prev_state=PipelineState(structures=tuple(children))
         )
         paths = ((c.id, engine.artifact_paths(child_ctx, c.id)) for c in children)
-        files = tuple((inp, out, cid) for cid, (inp, out) in paths if out.is_file())
+        files = tuple((inp, out, cid) for cid, (inp, out) in paths)
         succ, _fail = lifecycle.parse_with_failures(engine, StepInputs(files=files), child_ctx)
         return succ
 

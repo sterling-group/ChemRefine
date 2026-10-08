@@ -178,6 +178,29 @@ simply out of its depth there, `on_failure: skip` drops the structure and keeps
 the rest. Gradients are held to the same rule, since a non-finite force is what
 an `mlip-train` step would go on to fit.
 
+## A structure failed with "unreadable"
+
+```
+unreadable: 3/step2_3.out: Permission denied
+```
+
+The job's output is there, or cannot be ruled out, and this account cannot read it: a
+tree another account wrote, a directory whose mode changed, an I/O error on a network
+filesystem. The file is named relative to the step's directory, with the system's own
+reason. It is that structure's failure whichever engine wrote the output, so the step's
+other results are cached and its `on_failure` policy decides what follows.
+
+The calculation may be whole, so `resume` and `rerun-errors` do not run it again: they
+leave an unreadable output where it is. Restore read access, then have it read:
+
+```bash
+chemrefine resume input.yaml            # an on_failure: stop step reads it and carries on
+chemrefine rebuild-cache input.yaml 2   # a skip or best step, whose failure is not pending
+```
+
+If the file is beyond recovery, delete it. The structure is then `output missing`, which
+`resume` and `rerun-errors` run again.
+
 ## A `pyscf-extopt` step failed with "SCF did not converge"
 
 ```
@@ -304,9 +327,11 @@ applies wins, and `EXECUTE` skips straight to the full run:
 2. **Row provenance** — no cache this key can serve, but the manifest carries each
    row's own key. Rows whose stored key matches are **adopted** (re-parsed from disk);
    the rest — changed or new parents, jobs a config edit actually reaches, jobs with no
-   usable output — are computed. NMS resolution then runs on the assembled round 1:
-   clean parents pass through, `attemptK/` resolutions are honoured only under the
-   criterion they were written for, and unresolved parents fan out fresh children.
+   usable output — are computed. An output this account cannot read is neither: it stays
+   an `unreadable` failure and is not run again. NMS resolution then runs on the
+   assembled round 1: clean parents pass through, `attemptK/` resolutions are honoured
+   only under the criterion they were written for, and unresolved parents fan out fresh
+   children.
    An artifact step — one job and one product, such as a trained model — is
    continued at its own grain: its product is adopted when the manifest's step
    stamp matches this configuration and its job's runlog says the job finished,

@@ -15,6 +15,9 @@ this module. Only the direct callers moved here.
 
 from __future__ import annotations
 
+import errno
+import os
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -84,6 +87,8 @@ def test_failure_kind_values_are_the_human_wording():
     # A kind that carries detail appends it rather than replacing the name.
     detailed = Failure("0", FailureKind.UNPARSEABLE, None, detail="bad token at line 3")
     assert detailed.reason == "unparseable: bad token at line 3"
+    refused = Failure("0", FailureKind.UNREADABLE, None, detail="0/step1_0.out: Permission denied")
+    assert refused.reason == "unreadable: 0/step1_0.out: Permission denied"
 
 
 def test_failure_record_round_trips_through_the_ledger():
@@ -949,3 +954,124 @@ def test_best_backfills_are_stored_in_parent_order_whatever_order_they_failed_in
     manifest_order = stored([unconverged, missing], "rebuild")
     assert manifest_order[0] == ["0", "1", "2", "3"]
     assert stored([missing, unconverged], "resume") == manifest_order
+
+
+# ---------------------------------------------------------------------------
+# An output the filesystem will not let the run read
+# ---------------------------------------------------------------------------
+
+
+class _ReadingRecorder(_Recorder):
+    """:class:`_Recorder`, reading each output off disk before it answers.
+
+    Raw, as an engine's own reader does and as the engine guide's worked example shows: the
+    refusal of the read leaves ``parse`` as the ``OSError`` it is.
+    """
+
+    def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
+        for _inp, out, _sid in inputs.files:
+            out.read_text(encoding="utf-8")
+        return super().parse(inputs, ctx)
+
+
+def _h(*ids: str) -> tuple[Structure, ...]:
+    return tuple(Structure(id=i, atoms=Atoms("H", positions=[[0, 0, 0]])) for i in ids)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
+@pytest.mark.parametrize("locked", ["file", "directory"])
+def test_an_output_this_account_cannot_read_is_unreadable_and_the_rest_parse(
+    tmp_path: Path, locked: str
+):
+    """One output the filesystem refuses fails its structure by name; the others still parse.
+
+    The same on every Python, for the output itself and for its directory. Asked of
+    ``Path.is_file`` first, the directory is a ``PermissionError`` out of the whole parse on
+    3.11 to 3.13 and an output that was never written on 3.14; left to the engine's read,
+    either is a traceback that ends the step before its successes are cached.
+    """
+    engine = _ReadingRecorder(unconverged=set())
+    ctx = replace(_ctx(tmp_path), prev_state=PipelineState(structures=_h("0", "1")))
+    inputs = engine.prepare(ctx)
+    output = inputs.files[1][1]
+    target = output if locked == "file" else output.parent
+    target.chmod(0)
+    try:
+        successes, failures = lifecycle.parse_with_failures(engine, inputs, ctx)
+    finally:
+        target.chmod(0o755)
+    assert [s.id for s in successes] == ["0"]
+    assert [(f.sid, f.kind) for f in failures] == [("1", FailureKind.UNREADABLE)]
+    assert failures[0].reason == "unreadable: 1/step1_1.out: Permission denied"
+
+
+@pytest.mark.parametrize(
+    ("refusal", "reason"),
+    [
+        (
+            lambda step_dir: PermissionError(
+                errno.EACCES,
+                os.strerror(errno.EACCES),
+                str(step_dir / "0" / "step1_0.finalensemble.xyz"),
+            ),
+            "unreadable: 0/step1_0.finalensemble.xyz: Permission denied",
+        ),
+        (
+            lambda step_dir: OSError(errno.EIO, os.strerror(errno.EIO)),
+            "unreadable: 0/step1_0.out: Input/output error",
+        ),
+        (
+            lambda step_dir: OSError("the mount went away"),
+            "unreadable: 0/step1_0.out: the mount went away",
+        ),
+    ],
+    ids=["a-sidecar-the-system-names", "no-file-named", "no-system-reason"],
+)
+def test_an_unreadable_reason_names_the_file_the_filesystem_refused(
+    tmp_path: Path, refusal: Callable[[Path], OSError], reason: str
+):
+    """The reason names what was refused — a sidecar as readily as the output — and why.
+
+    Relative to the step, like every file a ledger names, and the job's own output when the
+    error names no file at all.
+    """
+
+    class _Engine:
+        def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
+            raise refusal(ctx.step_dir)
+
+    out = tmp_path / "0" / "step1_0.out"
+    out.parent.mkdir()
+    out.write_text("a whole calculation", encoding="utf-8")
+    inputs = StepInputs(files=((out.with_suffix(".inp"), out, "0"),))
+
+    successes, failures = lifecycle.parse_with_failures(_Engine(), inputs, _ctx(tmp_path))
+
+    assert successes == []
+    assert [f.kind for f in failures] == [FailureKind.UNREADABLE]
+    assert failures[0].reason == reason
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
+def test_an_unreadable_output_is_left_where_it_is_and_never_run_again(tmp_path: Path):
+    """A job is spent on a structure with no usable result, never on one the run could not read.
+
+    The calculation behind an unreadable output may be whole, and what restores it is
+    access to the file. Archived and resubmitted like a missing one, a colleague's finished
+    step would be computed again by whoever resumed it without the right to read it.
+    """
+    engine = _ReadingRecorder(unconverged=set())
+    ctx = replace(_ctx(tmp_path), prev_state=PipelineState(structures=_h("0", "1", "2")))
+    inputs = engine.prepare(ctx)
+    unreadable, missing = inputs.files[1][1], inputs.files[2][1]
+    missing.unlink()
+    unreadable.chmod(0)
+    try:
+        successes, failures = lifecycle.resubmit_unusable(engine, ctx, inputs)
+    finally:
+        unreadable.chmod(0o644)
+
+    assert engine.submitted == [["2"]], "only the job that left nothing is run again"
+    assert [s.id for s in successes] == ["0", "2"]
+    assert [(f.sid, f.kind) for f in failures] == [("1", FailureKind.UNREADABLE)]
+    assert sorted(p.name for p in unreadable.parent.iterdir()) == ["step1_1.inp", "step1_1.out"]

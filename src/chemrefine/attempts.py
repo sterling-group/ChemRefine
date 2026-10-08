@@ -77,7 +77,7 @@ def archive_previous(step_dir: Path, structure_ids: Iterable[str]) -> list[Path]
     """Archive any prior artifacts of ``structure_ids`` before they are re-executed.
 
     The invariant this protects: **a parsed output must have been produced by this run's
-    submission of that job.** Success is decided by ``out.is_file()``, which cannot tell this
+    submission of that job.** Success starts from an output being there, which cannot tell this
     run's output from a leftover — so without this, a re-executed step whose job dies before
     writing anything re-reads the *previous* run's result and reports it as current. The
     exposed paths are those that do not truncate their output in place: the script engines

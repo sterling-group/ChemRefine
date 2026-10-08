@@ -19,6 +19,10 @@ outside this seam as well: its refusal comes back as the job's failure.
 ``test_the_run_tree_is_written_only_through_io`` holds the rest of the package to this:
 outside this module a call that writes a path stands inside :func:`tree_write`, or its
 function is listed there with what it writes instead.
+
+What a run reads back from its own tree is asked here too. :func:`absent` is the one
+question whether something is there: it answers the same on every supported Python, and
+never reads what the filesystem refuses as nothing being there.
 """
 
 from __future__ import annotations
@@ -227,7 +231,8 @@ def expand_user_path(raw: str) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# The output tree — every write the driver makes under a run's output_dir
+# The output tree — every write the driver makes under a run's output_dir, and what it
+# asks of the tree before it reads
 # ---------------------------------------------------------------------------
 
 
@@ -379,6 +384,26 @@ def cleanup() -> Generator[None]:
         if in_flight is None:
             raise
         logger.warning("could not clean up during %s: %s", type(in_flight).__name__, e)
+
+
+def absent(path: Path) -> bool:
+    """Whether the filesystem says nothing is at ``path``.
+
+    The run's question whether a job left a file at all, or a directory was ever made.
+    Only "no such file or directory" proves that. Under a directory this account cannot
+    search, ``Path.exists`` and ``Path.is_file`` raise ``PermissionError`` on Python 3.11
+    to 3.13 and answer ``False`` on 3.14, so asked of them one tree is a traceback on one
+    interpreter and an output that was never written on the next. Here any other refusal
+    — another account's mode, a path through a regular file, an I/O error — leaves
+    something that may be there, and the read that follows names it.
+    """
+    try:
+        path.stat()
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return False
 
 
 # ---------------------------------------------------------------------------
