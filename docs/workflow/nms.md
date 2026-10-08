@@ -93,6 +93,14 @@ re-running the exploration. Which child it was comes from `resolution.json`, and
 the canonical output is still that child's own, byte for byte: delete the winning child's
 output and the structure is no longer recorded as resolved from it.
 
+A rebuild promotes nothing. Where a child in `attemptK/` reaches the target while the
+canonical output is another calculation's — a run stopped before promoting it, or `target`
+edited since the children ran — `rebuild-cache` and `rebuild-nms` ledger the structure as
+`NMS: winning child not promoted`, naming the attempt and the child. They do not record the
+child's energies and frequencies under an id whose directory holds round 1. The step's
+`on_failure` policy then applies as to any failure: under `stop`, the next `resume` or
+`rerun-errors` re-attempts the structure and promotes a winner.
+
 ## Targets
 
 The `target` defaults to whatever the template implies — a run that optimises a
@@ -140,8 +148,8 @@ about.
 nothing — the same rebuild `rebuild-cache` performs, but aimed at the step setting
 `nms: true` instead of the last one. Reach for it when nothing should be *submitted*
 at all (inspection, or adopting a tree whose manifest has no row provenance); reach
-for `resume` when the displacement children should actually run, and for `rerun` when
-round 1 itself must be recomputed.
+for `resume` when the displacement children should actually run or a winner be promoted,
+and for `rerun` when round 1 itself must be recomputed.
 
 See the [Normal-Mode Sampling API](../api/nms.md) for the coordinator and the two
 engine hooks documented in the [ORCA engine API](../api/engines_orca.md).

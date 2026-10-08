@@ -167,13 +167,23 @@ _BUNDLED: tuple[Mutation, ...] = (
     Mutation(
         id="nms-record-worn-only-over-its-output",
         path="src/chemrefine/nms.py",
-        old="if child_output.is_file() and child_output.read_bytes() == "
-        "canonical_output.read_bytes():",
-        new="if child_output.is_file():",
+        old="return child_output.is_file() and child_output.read_bytes() == "
+        "canonical_output.read_bytes()",
+        new="return child_output.is_file()",
         tests="tests/test_nms.py",
         breaks="the record an install writes before its promote is worn by whatever reaches "
         "the canonical path instead — round 1 run again there after a stop is cached as "
         "resolved from a child whose calculation never arrived",
+    ),
+    Mutation(
+        id="nms-winner-credited-only-over-its-output",
+        path="src/chemrefine/nms.py",
+        old="            if not _is_promoted(engine, ctx, s.id, attempt, winner_source):",
+        new="            if False:",
+        tests="tests/test_nms.py",
+        breaks="a rebuild caches a child's energies and frequencies under its parent's id "
+        "while the canonical output is round 1's — a saddle reported as the minimum a child "
+        "reached, and a mode drawn from one calculation beside frequencies from another",
     ),
     Mutation(
         id="resubmit-skips-unconverged",

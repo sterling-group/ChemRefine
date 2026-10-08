@@ -294,7 +294,8 @@ def _action_rebuild_nms(config: Config, target: str | int | None) -> None:
     Round 1 is re-parsed and its displaced children are re-derived and read back from the
     ``attemptK/`` they ran in, so tuning what counts as *resolved* costs a re-read rather
     than a re-run. The frequencies are the expensive part of an NMS step and they are
-    already on disk; recomputing them is what ``rerun`` is for.
+    already on disk; recomputing them is what ``rerun`` is for. A child the re-read finds at
+    the target is promoted by a run, never here (:func:`chemrefine.nms.rebuild_nms`).
 
     Aimed at the NMS step rather than the last one — see :func:`_nms_target`.
     """

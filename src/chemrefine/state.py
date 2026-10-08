@@ -341,6 +341,11 @@ class FailureKind(StrEnum):
     UNRESOLVED_NMS = "NMS: target stationary point not reached"
     """Normal-mode sampling could not reach the requested stationary point."""
 
+    UNPROMOTED_NMS = "NMS: winning child not promoted"
+    """A displaced child reached the target, but the structure's canonical path holds
+    another calculation: a run stopped before the child's output arrived there, or a
+    rebuild, which moves no output, chose it. The detail names the attempt and the child."""
+
     FAILED = "failed"
     """The engine set a failure flag with no more specific name here."""
 

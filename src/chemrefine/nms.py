@@ -540,9 +540,9 @@ class _RebuildAttempt:
         """Nothing: a rebuild must not rewrite the outputs it was asked to read.
 
         Not an omission but the invariant, held by the type rather than by a caller
-        remembering it. The winner's artifacts are already at the canonical path, put there
-        by the run that promoted them; re-promoting would rewrite the very records a later
-        comparison is meant to trust.
+        remembering it. Whether the winner is at the canonical path is the tree's to say,
+        and :func:`_resolve_all` reads it there: a rebuild credits the winner a run
+        promoted and ledgers the one no run did, and moves an output for neither.
         """
 
 
@@ -681,22 +681,36 @@ def _already_at_target(structure: Structure, target: int | None) -> bool:
     )
 
 
+def _is_promoted(
+    engine: NmsCapableEngine, ctx: StepContext, parent_id: str, attempt: Path, child_id: str
+) -> bool:
+    """Whether a parent's canonical output is this child's own, byte for byte.
+
+    The one test of whose calculation the canonical path holds.
+    :func:`chemrefine.attempts.promote` copies the winning child's output there verbatim, so
+    the same bytes are what a finished install leaves. Different bytes are another
+    calculation — round 1, left there or run again — and a child whose output is gone leaves
+    nothing to hold the canonical one to. Both paths are the engine's own
+    (:meth:`~chemrefine.engines.api.StructureArtifacts.artifact_paths`).
+    """
+    canonical_output = engine.artifact_paths(ctx, parent_id)[1]
+    child_output = engine.artifact_paths(replace(ctx, step_dir=attempt), child_id)[1]
+    return child_output.is_file() and child_output.read_bytes() == canonical_output.read_bytes()
+
+
 def _passthrough(engine: NmsCapableEngine, structure: Structure, ctx: StepContext) -> Structure:
     """A structure already at its target, carried through at the canonical place.
 
     That is either an untouched round-1 result or one this step already resolved. The latest
     attempt's record names the child it resolved to, and is worn only over the output it
-    names: :func:`chemrefine.attempts.promote` copies that child's output to the canonical
-    path verbatim, so the two must be the same bytes — a record beside round 1, or beside a
-    child whose output is gone, names nothing.
+    names (:func:`_is_promoted`): a record beside round 1, or beside a child whose output is
+    gone, names nothing.
     """
     resolved_from: str | None = None
     record = _read_resolution(ctx.step_dir / structure.id)
     if record is not None:
         attempt, named = record
-        canonical_output = engine.artifact_paths(ctx, structure.id)[1]
-        child_output = engine.artifact_paths(replace(ctx, step_dir=attempt), named)[1]
-        if child_output.is_file() and child_output.read_bytes() == canonical_output.read_bytes():
+        if _is_promoted(engine, ctx, structure.id, attempt, named):
             resolved_from = named
     return replace(structure, converged=True, resolved_from=resolved_from)
 
@@ -752,6 +766,15 @@ def _resolve_all(
     "the queue never fanned this parent out" — reachable only if the round and this loop
     disagreed about who earns an attempt, and failing safe as unresolved rather than reading
     an empty result set as a verdict.
+
+    A winner is credited only over the output it names. Once the mode has installed what it
+    may, the parent's canonical output has to be the winning child's own
+    (:func:`_is_promoted`), because the survivor is that child's parse wearing the parent's
+    id. A run's install makes it so. A rebuild installs nothing, so the winner it selects
+    over a canonical path that holds another calculation — an install that stopped, a
+    criterion edited since the children ran — is ledgered
+    :attr:`~chemrefine.state.FailureKind.UNPROMOTED_NMS`, with the child as the best
+    geometry obtained, for the step's ``on_failure`` policy to judge like any other.
     """
     opts = resolved_options(engine, ctx)
     target = target_imaginary_count(opts)
@@ -785,6 +808,11 @@ def _resolve_all(
         winner_source = s_surv[0].resolved_from if s_surv else None
         if winner_source is not None:
             mode.install(s_surv[0], winner_source, s.id, ctx, attempt)
+            if not _is_promoted(engine, ctx, s.id, attempt, winner_source):
+                winner = {c.id: c for c in resolved}[winner_source]
+                detail = f"{attempt.name}/{winner_source}"
+                failures.append(Failure(s.id, FailureKind.UNPROMOTED_NMS, winner, detail=detail))
+                continue
         survivors.extend(s_surv)
         failures.extend(s_fail)
     return NmsResolution(tuple(survivors), tuple(failures))
@@ -867,7 +895,9 @@ def rebuild_nms(
 
     Re-derives the (deterministic) displaced children and parses their existing round-2
     outputs from the structure's latest ``attemptK/``; a child with no output on disk is
-    simply absent, so its parent stays unresolved, and nothing on disk is rewritten.
+    simply absent, so its parent stays unresolved, and nothing on disk is rewritten. Nothing
+    is promoted either: a parent whose winning child is not at its canonical path is
+    ledgered, not credited (:func:`_resolve_all`).
     """
     return _resolve_all(engine, round1, round1_failures, ctx, _RebuildAttempt())
 

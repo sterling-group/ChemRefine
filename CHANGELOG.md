@@ -518,9 +518,12 @@ for those and the full map.
     `steps.csv` and each step's ensemble files.
   - `rebuild-nms [N]` re-resolves an NMS step from the outputs already on disk and
     submits nothing — the same rebuild `rebuild-cache` performs, aimed at the step
-    setting `nms: true` rather than the last one. `--rebuild_nms` from the v1 CLI
-    maps here; v1.3.1's flag re-ran the sampling, resubmitting the displaced jobs
-    under `calc_type: rm_imag`, and defaulted to step 2.
+    setting `nms: true` rather than the last one. Neither rebuild promotes a
+    child: a structure whose winning child is not at its canonical path is ledgered
+    `NMS: winning child not promoted` and left to the step's `on_failure` policy,
+    so under `stop` the next `resume` or `rerun-errors` resolves it. `--rebuild_nms`
+    from the v1 CLI maps here; v1.3.1's flag re-ran the sampling, resubmitting the
+    displaced jobs under `calc_type: rm_imag`, and defaulted to step 2.
   - `resume` and `rerun-errors` decide what is left to do by what actually
     parsed: a structure whose output is present but truncated or otherwise
     unusable is re-run rather than reported failed.

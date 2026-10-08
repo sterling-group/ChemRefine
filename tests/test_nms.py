@@ -1169,6 +1169,47 @@ def test_a_resolution_is_worn_only_over_the_output_it_names(tmp_path: Path, chil
     assert survivor.resolved_from == ("0_m5_pos" if child == "promoted" else None)
 
 
+@pytest.mark.parametrize("canonical", ["the winner's own", "round 1's"])
+def test_a_rebuild_credits_a_winner_only_over_the_output_it_names(tmp_path: Path, canonical: str):
+    """A rebuild caches a winner under its parent's id only over that child's own output.
+
+    The survivor is the child's parse wearing the parent's id, so it is true only where
+    the child's output is the canonical one, as `promote` leaves it. A rebuild promotes
+    nothing: over round 1 — an install that stopped, a criterion edited since the children
+    ran — the winner it selects is ledgered, carried as itself for the step's policy, and
+    nothing in the tree moves.
+    """
+    engine = _FakeNms(
+        freqs={
+            "0": _Freq(imaginary={5: -42.0}, modes=_modes(6)),
+            "0_m5_pos": _Freq(imaginary={}, modes=None),
+            "0_m5_neg": _Freq(imaginary={}, modes=None),
+        }
+    )
+    ctx = _ctx(tmp_path, (_h2("0"),))
+    round1 = _seed_round1(engine, ctx)
+    # Round 2 as the queue leaves it: every child's output in attempt1/, nothing installed.
+    lifecycle.run_child_rounds(engine, ctx, round1.structures, nms.child_round(engine, ctx))
+    if canonical == "round 1's":
+        # The fake writes every output alike; round 1's is its own calculation's.
+        engine.artifact_paths(ctx, "0")[1].write_bytes(b"round 1\n")
+    before = {p: p.read_bytes() for p in sorted(ctx.step_dir.rglob("*")) if p.is_file()}
+
+    res = nms.rebuild_nms(engine, round1, [], ctx)
+
+    after = {p: p.read_bytes() for p in sorted(ctx.step_dir.rglob("*")) if p.is_file()}
+    assert after == before, "a rebuild moves no output"
+    if canonical == "the winner's own":
+        assert [(s.id, s.resolved_from) for s in res.survivors] == [("0", "0_m5_pos")]
+        assert res.failures == ()
+    else:
+        assert res.survivors == ()
+        (failure,) = res.failures
+        assert (failure.sid, failure.kind) == ("0", FailureKind.UNPROMOTED_NMS)
+        assert failure.reason == "NMS: winning child not promoted: attempt1/0_m5_pos"
+        assert failure.best is not None and failure.best.id == "0_m5_pos"
+
+
 def test_an_untrusted_passthrough_disowns_its_resolution_sidecar(tmp_path: Path):
     """A label written under another criterion is cleared on disk, not only in memory.
 

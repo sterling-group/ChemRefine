@@ -842,6 +842,97 @@ def test_round_1_run_again_over_a_stopped_install_names_no_child(tmp_path: Path)
         ENGINES.pop("fake-nms2", None)
 
 
+@pytest.mark.parametrize("action", [Action.REBUILD_NMS, Action.REBUILD_CACHE])
+@pytest.mark.parametrize("stopped", ["before its seal", "inside its promote"])
+def test_a_rebuild_over_a_stopped_install_ledgers_the_winner_it_cannot_promote(
+    tmp_path: Path, stopped: str, action: Action
+):
+    """A rebuild does not cache a winner whose output never reached the canonical path.
+
+    An install stopped before its seal leaves round 1 there, and one stopped inside its
+    promote can leave a copy cut short; either re-parses off the target beside children
+    that reached it. A rebuild re-derives the winner from those children and promotes
+    nothing, so it ledgers the parent, naming the attempt and the child, and the tree
+    stays as the stop left it. The halt names the command that finishes it: the re-attempt
+    runs the children again, not round 1, and promotes.
+    """
+    from unittest.mock import patch
+
+    from chemrefine import attempts, cache
+    from chemrefine.engines.api import ENGINES
+    from chemrefine.ids import latest_attempt_dir
+
+    def promote_cut_short(attempt_dir: Path, *, step: int, source_id: str, target_id: str) -> None:
+        """A promote stopped inside its copy of the output: half of it is at canonical."""
+        output = (attempt_dir / source_id / f"step{step}_{source_id}.out").read_bytes()
+        (attempt_dir.parent / f"step{step}_{target_id}.out").write_bytes(output[: len(output) // 2])
+        raise SystemExit(143)
+
+    def outputs(structure_dir: Path) -> dict[Path, bytes]:
+        """Every file under a structure's directory but the records a rebuild derives."""
+        return {
+            p.relative_to(structure_dir): p.read_bytes()
+            for p in sorted(structure_dir.rglob("*"))
+            if p.is_file() and not p.name.endswith(".result.json")
+        }
+
+    stops = {
+        "before its seal": patch.object(attempts, "seal", side_effect=SystemExit(143)),
+        "inside its promote": patch.object(attempts, "promote", promote_cut_short),
+    }
+    eng = _register_fake_nms()
+    try:
+        eng.clean = {"0"}
+        eng.resolved = {"1"}
+        whole = _seeded_config(tmp_path / "whole", [_nms_step(1.0, on_failure="stop")])
+        execute(whole, Action.RESUME)
+        expected = {
+            s.id: s.resolved_from
+            for s in cache.load((whole.output_dir / "step1_s").resolve()).results.structures
+        }
+        winner = expected["1"]
+        assert winner is not None, "precondition: the uninterrupted run promotes a winner"
+
+        cut = _seeded_config(tmp_path / "cut", [_nms_step(1.0, on_failure="stop")])
+        step_dir = (cut.output_dir / "step1_s").resolve()
+        with stops[stopped], pytest.raises(SystemExit):
+            execute(cut, Action.RESUME)
+        attempt = latest_attempt_dir(step_dir / "1")
+        assert attempt is not None
+        canonical = step_dir / "1" / "step1_1.out"
+        assert canonical.read_bytes() != (attempt / winner / f"step1_{winner}.out").read_bytes(), (
+            "precondition: the stop left the canonical output another calculation's"
+        )
+        left = outputs(step_dir / "1")
+
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        with pytest.raises(ChemRefineError, match="rerun-errors 1"):
+            execute(cut, action, target=1)
+
+        assert eng.submitted == [] and eng.children_submitted == [], "a rebuild submits nothing"
+        assert outputs(step_dir / "1") == left, "and moves no output"
+        assert {s.id for s in cache.load(step_dir).results.structures} == {"0"}
+        ledger = [(r.structure_id, r.kind, r.reason) for r in cache.load_failure_records(step_dir)]
+        unpromoted = f"NMS: winning child not promoted: {attempt.name}/{winner}"
+        assert ledger == [("1", FailureKind.UNPROMOTED_NMS, unpromoted)]
+
+        execute(cut, Action.RESUME)  # the command the halt names
+
+        assert eng.submitted == [], "round 1 is not run again"
+        assert {c.split("_m")[0] for c in eng.children_submitted} == {"1"}, "fresh children"
+        cached = {s.id: s.resolved_from for s in cache.load(step_dir).results.structures}
+        assert cached == expected
+        assert cache.load_failure_records(step_dir) == []
+        attempt = latest_attempt_dir(step_dir / "1")
+        assert attempt is not None
+        promoted = attempt / winner / f"step1_{winner}.out"
+        assert canonical.read_bytes() == promoted.read_bytes()
+    finally:
+        eng.resolved, eng.clean, eng.fail_round1 = set(), set(), set()
+        eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
+        ENGINES.pop("fake-nms2", None)
+
+
 def test_a_criterion_change_re_resolves_without_resubmitting_round_1(tmp_path: Path):
     """target: minimum → ts re-runs the *resolution*, and only that.
 
