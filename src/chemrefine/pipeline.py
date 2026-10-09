@@ -90,7 +90,7 @@ def bootstrap(config: Config) -> PipelineState:
     """
     path = config.input
     if path is None:
-        default = config.template_dir / "step1.xyz"
+        default = config.default_input()
         if not default.is_file():
             raise ConfigError(f"no 'input' declared and default {default} does not exist")
         path = default

@@ -197,18 +197,24 @@ def validate_config_text(text: str, *, base_dir: Path | None = None) -> Validati
         for tool, warning in config.missing_executables()
     ]
     # The seed is the first file every run reads and the one file the per-step checks never
-    # look at: without this row, `input:` pointing at nothing would be `ok` here and an ASE
-    # traceback at the run. A warning like the template's, not an issue — the file may be
-    # written later (`build_structures`) or exist only on the cluster the config is for, and
-    # `save_config` must still be able to write the config.
-    if config.input is not None and not config.input.exists():
+    # look at: without this row, a seed that is not there would be `ok` here and a refusal
+    # at the run — under either of its names, `input:` or the default a config that
+    # declares none falls back to. A warning like the template's, not an issue — the file
+    # may be written later (`build_structures`) or exist only on the cluster the config is
+    # for, and `save_config` must still be able to write the config.
+    default = config.default_input()
+    if config.input is None and not default.is_file():
+        missing_seed: str | None = f"no 'input' declared and default {default}"
+    elif config.input is not None and not config.input.exists():
+        missing_seed = f"input {config.input}"
+    else:
+        missing_seed = None
+    if missing_seed is not None:
         warnings_list.append(
             ValidationIssue(
                 loc=("input",),
                 kind="input",
-                message=(
-                    f"input {config.input} does not exist yet; a run refuses to start without it"
-                ),
+                message=f"{missing_seed} does not exist yet; a run refuses to start without it",
             )
         )
     # First in the list: a deprecation is about the vocabulary the file is written in, which

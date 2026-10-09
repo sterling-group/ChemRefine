@@ -195,6 +195,24 @@ def test_step_name_validator_accepts_explicit_none():
     assert sc.name is None
 
 
+def test_a_step_name_that_ends_in_a_newline_is_refused(tmp_path: Path):
+    """A YAML block scalar (``name: |``) ends its text with a newline, which no name holds.
+
+    ``$`` also matches before a final newline, so a rule asked with ``match`` passed
+    ``screen\\n``: a step directory with a newline in its name, and a step that
+    ``find_step("screen")`` does not find.
+    """
+    p = tmp_path / "input.yaml"
+    p.write_text(
+        "steps:\n  - step: 1\n    engine: fake\n    name: |\n      screen\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigError, match="letters, digits, underscores, and hyphens"):
+        load_config(p)
+    with pytest.raises(ValidationError, match="step name"):
+        StepConfig(step=1, engine="fake", name="screen\n")
+    assert StepConfig(step=1, engine="fake", name="screen").name == "screen"
+
+
 def test_step_options_reject_a_yaml_date(tmp_path: Path):
     """An unquoted date in `options` fails at load, naming the key — not as a
     TypeError traceback from inside the cache fingerprint three layers later."""
@@ -245,6 +263,19 @@ def test_a_negative_nms_seed_is_refused_at_the_boundary():
     with pytest.raises(ValidationError, match="seed"):
         NmsKnobs.from_raw({"seed": -1})
     assert NmsKnobs.from_raw({"seed": 0}).seed == 0  # the floor itself is a valid seed
+
+
+def test_a_negative_ts_mode_index_is_refused_at_the_boundary():
+    """No mode has a negative index, and the run can only say so once round 1 is paid for.
+
+    Which modes are imaginary is each structure's to say, so an index is held to its
+    structure after the frequency calculation (``nms._reaction_coordinate``). ``-1`` names
+    a mode of none of them, and the field bound refuses it before anything is submitted.
+    """
+    with pytest.raises(ValidationError, match="ts_mode_index"):
+        NmsKnobs.from_raw({"ts_mode_index": -1})
+    assert NmsKnobs.from_raw({"ts_mode_index": 0}).ts_mode_index == 0
+    assert NmsKnobs.from_raw({}).ts_mode_index is None
 
 
 @pytest.mark.parametrize(

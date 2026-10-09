@@ -212,9 +212,14 @@ class NmsKnobs(BaseModel):
     num_random_displacements: int = Field(1, ge=1)
     """``random`` only: how many modes to draw."""
 
-    ts_mode_index: int | None = None
+    ts_mode_index: int | None = Field(None, ge=0)
     """``ts`` only: explicit reaction-coordinate mode index. ``None`` ⇒ the
-    largest-magnitude imaginary mode."""
+    largest-magnitude imaginary mode.
+
+    Non-negative, because no mode has a negative index. Which modes are imaginary is known
+    only once round 1 has run, so an index is held to its structure there
+    (:func:`chemrefine.nms._reaction_coordinate`); one no structure could satisfy is refused
+    here, before that round is paid for."""
 
     seed: int = Field(42, ge=0)
     """Deterministic seed for ``random`` mode selection.
@@ -510,7 +515,9 @@ class StepConfig(BaseModel):
         """Reject step names that aren't filesystem-safe or that shadow step numbers."""
         if v is None:
             return v
-        if not _NAME_RE.match(v):
+        if not _NAME_RE.fullmatch(v):
+            # The whole string: under `match` the pattern's `$` also matches before a final
+            # newline, and a YAML block scalar's `screen\n` would name the step's directory.
             raise ValueError(
                 "step name must contain only letters, digits, underscores, and hyphens"
             )
@@ -853,6 +860,15 @@ class Config(BaseModel):
             for tool, value in self.executables.items()
             if os.sep in value and not Path(value).exists()
         ]
+
+    def default_input(self) -> Path:
+        """The seed a run reads when ``input`` names none: ``step1.xyz`` beside the templates.
+
+        Spelled here for the run that reads it (:func:`chemrefine.pipeline.bootstrap`) and
+        for :mod:`chemrefine.validate`, which reports a seed that is not there under either
+        of its names.
+        """
+        return self.template_dir / "step1.xyz"
 
     def step_dir(self, step_cfg: StepConfig) -> Path:
         """Return the absolute output directory for ``step_cfg``."""

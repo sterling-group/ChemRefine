@@ -427,8 +427,7 @@ def test_nms_knobs_on_an_extopt_step_are_not_a_preflight_issue(tmp_path: Path):
 def test_undeclared_option_keys_warn_but_do_not_block(tmp_path: Path):
     report = _validate(tmp_path, steps=[{"step": 1, "engine": "fake", "options": {"typoed": 1}}])
     assert report.ok
-    [warning] = report.warnings
-    assert warning.kind == "options"
+    [warning] = [w for w in report.warnings if w.kind == "options"]
     assert "typoed" in warning.message
 
 
@@ -490,8 +489,8 @@ def test_missing_template_and_header_warn_with_the_scaffold_hint(tmp_path: Path)
     report = _validate(tmp_path, steps=[{"step": 1, "engine": "orca"}])
     assert report.ok
     kinds = {w.kind for w in report.warnings}
-    assert kinds == {"template", "slurm-header"}
-    assert all("scaffold" in w.message for w in report.warnings)
+    assert kinds == {"template", "slurm-header", "input"}  # an empty directory holds no seed
+    assert all("scaffold" in w.message for w in report.warnings if w.kind != "input")
 
 
 def test_a_path_valued_option_that_does_not_exist_yet_warns(tmp_path: Path):
@@ -521,6 +520,7 @@ def test_existing_template_and_header_do_not_warn(tmp_path: Path):
     templates.mkdir()
     (templates / "step1.inp").write_text("! Opt\n", encoding="utf-8")
     (templates / "cpu.slurm.header").write_text("#SBATCH -N1\n", encoding="utf-8")
+    (templates / "step1.xyz").write_text("1\n\nH 0 0 0\n", encoding="utf-8")
     report = _validate(tmp_path, steps=[{"step": 1, "engine": "orca"}])
     assert report.ok
     assert report.warnings == ()
@@ -653,6 +653,7 @@ def test_validate_config_file_reads_and_resolves_like_load_config(tmp_path: Path
     templates.mkdir()
     (templates / "step1.inp").write_text("! Opt\n", encoding="utf-8")
     (templates / "cpu.slurm.header").write_text("#SBATCH -N1\n", encoding="utf-8")
+    (templates / "step1.xyz").write_text("1\n\nH 0 0 0\n", encoding="utf-8")
     path = tmp_path / "input.yaml"
     path.write_text(yaml.safe_dump(_config_dict(steps=[{"step": 1, "engine": "orca"}])))
     report = validate_config_file(path)
@@ -768,6 +769,40 @@ def test_a_seed_that_does_not_exist_yet_is_a_warning(tmp_path: Path):
     (tmp_path / "seeds.xyz").write_text("1\n\nH 0 0 0\n", encoding="utf-8")
     present = _validate(tmp_path, input="./seeds.xyz")
     assert not any(w.kind == "input" for w in present.warnings)
+
+
+def test_a_default_seed_that_does_not_exist_yet_is_the_same_warning(tmp_path: Path):
+    """A config that declares no ``input:`` reads ``step1.xyz`` beside its templates.
+
+    The seed has two names and the row was written for one: with ``input:`` left out and
+    no default on disk the report was ``ok`` with no row, for a config whose run refuses to
+    start. The path is the one the run names, so the same config goes through both.
+    """
+    from chemrefine import pipeline
+    from chemrefine.errors import ConfigError
+
+    default = tmp_path / "templates" / "step1.xyz"
+    report = _validate(tmp_path)
+    assert report.ok and report.config is not None
+    [warning] = [w for w in report.warnings if w.kind == "input"]
+    assert warning.loc == ("input",)
+    assert warning.message == (
+        f"no 'input' declared and default {default} does not exist yet; "
+        "a run refuses to start without it"
+    )
+    with pytest.raises(ConfigError) as refused:
+        pipeline.bootstrap(report.config)
+    assert str(refused.value) == f"no 'input' declared and default {default} does not exist"
+
+    default.mkdir(parents=True)  # a directory there is no seed file, to the run or the report
+    assert [w.kind for w in _validate(tmp_path).warnings if w.kind == "input"] == ["input"]
+
+    default.rmdir()
+    default.write_text("1\n\nH 0 0 0\n", encoding="utf-8")
+    present = _validate(tmp_path)
+    assert not any(w.kind == "input" for w in present.warnings)
+    assert present.config is not None
+    assert [s.id for s in pipeline.bootstrap(present.config).structures] == ["0"]
 
 
 # ---------------------------------------------------------------------------
