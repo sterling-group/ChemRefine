@@ -1490,7 +1490,7 @@ def test_generated_script_reports_a_cancelled_job_as_failed(tmp_path: Path):
     before the explicit TERM trap a `scancel`-ed run recorded `exit_code=0`, i.e. it looked
     like it had finished cleanly. 143 is the conventional 128+SIGTERM.
     """
-    script = _runnable(tmp_path, "sleep 30")
+    script = _runnable(tmp_path, "echo run-block-reached; sleep 30")
 
     # Signal the whole process group, which is what `scancel` does. Signalling bash alone
     # would leave the foreground `sleep` running -- and bash defers a trap until its
@@ -1500,7 +1500,15 @@ def test_generated_script_reports_a_cancelled_job_as_failed(tmp_path: Path):
         proc = subprocess.Popen(
             ["bash", str(script)], stdout=fh, stderr=subprocess.DEVNULL, start_new_session=True
         )
-        time.sleep(0.5)
+        # Wait for the run block's own first line, not for a guessed interval: the handler
+        # is armed just before the block runs, and how long the scratch setup above it
+        # takes is the filesystem's to say. On a cluster's shared scratch half a second
+        # was not enough, and the signal landed on a script that had recorded nothing yet.
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if "run-block-reached" in log.read_text(encoding="utf-8"):
+                break
+            time.sleep(0.02)
         os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
         proc.wait(timeout=30)
     stdout = log.read_text(encoding="utf-8")
