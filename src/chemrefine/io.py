@@ -26,7 +26,9 @@ function is listed there with what it writes instead.
 What a run reads back from its own tree is asked here too. :func:`absent` is the one
 question whether something is there, and :func:`tree_entries` the one listing of a
 directory: each answers the same on every supported Python, and neither reads what the
-filesystem refuses as nothing being there.
+filesystem refuses as nothing being there. A path a person named is held to the same
+rule — the directory above it is theirs too — through :func:`file_there`,
+:func:`dir_there`, :func:`unreachable` and :func:`entries`.
 """
 
 from __future__ import annotations
@@ -36,6 +38,7 @@ import logging
 import os
 import re
 import shutil
+import stat
 import sys
 import tempfile
 from collections.abc import Generator, Iterable, Sequence
@@ -458,19 +461,83 @@ def absent(path: Path) -> bool:
     return False
 
 
+def unreachable(path: Path) -> str | None:
+    """Why the filesystem will not say what is at ``path``, in its own words; else ``None``.
+
+    ``None`` is an answer either way: something is there, or nothing is ("no such file or
+    directory", which :func:`absent` asks for). Anything else it says — a directory this
+    account cannot search, a regular file where a directory is named, a name too long, an
+    I/O error — is a path that may hold what a person named and cannot be asked about from
+    here. A caller with a read of its own lets that read say so; this is for the one that
+    reads nothing and still has to report the path: a row of ``chemrefine validate``, a
+    warning about a file a job will open on another host.
+    """
+    try:
+        path.stat()
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as e:
+        return getattr(e, "strerror", None) or str(e)
+    return None
+
+
+def _file_type(path: Path) -> int | None:
+    """The mode of what is at ``path``, links followed; ``None`` when the filesystem gives none."""
+    try:
+        return path.stat().st_mode
+    except (OSError, ValueError):
+        return None
+
+
+def file_there(path: Path) -> bool:
+    """Whether a regular file is at ``path``, as far as this account can be told.
+
+    ``Path.is_file``'s question for a path a person named, with one answer on every
+    supported Python: ``False`` for nothing there, for anything else there, and for a
+    path the filesystem will not answer for, where ``Path.is_file`` raises on Python 3.11
+    to 3.13 — ``PermissionError`` under a directory this account cannot search, ``OSError``
+    for a name too long — and answers ``False`` on 3.14. For a caller whose next step
+    speaks when this says no: a write that names what refuses it, a reader that names what
+    it cannot use, a reference that is then none. One that reads nothing and has to say
+    *why* asks :func:`unreachable` as well.
+    """
+    mode = _file_type(path)
+    return mode is not None and stat.S_ISREG(mode)
+
+
+def dir_there(path: Path) -> bool:
+    """Whether a directory is at ``path``, as far as this account can be told.
+
+    ``Path.is_dir``'s question with one answer on every supported Python — see
+    :func:`file_there`.
+    """
+    mode = _file_type(path)
+    return mode is not None and stat.S_ISDIR(mode)
+
+
+def entries(directory: Path) -> list[tuple[Path, bool]]:
+    """What ``directory`` holds: each entry and whether it is a directory, sorted by path.
+
+    Whether an entry is a directory is read with the listing, so a directory that can be
+    listed and not searched answers too. One that cannot be listed at all is the scan's own
+    ``OSError``, for a caller that words it: :func:`tree_entries` for a run's tree, a path
+    picker for wherever a person browses.
+    """
+    with os.scandir(directory) as scan:
+        return sorted((Path(entry.path), entry.is_dir()) for entry in scan)
+
+
 def tree_entries(directory: Path) -> list[tuple[Path, bool]]:
     """What a directory of a run's output tree holds: each entry, and whether it is a directory.
 
-    The one listing of the run's own tree, sorted by path; ``[]`` when ``directory`` is
+    The one listing of the run's own tree (:func:`entries`); ``[]`` when ``directory`` is
     not there. A directory the filesystem will not list — another account's mode, a
     regular file in its place — is :class:`~chemrefine.errors.CacheError`, where
     ``Path.glob`` answers an empty list and a run would take a structure that has
-    attempts for one that has none. Whether an entry is a directory is read with the
-    listing, so a directory that can be listed and not searched answers too.
+    attempts for one that has none.
     """
     try:
-        with os.scandir(directory) as scan:
-            return sorted((Path(entry.path), entry.is_dir()) for entry in scan)
+        return entries(directory)
     except FileNotFoundError:
         return []
     except OSError as e:

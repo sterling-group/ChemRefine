@@ -90,10 +90,10 @@ def bootstrap(config: Config) -> PipelineState:
     """
     path = config.input
     if path is None:
-        default = config.default_input()
-        if not default.is_file():
-            raise ConfigError(f"no 'input' declared and default {default} does not exist")
-        path = default
+        path = config.default_input()
+        # A default the filesystem will not answer for is `_seed`'s to refuse, with its reason.
+        if io.unreachable(path) is None and not io.file_there(path):
+            raise ConfigError(f"no 'input' declared and default {path} does not exist")
     try:
         state = _seed(path, config.output_dir / "_seed")
     except (OSError, ValueError, IndexError, KeyError) as e:
@@ -104,8 +104,16 @@ def bootstrap(config: Config) -> PipelineState:
 
 
 def _seed(path: Path, smiles_out_dir: Path) -> PipelineState:
-    """Dispatch on what ``path`` is — a directory, a SMILES CSV or an XYZ file."""
-    if path.is_dir():
+    """Dispatch on what ``path`` is — a directory, a SMILES CSV or an XYZ file.
+
+    A path the filesystem will not answer for — one under a directory this account cannot
+    search — is refused first, with the system's reason: it cannot be told a directory from
+    a file, and dispatched on its name alone a seed directory would be refused as an
+    unsupported format.
+    """
+    if (why := io.unreachable(path)) is not None:
+        raise ConfigError(f"cannot seed from {path}: {why}")
+    if io.dir_there(path):
         return _seed_from_directory(path)
     if path.suffix.lower() == ".csv":
         return _seed_from_smiles_csv(path, smiles_out_dir)

@@ -32,7 +32,7 @@ from chemrefine.config import Config
 from chemrefine.engines.api import JobExecutable, TemplateDriven, get_engine
 from chemrefine.errors import ConfigError
 from chemrefine.ids import step_template_path
-from chemrefine.io import user_write, write_user_file
+from chemrefine.io import file_there, user_write, write_user_file
 from chemrefine.slurm import CUDA_HEADER
 from chemrefine.validate import effective_header, shared_template_clash
 
@@ -94,7 +94,7 @@ def plan_templates(config: Config) -> tuple[TemplatePlan, ...]:
             )
             plan = TemplatePlan(
                 path=path,
-                exists=path.is_file(),
+                exists=file_there(path),
                 kind="step",
                 step=step.step,
                 engine=step.engine,
@@ -106,7 +106,7 @@ def plan_templates(config: Config) -> tuple[TemplatePlan, ...]:
         path = config.template_dir / name
         plans.append(
             TemplatePlan(
-                path=path, exists=path.is_file(), kind="slurm-header", step=None, engine=None
+                path=path, exists=file_there(path), kind="slurm-header", step=None, engine=None
             )
         )
     return tuple(plans)

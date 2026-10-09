@@ -2,6 +2,7 @@
 
 import builtins
 import importlib
+import os
 import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -371,6 +372,31 @@ def slow_config_writes(monkeypatch: pytest.MonkeyPatch) -> None:
         write(*args, **kwargs)
 
     monkeypatch.setattr(io, "atomic_write", slowly)
+
+
+@pytest.fixture
+def unsearchable() -> Iterator[Callable[[Path], Path]]:
+    """Take this account's search permission off a directory; given back when the test ends.
+
+    For a test of a path a person named that sits under a directory this account cannot
+    search — a colleague's project folder, a scratch tree with another owner. The test
+    builds the directory, fills it, and hands it here; what it then asks about any path
+    inside must be the same on every supported Python, where ``Path.exists`` and
+    ``Path.is_file`` raise on 3.11 to 3.13 and answer ``False`` on 3.14. Skipped for root,
+    which searches through any mode.
+    """
+    if os.geteuid() == 0:
+        pytest.skip("root searches through any mode; the wall cannot be built")
+    locked: list[Path] = []
+
+    def lock(directory: Path) -> Path:
+        directory.chmod(0)
+        locked.append(directory)
+        return directory
+
+    yield lock
+    for directory in locked:
+        directory.chmod(0o755)
 
 
 @pytest.fixture

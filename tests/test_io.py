@@ -1276,6 +1276,70 @@ def test_a_file_this_account_cannot_reach_is_not_called_absent(tmp_path: Path):
     assert answers == [False, False]
 
 
+def test_a_persons_path_is_answered_for_the_same_on_every_python(
+    tmp_path: Path, unsearchable: Callable[[Path], Path]
+):
+    """What is at a path a person named, asked so that no answer depends on the interpreter.
+
+    ``Path.is_file`` and ``Path.is_dir`` raise ``PermissionError`` under a directory this
+    account cannot search and ``OSError`` for a name too long on Python 3.11 to 3.13, and
+    answer ``False`` on 3.14. ``file_there`` and ``dir_there`` answer ``False`` wherever
+    the filesystem will not say, and ``unreachable`` gives its reason — ``None`` both for
+    what is there and for what is not, which is an answer.
+    """
+    seed = tmp_path / "seed.xyz"
+    seed.write_text("1\n\nH 0 0 0\n", encoding="utf-8")
+    private = tmp_path / "private"
+    private.mkdir()
+    (private / "seed.xyz").write_text("1\n\nH 0 0 0\n", encoding="utf-8")
+    (private / "seeds").mkdir()
+    unsearchable(private)
+    asked = {
+        "a file": seed,
+        "a directory": tmp_path,
+        "nothing": tmp_path / "never.xyz",
+        "a file behind the wall": private / "seed.xyz",
+        "a directory behind the wall": private / "seeds",
+        "nothing behind the wall": private / "never.xyz",
+        "a path through a file": seed / "inside.xyz",
+        "a name too long": tmp_path / ("x" * 300),
+        "a name no system holds": tmp_path / "a\0b",
+    }
+
+    assert [name for name, path in asked.items() if chemrefine_io.file_there(path)] == ["a file"]
+    assert [name for name, path in asked.items() if chemrefine_io.dir_there(path)] == [
+        "a directory"
+    ]
+    why = {name: chemrefine_io.unreachable(path) for name, path in asked.items()}
+    no_name = why.pop("a name no system holds")
+    assert no_name is not None and "null" in no_name
+    assert why == {
+        "a file": None,
+        "a directory": None,
+        "nothing": None,
+        "a file behind the wall": "Permission denied",
+        "a directory behind the wall": "Permission denied",
+        "nothing behind the wall": "Permission denied",
+        "a path through a file": "Not a directory",
+        "a name too long": "File name too long",
+    }
+
+
+def test_entries_lists_wherever_a_person_browses_and_raises_what_the_scan_raises(
+    tmp_path: Path, unsearchable: Callable[[Path], Path]
+):
+    """The listing under :func:`tree_entries`, for a caller that words a refusal itself."""
+    (tmp_path / "b.xyz").write_text("", encoding="utf-8")
+    (tmp_path / "a").mkdir()
+    assert chemrefine_io.entries(tmp_path) == [(tmp_path / "a", True), (tmp_path / "b.xyz", False)]
+    with pytest.raises(NotADirectoryError):
+        chemrefine_io.entries(tmp_path / "b.xyz")
+    with pytest.raises(FileNotFoundError):
+        chemrefine_io.entries(tmp_path / "never")
+    with pytest.raises(PermissionError):
+        chemrefine_io.entries(unsearchable(tmp_path / "a"))
+
+
 def test_tree_entries_lists_a_directory_and_says_which_entries_are_directories(tmp_path: Path):
     """Each entry with whether it is a directory, sorted; a directory never made holds none."""
     (tmp_path / "step1_0.out").write_text("", encoding="utf-8")

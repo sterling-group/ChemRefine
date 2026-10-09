@@ -435,7 +435,7 @@ def create_app(*, token: str, config_path: Path | None = None) -> Flask:
 
         initial = (
             _config_payload(config_path)
-            if config_path is not None and config_path.is_file()
+            if config_path is not None and io.file_there(config_path)
             else None
         )
         return jsonify(
@@ -499,17 +499,17 @@ def create_app(*, token: str, config_path: Path | None = None) -> Flask:
         """One directory level for the path pickers (local machine, local user)."""
         requested = _query(_BrowseQuery).path or str(Path.home())
         path = expand_user_path(requested).resolve()
-        if not path.is_dir():
-            return jsonify({"error": f"not a directory: {path}"}), 400
         try:
             entries = sorted(
                 (
-                    {"name": child.name, "path": str(child), "dir": child.is_dir()}
-                    for child in path.iterdir()
+                    {"name": child.name, "path": str(child), "dir": is_dir}
+                    for child, is_dir in io.entries(path)
                     if not child.name.startswith(".")
                 ),
                 key=lambda e: (not e["dir"], str(e["name"]).lower()),
             )
+        except (FileNotFoundError, NotADirectoryError):
+            return jsonify({"error": f"not a directory: {path}"}), 400
         except OSError as e:
             # A picker walks wherever the filesystem leads — another user's mode-700
             # directory, /lost+found — and an unreadable stop is an ordinary answer for

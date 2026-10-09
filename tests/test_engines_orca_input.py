@@ -291,6 +291,39 @@ def test_referenced_aux_files_of_an_unreadable_template_is_empty(tmp_path: Path)
     assert referenced_aux_files(tmp_path / "never-written.inp") == {}
 
 
+def test_a_quoted_string_the_filesystem_will_not_answer_for_is_no_reference(
+    tmp_path: Path, unsearchable
+):
+    """A file behind a directory this account cannot search, a string too long for a name.
+
+    Every quoted string of a template is asked whether it names a file. ``Path.is_file``
+    raises for both of these on Python 3.11 to 3.13 — ``PermissionError``, and ``OSError``
+    for the name — so a template quoting either was a traceback out of the step's key; on
+    3.14 it answers ``False``. Neither can be digested or pinned from here, so neither is a
+    reference, and the ones that can be still are.
+    """
+    from chemrefine.engines.orca.input import referenced_aux_files
+
+    private = tmp_path / "private"
+    private.mkdir()
+    (private / "field.pc").write_text("1\n0.1 0.0 0.0 0.0\n", encoding="utf-8")
+    unsearchable(private)
+    templates = tmp_path / "templates"
+    templates.mkdir()
+    guest = templates / "cl.xyz"
+    guest.write_text("1\nchloride\nCl 0.0 0.0 0.0\n", encoding="utf-8")
+    template = templates / "step1.inp"
+    template.write_text(
+        "! XTB\n"
+        f'%pointcharges "{private / "field.pc"}"\n'
+        f'%base "{"x" * 300}"\n'
+        '%DOCKER\n\tGUEST "cl.xyz"\nEND\n',
+        encoding="utf-8",
+    )
+
+    assert referenced_aux_files(template) == {"cl.xyz": guest.resolve()}
+
+
 def test_referenced_aux_files_of_a_template_that_is_not_utf8_is_empty(tmp_path: Path):
     """A latin-1 template contributes no aux files, for the reason a missing one doesn't.
 

@@ -831,6 +831,37 @@ def test_invalid_nms_options_are_refused_when_the_key_is_derived(tmp_path: Path)
         derive_step_key(ctx, cfg.steps[0], get_engine(cfg.steps[0].engine))
 
 
+def test_a_sampling_step_whose_template_cannot_be_reached_keys_as_one_without_it(
+    tmp_path: Path, unsearchable
+):
+    """Behind a directory this account cannot search, a template gives the key nothing.
+
+    The key of a sampling step asks whether its template is there before it infers the
+    target from it. ``Path.is_file`` raises there on Python 3.11 to 3.13, out of the key
+    and before any cache is consulted, and answers ``False`` on 3.14. No bytes, no digest
+    and no inferred target is the key of a template that is not there, on every Python —
+    so the step misses its cache and the reader that renders the template names the
+    refusal.
+    """
+    from chemrefine.step import derive_step_key
+
+    engine = get_engine("orca")
+
+    def key(root: Path) -> cache.StepKey:
+        cfg = _config(root, engine="orca", nms=True, operation=None)
+        ctx = build_context(cfg, cfg.steps[0], _seed_state(["0"]), engine)
+        return derive_step_key(ctx, cfg.steps[0], engine)
+
+    templates = tmp_path / "templates"
+    templates.mkdir()
+    (templates / "step1.inp").write_text("! B3LYP def2-SVP OptTS Freq\n", encoding="utf-8")
+    read = key(tmp_path)
+    unsearchable(templates)
+
+    assert key(tmp_path) == key(tmp_path / "a-project-with-no-templates")
+    assert key(tmp_path).fingerprint != read.fingerprint
+
+
 def test_a_model_path_is_keyed_by_basename_so_a_relocated_tree_derives_the_same_key(
     tmp_path: Path,
 ):

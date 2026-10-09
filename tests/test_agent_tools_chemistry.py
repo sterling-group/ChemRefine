@@ -943,6 +943,35 @@ def test_list_structures_enumerates_the_seeds_and_refuses_to_embed_them(tmp_path
     assert not (tmp_path / "outputs" / "_seed").exists()
 
 
+def test_a_seed_or_a_structure_file_behind_a_wall_is_refused_with_the_systems_reason(
+    tmp_path: Path, unsearchable
+):
+    """A file under a directory this account cannot search is a named refusal, never a traceback.
+
+    ``Path.is_dir`` and ``Path.is_file`` raise ``PermissionError`` there on Python 3.11 to
+    3.13, which reached an agent as a crashed tool, and answer ``False`` on 3.14, which
+    called the structure file "not a file". The filesystem's reason is the answer on both.
+    """
+    private = tmp_path / "private"
+    private.mkdir()
+    (private / "two.xyz").write_text("1\na\nN 0 0 0\n1\nb\nO 0 0 0\n", encoding="utf-8")
+    path = tmp_path / "input.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {"input": str(private / "two.xyz"), "steps": [{"step": 1, "engine": "orca"}]}
+        ),
+        "utf-8",
+    )
+    unsearchable(private)
+
+    with pytest.raises(ConfigError) as seeds:
+        agent_tools.list_structures(str(path))
+    assert str(seeds.value) == f"cannot seed from {private / 'two.xyz'}: Permission denied"
+    with pytest.raises(ConfigError) as shown:
+        agent_tools.read_structure_file(str(private / "two.xyz"))
+    assert str(shown.value) == f"cannot read {private / 'two.xyz'}: Permission denied"
+
+
 def test_list_structures_says_run_it_first_rather_than_offering_nothing(tmp_path: Path):
     """An empty list and "nothing has run" are different answers to "which structures?"."""
     with pytest.raises(ConfigError, match="run it"):

@@ -850,16 +850,32 @@ class Config(BaseModel):
         login node reading the YAML legitimately can't see it, while an explicit path absent
         here is almost always a typo. A bare command name (no path separator) is not on the
         list — it resolves on the executing host at submit time.
+
+        A path the filesystem will not answer for — one under a directory this account
+        cannot search — is on the list with the system's own reason: it may well be there,
+        and the job's account is the one that has to reach it.
         """
-        return [
-            (
-                tool,
-                f"executable {value!r} for {tool!r} does not exist on this host; "
-                f"ignore if a module load provides it inside the job",
+        missing: list[tuple[str, str]] = []
+        for tool, value in self.executables.items():
+            if os.sep not in value:
+                continue
+            path = Path(value)
+            why = io.unreachable(path)
+            if why is None and not io.absent(path):
+                continue
+            problem = (
+                "does not exist on this host"
+                if why is None
+                else f"cannot be reached on this host ({why})"
             )
-            for tool, value in self.executables.items()
-            if os.sep in value and not Path(value).exists()
-        ]
+            missing.append(
+                (
+                    tool,
+                    f"executable {value!r} for {tool!r} {problem}; "
+                    f"ignore if a module load provides it inside the job",
+                )
+            )
+        return missing
 
     def default_input(self) -> Path:
         """The seed a run reads when ``input`` names none: ``step1.xyz`` beside the templates.

@@ -139,6 +139,35 @@ def test_bootstrap_preloads_a_launched_config(tmp_path: Path):
     assert "steps" in initial["yaml_text"]
 
 
+def test_a_launch_path_or_a_folder_behind_a_wall_is_an_answer_not_a_500(
+    tmp_path: Path, unsearchable
+):
+    """The page still loads, and the picker says what the filesystem said.
+
+    Under a directory this account cannot search, ``Path.is_file`` and ``Path.is_dir``
+    raise ``PermissionError`` on Python 3.11 to 3.13: the first request of a builder
+    launched on such a config was a 500, and so was a picker pointed there. The page
+    starts empty, as it does for a config not written yet, and the picker answers with
+    the reason; a folder that is not there is still "not a directory".
+    """
+    private = tmp_path / "private"
+    (private / "runs").mkdir(parents=True)
+    config = private / "input.yaml"
+    config.write_text(yaml.safe_dump({"steps": [{"step": 1, "engine": "fake"}]}), "utf-8")
+    unsearchable(private)
+    app = create_app(token=TOKEN, config_path=config).test_client()
+
+    loaded = _get(app, "/api/bootstrap")
+    assert loaded.status_code == 200 and loaded.get_json()["initial"] is None
+    walled = _get(app, f"/api/browse?path={private / 'runs'}")
+    assert walled.status_code == 400
+    assert walled.get_json()["error"].startswith(f"cannot list {private / 'runs'}: ")
+    assert "Permission denied" in walled.get_json()["error"]
+    missing = _get(app, f"/api/browse?path={tmp_path / 'never'}")
+    assert missing.status_code == 400
+    assert missing.get_json()["error"] == f"not a directory: {tmp_path / 'never'}"
+
+
 # ---------------------------------------------------------------------------
 # YAML round-trip + validation
 # ---------------------------------------------------------------------------

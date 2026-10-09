@@ -201,20 +201,26 @@ def validate_config_text(text: str, *, base_dir: Path | None = None) -> Validati
     # at the run — under either of its names, `input:` or the default a config that
     # declares none falls back to. A warning like the template's, not an issue — the file
     # may be written later (`build_structures`) or exist only on the cluster the config is
-    # for, and `save_config` must still be able to write the config.
-    default = config.default_input()
-    if config.input is None and not default.is_file():
-        missing_seed: str | None = f"no 'input' declared and default {default}"
-    elif config.input is not None and not config.input.exists():
-        missing_seed = f"input {config.input}"
+    # for, and `save_config` must still be able to write the config. A seed the filesystem
+    # will not answer for is the same row with the system's reason, as the run refuses it.
+    if config.input is None:
+        # The default is a file's name; a declared seed may be a directory of them.
+        seed, named = config.default_input(), "no 'input' declared and default"
+        found = io.file_there(seed)
     else:
-        missing_seed = None
-    if missing_seed is not None:
+        seed, named = config.input, "input"
+        found = io.file_there(seed) or io.dir_there(seed)
+    seed_problem: str | None = None
+    if (why := io.unreachable(seed)) is not None:
+        seed_problem = f"cannot be reached from here ({why})"
+    elif not found:
+        seed_problem = "does not exist yet"
+    if seed_problem is not None:
         warnings_list.append(
             ValidationIssue(
                 loc=("input",),
                 kind="input",
-                message=f"{missing_seed} does not exist yet; a run refuses to start without it",
+                message=f"{named} {seed} {seed_problem}; a run refuses to start without it",
             )
         )
     # First in the list: a deprecation is about the vocabulary the file is written in, which
@@ -423,7 +429,7 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
                 template=step.template,
                 suffix=engine.template_suffix,
             )
-            if not template.is_file():
+            if io.unreachable(template) is None and not io.file_there(template):
                 warnings.append(
                     ValidationIssue(
                         loc=("steps", index, "template"),
@@ -436,8 +442,9 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
                 )
             else:
                 # The run's own read of the file, as every consumer reads it — a template
-                # that is there but is not UTF-8 text is refused before the run starts, so it
-                # is an issue here, not a row the run contradicts.
+                # that is there but is not UTF-8 text, or one the filesystem will not let
+                # this account reach, is refused before the run starts, so it is an issue
+                # here, not a row the run contradicts.
                 try:
                     read = require_template(template, label=engine.label)
                 except ConfigError as e:
@@ -488,17 +495,24 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
         # after the labelling steps upstream of a training step have run for days.
         for key in STEP_OPTION_PATHS:
             value = getattr(declared, key, None)
-            if isinstance(value, str) and not Path(value).is_file():
-                warnings.append(
-                    ValidationIssue(
-                        loc=("steps", index, "options", key),
-                        kind="options",
-                        message=(
-                            f"{key} {value} does not exist yet (fine if an earlier step "
-                            f"produces it; a typo here fails only inside the job)"
-                        ),
-                    )
+            if not isinstance(value, str) or io.file_there(Path(value)):
+                continue
+            why = io.unreachable(Path(value))
+            if why is not None:
+                # Nothing here reads the file, so this row is the one place that can say so.
+                missing = f"cannot be reached from here ({why}); the job has to be able to read it"
+            else:
+                missing = (
+                    "does not exist yet (fine if an earlier step produces it; a typo here "
+                    "fails only inside the job)"
                 )
+            warnings.append(
+                ValidationIssue(
+                    loc=("steps", index, "options", key),
+                    kind="options",
+                    message=f"{key} {value} {missing}",
+                )
+            )
         try:
             check_step_dir(engine, ctx)
         except ConfigError as e:
@@ -523,7 +537,7 @@ def _inspect_steps(config: Config) -> tuple[list[ValidationIssue], list[Validati
             )
     for name, steps in sorted(headers.items()):
         path = config.template_dir / name
-        if not path.is_file():
+        if io.unreachable(path) is None and not io.file_there(path):
             warnings.append(
                 ValidationIssue(
                     loc=("template_dir",),

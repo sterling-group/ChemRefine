@@ -844,6 +844,24 @@ def test_a_template_this_account_cannot_read_keys_as_one_that_is_not_there(tmp_p
         template.chmod(0o644)
 
 
+def test_a_template_this_account_cannot_reach_keys_as_one_that_is_not_there(
+    tmp_path: Path, unsearchable
+):
+    """The digest asks the filesystem one thing, the read, and takes every refusal as no bytes.
+
+    Asked ``Path.is_file`` first, a template under a directory this account cannot search
+    was a ``PermissionError`` out of the key on Python 3.11 to 3.13. A directory at the
+    path is no template either.
+    """
+    templates = tmp_path / "templates"
+    templates.mkdir()
+    (templates / "step1.inp").write_text("! Opt\n", encoding="utf-8")
+    (tmp_path / "step2.inp").mkdir()
+    unsearchable(templates)
+    assert cache.template_digest(templates / "step1.inp") == ""
+    assert cache.template_digest(tmp_path / "step2.inp") == ""
+
+
 @pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
 def test_an_unreadable_document_is_the_cache_error_a_corrupt_one_gets(tmp_path: Path):
     """Present-but-unreadable is the other half of what ``read_json`` promises to refuse.

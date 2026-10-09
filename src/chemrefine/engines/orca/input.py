@@ -27,7 +27,7 @@ from pathlib import Path
 from chemrefine.engines.api import require_whitespace_free
 from chemrefine.engines.orca.inspect import PAL_PATTERNS
 from chemrefine.ids import StepTemplate
-from chemrefine.io import write_tree_file
+from chemrefine.io import file_there, write_tree_file
 
 _XYZFILE_DIRECTIVE_RE = re.compile(r"^\s*\*\s+xyzfile.*$", re.MULTILINE)
 
@@ -53,7 +53,7 @@ def _referenced_file(raw: str, template_dir: Path) -> Path | None:
     """
     candidate = Path(raw)
     resolved = candidate if candidate.is_absolute() else (template_dir / candidate).resolve()
-    return resolved if resolved.is_file() else None
+    return resolved if file_there(resolved) else None
 
 
 def _absolutize_template_paths(text: str, template_dir: Path) -> str:

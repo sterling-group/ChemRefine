@@ -430,7 +430,7 @@ def derive_step_key(
         aux_files = engine.template_aux_files(ctx.template)
     resolution = None
     if step_cfg.nms and isinstance(engine, NmsCapableEngine):
-        readable = ctx.template is None or ctx.template.is_file()
+        readable = ctx.template is None or io.file_there(ctx.template)
         options = nms.resolved_options(engine, ctx) if readable else nms.read_options(step_cfg)
         resolution = options.resolution_spec()
     return cache.StepKey.of(

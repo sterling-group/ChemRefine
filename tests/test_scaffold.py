@@ -403,3 +403,32 @@ def test_a_scaffold_refused_partway_names_the_starter_and_a_second_run_writes_th
     assert str(refusal.value) == f"cannot write {templates / 'step2.in'}: No space left on device"
     assert [p.name for p in templates.iterdir()] == ["step1.inp"]
     assert [p.name for p in scaffold_templates(config)] == ["step2.in", "cpu.slurm.header"]
+
+
+def test_a_template_directory_behind_a_wall_is_the_writes_refusal_not_the_plans(
+    tmp_path: Path, unsearchable
+):
+    """The plan asks whether each starter is there, and the write that follows answers.
+
+    Under a directory this account cannot search, ``Path.is_file`` raises
+    ``PermissionError`` on Python 3.11 to 3.13 — the plan itself was a traceback — and
+    answers ``False`` on 3.14. A starter that cannot be seen is planned as missing on
+    every Python, and the write names what the filesystem refuses.
+    """
+    private = tmp_path / "private"
+    templates = private / "templates"
+    templates.mkdir(parents=True)
+    path = tmp_path / "input.yaml"
+    path.write_text(
+        yaml.safe_dump({"template_dir": str(templates), "steps": [{"step": 1, "engine": "orca"}]}),
+        encoding="utf-8",
+    )
+    config = load_config(path)
+    unsearchable(private)
+
+    assert [(plan.path.name, plan.exists) for plan in plan_templates(config)] == [
+        ("step1.inp", False),
+        ("cpu.slurm.header", False),
+    ]
+    with pytest.raises(WriteRefusedError, match=r"^cannot write .*: Permission denied$"):
+        scaffold_templates(config)

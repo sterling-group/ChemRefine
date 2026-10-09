@@ -2541,6 +2541,42 @@ def test_a_missing_executable_path_is_warned_once_per_load(tmp_path: Path, caplo
     assert absent in record.getMessage() and "does not exist on this host" in record.getMessage()
 
 
+def test_an_executable_this_account_cannot_reach_is_a_warning_with_the_reason(
+    tmp_path: Path, caplog, unsearchable
+):
+    """A binary under a directory this account cannot search loads, and the log says why.
+
+    ``Path.exists`` raises ``PermissionError`` there on Python 3.11 to 3.13, so the config
+    of a run whose ``orca`` lives in a colleague's install tree did not load at all; on
+    3.14 it answers ``False`` and the warning said the binary does not exist. It may well
+    be there — the job's account is the one that has to reach it — so the warning gives
+    the system's reason, and a path that is simply long is told from one that is absent.
+    """
+    private = tmp_path / "install"
+    private.mkdir()
+    (private / "orca").write_text("", encoding="utf-8")
+    unsearchable(private)
+    executables = {
+        "orca": str(private / "orca"),
+        "qchem": str(tmp_path / ("q" * 300)),
+        "qc": str(tmp_path),  # an install root that is there: nothing to say
+    }
+    path = _write_yaml(tmp_path, _minimal_config(executables=executables))
+
+    with caplog.at_level("WARNING", logger="chemrefine.config"):
+        config = load_config(path)
+
+    assert [warning for _tool, warning in config.missing_executables()] == [
+        f"executable {executables['orca']!r} for 'orca' cannot be reached on this host "
+        "(Permission denied); ignore if a module load provides it inside the job",
+        f"executable {executables['qchem']!r} for 'qchem' cannot be reached on this host "
+        "(File name too long); ignore if a module load provides it inside the job",
+    ]
+    assert [record.getMessage() for record in caplog.records] == [
+        warning for _tool, warning in config.missing_executables()
+    ]
+
+
 def test_a_legacy_spelling_is_announced_once_per_load(tmp_path: Path, caplog):
     """A copy the model re-checks carries current spellings only, so it announces nothing.
 

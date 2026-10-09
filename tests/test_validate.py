@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -803,6 +804,71 @@ def test_a_default_seed_that_does_not_exist_yet_is_the_same_warning(tmp_path: Pa
     assert not any(w.kind == "input" for w in present.warnings)
     assert present.config is not None
     assert [s.id for s in pipeline.bootstrap(present.config).structures] == ["0"]
+
+
+def test_a_project_this_account_cannot_reach_is_reported_row_by_row(
+    tmp_path: Path, unsearchable: Callable[[Path], Path]
+):
+    """Every path a config names is answered for wherever it sits, and nothing raises.
+
+    A project under a directory this account cannot search. ``Path.exists`` and
+    ``Path.is_file`` raise ``PermissionError`` there on Python 3.11 to 3.13 — a traceback
+    out of a function documented never to raise — and answer ``False`` on 3.14, which read
+    every file as not written yet. Each row gives the system's reason instead. A file the
+    run reads is an issue in the words of that read, since the run refuses it when it
+    starts; a file only the job opens is a warning, since the job's account may reach it.
+    """
+    private = tmp_path / "private"
+    templates = private / "templates"
+    templates.mkdir(parents=True)
+    (templates / "step1.inp").write_text("! Opt\n", encoding="utf-8")
+    (templates / "cpu.slurm.header").write_text("#SBATCH -N1\n", encoding="utf-8")
+    for name in ("seed.xyz", "orca", "trained.model"):
+        (private / name).write_text("", encoding="utf-8")
+    unsearchable(private)
+
+    report = _validate(
+        tmp_path,
+        template_dir=str(templates),
+        input=str(private / "seed.xyz"),
+        executables={"orca": str(private / "orca")},
+        steps=[
+            {"step": 1, "engine": "orca"},
+            {
+                "step": 2,
+                "engine": "mlip",
+                "template": "step1.inp",
+                "options": {"model_path": str(private / "trained.model")},
+            },
+        ],
+    )
+
+    said = {(row.kind, row.loc): row.message for row in (*report.issues, *report.warnings)}
+    assert said[("executable", ("executables", "orca"))] == (
+        f"executable {str(private / 'orca')!r} for 'orca' cannot be reached on this host "
+        "(Permission denied); ignore if a module load provides it inside the job"
+    )
+    assert said[("input", ("input",))] == (
+        f"input {private / 'seed.xyz'} cannot be reached from here (Permission denied); "
+        "a run refuses to start without it"
+    )
+    assert said[("options", ("steps", 1, "options", "model_path"))] == (
+        f"model_path {private / 'trained.model'} cannot be reached from here "
+        "(Permission denied); the job has to be able to read it"
+    )
+    refused = {(issue.kind, issue.loc): issue.message for issue in report.issues}
+    assert refused[("template", ("steps", 0, "template"))] == (
+        f"cannot read ORCA template {templates / 'step1.inp'}: Permission denied"
+    )
+    assert "Permission denied" in refused[("slurm-header", ("template_dir",))]
+    assert not any("does not exist yet" in message for message in said.values())
+
+    defaulted = _validate(tmp_path, template_dir=str(templates))
+    [seed] = [w.message for w in defaulted.warnings if w.kind == "input"]
+    assert seed == (
+        f"no 'input' declared and default {templates / 'step1.xyz'} cannot be reached from "
+        "here (Permission denied); a run refuses to start without it"
+    )
 
 
 # ---------------------------------------------------------------------------

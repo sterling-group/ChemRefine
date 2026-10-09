@@ -181,6 +181,44 @@ def test_bootstrap_refuses_a_seed_directory_whose_files_hold_no_frames(tmp_path:
         pipeline.bootstrap(_config(tmp_path, input=seeds))
 
 
+@pytest.mark.parametrize("seed", ["seed.xyz", "seeds", "smiles.csv", "the default"])
+def test_bootstrap_refuses_a_seed_it_cannot_reach_with_the_systems_reason(
+    tmp_path: Path, unsearchable: Callable[[Path], Path], seed: str
+):
+    """A seed under a directory this account cannot search is one refusal on every Python.
+
+    ``Path.is_dir`` and ``Path.is_file`` raise there on Python 3.11 to 3.13 and answer
+    ``False`` on 3.14: the default seed was a traceback on the one and "does not exist" on
+    the other, and a seed *directory* was dispatched on its name alone and refused as an
+    unsupported format. The path cannot be told a directory from a file, so the
+    filesystem's own reason is the answer.
+    """
+    private = tmp_path / "private"
+    (private / "seeds").mkdir(parents=True)
+    for xyz in (private / "seed.xyz", private / "seeds" / "a.xyz", private / "step1.xyz"):
+        xyz.write_text("1\n\nH 0 0 0\n", encoding="utf-8")
+    (private / "smiles.csv").write_text("smiles\nO\n", encoding="utf-8")
+    unsearchable(private)
+    if seed == "the default":
+        path = private / "step1.xyz"
+        cfg = _config(tmp_path, input=None, template_dir=private)
+    else:
+        path = private / seed
+        cfg = _config(tmp_path, input=path)
+
+    with pytest.raises(ConfigError) as refused:
+        pipeline.bootstrap(cfg)
+
+    assert str(refused.value) == f"cannot seed from {path}: Permission denied"
+
+
+def test_a_default_seed_that_is_no_file_is_refused_as_one_that_does_not_exist(tmp_path: Path):
+    """The default is a file's name: a directory there is not seeded from, on any Python."""
+    (tmp_path / "templates" / "step1.xyz").mkdir(parents=True)
+    with pytest.raises(ConfigError, match="no 'input' declared and default"):
+        pipeline.bootstrap(_config(tmp_path, input=None))
+
+
 @pytest.mark.parametrize("literal", ["nan", "inf", "-inf"])
 def test_bootstrap_refuses_a_non_finite_seed_coordinate(tmp_path: Path, literal: str):
     """A seed geometry that is not numbers must be refused where the file can be named.

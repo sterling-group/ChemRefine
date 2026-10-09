@@ -201,7 +201,7 @@ def template_digest(path: Path | None) -> str:
     the moment of rendering rather than from the cache, as it does for the operation the
     template would infer (:func:`chemrefine.engines.api.resolve_operation`).
     """
-    if path is None or not path.is_file():
+    if path is None:
         return ""
     try:
         data = path.read_bytes()

@@ -776,7 +776,7 @@ def test_every_writer_the_gate_names_is_one_it_finds():
 #: list for a directory they cannot list, on every Python.
 _ASKING_METHODS = frozenset({"exists", "glob", "is_dir", "is_file", "rglob"})
 
-_A_PERSONS_FILE = "a file or directory a person names: its reader words what it cannot use"
+_A_PERSONS_SEEDS = "the seed files of a directory a person names, which it has just made"
 _A_STATUS_READ = "a status read of a tree it does not drive: it reports, and holds no lock"
 _A_MANAGED_ENVIRONMENT = "a managed environment, outside every run tree"
 _INSIDE_THE_JOB = "a file of the job's own, asked inside the job"
@@ -786,25 +786,7 @@ _INSIDE_THE_JOB = "a file of the job's own, asked inside the job"
 #: about instead. An entry excuses its whole function, so it names one that asks nothing of
 #: a run's tree while driving it.
 _RAW_ASKERS: dict[tuple[str, str], str] = {
-    **dict.fromkeys(
-        [
-            ("agent_tools.py", "_seeds_for_reading"),
-            ("agent_tools.py", "build_structures"),
-            ("agent_tools.py", "read_structure_file"),
-            ("cache.py", "template_digest"),
-            ("config.py", "Config.missing_executables"),
-            ("engines/orca/input.py", "_referenced_file"),
-            ("gui/app.py", "create_app.bootstrap"),
-            ("gui/app.py", "create_app.browse"),
-            ("pipeline.py", "_seed"),
-            ("pipeline.py", "bootstrap"),
-            ("scaffold.py", "plan_templates"),
-            ("step.py", "derive_step_key"),
-            ("validate.py", "_inspect_steps"),
-            ("validate.py", "validate_config_text"),
-        ],
-        _A_PERSONS_FILE,
-    ),
+    ("agent_tools.py", "build_structures"): _A_PERSONS_SEEDS,
     **dict.fromkeys(
         [
             ("agent_tools.py", "_latest_log"),
@@ -888,8 +870,13 @@ def test_a_run_tree_is_asked_what_it_holds_only_through_io():
     and ``is_dir`` raise there on one Python and answer ``False`` on the next, and ``glob``
     answers an empty list everywhere — a traceback, or work read as never done. So the
     question is :func:`chemrefine.io.absent`, the listing :func:`chemrefine.io.tree_entries`,
-    and a reader that reads at once takes absence from its own ``FileNotFoundError``. A
-    function asking about something else — :data:`_RAW_ASKERS` says what — is listed.
+    and a reader that reads at once takes absence from its own ``FileNotFoundError``.
+
+    A file or directory a person named is held to the same rule, since the path is theirs
+    and so is the directory above it: :func:`chemrefine.io.file_there`,
+    :func:`chemrefine.io.dir_there` and :func:`chemrefine.io.unreachable` answer the same on
+    every supported Python, and :func:`chemrefine.io.entries` lists. A function asking
+    about something else — :data:`_RAW_ASKERS` says what — is listed.
     """
     offences = [
         f"{rel}:{ask.line}: {ask.function} — {ask.method}"
@@ -902,8 +889,9 @@ def test_a_run_tree_is_asked_what_it_holds_only_through_io():
         + "\n\nIn a run's tree ask io.absent(path), list with io.tree_entries(directory), or "
         "read and take absence from FileNotFoundError: Path.exists/is_file/is_dir answer "
         "differently across Python versions under a directory that cannot be searched, and "
-        "glob reads one it cannot list as empty. A function that asks about something that "
-        "is no run's tree read by its driver is listed in _RAW_ASKERS with what it asks about."
+        "glob reads one it cannot list as empty. Of a path a person named ask io.file_there, "
+        "io.dir_there or io.unreachable, and list with io.entries. A function that asks about "
+        "something else is listed in _RAW_ASKERS with what it asks about."
     )
 
 
@@ -939,6 +927,11 @@ def test_every_listed_asker_still_asks():
             "from chemrefine import io\ndef f(p):\n    return io.absent(p), io.tree_entries(p)\n",
             [],
         ),
+        (
+            "from chemrefine import io\nfrom chemrefine.io import file_there\ndef f(p):\n"
+            "    return io.file_there(p), io.dir_there(p), io.unreachable(p), file_there(p)\n",
+            [],
+        ),
         ("def f(p):\n    return p.read_text(), p.stat(), list(p.iterdir())\n", []),
     ],
     ids=[
@@ -949,6 +942,7 @@ def test_every_listed_asker_still_asks():
         "the-write-net-is-no-excuse",
         "a-modules-own-function",
         "ios-questions",
+        "ios-questions-of-a-persons-path",
         "reads-and-listings-that-raise",
     ],
 )

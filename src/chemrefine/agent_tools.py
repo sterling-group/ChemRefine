@@ -884,7 +884,9 @@ def read_structure_file(path: str) -> dict[str, Any]:
     frame is its result.
     """
     target = expand_user_path(path)
-    if not target.is_file():
+    if (why := io.unreachable(target)) is not None:
+        raise ConfigError(f"cannot read {target}: {why}")
+    if not io.file_there(target):
         raise ConfigError(f"not a file: {target}")
     size = target.stat().st_size
     if size > _MAX_STRUCTURE_BYTES:
@@ -990,12 +992,12 @@ def _seeds_for_reading(config: Config) -> tuple[Structure, ...]:
     the way round it. Every read of the seeds comes through here so that refusal cannot be
     true of one entry point and not the next.
     """
-    # is_dir() first, in bootstrap's order: it takes a directory as a directory whatever it
-    # is called, so testing the suffix first would refuse a folder named `batch.csv` here
-    # that bootstrap seeds from.
+    # The directory question first, in bootstrap's order: it takes a directory as a directory
+    # whatever it is called, so testing the suffix first would refuse a folder named
+    # `batch.csv` here that bootstrap seeds from.
     seeds_from_smiles = (
         config.input is not None
-        and not config.input.is_dir()
+        and not io.dir_there(config.input)
         and config.input.suffix.lower() == ".csv"
     )
     if seeds_from_smiles:
