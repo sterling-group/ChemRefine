@@ -206,8 +206,9 @@ def run_batch(
         # Local jobs are real background processes owned by this interpreter, so
         # leaving them running would orphan compute that keeps competing for the
         # cores of whatever the user runs next. (SLURM jobs run on: the resume fence
-        # waits for them on their leases, and one whose lease could not be written was
-        # cancelled at that write, or named in its refusal — see `record_leases`.)
+        # waits for them on their leases, and finds one whose id never reached the ledger
+        # by the batch's tag, on record since before the first was asked for — see
+        # `lease_batch`.)
         slurm.terminate_local_jobs(throttler.active_jobs)
         # The local jobs just died with their leases' reason; the SLURM ones run on,
         # so their leases stay — they are what the resume fence reads once this
@@ -226,12 +227,14 @@ def _submit_one(
     ctx: StepContext,
     throttler: throttle.Throttler,
     job: JobTriple,
+    batch: str | None,
 ) -> str:
     """Build one job's script, submit it, charge it to the budget; return its job id.
 
     :func:`_run_queue` has already established that the budget has room, which is also
     :meth:`~chemrefine.throttle.Throttler.assign_device`'s documented precondition — so this
-    does not ask a second time.
+    does not ask a second time. ``batch`` is the tag the batch is on record under, ``None``
+    for one the plan runs locally.
     """
     inp, out, sid = job
     # Pin a free GPU per local job so concurrent CUDA jobs don't collide on device
@@ -260,13 +263,17 @@ def _submit_one(
         output_dirs=engine.output_dirs(ctx),
         extra_header_fields=engine.extra_header_fields(ctx),
     )
-    job_id = slurm.submit(script_path, env=env, dispatch=ctx.dispatch)
+    # A batch the plan runs locally asks for exactly that, so the scheduler is reached only
+    # from a batch that holds a tag.
+    job_id = slurm.submit(
+        script_path, batch=batch, env=env, dispatch="local" if plan.local else ctx.dispatch
+    )
     throttler.register(job_id, plan.shape.cores, gpus=plan.shape.gpus, device=device)
     # Leased before anyone waits on it, so the record survives a driver that dies without
     # unwinding — the case the resume fence exists for. Registered first, so a local job
-    # whose ledger write fails is in the set the unwind terminates; a SLURM one is
-    # cancelled at that write, or named in its refusal (see `record_leases`).
-    slurm.record_leases(ctx.step_dir, throttler.active_jobs, accepted=job_id)
+    # whose ledger write fails is in the set the unwind terminates; a SLURM one is on
+    # record under the batch's tag whether or not this write lands.
+    slurm.record_leases(ctx.step_dir, throttler.active_jobs, batch=batch)
     logger.info(
         "submitted %s as job %s (cores=%d, gpus=%d)",
         inp.name,
@@ -301,12 +308,15 @@ def _run_queue(
     nothing reads back.
     """
     pending: deque[JobTriple] = deque(inputs.files)
+    # On record before the scheduler is asked for the first job: a job it accepts is named
+    # by the batch's tag from that moment, whatever becomes of its id or of this driver.
+    batch = slurm.lease_batch(ctx.step_dir) if pending and not plan.local else None
     jobs: dict[Path, str] = {}
     index: dict[str, JobTriple] = {}
     while pending or throttler.active_jobs:
         while pending and throttler.has_room(plan.shape.cores, gpus_needed=plan.shape.gpus):
             job = pending.popleft()
-            jobs[job[0]] = job_id = _submit_one(engine, plan, ctx, throttler, job)
+            jobs[job[0]] = job_id = _submit_one(engine, plan, ctx, throttler, job, batch)
             index[job_id] = job
         if pending and not throttler.active_jobs:
             # Unreachable: `pal` is clamped to `max_cores` and the GPU budget is checked
@@ -403,12 +413,18 @@ def _run_array(
     max_concurrent = max(1, ctx.max_cores // (plan.shape.cores * len(manifests)))
     jobs: dict[Path, str] = {}
     submitted: list[str] = []
+    # On record before the scheduler is asked for the first chunk, as on the per-job path.
+    batch = slurm.lease_batch(output_dir)
     for manifest, chunk in manifests:
         parent_id = slurm.submit_array(
-            script_path, n_tasks=len(chunk), max_concurrent=max_concurrent, manifest=manifest
+            script_path,
+            n_tasks=len(chunk),
+            max_concurrent=max_concurrent,
+            manifest=manifest,
+            batch=batch,
         )
         submitted.append(parent_id)
-        slurm.record_leases(output_dir, submitted, accepted=parent_id)
+        slurm.record_leases(output_dir, submitted, batch=batch)
         for inp, _out, _sid in chunk:
             jobs[inp] = parent_id
         logger.info(

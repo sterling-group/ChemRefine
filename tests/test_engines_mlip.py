@@ -427,7 +427,7 @@ def test_local_gpu_jobs_get_distinct_cuda_visible_devices(tmp_path: Path, monkey
 
     captured: list[dict | None] = []
 
-    def fake_submit(script_path, *, env=None, dispatch="auto"):
+    def fake_submit(script_path, *, batch=None, env=None, dispatch="auto"):
         captured.append(env)
         return f"local-{len(captured)}"
 

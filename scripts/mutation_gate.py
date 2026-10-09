@@ -418,13 +418,24 @@ _BUNDLED: tuple[Mutation, ...] = (
         "`12345_0`, never the bare parent id — so its outputs are parsed while it writes",
     ),
     Mutation(
-        id="lease-unrecorded-slurm-job-cancelled",
-        path="src/chemrefine/slurm/dispatch.py",
-        old="if JobLease(accepted, host).local:",
-        new="if True:",
+        id="lease-batch-on-record-before-its-first-job",
+        path="src/chemrefine/engines/_execution.py",
+        old="batch = slurm.lease_batch(ctx.step_dir) if pending and not plan.local else None",
+        new="batch = None",
         tests="tests/test_execution.py",
-        breaks="a SLURM job whose lease could not be written runs on with no record, so the "
-        "next run's fence passes beside it and resubmits the structures it is still writing",
+        breaks="a batch asks the scheduler for jobs under no recorded name, so one whose id "
+        "never reaches the ledger — the driver killed or sbatch failing once the scheduler "
+        "has the job — is invisible to the next run's fence, which resubmits the structures "
+        "it is still writing",
+    ),
+    Mutation(
+        id="lease-batch-jobs-found-by-tag",
+        path="src/chemrefine/slurm/dispatch.py",
+        old="mine = {row[0] for row in queued if row[-1].endswith(_name_tail(jid))}",
+        new="mine = {row[0] for row in queued if row[-1] == _name_tail(jid)}",
+        tests="tests/test_slurm.py",
+        breaks="no queued job is ever found under a batch's tag, so the fence passes beside "
+        "every job the ledger names by tag alone and the run resubmits beside it",
     ),
     Mutation(
         id="tree-write-names-the-refusal",

@@ -1,4 +1,4 @@
-"""Run the scripts: sbatch, squeue, scancel, and the local-process fallback.
+"""Run the scripts: sbatch, squeue, and the local-process fallback.
 
 The other half of :mod:`chemrefine.slurm` — :mod:`chemrefine.slurm.script` writes the
 bash, this runs it. Everything here shells out to a real binary or to the OS, which is
@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import shutil
 import signal
 import socket
@@ -32,7 +33,7 @@ from pathlib import Path
 from typing import TextIO
 
 from chemrefine import ids, io, job_log
-from chemrefine.errors import CacheError, ConfigError, JobSubmissionError, OutputTreeError
+from chemrefine.errors import CacheError, ConfigError, JobSubmissionError
 from chemrefine.throttle import GpuBudget, StallDeadline
 
 logger = logging.getLogger(__name__)
@@ -425,8 +426,10 @@ outlive its jobs: a SIGTERM unwind deliberately leaves SLURM jobs running, and a
 leaves the local ones too (they run in sessions of their own). A prompt ``resume`` then
 passes the lock, sees a matching manifest, and archives directories the old jobs' exit
 traps are still copying into — the very overlap the lock exists to prevent, reopened
-through its own release. The lease is the record that closes it: each submission rewrites
-it as the jobs then in flight, a cleanly drained batch releases its own, and
+through its own release. The lease is the record that closes it: a batch that will ask the
+scheduler for jobs writes the tag their names carry before it asks for the first
+(:func:`lease_batch`), each submission rewrites the ledger as that tag and the jobs then in
+flight, a cleanly drained batch releases its own, and
 :func:`chemrefine.pipeline.require_no_live_jobs` refuses a new driver while any recorded
 job is still alive.
 
@@ -437,12 +440,23 @@ the engine subsystem must not import the cache (the boundary
 domain, exactly as the local-process registry above is."""
 
 
+_BATCH_TAG_PREFIX = "cr"
+"""What a batch's tag starts with (:func:`lease_batch`).
+
+A scheduler's job id is digits and a local one starts ``local-``, so a lease's ``id`` says
+which of the three it is, and :func:`poll_jobs` asks the queue for a tag by job name."""
+
+
 @dataclass(frozen=True)
 class JobLease:
-    """One submitted job a driver had in flight when the lease was last written.
+    """One thing a driver had in flight when the lease was last written.
 
-    ``pid`` is the local job's session leader (probe-able with ``os.kill(pid, 0)`` on
-    ``host``); ``None`` for a SLURM job, whose liveness is the queue's to answer.
+    A local job, by its ``local-N`` id and ``pid``, its session leader (probe-able with
+    ``os.kill(pid, 0)`` on ``host``). A scheduler job, by the id the scheduler returned. Or a
+    batch of scheduler jobs, by the tag every one of their names carries
+    (:func:`lease_batch`), which names a job the scheduler holds whether or not its id ever
+    reached the driver. ``pid`` is ``None`` for the last two, whose liveness is the queue's to
+    answer.
     """
 
     id: str
@@ -451,7 +465,7 @@ class JobLease:
 
     @property
     def local(self) -> bool:
-        """Whether this is a background local job rather than a SLURM one."""
+        """Whether this is a background local job rather than something the scheduler holds."""
         return self.id.startswith(_LOCAL_JOB_PREFIX)
 
 
@@ -514,78 +528,60 @@ def _write_leases(path: Path, leases: list[JobLease]) -> None:
     io.write_tree_file(path, json.dumps(rows), atomic=True)
 
 
-def record_leases(step_dir: Path, job_ids: Iterable[str], *, accepted: str) -> None:
-    """Write ``step_dir``'s ledger as exactly ``job_ids``, the jobs in flight, before anyone waits.
+def lease_batch(step_dir: Path) -> str:
+    """Put a batch on record before it asks the scheduler for a job; return its tag.
+
+    A scheduler job exists from the moment the scheduler accepts it, and its id reaches the
+    ledger only if the answer reaches the driver and the driver lives to write it: a driver
+    killed in between, a SIGTERM while ``sbatch`` waits, an ``sbatch`` that fails or times
+    out after the scheduler took the job, or an answer that holds no id each leave a job no
+    id names. So the record cannot wait for the answer. The tag is this driver's own name
+    for the batch, written here before the first job is asked for and submitted as the tail
+    of every job's name (:func:`submit`, :func:`submit_array`), so the queue answers for the
+    batch's jobs by a name the ledger already holds (:func:`poll_jobs`).
+
+    Forty random bits, so no two batches an account has in the queue share one: a job
+    listed under a tag is a job of the batch whose ledger holds it.
+    """
+    batch = f"{_BATCH_TAG_PREFIX}{secrets.token_hex(5)}"
+    record_leases(step_dir, (), batch=batch)
+    return batch
+
+
+def record_leases(step_dir: Path, job_ids: Iterable[str], *, batch: str | None) -> None:
+    """Write ``step_dir``'s ledger as ``batch`` and exactly ``job_ids``, before anyone waits.
 
     Written at each submission, so the record survives the one thing it exists for — a
     driver that dies without unwinding — and holds what that driver had running, not every
     job its batch ever submitted: a job that finished has left the set the caller passes,
     so the ledger stays bounded by the batch's concurrency, and the fence probes only what
     could still be alive. A local job carries its session leader's pid (the process
-    :func:`terminate_local_jobs` signals); a SLURM id carries none.
+    :func:`terminate_local_jobs` signals); a scheduler id carries none.
 
-    ``accepted`` is the job the scheduler has just accepted, the one id this write is the
-    first to record: every earlier write recorded all the jobs then in flight. A job
-    outlives its driver only on record — an unwind kills the local jobs and leaves the
-    SLURM ones to the fence their leases feed — so a refused write decides that job's fate
-    here. A local one is already in the set the caller's unwind terminates, and the refusal
-    goes on as it came. A SLURM one, which no fence could see, is cancelled, and the
-    refusal says so; when the cancel fails too, it names the job and what to do with it
-    before the command runs again.
+    ``batch`` is the tag :func:`lease_batch` returned, ``None`` for a batch that asks the
+    scheduler for nothing. It stays on every write: the ids beside it are what the driver
+    knows by then, and the tag is what names a job it does not. So a write the output tree
+    refuses once the scheduler has accepted a job leaves that job on record all the same,
+    and the refusal goes on as it came; a local job is in the set the caller's unwind
+    terminates.
     """
     host = socket.gethostname()
-    leases = [
+    leases = [JobLease(batch, host)] if batch is not None else []
+    leases += [
         JobLease(j, host, _LOCAL_PROCS[j][0].pid if j in _LOCAL_PROCS else None) for j in job_ids
     ]
-    try:
-        _write_leases(lease_path(step_dir), leases)
-    except OutputTreeError as e:
-        if JobLease(accepted, host).local:
-            raise
-        why = _scancel(accepted)
-        raise OutputTreeError(
-            f"{e}. SLURM had already accepted job {accepted}, which no ledger records, so "
-            + (
-                f"the run cancelled it (scancel {accepted})."
-                if why is None
-                else f"no later run would wait for it, and cancelling it failed ({why}): "
-                f"`scancel {accepted}`, or wait until `squeue -j {accepted}` no longer "
-                f"lists it, before running the command again."
-            )
-        ) from e.__cause__
-
-
-def _scancel(job_id: str) -> str | None:
-    """Cancel one SLURM job: ``None`` once the scheduler takes the request, else why not.
-
-    For the job :func:`record_leases` could not record. A cancel the scheduler refuses, or
-    a missing ``scancel``, is its answer rather than an exception: its caller is already
-    reporting a refusal and only says whether this landed.
-    """
-    try:
-        # No shell: a literal binary and an id sbatch returned, passed as argv.
-        subprocess.run(  # noqa: S603
-            ["scancel", job_id],  # noqa: S607
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except subprocess.CalledProcessError as e:
-        said: str = (e.stderr or "").strip()
-        return said or f"scancel exited {e.returncode}"
-    except OSError as e:
-        return str(e)
-    return None
+    _write_leases(lease_path(step_dir), leases)
 
 
 def release_leases(step_dir: Path, *, keep_slurm: bool = False) -> None:
-    """Drop ``step_dir``'s leases — all of them, or everything but the SLURM ids.
+    """Drop ``step_dir``'s leases — all of them, or everything but the scheduler's.
 
-    A cleanly drained batch releases everything. Two callers keep the SLURM entries: an
-    unwinding batch — :func:`terminate_local_jobs` has just killed the local jobs, but
-    the scheduler's jobs run on by design, and their leases are what the resume fence
-    reads once the lock is gone — and that fence itself on a host with no ``squeue``,
-    where the local leases are proven dead and the SLURM ids cannot be asked.
+    A cleanly drained batch releases everything. Two callers keep the scheduler's entries,
+    a batch's tag and the ids beside it: an unwinding batch — :func:`terminate_local_jobs`
+    has just killed the local jobs, but the scheduler's jobs run on by design, and their
+    leases are what the resume fence reads once the lock is gone — and that fence itself on
+    a host with no ``squeue``, where the local leases are proven dead and the scheduler's
+    cannot be asked.
 
     A release that keeps every lease writes nothing, so an unwind under SLURM dispatch,
     whose leases are all kept, touches no file on the full or read-only disk it may be
@@ -613,9 +609,30 @@ def scheduler_reachable() -> bool:
     return shutil.which("squeue") is not None
 
 
+def _name_tail(batch: str) -> str:
+    """How the name of every job of ``batch`` ends: what :func:`_named` writes and
+    :func:`poll_jobs` reads back from the queue."""
+    return f".{batch}"
+
+
+def _named(script_path: str | Path, batch: str | None) -> list[str]:
+    """The ``sbatch`` option that names a job under its batch's tag: ``<script stem>.<tag>``.
+
+    On the command line, which ``sbatch`` reads ahead of its environment and of the
+    script's own ``#SBATCH --job-name``, so the name the scheduler holds is this one
+    whatever either says. The script's stem comes first, so a listing that shows a name's
+    head still shows which structure the job computes. ``None`` — a job outside any batch,
+    which only the script's own directive names — adds nothing.
+    """
+    if batch is None:
+        return []
+    return [f"--job-name={Path(script_path).stem}{_name_tail(batch)}"]
+
+
 def submit(
     script_path: str | Path,
     *,
+    batch: str | None = None,
     sbatch_cmd: str = "sbatch",
     env: dict[str, str] | None = None,
     dispatch: str = "auto",
@@ -637,6 +654,8 @@ def submit(
 
     ``env`` (e.g. ``{"CUDA_VISIBLE_DEVICES": "1"}``) is applied only on the
     local fallback; under SLURM the scheduler sets the per-job GPU environment.
+    ``batch`` is the tag the job's batch is on record under (:func:`lease_batch`), and
+    reaches ``sbatch`` only: a local job is leased by its pid.
     """
     if dispatch_locally(dispatch, sbatch_cmd=sbatch_cmd):
         return _submit_local(script_path, env=env)
@@ -645,7 +664,7 @@ def submit(
         # held to `reject_shell_unsafe`, defaulting to the literal below), and the script is
         # one this process generated moments ago — passed as argv, never interpolated.
         result = subprocess.run(  # noqa: S603
-            [sbatch_cmd, "--parsable", str(script_path)],
+            [sbatch_cmd, "--parsable", *_named(script_path, batch), str(script_path)],
             capture_output=True,
             text=True,
             check=True,
@@ -711,6 +730,12 @@ def poll_jobs(job_ids: Collection[str], *, squeue_cmd: str = "squeue") -> QueueS
     parent id matches its task rows by prefix — ``squeue`` prints running tasks as
     ``12345_0`` and pending ones as ``12345_[5-999]``, never the bare parent id.
 
+    A batch's tag (:func:`lease_batch`) is answered from the same query, by name: its rows
+    are the queue's jobs whose name ends in the tag, as :func:`submit` and
+    :func:`submit_array` name them, so it is finished once no job carries it. Only the
+    resume fence asks about one, and the names are requested only then; a poll of ids
+    alone reads ids alone.
+
     ``--noheader`` is requested explicitly rather than slicing the first line off the
     output: a site that injects ``--noheader`` (via a ``squeue`` wrapper or
     ``SQUEUE_FORMAT``) would otherwise have its first *real* job id discarded as if it
@@ -737,20 +762,29 @@ def poll_jobs(job_ids: Collection[str], *, squeue_cmd: str = "squeue") -> QueueS
     rows = local - done
     if not scheduled:
         return QueueState(frozenset(done), frozenset(rows))
+    batches = {jid for jid in scheduled if jid.startswith(_BATCH_TAG_PREFIX)}
     try:
         # No shell. Every element is either a literal or resolved here: `squeue_cmd` is the
         # scheduler binary the caller named, and the user comes from `getpass.getuser()`.
+        # A name this locale cannot decode is some other job's: the names asked about are
+        # ASCII, so it is read with a replacement character rather than refused.
         result = subprocess.run(  # noqa: S603
-            [squeue_cmd, "--noheader", "-u", current_user(), "-o", "%i"],
+            [squeue_cmd, "--noheader", "-u", current_user(), "-o", "%i %j" if batches else "%i"],
             capture_output=True,
             text=True,
+            errors="replace",
             check=True,
         )
     except (subprocess.CalledProcessError, FileNotFoundError):
         return QueueState(frozenset(done), None)
-    running = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    # A row is the job's id and, when names were asked for, the rest of the line.
+    queued = [row.split(maxsplit=1) for row in map(str.strip, result.stdout.splitlines()) if row]
+    running = [row[0] for row in queued]
     for jid in scheduled:
-        mine = {line for line in running if line == jid or line.startswith(f"{jid}_")}
+        if jid in batches:
+            mine = {row[0] for row in queued if row[-1].endswith(_name_tail(jid))}
+        else:
+            mine = {line for line in running if line == jid or line.startswith(f"{jid}_")}
         if mine:
             rows |= mine
         else:
@@ -821,9 +855,10 @@ def submit_array(
     n_tasks: int,
     max_concurrent: int,
     manifest: Path,
+    batch: str,
     sbatch_cmd: str = "sbatch",
 ) -> str:
-    """Submit one array chunk; return the parent job ID.
+    """Submit one array chunk under its batch's tag; return the parent job ID.
 
     The chunk's manifest rides as the script's first argument — sbatch forwards
     everything after the script path to it — which the generated script captures
@@ -845,6 +880,7 @@ def submit_array(
                 sbatch_cmd,
                 "--parsable",
                 "--export=ALL",
+                *_named(script_path, batch),
                 f"--array=0-{n_tasks - 1}%{max_concurrent}",
                 str(script_path),
                 str(manifest),

@@ -1907,9 +1907,10 @@ def test_execute_fences_live_jobs_before_the_handler_runs(
     monkeypatch.setitem(
         recovery._HANDLERS, Action.RUN, lambda config, target: reached.append("handler")
     )
+    still_queued = slurm.QueueState(frozenset(), frozenset({"424242"}))
     with (
         patch.object(slurm, "scheduler_reachable", return_value=True),
-        patch.object(slurm, "finished_jobs", return_value=set()),
+        patch.object(slurm, "poll_jobs", return_value=still_queued),
         pytest.raises(RunLockError, match="424242"),
     ):
         execute(cfg, Action.RUN)

@@ -12,10 +12,9 @@ this process:
 * :mod:`~chemrefine.slurm.script` turns values into a script's text and writes it. It
   runs nothing, so its tests need no cluster and no patching, and so the shell-safety
   invariant can enumerate every value that reaches generated bash from its signatures.
-* :mod:`~chemrefine.slurm.dispatch` runs those scripts — ``sbatch``, ``squeue``,
-  ``scancel``, and the local-process fallback that lets the same pipeline run on a
-  laptop. Everything that shells out is here, which is why the tests patch
-  ``subprocess.run``.
+* :mod:`~chemrefine.slurm.dispatch` runs those scripts — ``sbatch``, ``squeue``, and the
+  local-process fallback that lets the same pipeline run on a laptop. Everything that
+  shells out is here, which is why the tests patch ``subprocess.run``.
 
 The names are re-exported here, so ``from chemrefine import slurm`` then ``slurm.submit``
 keeps working; a caller has no reason to know which half something came from.
@@ -32,6 +31,7 @@ from chemrefine.slurm.dispatch import (
     dispatch_locally,
     finished_jobs,
     header_name_for_step,
+    lease_batch,
     lease_path,
     load_leases,
     poll_jobs,
@@ -65,6 +65,7 @@ __all__ = [
     "dispatch_locally",
     "finished_jobs",
     "header_name_for_step",
+    "lease_batch",
     "lease_path",
     "load_leases",
     "poll_jobs",

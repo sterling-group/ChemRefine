@@ -48,7 +48,7 @@ made of are not its business. The step's template travels on the `StepContext` a
 digests it from there, so no engine has to hand the cache anything.
 `test_no_engine_module_imports_the_cache` keeps the boundary honest, since prose does not.
 
-`sbatch` / `squeue` / `scancel` are reached only from `slurm`; `io` and `cache` own the
+`sbatch` / `squeue` are reached only from `slurm`; `io` and `cache` own the
 *shared* on-disk formats (each engine owns its own input format — that is the plugin
 contract). `io` also owns the one path by which a run's output tree is written: outside a
 job, whatever the package writes, moves or removes under `output_dir` goes through

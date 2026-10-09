@@ -1068,13 +1068,19 @@ def test_submit_array_passes_the_manifest_as_the_script_argument(tmp_path: Path)
     manifest = tmp_path / "out,puts" / "m.0"
     with patch.object(subprocess, "run", return_value=fake) as run:
         job_id = slurm.submit_array(
-            tmp_path / "a.slurm", n_tasks=10, max_concurrent=4, manifest=manifest
+            tmp_path / "a.slurm",
+            n_tasks=10,
+            max_concurrent=4,
+            manifest=manifest,
+            batch="cr0123456789",
         )
     assert job_id == "777"
     argv = run.call_args[0][0]
     assert "--parsable" in argv
     assert "--export=ALL" in argv
     assert "--array=0-9%4" in argv
+    # Every chunk of the batch goes out under the one tag the ledger already holds.
+    assert "--job-name=a.cr0123456789" in argv
     assert argv[-2:] == [str(tmp_path / "a.slurm"), str(manifest)]
 
 
@@ -1084,7 +1090,9 @@ def test_submit_array_raises_on_sbatch_failure(tmp_path: Path):
         patch.object(subprocess, "run", side_effect=err),
         pytest.raises(JobSubmissionError, match="invalid partition specified"),
     ):
-        slurm.submit_array(tmp_path / "a.slurm", n_tasks=1, max_concurrent=1, manifest=tmp_path)
+        slurm.submit_array(
+            tmp_path / "a.slurm", n_tasks=1, max_concurrent=1, manifest=tmp_path, batch="cr0"
+        )
 
 
 def test_submit_array_raises_when_output_lacks_job_id(tmp_path: Path):
@@ -1093,7 +1101,9 @@ def test_submit_array_raises_when_output_lacks_job_id(tmp_path: Path):
         patch.object(subprocess, "run", return_value=fake),
         pytest.raises(JobSubmissionError, match="could not parse job ID"),
     ):
-        slurm.submit_array(tmp_path / "a.slurm", n_tasks=1, max_concurrent=1, manifest=tmp_path)
+        slurm.submit_array(
+            tmp_path / "a.slurm", n_tasks=1, max_concurrent=1, manifest=tmp_path, batch="cr0"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1892,7 +1902,7 @@ def test_leases_round_trip_and_an_absent_ledger_reads_empty(tmp_path: Path):
     proc = subprocess.Popen(["sleep", "5"])
     try:
         with patch.dict(dispatch._LOCAL_PROCS, {"local-7": (proc, None, None)}):
-            slurm.record_leases(tmp_path, ["12345", "local-7"], accepted="local-7")
+            slurm.record_leases(tmp_path, ["12345", "local-7"], batch=None)
     finally:
         proc.kill()
         proc.wait()
@@ -1905,23 +1915,26 @@ def test_leases_round_trip_and_an_absent_ledger_reads_empty(tmp_path: Path):
 
 def test_the_ledger_is_written_whole_as_the_jobs_in_flight(tmp_path: Path):
     """Each write replaces the ledger: a job no longer in flight leaves it."""
-    slurm.record_leases(tmp_path, ["local-1", "local-2"], accepted="local-2")
-    slurm.record_leases(tmp_path, ["local-2", "local-3"], accepted="local-3")
+    slurm.record_leases(tmp_path, ["local-1", "local-2"], batch=None)
+    slurm.record_leases(tmp_path, ["local-2", "local-3"], batch=None)
     assert [lease.id for lease in slurm.load_leases(tmp_path)] == ["local-2", "local-3"]
 
 
 def test_an_unwinding_release_keeps_the_slurm_leases_only(tmp_path: Path):
-    """`keep_slurm` is the unwind's shape: local jobs were just killed, SLURM jobs run on."""
+    """`keep_slurm` is the unwind's shape: local jobs were just killed, SLURM jobs run on.
+
+    What stays is everything the scheduler holds: the batch's tag and the id beside it.
+    """
     # No registry entry for local-3, so its pid stays None.
-    slurm.record_leases(tmp_path, ["12345", "local-3"], accepted="local-3")
+    slurm.record_leases(tmp_path, ["12345", "local-3"], batch="cr0123456789")
 
     slurm.release_leases(tmp_path, keep_slurm=True)
-    assert [lease.id for lease in slurm.load_leases(tmp_path)] == ["12345"]
+    assert [lease.id for lease in slurm.load_leases(tmp_path)] == ["cr0123456789", "12345"]
 
     # A second unwind with nothing but local leases must not leave an empty ledger
     # behind — an existing-but-empty file and no file must mean the same thing.
     slurm.release_leases(tmp_path)
-    slurm.record_leases(tmp_path, ["local-4"], accepted="local-4")
+    slurm.record_leases(tmp_path, ["local-4"], batch=None)
     slurm.release_leases(tmp_path, keep_slurm=True)
     assert not slurm.lease_path(tmp_path).exists()
 
@@ -1951,7 +1964,7 @@ def test_an_unreadable_lease_ledger_is_refused_and_not_called_corrupt(tmp_path: 
     """
     from chemrefine.errors import CacheError
 
-    slurm.record_leases(tmp_path, ["local-1"], accepted="local-1")
+    slurm.record_leases(tmp_path, ["local-1"], batch=None)
     path = slurm.lease_path(tmp_path)
     target = path if locked == "file" else path.parent
     target.chmod(0)
@@ -1997,7 +2010,7 @@ def test_the_lease_ledger_is_written_readable_for_the_next_driver(tmp_path: Path
 
     previous = os.umask(0o027)
     try:
-        slurm.record_leases(tmp_path, ["local-1"], accepted="local-1")
+        slurm.record_leases(tmp_path, ["local-1"], batch=None)
         mode = stat.S_IMODE(slurm.lease_path(tmp_path).stat().st_mode)
     finally:
         os.umask(previous)
@@ -2007,14 +2020,15 @@ def test_the_lease_ledger_is_written_readable_for_the_next_driver(tmp_path: Path
 def test_a_failed_lease_write_leaves_no_temp_file_behind(tmp_path: Path):
     """The temp file is the writer's, and it is gone whether or not the rename happened.
 
-    The refusal is the output tree's, naming the ledger; recording a local job, it goes on
-    as it came, since the job is the unwind's to stop.
+    The refusal is the output tree's, naming the ledger, and it goes on as it came whatever
+    the write was recording: a local job is the unwind's to stop, and a scheduler job is on
+    record under its batch's tag.
     """
     with (
         patch.object(Path, "replace", side_effect=OSError(errno.ENOSPC, "disk full")),
         pytest.raises(OutputTreeError) as refusal,
     ):
-        slurm.record_leases(tmp_path, ["local-1"], accepted="local-1")
+        slurm.record_leases(tmp_path, ["local-1"], batch=None)
     assert str(refusal.value) == f"cannot write {slurm.lease_path(tmp_path)}: disk full"
     assert not list(slurm.lease_path(tmp_path).parent.glob(".tmp_*"))
     assert not slurm.lease_path(tmp_path).exists()
@@ -2027,7 +2041,7 @@ def test_an_unwinding_release_writes_nothing_when_it_drops_nothing(tmp_path: Pat
     could only meet the full or read-only disk the unwind may be stopping for. A step with
     no ledger at all is the same release: nothing to drop, nothing to remove.
     """
-    slurm.record_leases(tmp_path, ["12345"], accepted="12345")
+    slurm.record_leases(tmp_path, ["12345"], batch="cr0123456789")
     unrecorded = tmp_path / "step2"
     refused = OSError(errno.EROFS, os.strerror(errno.EROFS))
     with (
@@ -2036,13 +2050,13 @@ def test_an_unwinding_release_writes_nothing_when_it_drops_nothing(tmp_path: Pat
     ):
         slurm.release_leases(tmp_path, keep_slurm=True)
         slurm.release_leases(unrecorded, keep_slurm=True)
-    assert [lease.id for lease in slurm.load_leases(tmp_path)] == ["12345"]
+    assert [lease.id for lease in slurm.load_leases(tmp_path)] == ["cr0123456789", "12345"]
     assert not unrecorded.exists()
 
 
 def test_a_release_the_tree_refuses_is_named(tmp_path: Path):
     """After a drained batch, a ledger the filesystem will not remove is the batch's refusal."""
-    slurm.record_leases(tmp_path, ["local-1"], accepted="local-1")
+    slurm.record_leases(tmp_path, ["local-1"], batch=None)
     ledger = slurm.lease_path(tmp_path)
     with (
         patch.object(
@@ -2055,22 +2069,122 @@ def test_a_release_the_tree_refuses_is_named(tmp_path: Path):
     assert ledger.exists()
 
 
-def test_scancel_answers_whether_the_cancel_landed():
-    """argv with no shell; ``None`` when the scheduler took it, its words when it did not."""
-    ok = subprocess.CompletedProcess(["scancel", "4242"], 0, "", "")
-    with patch.object(dispatch.subprocess, "run", return_value=ok) as run:
-        assert dispatch._scancel("4242") is None
-    assert run.call_args.args[0] == ["scancel", "4242"]
-    assert "shell" not in run.call_args.kwargs
-    refused = subprocess.CalledProcessError(1, "scancel", "", "Invalid job id specified\n")
-    with patch.object(dispatch.subprocess, "run", side_effect=refused):
-        assert dispatch._scancel("4242") == "Invalid job id specified"
-    silent = subprocess.CalledProcessError(1, "scancel", "", "")
-    with patch.object(dispatch.subprocess, "run", side_effect=silent):
-        assert dispatch._scancel("4242") == "scancel exited 1"
-    missing = FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), "scancel")
-    with patch.object(dispatch.subprocess, "run", side_effect=missing):
-        assert dispatch._scancel("4242") == "[Errno 2] No such file or directory: 'scancel'"
+def test_a_batch_is_on_record_under_its_own_tag_before_any_job_is(tmp_path: Path):
+    """The tag is written alone, ahead of every id, and no two batches share one.
+
+    It is the one record that needs no answer from the scheduler, so it is the one that
+    names a job whose id never reached the driver.
+    """
+    first = slurm.lease_batch(tmp_path)
+    assert [(lease.id, lease.pid, lease.local) for lease in slurm.load_leases(tmp_path)] == [
+        (first, None, False)
+    ]
+    second = slurm.lease_batch(tmp_path)
+    assert first != second
+    assert [lease.id for lease in slurm.load_leases(tmp_path)] == [second]
+    assert all(tag.startswith("cr") and len(tag) == 12 for tag in (first, second))
+
+
+def test_the_batchs_tag_stays_on_the_ledger_through_every_submission(tmp_path: Path):
+    """Each write is the tag and the jobs then in flight; a batch without one writes none."""
+    batch = slurm.lease_batch(tmp_path)
+    slurm.record_leases(tmp_path, ["4241"], batch=batch)
+    slurm.record_leases(tmp_path, ["4241", "4242"], batch=batch)
+    assert [lease.id for lease in slurm.load_leases(tmp_path)] == [batch, "4241", "4242"]
+    slurm.record_leases(tmp_path, ["local-1"], batch=None)
+    assert [lease.id for lease in slurm.load_leases(tmp_path)] == ["local-1"]
+
+
+def test_a_job_is_submitted_under_its_batchs_tag():
+    """``--job-name`` on the command line, where neither the script nor the environment
+    outranks it; a job outside a batch is named by its script alone."""
+    fake = MagicMock(returncode=0, stdout="4242\n", stderr="")
+    with (
+        patch("chemrefine.slurm.dispatch.shutil.which", return_value="/usr/bin/sbatch"),
+        patch.object(subprocess, "run", return_value=fake) as run,
+    ):
+        slurm.submit("out/step1/0/step1_0.slurm", batch="cr0123456789")
+        slurm.submit("out/step1/0/step1_0.slurm")
+    tagged, plain = (call.args[0] for call in run.call_args_list)
+    assert tagged == [
+        "sbatch",
+        "--parsable",
+        "--job-name=step1_0.cr0123456789",
+        "out/step1/0/step1_0.slurm",
+    ]
+    assert plain == ["sbatch", "--parsable", "out/step1/0/step1_0.slurm"]
+
+
+def _squeue_says(stdout: str) -> MagicMock:
+    """A ``squeue`` that answers with ``stdout``."""
+    return MagicMock(returncode=0, stdout=stdout, stderr="")
+
+
+def test_poll_jobs_finds_a_batchs_jobs_by_the_tag_their_names_carry():
+    """A job is its batch's by name, whether or not its id was ever recorded.
+
+    One ``squeue`` answers for the ids and the tag alike. The tag's rows are the jobs and
+    array tasks named under it; another batch's job and a job with no tag are not among
+    them.
+    """
+    queue = (
+        "4241 step1_0.cr0123456789\n"
+        "4242 step1_1.cr0123456789\n"
+        "4243_7 step1_array.cr0123456789\n"
+        "4243_[8-99%4] step1_array.cr0123456789\n"
+        "4250 step1_0.crffffffffff\n"
+        "4251 step1_0\n"
+    )
+    with patch.object(subprocess, "run", return_value=_squeue_says(queue)) as run:
+        state = slurm.poll_jobs(["cr0123456789", "4241", "999"])
+    assert run.call_count == 1
+    assert run.call_args.args[0][-2:] == ["-o", "%i %j"]
+    assert state.finished == {"999"}
+    assert state.rows == frozenset({"4241", "4242", "4243_7", "4243_[8-99%4]"})
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["cr0123456789", "cr0123456789.step1_0", "step1_0.cr0123456789x", "step1_0cr0123456789", ""],
+    ids=["tag-alone", "tag-first", "tag-inside", "no-dot", "no-name"],
+)
+def test_a_job_is_its_batchs_only_when_its_name_ends_in_the_tag(name: str):
+    """The tag is the name's tail after a dot, as :func:`submit` writes it — nothing looser."""
+    with patch.object(subprocess, "run", return_value=_squeue_says(f"4242 {name}\n")):
+        state = slurm.poll_jobs(["cr0123456789"])
+    assert state.finished == {"cr0123456789"}
+    assert state.rows == frozenset()
+
+
+def test_a_job_name_with_spaces_is_read_whole():
+    """The id is the first field and the name the rest of the line, less the padding."""
+    padded = "  4242 my job step1_0.cr0123456789  \n"
+    with patch.object(subprocess, "run", return_value=_squeue_says(padded)):
+        assert slurm.poll_jobs(["cr0123456789"]).rows == frozenset({"4242"})
+
+
+def test_poll_jobs_asks_for_names_only_when_a_tag_is_asked_about():
+    """The throttler's poll of ids reads ids alone, as squeue prints them for ``%i``."""
+    with patch.object(subprocess, "run", return_value=_squeue_says("4241\n")) as run:
+        slurm.poll_jobs(["4241"])
+    assert run.call_args.args[0][-2:] == ["-o", "%i"]
+
+
+def test_a_job_name_that_cannot_be_decoded_is_some_other_jobs(tmp_path: Path):
+    """A name is bytes whoever submitted the job chose; one this locale cannot decode stops
+    nothing.
+
+    A real ``squeue`` stand-in, since the decoding is the subprocess's: the batch's own job
+    is found beside a job whose name is not text at all.
+    """
+    squeue = tmp_path / "squeue"
+    squeue.write_text(
+        "#!/bin/bash\nprintf '4241 \\377\\376 job\\n4242 step1_0.cr0123456789\\n'\n",
+        encoding="utf-8",
+    )
+    squeue.chmod(0o755)
+    state = slurm.poll_jobs(["cr0123456789"], squeue_cmd=str(squeue))
+    assert state.rows == frozenset({"4242"})
 
 
 def _array_script(tmp_path: Path) -> Path:

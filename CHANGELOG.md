@@ -186,7 +186,13 @@ for those and the full map.
   deleted by hand once that run is known dead (the error says so). A
   `scancel`-ed (SIGTERM'd) driver exits in an orderly way (code 143),
   releasing the lock and terminating its local jobs — only a genuine SIGKILL
-  can strand a lock, and the same-host dead-pid reclaim covers that case.
+  can strand a lock, and the same-host dead-pid reclaim covers that case. A
+  driver's jobs hold the tree after it as well: each batch records a tag before
+  it asks `sbatch` for its first job and names every job under it (`squeue`
+  lists `step1_0.cr1f3a9c21b0`, where v1.3.1 named a job after its input file
+  alone), each submission records the job's id or a local job's pid, and a new
+  run that finds a recorded job still queued or running — by id, by pid, or by
+  a name under a recorded tag — exits with code `10` before it touches the tree.
   `run_status`'s holder payload carries a three-valued `alive` field:
   `true`/`false` for a same-host holder, `null` for a holder no status read can
   probe: one on a foreign host, or one whose lock names a number no process

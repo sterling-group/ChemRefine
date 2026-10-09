@@ -209,8 +209,8 @@ class OutputTreeError(WriteRefusedError):
     place would serve what they were asked to discard; a ``run``, ``resume``, ``rerun`` or
     ``rerun-errors`` that stopped inside its steps continues with ``chemrefine resume``,
     which adopts what the jobs already finished — an artifact step's product among it. A
-    message that also names a SLURM job the run could not cancel, or a live run whose lock
-    it could not put back, says what to do about that first.
+    message that also names a live run whose lock it could not put back says what to do
+    about that first.
     """
 
 

@@ -12,14 +12,14 @@ run stopped by a signal exits with the shell's code for that signal.
 | `1` | Generic failure | A step halted under `on_failure: stop`, or an error with no more specific code | Read the last log lines; if a step halted, see [pending failures](#a-step-halted-with-pending-failures) |
 | `2` | Config invalid | A typo in `input.yaml` — unknown key, wrong type, non-contiguous `step:` numbers, a directory path with a shell metacharacter in it | The message quotes the offending field; fix and re-run |
 | `3` | Unknown engine | `engine:` names something not in the registry | Check the spelling against the [configuration reference](../workflow/configuration.md); legacy names (`mlff`, `dft`) are rewritten automatically |
-| `4` | Job submission refused | `sbatch` rejected the script — bad partition, over a QoS limit, missing account | The message includes what `sbatch` said. To run without SLURM, set `dispatch: local` |
+| `4` | Job submission refused | `sbatch` rejected the script — bad partition, over a QoS limit, missing account | The message includes what `sbatch` said. To run without SLURM, set `dispatch: local`. An `sbatch` that failed on a controller timeout may have queued the job all the same: the next run finds it in the queue and [stops until it has drained](#a-previous-runs-jobs-are-still-queued-or-running) |
 | `5` | Job ran but failed | A backend reported failure the pipeline could not recover from | Look at the structure's `.runlog` and `.err` under `outputs/stepN/<id>/` |
 | `6` | Output unparseable | The calculation produced a file ChemRefine could not read — usually truncated by a time limit or a node failure | Inspect the `.out`; re-run the affected structures with `chemrefine rerun-errors N` |
 | `7` | Cache corrupt or unreadable | A `_cache/` file or a directory of the run's tree this account cannot read, an interrupted save, or a cache written by a different ChemRefine version | *Unreadable*: restore read access (or run as the tree's owner), then repeat the command. *Corrupt* or another version: `chemrefine rebuild-cache N` re-parses from the outputs already on disk without re-running anything. A job-lease ledger (`active_jobs.json`) is the exception: its message says when to delete it |
 | `8` | Wait deadline expired | Nothing finished for `job_timeout_seconds` | The queue has stalled, not merely slowed — a step that keeps completing jobs restarts the clock each time. Check whether the jobs are stuck (`squeue -u $USER`), or raise the limit. Only reachable when you set `job_timeout_seconds`; the default waits indefinitely |
 | `9` | Backend env could not be built | `chemrefine backends install <extra>` failed — no network on the node, a resolver conflict, a full disk, or an env tool that is a shell function rather than a binary on `PATH` | The message quotes the command that failed, or names the directory it could not create. Run it on a machine with internet (on HPC: a login node); the half-built env is removed, so a re-run starts clean |
 | `10` | Another run holds this output tree | A second `chemrefine` was pointed at an `output_dir` a first one is still working in — a double-submitted driver script, or a second terminal because the first "looks hung" while waiting on the queue | Wait for the other run. If it is known dead, see [another run holds this output tree](#another-run-holds-this-output-tree) |
-| `11` | Write refused by the filesystem | A full disk or quota, a read-only mount, or a directory this account cannot write — under `output_dir` during a run, or where `chemrefine scaffold`, the builder or an agent was asked to save a config, a template or a seed | The message names the file, and the one the filesystem refused when that was another. *A file you named* (`WriteRefusedError`): free space, fix the permissions or name another place, then ask again — a file that was there is as it was. *A run's output tree* (`OutputTreeError`): when the message also names a SLURM job the run could not cancel, `scancel` that job, or wait until `squeue -j <id>` no longer lists it, and when it names a run whose lock a reclaim swept up, wait for that run to end or stop it — before anything else. Free space, remount read-write or fix the permissions, then run the command that stopped again: `run` and `rerun` begin by discarding caches, so `resume` in their place would serve what they were asked to discard. A `run`, `resume`, `rerun` or `rerun-errors` that stopped inside its steps continues with `chemrefine resume`, which reads back what the jobs had already finished — a trained model included — and runs only the rest |
+| `11` | Write refused by the filesystem | A full disk or quota, a read-only mount, or a directory this account cannot write — under `output_dir` during a run, or where `chemrefine scaffold`, the builder or an agent was asked to save a config, a template or a seed | The message names the file, and the one the filesystem refused when that was another. *A file you named* (`WriteRefusedError`): free space, fix the permissions or name another place, then ask again — a file that was there is as it was. *A run's output tree* (`OutputTreeError`): when the message also names a run whose lock a reclaim swept up, wait for that run to end or stop it before anything else. Free space, remount read-write or fix the permissions, then run the command that stopped again: `run` and `rerun` begin by discarding caches, so `resume` in their place would serve what they were asked to discard. A `run`, `resume`, `rerun` or `rerun-errors` that stopped inside its steps continues with `chemrefine resume`, which reads back what the jobs had already finished — a trained model included — and runs only the rest |
 | `130` | Interrupted | `Ctrl-C` (SIGINT) stopped the driver | On its way out the run stopped its local jobs and released the output tree. `chemrefine resume` continues it — see [the run was interrupted mid-step](#the-run-was-interrupted-mid-step) |
 | `143` | Terminated | SIGTERM stopped the driver: `scancel`, the walltime of the batch job it ran in, a plain `kill` | As for `130`. Jobs the run had submitted to SLURM run on, and `chemrefine resume` refuses with code `10` while one of them is still queued or running: wait for them, or `scancel` them |
 
@@ -135,25 +135,29 @@ chemrefine resume input.yaml
 A dead driver is not the whole story: the SLURM jobs it submitted keep running
 after it is gone (that is the scheduler's job), and so do locally dispatched
 jobs after a `kill -9`. The jobs in flight are therefore recorded in the step's
-`_cache/active_jobs.json`, rewritten at each submission, and a new run checks
-those records — with the same
+`_cache/active_jobs.json`, and a new run checks those records — with the same
 exit code `10` — before touching the tree, because those jobs' exit traps still
 copy results into it.
 
-- **SLURM ids**: the run asks `squeue` once. Wait for the jobs to drain (or
-  `scancel` them), then re-run. On a host with no `squeue` the ids cannot be
-  checked; the run warns and proceeds, so a tree copied off-cluster stays
-  usable.
+- **SLURM jobs**: a batch records a tag of its own before it asks `sbatch` for
+  its first job, and every job of the batch is submitted under a name that ends
+  in it — `squeue` lists `step1_0.cr1f3a9c21b0` for structure `0` of step 1, an
+  array as `step1_array.cr1f3a9c21b0`. Each job's id joins the tag in the record
+  as `sbatch` returns it. The new run asks `squeue` once, for the recorded ids
+  and for any job named under a recorded tag, so it also finds a job whose id
+  never reached the record: the driver was killed, or `sbatch` failed, after the
+  scheduler had taken the job. The message names the jobs the queue listed. Wait
+  for them to drain (or `scancel` them), then re-run. When `squeue` itself
+  fails, the run stops and says so: run the command again once the scheduler
+  answers. On a host with no `squeue` nothing can be checked; the run warns and
+  proceeds, so a tree copied off-cluster stays usable.
 - **Local jobs**: probed by pid on the host that submitted them. From any other
   host they cannot be probed — once you know that run's jobs are dead, delete
   the named `active_jobs.json` and re-run.
 
-When the record of a job `sbatch` has just accepted is refused — the disk filled
-or the quota ran out at that moment — the run cancels that job before it stops
-with code `11`, since no later check could see it. If the cancel fails too, the
-message names the job: `scancel` it, or wait until `squeue -j <id>` no longer
-lists it, before running the command again. A local job stops with the run, like
-the batch's other local jobs.
+A record the filesystem refuses stops the run with code `11`, and the batch's
+SLURM jobs are on record all the same, under the tag written before the first of
+them was asked for. A local job stops with the run.
 
 ## A structure keeps failing to converge
 

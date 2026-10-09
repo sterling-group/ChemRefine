@@ -1636,15 +1636,115 @@ def test_the_fence_refuses_while_a_recorded_slurm_job_is_still_queued(tmp_path: 
     step_dir = cfg.step_dir(cfg.steps[0])
     _plant_leases(step_dir, {"id": "424242", "host": "cluster-login", "pid": None})
 
+    still_queued = slurm.QueueState(frozenset(), frozenset({"424242"}))
     with (
         patch.object(slurm, "scheduler_reachable", return_value=True),
-        patch.object(slurm, "finished_jobs", return_value=set()),
+        patch.object(slurm, "poll_jobs", return_value=still_queued),
         pytest.raises(RunLockError, match="424242"),
     ):
         pipeline.run(cfg)
 
     assert slurm.load_leases(step_dir), "the refusal must not consume its own evidence"
     assert not (cfg.output_dir / pipeline.RUN_LOCK_NAME).exists()
+
+
+def _queue_shows(*rows: str) -> Callable[..., object]:
+    """``subprocess.run`` standing in for a ``squeue`` whose answer is ``rows``."""
+    import subprocess
+
+    def run(argv: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        assert argv[0] == "squeue", argv
+        return subprocess.CompletedProcess(argv, 0, "".join(f"{row}\n" for row in rows), "")
+
+    return run
+
+
+def test_the_fence_finds_a_job_whose_id_was_never_recorded_by_its_batchs_tag(tmp_path: Path):
+    """A job the scheduler accepted is the batch's by name, on record or not.
+
+    The ledger is what a driver killed between ``sbatch`` taking its second job and the
+    write of that job's id leaves: the batch's tag and the first job's id. The first job has
+    drained; the second is still queued under the tag, and the refusal names it by the id
+    the queue gives.
+    """
+    import subprocess
+    from unittest.mock import patch
+
+    from chemrefine import slurm
+    from chemrefine.errors import RunLockError
+
+    cfg = _config(tmp_path, input=None)
+    step_dir = cfg.step_dir(cfg.steps[0])
+    ledger = _plant_leases(
+        step_dir,
+        {"id": "cr0123456789", "host": "cluster-login", "pid": None},
+        {"id": "4241", "host": "cluster-login", "pid": None},
+    )
+    queue = _queue_shows("4242 step1_1.cr0123456789", "4250 step1_0.crffffffffff")
+    with (
+        patch.object(slurm, "scheduler_reachable", return_value=True),
+        patch.object(subprocess, "run", queue),
+        pytest.raises(RunLockError) as refusal,
+    ):
+        pipeline.run(cfg)
+
+    assert str(refusal.value).startswith(
+        f"a previous run's SLURM job(s) 4242 are still queued or running (recorded in {ledger})"
+    )
+    assert [lease.id for lease in slurm.load_leases(step_dir)] == ["cr0123456789", "4241"]
+
+
+def test_the_fence_names_an_array_once_by_its_parent_id(tmp_path: Path):
+    """The queue lists an array task by task; the refusal names what ``scancel`` takes."""
+    import subprocess
+    from unittest.mock import patch
+
+    from chemrefine import slurm
+    from chemrefine.errors import RunLockError
+
+    cfg = _config(tmp_path, input=None)
+    _plant_leases(
+        cfg.step_dir(cfg.steps[0]), {"id": "cr0123456789", "host": "cluster-login", "pid": None}
+    )
+    queue = _queue_shows(
+        "4243_7 step1_array.cr0123456789", "4243_[8-99%4] step1_array.cr0123456789"
+    )
+    with (
+        patch.object(slurm, "scheduler_reachable", return_value=True),
+        patch.object(subprocess, "run", queue),
+        pytest.raises(RunLockError, match=r"SLURM job\(s\) 4243 are still queued or running"),
+    ):
+        pipeline.run(cfg)
+
+
+def test_the_fence_stops_when_squeue_cannot_say(tmp_path: Path):
+    """A queue that could not be asked proves nothing drained, and the refusal says that.
+
+    It names no job, since none was listed, and it keeps the record for the run that can
+    ask.
+    """
+    import subprocess
+    from unittest.mock import patch
+
+    from chemrefine import slurm
+    from chemrefine.errors import RunLockError
+
+    cfg = _config(tmp_path, input=None)
+    step_dir = cfg.step_dir(cfg.steps[0])
+    ledger = _plant_leases(step_dir, {"id": "cr0123456789", "host": "cluster-login", "pid": None})
+    down = subprocess.CalledProcessError(1, "squeue", "", "Unable to contact slurm controller")
+    with (
+        patch.object(slurm, "scheduler_reachable", return_value=True),
+        patch.object(subprocess, "run", side_effect=down),
+        pytest.raises(RunLockError) as refusal,
+    ):
+        pipeline.run(cfg)
+
+    assert str(refusal.value).startswith(
+        "squeue could not say whether a previous run's SLURM jobs are still queued or running "
+        f"(recorded in {ledger})"
+    )
+    assert slurm.load_leases(step_dir)
 
 
 def test_a_drained_slurm_jobs_lease_is_swept_and_the_run_proceeds(tmp_path: Path):
@@ -1661,11 +1761,41 @@ def test_a_drained_slurm_jobs_lease_is_swept_and_the_run_proceeds(tmp_path: Path
 
     with (
         patch.object(slurm, "scheduler_reachable", return_value=True),
-        patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids)),
+        patch.object(
+            slurm,
+            "poll_jobs",
+            side_effect=lambda ids, **_: slurm.QueueState(frozenset(ids), frozenset()),
+        ),
     ):
         outcomes = pipeline.run(cfg)
 
     assert outcomes, "a provably-drained ledger must not block the run"
+    assert not slurm.lease_path(step_dir).exists()
+
+
+def test_a_batch_whose_jobs_have_all_left_the_queue_is_swept_with_its_tag(tmp_path: Path):
+    """No job under the tag and no recorded id still queued: the batch is over."""
+    import subprocess
+    from unittest.mock import patch
+
+    from chemrefine import slurm
+
+    seed = tmp_path / "step0_seed.xyz"
+    io.write_single_xyz(_h2(), seed)
+    cfg = _config(tmp_path, input=seed)
+    step_dir = cfg.step_dir(cfg.steps[0])
+    _plant_leases(
+        step_dir,
+        {"id": "cr0123456789", "host": "cluster-login", "pid": None},
+        {"id": "4241", "host": "cluster-login", "pid": None},
+    )
+    with (
+        patch.object(slurm, "scheduler_reachable", return_value=True),
+        patch.object(subprocess, "run", _queue_shows("4250 step1_0.crffffffffff")),
+    ):
+        outcomes = pipeline.run(cfg)
+
+    assert outcomes
     assert not slurm.lease_path(step_dir).exists()
 
 

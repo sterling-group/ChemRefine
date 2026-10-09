@@ -33,7 +33,14 @@ from chemrefine.errors import (
     ThrottleTimeoutError,
 )
 from chemrefine.slurm import dispatch
-from chemrefine.state import JobBatch, PipelineState, RunBlock, StepContext, Structure
+from chemrefine.state import (
+    JobBatch,
+    PipelineState,
+    RunBlock,
+    StepContext,
+    StepInputs,
+    Structure,
+)
 
 
 class _FakeJobEngine(JobEngine):
@@ -324,11 +331,11 @@ def test_run_batch_terminates_local_jobs_when_a_submission_fails(tmp_path: Path)
     next, and their log handles stay open.
     """
     engine = _FakeJobEngine()
-    ctx = _ctx(tmp_path, ids=("0", "1", "2"))
+    ctx = _ctx(tmp_path, ids=("0", "1", "2"), dispatch="local")
     inputs = engine.prepare(ctx)
     terminated: list[tuple[str, ...]] = []
 
-    def failing_submit(script_path, *, env=None, dispatch="auto"):
+    def failing_submit(script_path, *, batch=None, env=None, dispatch="auto"):
         if len(terminated) or script_path.stem.endswith("_1"):
             raise JobSubmissionError("sbatch refused the job")
         return "local-1"
@@ -355,25 +362,28 @@ def test_an_unwinding_batch_keeps_its_slurm_leases(tmp_path: Path):
 
     A driver that dies mid-batch leaves its SLURM jobs running by design; their recorded
     leases are the only evidence the resume fence has, so the exception path must keep
-    them while dropping the leases of the local jobs it just terminated.
+    them — the batch's tag and the id beside it — while dropping the leases of the local
+    jobs it just terminated.
     """
     engine = _FakeJobEngine()
-    ctx = _ctx(tmp_path, ids=("0", "1", "2"))
+    ctx = replace(_ctx(tmp_path, ids=("0", "1", "2"), dispatch="slurm"), max_cores=3)
     inputs = engine.prepare(ctx)
 
     with (
+        patch.object(dispatch, "sbatch_available", return_value=True),
         patch.object(
             slurm,
             "submit",
             side_effect=["12345", "local-1", JobSubmissionError("sbatch refused the job")],
-        ),
+        ) as submit,
         patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set()),
         patch.object(slurm, "terminate_local_jobs"),
         pytest.raises(JobSubmissionError),
     ):
         _execution.run_batch(engine, inputs, ctx)
 
-    assert [lease.id for lease in slurm.load_leases(ctx.step_dir)] == ["12345"]
+    batch = submit.call_args.kwargs["batch"]
+    assert [lease.id for lease in slurm.load_leases(ctx.step_dir)] == [batch, "12345"]
 
 
 @patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))
@@ -386,7 +396,7 @@ def test_the_ledger_holds_the_jobs_in_flight_not_the_whole_batch(submit, _finish
     fence probes every pid it ever ran, recycled ones included.
     """
     engine = _FakeJobEngine()
-    ctx = replace(_ctx(tmp_path, ids=("0", "1", "2")), max_cores=1)
+    ctx = replace(_ctx(tmp_path, ids=("0", "1", "2"), dispatch="local"), max_cores=1)
     seen: list[list[str]] = []
 
     def _submit(*_args: object, **_kwargs: object) -> str:
@@ -453,25 +463,10 @@ def _ledger_full_from(job_id: str) -> Callable[[Path, str | Path], Path]:
     return replace
 
 
-def _scancel_answers(answer: object) -> Callable[..., object]:
-    """``subprocess.run`` with ``scancel`` answered by ``answer``; anything else runs for real."""
-    real_run = subprocess.run
-
-    def run(argv, *args, **kwargs):
-        if argv[0] != "scancel":
-            return real_run(argv, *args, **kwargs)
-        if isinstance(answer, BaseException):
-            raise answer
-        return answer
-
-    return run
-
-
 def test_a_failed_ledger_write_leaves_its_local_job_in_the_unwinds_sweep(tmp_path: Path):
     """Registered before it is leased, so the unwind terminates the job it was recording.
 
-    A local job is the unwind's to stop, so the refused write cancels nothing itself: the
-    output tree's refusal goes on as it came.
+    A local job is the unwind's to stop, and the output tree's refusal goes on as it came.
     """
     engine = _FakeJobEngine()
     ctx = _ctx(tmp_path, dispatch="local")
@@ -479,7 +474,6 @@ def test_a_failed_ledger_write_leaves_its_local_job_in_the_unwinds_sweep(tmp_pat
     with (
         patch.object(slurm, "submit", return_value="local-1"),
         patch.object(Path, "replace", _ledger_full_from("local-1")),
-        patch.object(dispatch.subprocess, "run", side_effect=_scancel_answers(None)) as run,
         patch.object(
             slurm, "terminate_local_jobs", side_effect=lambda ids=(): terminated.append(tuple(ids))
         ),
@@ -490,79 +484,201 @@ def test_a_failed_ledger_write_leaves_its_local_job_in_the_unwinds_sweep(tmp_pat
         f"cannot write {slurm.lease_path(ctx.step_dir)}: No space left on device"
     )
     assert terminated == [("local-1",)]
-    assert not [c for c in run.call_args_list if c.args[0][0] == "scancel"]
+
+
+def _scheduler_answers(
+    step_dir: Path, answers: list[object], seen: list[tuple[list[str], list[str]]]
+) -> Callable[..., object]:
+    """``subprocess.run`` standing in for ``sbatch``: one of ``answers`` per call, in order.
+
+    Each call first notes what the ledger held at that moment and the argv it was given,
+    which is what the scheduler would have to go on if the driver died right there. An
+    answer that is an exception is raised; a string is the id ``sbatch --parsable`` prints.
+    """
+    remaining = iter(answers)
+
+    def run(argv: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        assert argv[0] == "sbatch", argv
+        seen.append(([lease.id for lease in slurm.load_leases(step_dir)], argv))
+        answer = next(remaining)
+        if isinstance(answer, BaseException):
+            raise answer
+        return subprocess.CompletedProcess(argv, 0, f"{answer}\n", "")
+
+    return run
+
+
+def test_a_scheduler_batch_is_on_record_before_its_first_job_is_asked_for(tmp_path: Path):
+    """The tag is on the ledger when ``sbatch`` is first called, and every job is named by it.
+
+    A driver that dies once the scheduler has a job, or never learns its id, leaves a job
+    no id on the ledger names. Whatever happens after ``sbatch`` is asked, the ledger
+    already holds the name the queue will show that job under.
+    """
+    engine = _FakeJobEngine()
+    ctx = replace(_ctx(tmp_path, ids=("0", "1"), dispatch="slurm"), max_cores=2)
+    seen: list[tuple[list[str], list[str]]] = []
+    with (
+        patch.object(dispatch, "sbatch_available", return_value=True),
+        patch.object(
+            dispatch.subprocess, "run", _scheduler_answers(ctx.step_dir, ["4241", "4242"], seen)
+        ),
+        patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids)),
+    ):
+        _execution.run_batch(engine, engine.prepare(ctx), ctx)
+
+    (first_ledger, first_argv), (second_ledger, second_argv) = seen
+    (batch,) = first_ledger
+    assert batch.startswith("cr")
+    assert second_ledger == [batch, "4241"]
+    assert first_argv[:3] == ["sbatch", "--parsable", f"--job-name=step1_0.{batch}"]
+    assert second_argv[:3] == ["sbatch", "--parsable", f"--job-name=step1_1.{batch}"]
+    assert not slurm.lease_path(ctx.step_dir).exists(), "a drained batch releases its tag too"
+
+
+def test_an_array_batch_is_on_record_before_its_first_chunk_is_asked_for(tmp_path: Path):
+    """The array path takes the same lease: one tag, written first, on every chunk."""
+    engine = _FakeJobEngine()
+    ctx = _ctx(tmp_path, ids=("0", "1"), slurm_array=True, dispatch="slurm")
+    seen: list[tuple[list[str], list[str]]] = []
+    with (
+        patch.object(dispatch, "sbatch_available", return_value=True),
+        patch("chemrefine.slurm.script._MAX_ARRAY_SIZE", 1),
+        patch.object(
+            dispatch.subprocess, "run", _scheduler_answers(ctx.step_dir, ["4241", "4242"], seen)
+        ),
+        patch.object(slurm, "wait_for_jobs"),
+    ):
+        _execution.run_batch(engine, engine.prepare(ctx), ctx)
+
+    (first_ledger, first_argv), (second_ledger, second_argv) = seen
+    (batch,) = first_ledger
+    assert second_ledger == [batch, "4241"]
+    assert f"--job-name=step1_array.{batch}" in first_argv
+    assert f"--job-name=step1_array.{batch}" in second_argv
 
 
 @pytest.mark.parametrize(
-    ("scancel", "said"),
+    "answer",
     [
-        (
-            subprocess.CompletedProcess(["scancel", "4242"], 0, "", ""),
-            "so the run cancelled it (scancel 4242).",
+        subprocess.CalledProcessError(
+            1, "sbatch", "", "sbatch: error: Socket timed out on send/recv operation\n"
         ),
-        (
-            subprocess.CalledProcessError(1, "scancel", "", "Unable to contact slurm controller\n"),
-            "cancelling it failed (Unable to contact slurm controller): `scancel 4242`, or "
-            "wait until `squeue -j 4242` no longer lists it, before running the command again.",
-        ),
-        (
-            FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), "scancel"),
-            "cancelling it failed ([Errno 2] No such file or directory: 'scancel'): `scancel 4242`",
-        ),
+        "Thank you for using the site wrapper",
     ],
-    ids=["cancelled", "controller-unreachable", "no-scancel"],
+    ids=["sbatch-failed", "no-id-in-the-answer"],
 )
-def test_a_slurm_job_whose_lease_cannot_be_written_is_cancelled_or_named(
-    tmp_path: Path, scancel: object, said: str
+def test_a_job_whose_id_never_arrived_is_on_record_when_the_batch_unwinds(
+    tmp_path: Path, answer: object
 ):
-    """Accepted but unrecorded, a SLURM job is invisible to the next run's fence.
+    """``sbatch`` failing, or answering without an id, does not prove the scheduler has no job.
 
-    The unwind leaves SLURM jobs running because their leases fence the next run; this one
-    has none. So the refused write cancels exactly that job, and the refusal names it and
-    what became of the cancel. The job recorded before it keeps its lease.
+    A controller that times out may have queued the job it never confirmed. The unwind
+    keeps the batch's tag, which is the one record that names such a job.
+    """
+    engine = _FakeJobEngine()
+    ctx = replace(_ctx(tmp_path, ids=("0", "1"), dispatch="slurm"), max_cores=2)
+    seen: list[tuple[list[str], list[str]]] = []
+    with (
+        patch.object(dispatch, "sbatch_available", return_value=True),
+        patch.object(
+            dispatch.subprocess, "run", _scheduler_answers(ctx.step_dir, ["4241", answer], seen)
+        ),
+        patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set()),
+        pytest.raises(JobSubmissionError),
+    ):
+        _execution.run_batch(engine, engine.prepare(ctx), ctx)
+
+    batch = seen[0][0][0]
+    assert [lease.id for lease in slurm.load_leases(ctx.step_dir)] == [batch, "4241"]
+
+
+def test_a_slurm_job_whose_id_cannot_be_written_stays_on_record_under_its_batchs_tag(
+    tmp_path: Path,
+):
+    """A ledger write the disk refuses after ``sbatch`` accepted a job leaves the job named.
+
+    The tag was written before the job was asked for, so the refusal goes on as it came:
+    nothing is cancelled, and the job runs on for the next run to wait for and read.
     """
     engine = _FakeJobEngine()
     ctx = replace(_ctx(tmp_path, ids=("0", "1"), dispatch="slurm"), max_cores=2)
     with (
         patch.object(dispatch, "sbatch_available", return_value=True),
-        patch.object(slurm, "submit", side_effect=["4241", "4242"]),
+        patch.object(slurm, "submit", side_effect=["4241", "4242"]) as submit,
         patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids)),
         patch.object(Path, "replace", _ledger_full_from("4242")),
-        patch.object(dispatch.subprocess, "run", side_effect=_scancel_answers(scancel)) as run,
+        patch.object(dispatch.subprocess, "run") as run,
         pytest.raises(OutputTreeError) as refusal,
     ):
         _execution.run_batch(engine, engine.prepare(ctx), ctx)
 
-    assert [c.args[0] for c in run.call_args_list] == [["scancel", "4242"]]
-    assert str(refusal.value).startswith(
-        f"cannot write {slurm.lease_path(ctx.step_dir)}: No space left on device. SLURM had "
-        "already accepted job 4242, which no ledger records, so "
+    assert str(refusal.value) == (
+        f"cannot write {slurm.lease_path(ctx.step_dir)}: No space left on device"
     )
-    assert said in str(refusal.value)
-    assert isinstance(refusal.value.__cause__, OSError), "the disk's refusal is the cause"
-    assert [lease.id for lease in slurm.load_leases(ctx.step_dir)] == ["4241"]
+    run.assert_not_called()
+    batch = submit.call_args.kwargs["batch"]
+    assert [lease.id for lease in slurm.load_leases(ctx.step_dir)] == [batch, "4241"]
 
 
-def test_an_array_chunk_whose_lease_cannot_be_written_is_cancelled_before_any_wait(
+def test_an_array_chunk_whose_id_cannot_be_written_stays_on_record_and_nothing_waits(
     tmp_path: Path,
 ):
-    """The array path has no unwind, so the refused write is the one place to act."""
+    """The array path has no unwind, and needs none: the chunk is named by the batch's tag."""
     engine = _FakeJobEngine()
     ctx = _ctx(tmp_path, ids=("0", "1"), slurm_array=True, dispatch="slurm")
-    ok = subprocess.CompletedProcess(["scancel", "4242"], 0, "", "")
     with (
         patch.object(dispatch, "sbatch_available", return_value=True),
         patch("chemrefine.slurm.script._MAX_ARRAY_SIZE", 1),
-        patch.object(slurm, "submit_array", side_effect=["4241", "4242"]),
+        patch.object(slurm, "submit_array", side_effect=["4241", "4242"]) as submit_array,
         patch.object(slurm, "wait_for_jobs") as wait,
         patch.object(Path, "replace", _ledger_full_from("4242")),
-        patch.object(dispatch.subprocess, "run", side_effect=_scancel_answers(ok)) as run,
-        pytest.raises(OutputTreeError, match=r"so the run cancelled it \(scancel 4242\)"),
+        pytest.raises(OutputTreeError, match=r"No space left on device$"),
     ):
         _execution.run_batch(engine, engine.prepare(ctx), ctx)
-    assert [c.args[0] for c in run.call_args_list] == [["scancel", "4242"]]
     wait.assert_not_called()
-    assert [lease.id for lease in slurm.load_leases(ctx.step_dir)] == ["4241"]
+    batch = submit_array.call_args.kwargs["batch"]
+    assert [lease.id for lease in slurm.load_leases(ctx.step_dir)] == [batch, "4241"]
+
+
+def test_a_batch_the_plan_runs_locally_holds_no_tag_and_stays_local(tmp_path: Path):
+    """Only a batch that holds a tag can reach the scheduler.
+
+    Under ``dispatch: auto`` the plan is local when the batch starts with no ``sbatch``. It
+    asks :func:`~chemrefine.slurm.submit` for local dispatch outright, so an ``sbatch`` that
+    appears on ``PATH`` part-way through cannot be handed a job under no recorded name.
+    """
+    engine = _FakeJobEngine()
+    ctx = _ctx(tmp_path, ids=("0", "1"))
+    ledgers: list[list[str]] = []
+
+    def submit(_script: Path, **kwargs: object) -> str:
+        assert kwargs["batch"] is None
+        assert kwargs["dispatch"] == "local"
+        ledgers.append([lease.id for lease in slurm.load_leases(ctx.step_dir)])
+        return f"local-{len(ledgers)}"
+
+    with (
+        patch.object(dispatch, "sbatch_available", return_value=False),
+        patch.object(slurm, "submit", side_effect=submit),
+        patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids)),
+    ):
+        _execution.run_batch(engine, engine.prepare(ctx), ctx)
+    assert ledgers == [[], ["local-1"]]
+
+
+def test_a_scheduler_batch_with_nothing_to_submit_records_nothing(tmp_path: Path):
+    """A tag is the name of jobs about to be asked for; with none, the tree is not touched."""
+    engine = _FakeJobEngine()
+    ctx = _ctx(tmp_path, dispatch="slurm")
+    with (
+        patch.object(dispatch, "sbatch_available", return_value=True),
+        patch.object(slurm, "lease_batch") as lease_batch,
+    ):
+        batch = _execution.run_batch(engine, StepInputs(files=()), ctx)
+    assert batch.jobs == {}
+    lease_batch.assert_not_called()
+    assert not slurm.lease_path(ctx.step_dir).exists()
 
 
 def test_a_release_the_tree_refuses_does_not_replace_the_error_that_unwound_the_batch(
@@ -845,30 +961,32 @@ def test_an_array_batch_is_leased_before_the_wait_and_released_after(tmp_path: P
 
     with (
         patch.object(dispatch, "sbatch_available", return_value=True),
-        patch.object(slurm, "submit_array", return_value="900"),
+        patch.object(slurm, "submit_array", return_value="900") as submit_array,
         patch.object(slurm, "wait_for_jobs", side_effect=observing_wait),
     ):
         _execution.run_batch(engine, inputs, ctx)
 
-    assert at_wait_time == ["900"]
+    assert at_wait_time == [submit_array.call_args.kwargs["batch"], "900"]
     assert not slurm.lease_path(ctx.step_dir).exists()
 
 
 def test_an_interrupted_array_wait_keeps_the_lease(tmp_path: Path):
-    """A wait that dies leaves the parent id on record — array jobs are all SLURM's."""
+    """A wait that dies leaves the batch on record, tag and parent id — array jobs are all
+    SLURM's."""
     engine = _FakeJobEngine()
     ctx = _ctx(tmp_path, ids=("0",), slurm_array=True, dispatch="slurm")
     inputs = engine.prepare(ctx)
 
     with (
         patch.object(dispatch, "sbatch_available", return_value=True),
-        patch.object(slurm, "submit_array", return_value="901"),
+        patch.object(slurm, "submit_array", return_value="901") as submit_array,
         patch.object(slurm, "wait_for_jobs", side_effect=ThrottleTimeoutError("stalled")),
         pytest.raises(ThrottleTimeoutError),
     ):
         _execution.run_batch(engine, inputs, ctx)
 
-    assert [lease.id for lease in slurm.load_leases(ctx.step_dir)] == ["901"]
+    batch = submit_array.call_args.kwargs["batch"]
+    assert [lease.id for lease in slurm.load_leases(ctx.step_dir)] == [batch, "901"]
 
 
 @patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids))

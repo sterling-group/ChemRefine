@@ -504,7 +504,7 @@ def run_lock(output_dir: Path) -> Generator[None]:
 
     **The lock fences drivers, not their jobs.** A dead holder's SLURM jobs run on
     after its lock is reclaimed (and a SIGKILLed holder's local ones too); the leases
-    every submission records are the fence for that window — see
+    every batch and every submission record are the fence for that window — see
     :func:`require_no_live_jobs`, which both takers of this lock call before touching
     the tree.
     """
@@ -557,11 +557,15 @@ def require_no_live_jobs(config: Config) -> None:
     and this fence — called with the lock already held, before anything mutates the
     tree — walks every step's ledger and answers each lease by kind:
 
-    * a **SLURM id** is put to the queue, all ids in one probe. A host with no
-      ``squeue`` cannot verify them, and a tree copied to a laptop must not be fenced
-      harder than the original — so that case warns and proceeds instead of refusing
-      on evidence no one there can produce, keeping those ids on record for the next
-      run that can ask.
+    * a **SLURM lease** is put to the queue, all of them in one probe: an id the
+      scheduler returned, and the tag a batch recorded before it asked for its first job
+      (:func:`chemrefine.slurm.dispatch.lease_batch`), which the queue answers by job
+      name. The tag is what finds a job whose id never reached the ledger — the driver
+      was killed, or ``sbatch`` failed, once the scheduler had it — and the refusal names
+      the jobs the queue listed, not the record. A host with no ``squeue`` cannot verify
+      them, and a tree copied to a laptop must not be fenced harder than the original —
+      so that case warns and proceeds instead of refusing on evidence no one there can
+      produce, keeping those leases on record for the next run that can ask.
     * a **local job** is probed by pid on its own host, and refused unless the probe
       proves it gone (:func:`_pid_alive`); recorded on another host it cannot be probed
       from here, and the fence refuses until someone who knows that run is dead deletes
@@ -574,7 +578,7 @@ def require_no_live_jobs(config: Config) -> None:
     """
     hostname = socket.gethostname()
     visited: list[Path] = []
-    slurm_ids: dict[str, Path] = {}
+    scheduled: dict[str, Path] = {}
     for step_cfg in config.steps:
         step_dir = config.step_dir(step_cfg)
         leases = slurm.load_leases(step_dir)
@@ -583,7 +587,7 @@ def require_no_live_jobs(config: Config) -> None:
         ledger = slurm.lease_path(step_dir)
         for lease in leases:
             if not lease.local:
-                slurm_ids[lease.id] = ledger
+                scheduled[lease.id] = ledger
             elif lease.host != hostname:
                 raise RunLockError(
                     f"a previous run left local job {lease.id} recorded on {lease.host} "
@@ -604,31 +608,42 @@ def require_no_live_jobs(config: Config) -> None:
                         f"kill it, delete the record, and retry."
                     )
         visited.append(step_dir)
-    if slurm_ids:
+    if scheduled:
+        ledgers = {str(ledger) for ledger in scheduled.values()}
         if not slurm.scheduler_reachable():
             logger.warning(
-                "cannot verify %d recorded SLURM job(s) from this host (no squeue); "
-                "proceeding — if the run that submitted them is still live on the "
+                "cannot verify the SLURM jobs recorded in %d ledger(s) from this host (no "
+                "squeue); proceeding — if the run that submitted them is still live on the "
                 "cluster, stop this one now",
-                len(slurm_ids),
+                len(ledgers),
             )
             # Every local lease above was proven dead (any other kind raised) and only
-            # the SLURM ids are unverified — so shed exactly the former and keep exactly
+            # the SLURM ones are unverified — so shed exactly the former and keep exactly
             # the latter, whether or not they share a ledger. A dead pid left beside a
-            # SLURM id would be re-probed by every later resume and, once recycled,
+            # SLURM lease would be re-probed by every later resume and, once recycled,
             # refuse a run whose only escape deletes the SLURM evidence with it.
             for step_dir in visited:
                 slurm.release_leases(step_dir, keep_slurm=True)
             return
-        live = sorted(set(slurm_ids) - slurm.finished_jobs(tuple(slurm_ids)))
-        if live:
-            ledgers = ", ".join(sorted({str(slurm_ids[jid]) for jid in live}))
+        queue = slurm.poll_jobs(tuple(scheduled))
+        if queue.rows is None:
             raise RunLockError(
-                f"a previous run's SLURM job(s) {', '.join(live)} are still queued or "
-                f"running (recorded in {ledgers}), and their exit traps still write into "
-                f"this tree, so this run stops here. Wait for them to drain or scancel "
-                f"them — or, if the record is known stale (a transient squeue failure "
-                f"reports every job live), delete it and retry."
+                f"squeue could not say whether a previous run's SLURM jobs are still "
+                f"queued or running (recorded in {', '.join(sorted(ledgers))}), and their "
+                f"exit traps would still write into this tree, so this run stops here. Run "
+                f"the command again once the scheduler answers — or, if the record is known "
+                f"stale, delete it and retry."
+            )
+        if queue.rows:
+            # A row is a job, or one array's task: `12345_7`, `12345_[8-99%4]`.
+            jobs = sorted({row.partition("_")[0] for row in queue.rows})
+            live = {str(scheduled[key]) for key in set(scheduled) - queue.finished}
+            raise RunLockError(
+                f"a previous run's SLURM job(s) {', '.join(jobs)} are still queued or "
+                f"running (recorded in {', '.join(sorted(live))}), and their exit traps "
+                f"still write into this tree, so this run stops here. Wait for them to "
+                f"drain or scancel them — or, if the record is known stale, delete it and "
+                f"retry."
             )
     for step_dir in visited:
         slurm.release_leases(step_dir)
