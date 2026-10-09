@@ -144,7 +144,7 @@ scratch copy is then the only whole one, so the handler leaves it, and the foote
 
 _FREE_SPACE = (
     'local _cr_free; _cr_free=$(df -Pk "$OUTPUT_DIR" 2>/dev/null | '
-    "awk 'NR == 2 && $2 > 0 { print $4 }')"
+    "awk 'NR == 2 && $5 ~ /%$/ && $2 > 0 { print $4 }')"
 )
 """The exit handler's first question: how much ``$OUTPUT_DIR``'s filesystem has left, in KiB.
 
@@ -156,10 +156,12 @@ removes: afterwards the disk has room, the ``.err`` is empty, and nothing in the
 why the job died. So the figure is taken first, before the engine's teardown and the
 scratch removal free anything.
 
-POSIX ``df -P``: its second line carries the filesystem's size in the second field and the
-blocks available in the fourth. A filesystem that reports no size — one that answers the
-question with zeros throughout, as ``/proc`` does — and a ``df`` that cannot answer leave the
-figure empty, which claims nothing."""
+POSIX ``df -P``: its second line carries the filesystem's size in the second field, the
+blocks available in the fourth and the capacity, a percentage, in the fifth. A line whose
+fifth field is no percentage has a filesystem name with a blank in it, which shifts every
+field: that one, a filesystem that reports no size — one that answers the question with
+zeros throughout, as ``/proc`` does — and a ``df`` that cannot answer leave the figure
+empty, which claims nothing."""
 
 _FULL_FILESYSTEM_NOTICE = (
     'if [ "$_cr_free" = 0 ]; then echo "ChemRefine: the filesystem holding $OUTPUT_DIR had '
@@ -319,10 +321,12 @@ def _run_body_lines(
 
     **A copy-back that fails is the job's failure.** Each file a glob matches and each
     ``output_dirs`` entry that exists is copied on its own, and a pattern that matches
-    nothing is no failure — the globs are a superset by design. A copy the destination
-    refuses (a full disk, a quota) says why on stderr, keeps ``$WORK_DIR`` — the only whole
-    copy — and is reported as ``scratch_kept=true``; when the run block itself had
-    succeeded, the script exits :data:`chemrefine.job_log.COPY_BACK_FAILED`.
+    nothing is no failure — the globs are a superset by design. A file there is no room
+    to copy is moved instead: within one filesystem a rename needs none, so a job whose own
+    scratch filled the disk still brings its results home. A result the destination refuses
+    either way says why on stderr, keeps ``$WORK_DIR`` — the only whole copy — and is
+    reported as ``scratch_kept=true``; when the run block itself had succeeded, the script
+    exits :data:`chemrefine.job_log.COPY_BACK_FAILED`.
 
     **The handler ends the script**, with the status its footer accounts for: the run
     block's, or the copy-back's when only that failed. So the scheduler's accounting and
@@ -389,8 +393,11 @@ def _run_body_lines(
         "  local item",
         f"  for item in {globs_expr}; do",
         '    [ -f "$item" ] || continue',
-        '    if cp -- "$item" "$OUTPUT_DIR/"; then files_copied=$((files_copied + 1));'
-        " else scratch_kept=true; fi",
+        # A copy with no room is tried again as a move: within one filesystem a rename
+        # needs none, so a job whose own scratch filled the disk still brings its results
+        # home. `mv` speaks for both when it fails too.
+        '    if cp -- "$item" "$OUTPUT_DIR/" 2>/dev/null || mv -f -- "$item" "$OUTPUT_DIR/";'
+        " then files_copied=$((files_copied + 1)); else scratch_kept=true; fi",
         "  done",
         *dir_copies,
         f"  $scratch_kept || {{ {cleanup}; }}",

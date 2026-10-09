@@ -1510,6 +1510,34 @@ def test_a_result_that_cannot_come_home_fails_the_job_and_keeps_its_scratch(tmp_
     assert (kept / "result.out").read_text(encoding="utf-8") == "energy\n"
 
 
+def test_a_result_there_is_no_room_to_copy_is_moved_home(tmp_path: Path):
+    """A rename needs no room, so a job whose scratch filled its own disk loses no result.
+
+    The stand-in `cp` refuses every copy home the way a full disk does and copies the input
+    in as usual. The result arrives all the same, the job is a success, and nothing is said
+    of a copy that did not matter.
+    """
+    script = _runnable(tmp_path, "echo energy > result.out")
+    stand_ins = tmp_path / "bin"
+    stand_ins.mkdir()
+    cp = stand_ins / "cp"
+    cp.write_text(
+        '#!/bin/bash\nif [ "$1" = -- ]; then echo "cp: no space left on device" >&2; exit 1; fi\n'
+        'exec /bin/cp "$@"\n',
+        encoding="utf-8",
+    )
+    cp.chmod(0o755)
+    env = {**os.environ, "PATH": f"{stand_ins}{os.pathsep}{os.environ['PATH']}"}
+
+    result = _run_generated(script, env=env)
+
+    assert result.returncode == 0
+    assert (tmp_path / "out" / "result.out").read_text(encoding="utf-8") == "energy\n"
+    assert "files_copied=1" in result.stdout and "scratch_kept=false" in result.stdout
+    assert "no space left" not in result.stderr
+    assert _scratch_dirs(tmp_path) == []
+
+
 def test_a_declared_directory_that_cannot_come_home_fails_the_job_too(tmp_path: Path):
     """An ``output_dirs`` entry is a result like any file: refused, it keeps scratch."""
     script = _runnable(tmp_path, "mkdir tensors; echo t > tensors/t.npy", output_dirs=("tensors",))
@@ -1646,8 +1674,9 @@ def test_a_job_that_ends_on_a_full_filesystem_says_so_on_its_stderr(tmp_path: Pa
         f"{_DF_HEADER}\necho 'fuse 0 0 0 - /mnt'",
         "echo 'df: cannot read table of mounted file systems' >&2\nexit 1",
         _DF_HEADER,
+        f"{_DF_HEADER}\necho '//nas/My Share 1024 0 1024 0% /mnt'",
     ],
-    ids=["room-left", "no-size", "no-answer", "no-filesystem-line"],
+    ids=["room-left", "no-size", "no-answer", "no-filesystem-line", "a-blank-in-its-name"],
 )
 def test_a_job_says_nothing_of_its_filesystem_unless_df_found_it_full(tmp_path: Path, answer: str):
     """Room left, or a ``df`` that cannot say: no line, and the job ends as it would have.

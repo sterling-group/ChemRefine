@@ -86,11 +86,13 @@ submitting anything, and ledgers whatever is missing.
 ## A job's results did not all come home
 
 A job runs in a scratch directory and copies its results into the structure's
-directory when it ends. A copy that directory refuses — a full disk, a quota —
-is the job's failure, not something it passes over:
+directory when it ends; a file there is no room to copy is moved instead, which
+within one filesystem needs none. A result that directory refuses either way —
+a full disk with the scratch elsewhere, a quota — is the job's failure, not
+something it passes over:
 
 - the job's script exits `74`, or with its program's own status when that had
-  already failed, and `cp`'s own message is in the structure's `.err`;
+  already failed, and the system's own message is in the structure's `.err`;
 - its `.runlog` ends with `scratch_kept=true`;
 - the scratch directory is left in place, because it then holds the only whole
   copy. The runlog's header names its `host` and its `scratch` path.
@@ -179,11 +181,14 @@ this line once the scratch is gone. Where a step's ledgered reason quotes the en
 Point [`scratch_dir`](../workflow/configuration.md) at a filesystem with room for the
 program's temporary files, or free space, then `chemrefine resume`.
 
-The line states what `df` reports. A quota `df` does not show leaves no line: an output
-that stops mid-line beside an empty `.err` and a non-zero `exit_code` in the `.runlog`
-is the same failure without it. And with the scratch on another filesystem, removing it
-frees nothing, so the line cannot be written either: the run itself then stops with
-[exit `11`](#exit-codes) at its next write, naming the file.
+The line states what `df` reports. A quota `df` does not show leaves no line, and neither
+does a disk that is out of inodes, or one the dying program made room on by deleting its
+own temporaries: an output that stops mid-line beside an empty `.err` and a non-zero
+`exit_code` in the `.runlog` is the same failure without it. And where nothing is freed —
+the scratch is on another filesystem, or the job kept it because a result
+[did not come home](#a-jobs-results-did-not-all-come-home) — the line cannot be written
+either: the run itself then stops with [exit `11`](#exit-codes) at its next write, naming
+the file.
 
 ## A structure failed with "the calculation diverged"
 
