@@ -144,6 +144,7 @@ def test_bootstrap_unsupported_format_raises(tmp_path: Path):
     [
         ("missing.xyz", None),
         ("short.xyz", "3\n\nH 0 0 0\nH 0.7 0 0\n"),
+        ("count.xyz", "3\n"),
         ("header.xyz", "abc\n\nH 0 0 0\n"),
         ("words.xyz", "1\n\nH x y z\n"),
         ("binary.xyz", b"\xff\xfe\x00garbage\n"),

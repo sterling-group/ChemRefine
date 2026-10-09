@@ -637,10 +637,23 @@ def read_xyz_frames(path: str | Path) -> list[Atoms]:
     about half a second, and importing this module is how every process in the package
     starts — the CLI answering ``--help``, and the ExtOpt wrapper spawned once per
     optimizer step, which never reads a frame through here.
+
+    A file that is not XYZ raises what ASE's reader raises about its text — a
+    :class:`ValueError`, an :class:`IndexError`, a :class:`KeyError`, or its own error,
+    which is an :class:`OSError` — and those are what the readers of a person's file hold.
+    A file that ends on an atom count, with no frame after it, is one of them, a
+    :class:`ValueError` raised here: ASE takes a frame's comment line with a bare ``next``
+    inside a generator, so the end of the file there reaches a caller as the
+    :class:`RuntimeError` Python makes of a ``StopIteration`` in a generator.
     """
     from ase.io import read as ase_read
 
-    return cast("list[Atoms]", ase_read(str(path), index=":", format="extxyz"))
+    try:
+        return cast("list[Atoms]", ase_read(str(path), index=":", format="extxyz"))
+    except RuntimeError as e:
+        if not isinstance(e.__cause__, StopIteration):
+            raise
+        raise ValueError("the file ends on an atom count, with no frame after it") from e
 
 
 # ---------------------------------------------------------------------------

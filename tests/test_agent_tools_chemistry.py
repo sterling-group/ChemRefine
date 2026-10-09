@@ -429,9 +429,10 @@ def test_build_structures_from_xyz_text_validates_through_the_pipelines_reader(t
     assert result["warnings"] == []
 
 
-def test_build_structures_rejects_malformed_xyz_and_cleans_up(tmp_path: Path):
+@pytest.mark.parametrize("text", ["not xyz at all", "3\n"], ids=["no count", "a count alone"])
+def test_build_structures_rejects_malformed_xyz_and_cleans_up(tmp_path: Path, text: str):
     with pytest.raises(ConfigError, match="not valid XYZ"):
-        agent_tools.build_structures(str(tmp_path / "seeds"), xyz_text="not xyz at all")
+        agent_tools.build_structures(str(tmp_path / "seeds"), xyz_text=text)
     assert not (tmp_path / "seeds" / "structure_0.xyz").exists()
 
 

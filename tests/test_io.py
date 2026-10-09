@@ -334,6 +334,41 @@ def test_write_ensemble_xyz_empty_input_removes_a_stale_file(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# read_xyz_frames — what a file that is not XYZ raises
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["0\n", "3\n", "1\nfirst\nH 0 0 0\n2\n"],
+    ids=["a zero count", "a count", "a second frame's count"],
+)
+def test_an_xyz_that_ends_on_an_atom_count_is_a_bad_file(tmp_path: Path, text: str):
+    """A file cut off after an atom count is refused as the readers of a seed expect.
+
+    ASE takes the frame's comment line with a bare ``next`` inside a generator, so the
+    end of the file there left as ``RuntimeError: generator raised StopIteration``. The
+    seed reader and ``build_structures`` hold ``ValueError`` and the like for a bad file
+    and not that, so a seed of ``0`` alone was a traceback where every other malformed
+    seed is a refusal naming the file.
+    """
+    path = tmp_path / "cut.xyz"
+    path.write_text(text, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="ends on an atom count"):
+        read_xyz_frames(path)
+
+
+def test_an_error_that_is_not_the_end_of_the_file_leaves_the_reader_as_itself(tmp_path: Path):
+    """Only the end of the file is reworded: any other ``RuntimeError`` is not about it."""
+    with (
+        patch("ase.io.read", side_effect=RuntimeError("something else")),
+        pytest.raises(RuntimeError, match="something else"),
+    ):
+        read_xyz_frames(tmp_path / "any.xyz")
+
+
+# ---------------------------------------------------------------------------
 # gather_output_files
 # ---------------------------------------------------------------------------
 
