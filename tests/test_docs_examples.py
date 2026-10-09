@@ -142,6 +142,19 @@ def test_the_engine_guides_python_parses():
         compile(fence, str(_ENGINE_GUIDE), "exec")
 
 
+def test_the_engine_guides_parse_vouches_for_nothing_it_did_not_read():
+    """The worked ``parse_one`` sets no success flag it did not read off the output.
+
+    A structure whose engine leaves ``terminated_normally`` unset is held to its job's own
+    account; one that sets it ``True`` unconditionally opts out, and its job that died
+    after printing an energy and a geometry is cached as a success. The page is copied by
+    whoever writes the next engine, so the example must not carry the opt-out.
+    """
+    guide = "\n".join(_engine_guide_python())
+    assert "def parse_one(" in guide
+    assert "terminated_normally=True" not in guide and "converged=True" not in guide
+
+
 @pytest.mark.parametrize(
     ("method", "returns"),
     [("build_input", "None"), ("run_block", "RunBlock"), ("parse_one", "list[ParsedResult]")],

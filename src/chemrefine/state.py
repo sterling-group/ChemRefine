@@ -366,8 +366,9 @@ class Failure:
     best: Structure | None
     detail: str = ""
     """Extra context for kinds that have some (the parser message for
-    ``UNPARSEABLE``, the file and the system's reason for ``UNREADABLE``); empty
-    otherwise."""
+    ``UNPARSEABLE``, the file and the system's reason for ``UNREADABLE``, the
+    program's own last words or the job's runlog and how it ended for
+    ``NOT_TERMINATED_NORMALLY``); empty otherwise."""
 
     @property
     def reason(self) -> str:

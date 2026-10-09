@@ -36,7 +36,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Protocol
 
-from chemrefine import __version__, attempts, cache, ids, io
+from chemrefine import __version__, attempts, cache, ids, io, job_log
 from chemrefine.config import StepConfig
 from chemrefine.engines.api import CalculationEngine, StreamingSubmit, sweep
 from chemrefine.errors import (
@@ -61,10 +61,12 @@ logger = logging.getLogger(__name__)
 
 
 def succeeded(s: Structure) -> bool:
-    """A parsed structure failed only when an engine success flag is explicitly False.
+    """A parsed structure failed only when a success flag is explicitly False.
 
-    ``None`` (engine doesn't report it) is treated as 'not a failure signal', so
-    backends that don't set termination/convergence flags are never gated.
+    ``None`` (the engine doesn't report it) is no failure signal here, so an engine that
+    sets no convergence flag is never gated on one. A termination flag an engine leaves
+    unset is filled in from the job's own account before this is asked, where the job
+    left one (:func:`_held_to_exit_status`).
     """
     return s.terminated_normally is not False and s.converged is not False
 
@@ -105,6 +107,9 @@ def _parse_job(
     the job's files and nothing else, so an ``OSError`` out of it is the refusal of one of
     them — the output, a sidecar beside it — and it is filed here, once for every engine,
     under the file the filesystem named (:func:`_refused_file`).
+
+    A structure its engine finds nothing wrong with is still held to its job's own account
+    wherever the engine could not say how the program ended (:func:`_held_to_exit_status`).
     """
     _inp, out, sid = triple
     if io.absent(out):
@@ -125,11 +130,75 @@ def _parse_job(
             raise
         detail = _refused_file(e, out, ctx.step_dir)
         return [], Failure(sid, FailureKind.UNREADABLE, None, detail=detail)
+    parsed, died = _held_to_exit_status(parsed, triple, ctx)
     bad = [s for s in parsed if not succeeded(s)]
     if not bad:
         return parsed, None
     best = min(bad, key=lambda s: (s.energy_hartree is None, s.energy_hartree or 0.0))
-    return parsed, Failure(sid, failure_kind(best), best)
+    kind = failure_kind(best)
+    # The job's account is the reason of a structure it failed, not of one that did not
+    # converge beside it.
+    detail = died if kind is FailureKind.NOT_TERMINATED_NORMALLY else ""
+    return parsed, Failure(sid, kind, best, detail=detail)
+
+
+def _held_to_exit_status(
+    parsed: list[Structure], triple: JobTriple, ctx: StepContext
+) -> tuple[list[Structure], str]:
+    """A job's structures with its own account standing in for a verdict its engine lacks.
+
+    ``terminated_normally`` is an engine's reading of how the program ended, and ``None``
+    is an engine that could not say: its program prints no closing line, or nothing reads
+    one. :func:`succeeded` takes ``None`` for no complaint, so a program that died after
+    printing an energy and a geometry would be cached, ranked and handed to the next step.
+    The job gave an account all the same, in its runlog: its script records the run
+    block's status in a footer (:func:`chemrefine.job_log.read_footer`), the record an
+    artifact step is judged by too. Two things in it answer for the engine:
+
+    * a footer with a non-zero ``exit_code`` — the run block failed, or was stopped;
+    * a run that started and left no footer (:func:`chemrefine.job_log.cut_short`) — the
+      job was killed outright, or stopped and cut down before its handler finished.
+
+    Either way every structure in question is one whose program did not terminate
+    normally, and the second value returned is the reason: the runlog, relative to the
+    directory the job's context names (:func:`chemrefine.ids.step_relative`), and what it
+    shows. Otherwise the structures come back as they are, with no reason.
+
+    **The structures in question are the ones the engine left undecided and found nothing
+    wrong with**, each on its own. An engine that read the program's own ending has the
+    better evidence, and a structure its engine already faults keeps the kind the engine
+    gave it, which is what routes a convergence failure to its retry. A job that has none
+    in question is not asked for its account at all.
+
+    A runlog that records no run is no account, never a failure: a tree copied without
+    its runlogs must still rebuild. And an exit status of zero vouches for nothing by
+    itself — a launcher can return it for a program that died — so this narrows what
+    passes and replaces no engine's own reading of its output.
+
+    The runlog is the one beside the output, named after the input
+    (:func:`chemrefine.job_log.runlog_path`). It is the account of the calculation at that
+    path because the two travel together: a superseded attempt is archived whole and a
+    promoted child's files are copied up whole (:mod:`chemrefine.attempts`).
+    """
+
+    def in_question(s: Structure) -> bool:
+        return s.terminated_normally is None and succeeded(s)
+
+    if not any(in_question(s) for s in parsed):
+        return parsed, ""
+    inp, out, _sid = triple
+    runlog = job_log.runlog_path(out.parent, inp.stem)
+    footer = job_log.read_footer(runlog)
+    if footer is None:
+        if not job_log.cut_short(runlog):
+            return parsed, ""
+        shows = "records a run that left no footer"
+    elif footer.exit_code == 0:
+        return parsed, ""
+    else:
+        shows = f"ends with exit_code={footer.exit_code}"
+    held = [replace(s, terminated_normally=False) if in_question(s) else s for s in parsed]
+    return held, f"{ids.step_relative(runlog, ctx.step_dir)} {shows}"
 
 
 def _refused_file(error: OSError, out: Path, step_dir: Path) -> str:
@@ -220,11 +289,12 @@ def resubmit_unusable(
     actually re-run are parsed a second time.
 
     *Unusable* means the job did not leave a result this step can stand behind: no output at
-    all, an output that will not parse, or one whose engine says it did not terminate
-    normally. Two failures are excluded (:data:`_NOT_RESUBMITTED`), each because a re-run is
-    not its remedy: a structure that merely failed to **converge** is left to
-    :func:`retry_unconverged`, and an output this account **cannot read** is left a failure
-    for the step's ``on_failure`` policy.
+    all, an output that will not parse, or one whose program did not terminate normally —
+    by its engine's reading of the output, or by the job's own account. Two failures are
+    excluded (:data:`_NOT_RESUBMITTED`), each because a re-run is not its remedy: a
+    structure that merely failed to **converge** is left to :func:`retry_unconverged`, and
+    an output this account **cannot read** is left a failure for the step's ``on_failure``
+    policy.
 
     Judging by what parsed rather than by which files exist is what closes the window every
     re-run opens: preparing one archives the previous attempt and writes a fresh input, so a

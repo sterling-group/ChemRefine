@@ -223,8 +223,11 @@ for those and the full map.
   stops the run as a cache error (exit code 7).
 - Per-step failure policy `on_failure: stop | skip | best`. Failures are
   ledgered in `failed_jobs.json`, and `resume` / `rerun-errors` re-attempt only
-  the still-failed structures of a `stop` step. Changing a step's `on_failure`
-  and resuming takes effect even over a cached step: ledgered failures are
+  the still-failed structures of a `stop` step. A job whose script recorded a
+  non-zero exit status, or started and was cut down before it recorded any, is
+  a failure wherever its engine cannot read from the output how the program
+  ended, however complete that output reads. Changing a step's `on_failure` and
+  resuming takes effect even over a cached step: ledgered failures are
   re-attempted and the step is re-finalized under the new policy, and successes
   are never recomputed (`stop` ↔ `skip` edits are a free cache hit, since both
   store the same results). Under `best`, a backfilled structure carries no

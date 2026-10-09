@@ -270,6 +270,52 @@ def test_the_assembled_array_script_still_runs_its_exit_handler(
     )
 
 
+@pytest.mark.parametrize("array", [False, True], ids=["job", "array"])
+@pytest.mark.parametrize("engine_name", _job_executables())
+def test_a_job_whose_program_failed_is_never_a_success(
+    engine_name: str, array: bool, tmp_path: Path
+) -> None:
+    """Every engine's job records that its program failed, and no parse outvotes that record.
+
+    The footer's ``exit_code`` is the run block's status, so what it says of a dead program
+    is each engine's to get right: a block that swallowed the status (``program … || true``)
+    would record ``exit_code=0``, an artifact step would adopt the product of a job that
+    died, and a parsed step would cache whatever the output held. Run for real, with the
+    engine's compute missing, the script must end non-zero and say so in the runlog its own
+    ``--output`` names — and a parse that reads no verdict off an output beside it is then
+    held to that status, whichever engine wrote the script.
+    """
+    from chemrefine import job_log, lifecycle
+    from chemrefine.state import StepInputs, StepResults
+
+    script, args = _assemble(engine_name, tmp_path, array=array)
+    result = _run_script(script, args)
+    out_dir = tmp_path / "out"
+    job = (out_dir / "step1_0.inp", out_dir / "step1_0.out", "0")
+    runlog = job_log.runlog_path(out_dir, job[0].stem)
+    if not array:
+        # Where `sbatch` and the local runner put this script's stdout.
+        assert f'#SBATCH --output="{runlog}"' in script.read_text(encoding="utf-8")
+        runlog.write_text(result.stdout, encoding="utf-8")
+    footer = job_log.read_footer(runlog)
+    assert footer is not None, f"{engine_name}: the job wrote no footer\n{result.stderr}"
+    assert footer.exit_code != 0, f"{engine_name}: a job whose compute is missing ended 0"
+
+    class _Undecided:
+        def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
+            return StepResults(
+                structures=(Structure(id="0", atoms=Atoms("H"), energy_hartree=-1.0),)
+            )
+
+    job[1].write_text("an output the parse finds nothing wrong with\n", encoding="utf-8")
+    successes, failures = lifecycle.parse_with_failures(
+        _Undecided(), StepInputs(files=(job,)), _ctx(tmp_path, engine_name, {})
+    )
+    assert successes == []
+    assert [(f.sid, f.kind) for f in failures] == [("0", FailureKind.NOT_TERMINATED_NORMALLY)]
+    assert failures[0].detail == f"out/step1_0.runlog ends with exit_code={footer.exit_code}"
+
+
 @pytest.mark.parametrize("engine_name", _job_executables())
 def test_an_array_run_block_leaves_its_sentinels_expandable(
     engine_name: str, tmp_path: Path

@@ -822,6 +822,37 @@ _BUNDLED: tuple[Mutation, ...] = (
         "`rebuild-cache`, the documented repair for both, stops the same way",
     ),
     Mutation(
+        id="exit-status-answers-for-no-verdict",
+        path="src/chemrefine/lifecycle.py",
+        old='    elif footer.exit_code == 0:\n        return parsed, ""\n',
+        new='    elif True:\n        return parsed, ""\n',
+        tests="tests/test_lifecycle.py",
+        breaks="a program that died after printing an energy and a geometry is cached as a "
+        "success wherever its engine reads no verdict off the output — ranked and handed to "
+        "the next step, with no ledger entry and exit 0",
+    ),
+    Mutation(
+        id="a-run-cut-short-is-no-success",
+        path="src/chemrefine/lifecycle.py",
+        old='        if not job_log.cut_short(runlog):\n            return parsed, ""\n',
+        new='        if True:\n            return parsed, ""\n',
+        tests="tests/test_lifecycle.py",
+        breaks="a job stopped and cut down before its handler finished — an interrupt past "
+        "the kill grace, a walltime, a node that went down — leaves an output written up to "
+        "the moment it died, and a resume adopts it as a success wherever its engine reads "
+        "no verdict",
+    ),
+    Mutation(
+        id="exit-status-leaves-an-engines-fault-alone",
+        path="src/chemrefine/lifecycle.py",
+        old="        return s.terminated_normally is None and succeeded(s)\n",
+        new="        return s.terminated_normally is None\n",
+        tests="tests/test_lifecycle.py",
+        breaks="an unconverged structure whose script also exited non-zero is filed as not "
+        "terminated — the next resume resubmits it from its original input, where the "
+        "convergence retry would have restarted it from the geometry it reached",
+    ),
+    Mutation(
         id="orca-scan-block-bound",
         path="src/chemrefine/engines/orca/inspect.py",
         old='_GEOM_BLOCK_RE = re.compile(r"%geom\\b([^%*!]*)", re.IGNORECASE)',

@@ -200,6 +200,256 @@ def test_parse_with_failures_writes_nothing_and_parse_and_record_does(tmp_path: 
 
 
 # ---------------------------------------------------------------------------
+# A job's own exit status, where its engine reads no verdict
+# ---------------------------------------------------------------------------
+
+
+class _Frames:
+    """An engine whose parse answers with the structures it was built with, whatever it reads."""
+
+    def __init__(self, *frames: Structure) -> None:
+        self.frames = frames
+
+    def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
+        return StepResults(structures=self.frames)
+
+
+def _job(tmp_path: Path) -> tuple[Path, Path, str]:
+    """One prepared job with an output on disk, laid out as a structure's directory is."""
+    inp = tmp_path / "0" / "step1_0.inp"
+    inp.parent.mkdir(parents=True, exist_ok=True)
+    out = inp.with_suffix(".out")
+    out.write_text("an energy and a geometry\n", encoding="utf-8")
+    return inp, out, "0"
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "scratch_kept", "reason"),
+    [
+        (0, False, None),
+        (0, True, None),  # results that did not all come home: read on what did arrive
+        (1, False, "did not terminate normally: 0/step1_0.runlog ends with exit_code=1"),
+        (1, True, "did not terminate normally: 0/step1_0.runlog ends with exit_code=1"),
+        (143, False, "did not terminate normally: 0/step1_0.runlog ends with exit_code=143"),
+    ],
+)
+def test_a_job_whose_run_block_failed_is_no_success_where_its_engine_cannot_say(
+    tmp_path: Path, exit_code: int, scratch_kept: bool, reason: str | None
+):
+    """A structure with no verdict of its own is held to its job's exit status.
+
+    ``terminated_normally=None`` is an engine that could not say how the program ended, and
+    it reads as no complaint: a program that died after printing an energy and a geometry
+    was cached, ranked and handed to the next step, with no ledger entry and exit 0. The
+    job said how it ended in its runlog's footer, so a non-zero ``exit_code`` there files
+    the structure ``did not terminate normally``, naming the runlog relative to the step.
+    """
+    from fake_engine import leave_runlog
+
+    job = _job(tmp_path)
+    engine = _Frames(Structure(id="0", atoms=Atoms("H"), energy_hartree=-1.0))
+    inputs = StepInputs(files=(job,))
+
+    successes, failures = lifecycle.parse_with_failures(engine, inputs, _ctx(tmp_path))
+    assert [s.id for s in successes] == ["0"] and failures == [], "no runlog is no verdict"
+
+    leave_runlog(job, exit_code=exit_code, scratch_kept=scratch_kept)
+    successes, failures = lifecycle.parse_with_failures(engine, inputs, _ctx(tmp_path))
+    if reason is None:
+        assert [s.id for s in successes] == ["0"] and failures == []
+        return
+    assert successes == []
+    [failure] = failures
+    assert (failure.sid, failure.kind) == ("0", FailureKind.NOT_TERMINATED_NORMALLY)
+    assert failure.reason == reason
+    assert failure.best is not None and failure.best.terminated_normally is False
+    assert failure.best.energy_hartree == -1.0, "the geometry reached is still what `best` carries"
+
+
+def test_the_exit_status_is_recorded_beside_the_output_it_judged(tmp_path: Path):
+    """The result record says what the ledger says: the program did not terminate normally."""
+    import json
+
+    from fake_engine import leave_runlog
+
+    job = _job(tmp_path)
+    leave_runlog(job, exit_code=1)
+    engine = _Frames(Structure(id="0", atoms=Atoms("H"), energy_hartree=-1.0))
+
+    lifecycle.parse_and_record(engine, StepInputs(files=(job,)), _ctx(tmp_path))
+
+    [record] = (tmp_path / "0").glob("*.result.json")
+    assert json.loads(record.read_text(encoding="utf-8"))["terminated_normally"] is False
+
+
+def test_only_the_last_runs_account_judges_a_job(tmp_path: Path):
+    """A runlog a scheduler appended to holds one footer per run, and the last run's counts.
+
+    An earlier run that failed and a later one that finished is a finished job. A last run
+    that started and left no footer — killed outright, or stopped and cut down while its
+    handler was still copying results home — did not end cleanly either, whatever an
+    earlier run said. A runlog that records no run at all is no account: the structure is
+    then read on its output alone.
+    """
+    from fake_engine import leave_runlog
+
+    job = _job(tmp_path)
+    engine = _Frames(Structure(id="0", atoms=Atoms("H"), energy_hartree=-1.0))
+    inputs = StepInputs(files=(job,))
+    failed = leave_runlog(job, exit_code=1).read_text(encoding="utf-8")
+    runlog = leave_runlog(job, exit_code=0)
+    finished = runlog.read_text(encoding="utf-8")
+    started = finished[: finished.rindex("[")]  # the same run, cut before its footer
+
+    def judged(text: str) -> list[str]:
+        runlog.write_text(text, encoding="utf-8")
+        _, failures = lifecycle.parse_with_failures(engine, inputs, _ctx(tmp_path))
+        return [f.reason for f in failures]
+
+    died = ["did not terminate normally: 0/step1_0.runlog ends with exit_code=1"]
+    cut = ["did not terminate normally: 0/step1_0.runlog records a run that left no footer"]
+    assert judged(failed) == died
+    assert judged(failed + finished) == []
+    assert judged(finished + failed) == died
+    assert judged(started) == cut
+    assert judged(failed + started) == cut
+    assert judged(finished + started) == cut
+    assert judged(finished[: len(finished) - 20]) == cut, "a footer cut short is none"
+    assert judged("") == []
+    assert judged("a log some other tool left here\n") == []
+
+
+def test_an_engine_that_read_the_ending_is_not_asked_for_its_exit_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """An engine that read how the program ended has the better evidence, and it stands.
+
+    Its verdict is the program's own closing line; the exit status is the run block's, which
+    also covers whatever the block does after the program. The runlog is not opened at all
+    for such a job, so a step of ten thousand of them reads no more files than it did.
+    """
+    from fake_engine import leave_runlog
+
+    from chemrefine import job_log
+
+    job = _job(tmp_path)
+    leave_runlog(job, exit_code=1)
+    decided = Structure(id="0", atoms=Atoms("H"), energy_hartree=-1.0, terminated_normally=True)
+    monkeypatch.setattr(job_log, "read_footer", lambda runlog: pytest.fail(f"read {runlog}"))
+
+    successes, failures = lifecycle.parse_with_failures(
+        _Frames(decided), StepInputs(files=(job,)), _ctx(tmp_path)
+    )
+
+    assert [s.id for s in successes] == ["0"] and failures == []
+
+
+def test_a_job_its_engine_already_faults_keeps_the_engines_kind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A convergence failure stays one, so it still goes to its retry.
+
+    The exit status decides only what the engine left undecided on a job it found nothing
+    wrong with. Filed ``did not terminate normally`` instead, an unconverged structure whose
+    script also exited non-zero would be resubmitted from its original input, where the
+    retry restarts it from the geometry it reached.
+    """
+    from fake_engine import leave_runlog
+
+    from chemrefine import job_log
+
+    job = _job(tmp_path)
+    leave_runlog(job, exit_code=1)
+    unconverged = Structure(id="0", atoms=Atoms("H"), energy_hartree=-1.0, converged=False)
+    monkeypatch.setattr(job_log, "read_footer", lambda runlog: pytest.fail(f"read {runlog}"))
+
+    _, [failure] = lifecycle.parse_with_failures(
+        _Frames(unconverged), StepInputs(files=(job,)), _ctx(tmp_path)
+    )
+
+    assert failure.kind is FailureKind.NOT_CONVERGED and failure.detail == ""
+    assert lifecycle.retryable_best(failure) is unconverged
+
+
+def test_a_fan_out_job_that_failed_fails_every_frame_it_left_undecided(tmp_path: Path):
+    """Every frame the engine could not vouch for goes; one it did vouch for stays.
+
+    Frame by frame, not job by job: a frame the engine faults beside the undecided ones
+    exempts none of them, and keeps the kind the engine gave it. The failure carries the
+    lowest-energy bad frame, as any fan-out failure does, and the job's account is its
+    reason only when that frame is one the account failed.
+    """
+    from fake_engine import leave_runlog
+
+    job = _job(tmp_path)
+    leave_runlog(job, exit_code=1)
+    inputs = StepInputs(files=(job,))
+
+    def frame(sid: str, energy: float, **flags: bool | None) -> Structure:
+        return Structure(id=sid, atoms=Atoms("H"), energy_hartree=energy, **flags)
+
+    vouched = frame("0-1", -3.0, terminated_normally=True)
+    engine = _Frames(frame("0-0", -1.0), vouched, frame("0-2", -2.0))
+    successes, [failure] = lifecycle.parse_with_failures(engine, inputs, _ctx(tmp_path))
+    assert [s.id for s in successes] == ["0-1"]
+    assert failure.reason == "did not terminate normally: 0/step1_0.runlog ends with exit_code=1"
+    assert failure.best is not None and failure.best.id == "0-2"
+
+    for energy, kind, detail in (
+        (-0.5, FailureKind.NOT_TERMINATED_NORMALLY, "0/step1_0.runlog ends with exit_code=1"),
+        (-9.0, FailureKind.NOT_CONVERGED, ""),  # the unconverged frame is now the best one
+    ):
+        unconverged = frame("0-3", energy, converged=False)
+        engine = _Frames(frame("0-0", -1.0), unconverged, frame("0-2", -2.0))
+        successes, [failure] = lifecycle.parse_with_failures(engine, inputs, _ctx(tmp_path))
+        assert successes == [], "a frame the engine faults exempts no undecided frame"
+        assert (failure.kind, failure.detail) == (kind, detail)
+
+
+def test_a_job_that_failed_is_run_again_and_its_runlog_goes_with_the_attempt(tmp_path: Path):
+    """A resume re-runs what its exit status failed, and the new run is judged by its own.
+
+    The runlog is the account of the calculation beside it because the two move together:
+    preparing the re-run archives the failed attempt whole, its runlog with it.
+    """
+    from fake_engine import leave_runlog
+
+    class _DiesOnce:
+        name = "dies-once"
+
+        def __init__(self) -> None:
+            self.submissions = 0
+
+        def prepare(self, ctx: StepContext) -> StepInputs:
+            (inp, out, sid) = _job(ctx.step_dir)
+            return StepInputs(files=((inp, out, sid),))
+
+        def submit(self, inputs: StepInputs, ctx: StepContext) -> JobBatch:
+            self.submissions += 1
+            leave_runlog(inputs.files[0], exit_code=0)
+            return JobBatch(jobs={})
+
+        def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
+            return StepResults(
+                structures=(Structure(id="0", atoms=Atoms("H"), energy_hartree=-1.0),)
+            )
+
+    engine = _DiesOnce()
+    ctx = replace(
+        _ctx(tmp_path), prev_state=PipelineState(structures=(Structure(id="0", atoms=Atoms("H")),))
+    )
+    inputs = engine.prepare(ctx)
+    first = leave_runlog(inputs.files[0], exit_code=1).read_text(encoding="utf-8")
+
+    successes, failures = lifecycle.resubmit_unusable(engine, ctx, inputs)
+
+    assert engine.submissions == 1
+    assert [s.id for s in successes] == ["0"] and failures == []
+    assert (tmp_path / "0" / "attempt1" / "step1_0.runlog").read_text(encoding="utf-8") == first
+    assert "exit_code=0" in (tmp_path / "0" / "step1_0.runlog").read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
 # The convergence retry — a re-run must still be the same structure
 # ---------------------------------------------------------------------------
 

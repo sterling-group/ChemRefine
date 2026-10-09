@@ -223,7 +223,12 @@ scattered through the parser:
   `OutputTerminationError` with the `.err` tail — never a silent `NaN`); and every case ships
   a *trimmed real* contract fixture. A file the filesystem will not let the run read is
   not yours to word: let the `OSError` of your read leave `parse_one`, and the lifecycle
-  files it as that structure's `unreadable` failure, the same for every engine.
+  files it as that structure's `unreadable` failure, the same for every engine. And *a
+  verdict is read, never assumed*: set `terminated_normally` and `converged` only from
+  what the output itself says of how the program ended. Left unset, a structure is held
+  to its job's own account — a job script that exited non-zero, or was cut down before
+  it could say, fails it — where a flag set to `True` without reading would vouch for a
+  program that died after printing an energy and a geometry.
 
 For **method-dependent scalars** — "the" energy differs between a plain SCF and a correlated
 run that prints both — declare a priority chain over the *output text*: rows tried highest
@@ -409,7 +414,6 @@ class DemoqmEngine(JobEngine):
                 positions=positions,
                 energy_hartree=energy,
                 forces_ev_per_a=None,
-                terminated_normally=True,
             )
         ]
 ```

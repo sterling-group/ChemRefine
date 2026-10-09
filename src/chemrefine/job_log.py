@@ -51,7 +51,8 @@ fields are the verdict, one fact each:
 
 ``files_copied`` counts the loose result files that did arrive. A job killed
 outright — ``SIGKILL``, a node that went down — writes no footer at all,
-which is why no footer is never read as success.
+which is why a run that started and left none (:func:`cut_short`) is never
+read as one that succeeded.
 """
 
 from __future__ import annotations
@@ -239,8 +240,8 @@ start: a program whose last output carries no newline leaves the footer's line j
 it."""
 
 _TAIL_BYTES = 65536
-"""How much of a runlog's end :func:`read_footer` reads. A footer is five short lines and
-the last thing its script writes; a training's log above it can run to gigabytes."""
+"""How much of each end of a runlog is read (:func:`_ends`). A footer is five short lines
+and the last thing its script writes; a training's log above it can run to gigabytes."""
 
 _BOOLEANS = {"true": True, "false": False}
 
@@ -255,12 +256,25 @@ class Footer(NamedTuple):
     """Whether a declared result could not be copied home, so scratch was left holding it."""
 
 
+def _ends(runlog: Path) -> tuple[str, str] | None:
+    """The first and the last :data:`_TAIL_BYTES` of a runlog; ``None`` when it cannot be read."""
+    try:
+        with runlog.open("rb") as handle:
+            head = handle.read(_TAIL_BYTES)
+            handle.seek(max(0, handle.seek(0, os.SEEK_END) - _TAIL_BYTES))
+            tail = handle.read()
+    except OSError:
+        return None
+    return head.decode("utf-8", errors="replace"), tail.decode("utf-8", errors="replace")
+
+
 def read_footer(runlog: Path) -> Footer | None:
     """The footer of a job's last run, as it wrote it; ``None`` when it wrote none.
 
-    ``None`` is no verdict at all, and a caller must never read it as success: there is
-    no runlog, it cannot be read, the footer is cut short, or the job was killed before
-    it could write one.
+    ``None`` is no word from the job, and a caller must never read it as the job's word
+    that it succeeded: there is no runlog, it cannot be read, the footer is cut short, or
+    the job was killed before it could write one. :func:`cut_short` tells the last two from
+    the first two.
 
     The verdict is the **last run's**. A scheduler that appends to a job's output file
     leaves an earlier run's footer above a later run's header, and a later run that was
@@ -271,12 +285,10 @@ def read_footer(runlog: Path) -> Footer | None:
     footer of its own and was then killed outright, before the script's handler could
     write the real one, would be believed. No engine's program prints one.
     """
-    try:
-        with runlog.open("rb") as handle:
-            handle.seek(max(0, handle.seek(0, os.SEEK_END) - _TAIL_BYTES))
-            tail = handle.read().decode("utf-8", errors="replace")
-    except OSError:
+    ends = _ends(runlog)
+    if ends is None:
         return None
+    _head, tail = ends
     footers = list(_FOOTER_RE.finditer(tail))
     if not footers or _STARTED_RE.search(tail, footers[-1].end()):
         return None
@@ -284,3 +296,29 @@ def read_footer(runlog: Path) -> Footer | None:
         return Footer(int(footers[-1]["exit_code"]), _BOOLEANS[footers[-1]["scratch_kept"]])
     except (ValueError, KeyError):
         return None
+
+
+def cut_short(runlog: Path) -> bool:
+    """Whether the last run a runlog records started and never said how it ended.
+
+    A start line with no whole footer after it: the job was killed outright, its node went
+    down, the grace a stop allows ran out while its handler was still copying results
+    home, or the disk the runlog sits on filled before the footer could be written. Such
+    a job did not end cleanly, whatever it left at its output's path.
+
+    ``False`` is every other state, the one with no run on record included: no runlog, one
+    that cannot be read, one that holds no start line this module writes. A tree copied
+    without its runlogs says nothing here, where a tree whose job was cut down says so.
+
+    A run's start is looked for where a start can be — at the head of the file, where a
+    job's own header is, and in the tail the footer is read from. One buried deeper, under
+    more output than either end holds, is not seen, and answers ``False``.
+    """
+    ends = _ends(runlog)
+    if ends is None:
+        return False
+    head, tail = ends
+    footers = list(_FOOTER_RE.finditer(tail))
+    if footers:
+        return _STARTED_RE.search(tail, footers[-1].end()) is not None
+    return _STARTED_RE.search(tail) is not None or _STARTED_RE.search(head) is not None

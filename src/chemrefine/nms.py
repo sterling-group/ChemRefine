@@ -932,11 +932,11 @@ def reattempt_nms(
     The still-valid resolved survivors from the old cache are kept; the failed parents'
     round-1 outputs are re-parsed once, and what that parse cannot stand behind is re-run
     by the rule the non-NMS resume applies (:func:`chemrefine.lifecycle.resubmit_unusable`):
-    a parent with no output, an unparseable one, or one whose engine says the program did
-    not terminate is archived and resubmitted from a regenerated input; an unconverged one
-    is retried from its best geometry; an unresolved parent — whose round-1 frequency
-    output is the expensive artifact this path exists to keep — is not resubmitted at all.
-    NMS round-2 is then re-run for them and the merged result is re-cached.
+    a parent with no output, an unparseable one, or one whose program did not terminate
+    normally is archived and resubmitted from a regenerated input; an unconverged one is
+    retried from its best geometry; an unresolved parent — whose round-1 frequency output
+    is the expensive artifact this path exists to keep — is not resubmitted at all. NMS
+    round-2 is then re-run for them and the merged result is re-cached.
 
     Resubmitting only the ``MISSING_OUTPUT`` parents and re-parsing everyone else's round-1
     file would leave a truncated or crashed round 1 failing the same way on every

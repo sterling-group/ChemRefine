@@ -314,3 +314,62 @@ def test_a_footer_joined_to_a_programs_unterminated_last_line_is_still_read(tmp_
     runlog.write_text(head + "last words with no newline" + footer, encoding="utf-8")
 
     assert job_log.read_footer(runlog) == job_log.Footer(exit_code=0, scratch_kept=False)
+
+
+def test_a_run_that_started_and_left_no_footer_is_told_from_no_run_at_all(tmp_path: Path):
+    """``cut_short`` is the last run starting and never saying how it ended.
+
+    ``read_footer`` answers ``None`` for both a runlog whose job was killed before its
+    footer and a runlog that is not there. They are different facts — a job that did not
+    end cleanly, and no account of any job — and a caller judging what sits at the job's
+    output path needs the first without being handed the second.
+    """
+    whole = _whole(tmp_path)
+    runlog = tmp_path / "step1_0.runlog"
+    started = whole[: whole.rindex("[")]
+    states = {
+        "ran to its end": whole,
+        "killed before its footer": started,
+        "footer cut short": whole[: whole.rindex("scratch_kept=")],
+        "an earlier footer, then a run that left none": whole + started,
+        "an earlier run cut short, then one that ended": started + whole,
+        "nothing written": "",
+        "no run this module wrote": "module load orca\nsome other tool's log\n",
+    }
+    answers = {}
+    for name, text in states.items():
+        runlog.write_text(text, encoding="utf-8")
+        answers[name] = job_log.cut_short(runlog)
+
+    assert [name for name, cut in answers.items() if cut] == [
+        "killed before its footer",
+        "footer cut short",
+        "an earlier footer, then a run that left none",
+    ]
+    runlog.unlink()
+    assert not job_log.cut_short(runlog), "no runlog is no run on record"
+    runlog.mkdir()
+    assert not job_log.cut_short(runlog), "nor is one that cannot be read"
+
+
+def test_a_start_is_found_at_the_head_of_a_log_far_longer_than_what_is_read(tmp_path: Path):
+    """A long run killed before its footer still shows its start, at the top of the file.
+
+    Only the two ends are read. A start under more output than either end holds — a
+    header's own chatter above it, a long run below — is the one that is not seen, and
+    that runlog reads as no run on record rather than as a guess.
+    """
+    whole = _whole(tmp_path)
+    runlog = tmp_path / "step1_0.runlog"
+    started = whole[: whole.rindex("[")]
+    long_run = "epoch 1 loss 0.5\n" * 20_000
+    assert len(long_run) > 4 * job_log._TAIL_BYTES
+
+    runlog.write_text(started + long_run, encoding="utf-8")
+    assert job_log.cut_short(runlog) and job_log.read_footer(runlog) is None
+
+    runlog.write_text(started + long_run + whole[whole.rindex("[") :], encoding="utf-8")
+    assert not job_log.cut_short(runlog)
+
+    runlog.write_text(long_run + started + long_run, encoding="utf-8")
+    assert not job_log.cut_short(runlog)

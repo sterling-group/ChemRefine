@@ -364,6 +364,67 @@ def test_a_qchem_step_runs_end_to_end_through_local_dispatch(tmp_path: Path):
     assert rerun[0].cache_hit
 
 
+def test_a_qchem_job_that_died_after_printing_a_result_halts_its_step(tmp_path: Path):
+    """A job whose program exits non-zero is a failure, however complete its output reads.
+
+    The stub writes the whole fixture output, an energy and a geometry any reader accepts,
+    and then exits 1 as a ``qchem`` wrapper does when the program under it dies. The parse
+    reads no verdict off that output, so the job's own word decides: its runlog ends with
+    ``exit_code=1``, the structure is ledgered ``did not terminate normally`` and the step
+    halts — where the energy of a dead job was cached, ranked and handed on with exit 0.
+    Once the program works, ``resume`` runs the structure again and keeps the failed
+    attempt.
+    """
+    from chemrefine import cache
+    from chemrefine.errors import ChemRefineError
+    from chemrefine.recovery import Action, execute
+    from chemrefine.state import FailureKind
+
+    stub = tmp_path / "fake-qchem"
+
+    def program(status: int) -> None:
+        stub.write_text(
+            f'#!/bin/bash\ncp "{DATA / "sp" / "step1_0.out"}" "$4"\nexit {status}\n',
+            encoding="utf-8",
+        )
+        stub.chmod(0o755)
+
+    program(1)
+    template_dir = tmp_path / "templates"
+    template_dir.mkdir()
+    (template_dir / "step1.in").write_text(_SP_TEMPLATE, encoding="utf-8")
+    (template_dir / "cpu.slurm.header").write_text("#!/bin/bash\n", encoding="utf-8")
+    seed = write_single_xyz([("H", 0.0, 0.0, 0.0), ("H", 0.0, 0.0, 0.74)], tmp_path / "input.xyz")
+    config = Config(
+        template_dir=template_dir,
+        output_dir=tmp_path / "outputs",
+        input=seed,
+        max_cores=2,
+        dispatch="local",
+        executables={"qchem": str(stub)},
+        steps=[StepConfig(step=1, engine="qchem", options={"cores": 1})],
+    )
+    step_dir = config.output_dir / "step1"
+
+    with pytest.raises(ChemRefineError, match="step 1 halted"):
+        pipeline.run(config)
+
+    assert (step_dir / "0" / "step1_0.out").is_file(), "the dead job's output did come home"
+    [failed] = cache.load_failure_records(step_dir)
+    assert (failed.structure_id, failed.kind) == ("0", FailureKind.NOT_TERMINATED_NORMALLY)
+    assert failed.reason == "did not terminate normally: 0/step1_0.runlog ends with exit_code=1"
+    cached = cache.load(step_dir)
+    assert cached is not None and cached.results.structures == ()
+
+    program(0)
+    assert execute(config, Action.RESUME) == 0
+    assert cache.load_failure_records(step_dir) == []
+    survivors = cache.load(step_dir)
+    assert survivors is not None and [s.id for s in survivors.results.structures] == ["0"]
+    archived = (step_dir / "0" / "attempt1" / "step1_0.runlog").read_text(encoding="utf-8")
+    assert "exit_code=1" in archived
+
+
 def test_the_header_records_the_binary_as_text_never_as_a_shell_reference(tmp_path: Path):
     """The runlog row is raw path text, derived by `_executable`'s precedence — no `$QC`.
 

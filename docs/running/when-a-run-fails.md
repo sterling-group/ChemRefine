@@ -219,6 +219,38 @@ simply out of its depth there, `on_failure: skip` drops the structure and keeps
 the rest. Gradients are held to the same rule, since a non-finite force is what
 an `mlip-train` step would go on to fit.
 
+## A structure failed with "did not terminate normally"
+
+```
+did not terminate normally: 0/step1_0.runlog ends with exit_code=1
+```
+
+The program did not end cleanly. An engine that reads how its program ended off the
+output says so in its own words. Where the output cannot say, the job's own account
+decides. A job script writes the status its commands ended with as the last lines of the
+structure's `.runlog`, and two things there fail the structure, however complete the
+output it left reads:
+
+- a non-zero `exit_code` — the program failed, or the job was stopped (`143` and `130` are
+  a `TERM` and an interrupt: a walltime, a `scancel`, a `Ctrl-C`);
+- a run that started and wrote no such lines at all — `records a run that left no
+  footer`: the job was killed outright, its node went down, or it was stopped and cut
+  down before it had copied its results home.
+
+The reason names that runlog, relative to the step's directory, and what it shows; what
+the program said is in the `.err` beside it and at the end of its output. An exit status
+of zero proves nothing by itself: a launcher that returns success for a program that died
+is past this check, and only an engine reading the output's own ending closes that.
+
+`resume` and `rerun-errors` run such a structure again for an `on_failure: stop` step and
+keep the failed attempt under `attemptK/`, its runlog included; for a `skip` or `best`
+step, `chemrefine rerun N` recomputes it.
+
+A structure with no `.runlog` beside it is judged by its output alone, so a tree copied
+without its runlogs still rebuilds. The runlog is the account of the job that ran in that
+directory: an output you computed yourself and put there is still judged by it until the
+runlog is removed too.
+
 ## A structure failed with "unreadable"
 
 ```
