@@ -956,6 +956,103 @@ def test_best_backfills_are_stored_in_parent_order_whatever_order_they_failed_in
     assert stored([missing, unconverged], "resume") == manifest_order
 
 
+def test_an_entry_an_earlier_run_ledgered_stays_until_the_cache_is_saved(tmp_path: Path):
+    """A ledger entry is dropped only once the cache holding its structure is on disk.
+
+    An earlier run ledgered ``1`` and ``2``. This one has ``1``'s result and fails ``2``
+    again, and the filesystem refuses its cache. The ledger still names both: the cache on
+    disk is the earlier run's, and with ``1`` off the ledger nothing would read its output
+    again. Once the cache is saved, the ledger holds this run's failures and nothing else.
+    """
+    from unittest.mock import patch
+
+    from chemrefine import cache
+    from chemrefine.errors import OutputTreeError
+
+    parents = PipelineState(structures=_h("0", "1", "2"))
+    step_cfg = StepConfig(step=1, engine="fake", operation="opt_sp")
+    ctx = replace(_ctx(tmp_path), step_cfg=step_cfg, prev_state=parents)
+    key = cache.StepKey.of(step_cfg, parents.structures, None)
+
+    def ledger() -> list[tuple[str, FailureKind]]:
+        return [(r.structure_id, r.kind) for r in cache.load_failure_records(ctx.step_dir)]
+
+    def cached() -> list[str]:
+        on_disk = cache.load_if_valid(key=key, step_dir=ctx.step_dir)
+        assert on_disk is not None, "the cache on disk answers to this step's key"
+        return [s.id for s in on_disk.results.structures]
+
+    # The earlier run: "0" cached, "1" and "2" owed.
+    missing = [Failure(sid, FailureKind.MISSING_OUTPUT, None) for sid in ("1", "2")]
+    lifecycle.finalize(ctx, step_cfg, key, list(parents.structures[:1]), missing)
+    assert ledger() == [("1", FailureKind.MISSING_OUTPUT), ("2", FailureKind.MISSING_OUTPUT)]
+    assert cached() == ["0"]
+
+    successes = list(parents.structures[:2])
+    failures = [Failure("2", FailureKind.NOT_CONVERGED, None)]
+    refusal = OutputTreeError("cannot write arrays.npz: No space left on device")
+    with patch.object(cache, "save", side_effect=refusal), pytest.raises(OutputTreeError):
+        lifecycle.finalize(ctx, step_cfg, key, successes, failures)
+    assert ledger() == [("1", FailureKind.MISSING_OUTPUT), ("2", FailureKind.NOT_CONVERGED)]
+    assert cached() == ["0"]
+
+    lifecycle.finalize(ctx, step_cfg, key, successes, failures)
+    assert ledger() == [("2", FailureKind.NOT_CONVERGED)]
+    assert cached() == ["0", "1"]
+
+
+_V1_LEDGER = (
+    '[{"step": "step1", "structure_id": "step1_structure_1.out", "reason": "Unknown error"}]'
+)
+"""An entry as v1.3.1 wrote it (``record_failed_job``): the step's directory name, the
+output's file name and a free-text reason — no ``kind``."""
+
+
+@pytest.mark.parametrize(
+    "earlier", [_V1_LEDGER, '{"structure_id": "1"}', '["1"]', "[{"], ids=["v1", "obj", "ids", "cut"]
+)
+def test_a_ledger_that_cannot_be_read_is_replaced_once_the_cache_is_saved(
+    tmp_path: Path, earlier: str
+):
+    """An earlier ledger this version cannot read does not stop a step from ending.
+
+    A v1.3.1 tree's entries carry no ``kind``, and a file cut short is no list of records
+    at all. Such a ledger cannot be added to, and reading it must not cost a step the
+    results it just computed: ``rebuild-cache`` is the documented way to adopt the one and
+    to repair the other. It is left as it is while the cache is being saved — as it is, it
+    stops every run that would serve a cache beside it — and replaced by this run's
+    verdict once the cache is on disk.
+    """
+    from unittest.mock import patch
+
+    from chemrefine import cache
+    from chemrefine.errors import CacheError, OutputTreeError
+
+    parents = PipelineState(structures=_h("0", "1"))
+    step_cfg = StepConfig(step=1, engine="fake", operation="opt_sp")
+    ctx = replace(_ctx(tmp_path), step_cfg=step_cfg, prev_state=parents)
+    key = cache.StepKey.of(step_cfg, parents.structures, None)
+    ledger_file = cache.failed_jobs_path(ctx.step_dir)
+    ledger_file.parent.mkdir(parents=True)
+    ledger_file.write_text(earlier, encoding="utf-8")
+    successes = list(parents.structures[:1])
+    failures = [Failure("1", FailureKind.NOT_CONVERGED, None)]
+
+    refusal = OutputTreeError("cannot write arrays.npz: No space left on device")
+    with patch.object(cache, "save", side_effect=refusal), pytest.raises(OutputTreeError):
+        lifecycle.finalize(ctx, step_cfg, key, successes, failures)
+    assert ledger_file.read_text(encoding="utf-8") == earlier
+    with pytest.raises(CacheError, match="failed-jobs ledger"):
+        cache.load_failure_records(ctx.step_dir)
+
+    lifecycle.finalize(ctx, step_cfg, key, successes, failures)
+    assert [(r.structure_id, r.kind) for r in cache.load_failure_records(ctx.step_dir)] == [
+        ("1", FailureKind.NOT_CONVERGED)
+    ]
+    on_disk = cache.load_if_valid(key=key, step_dir=ctx.step_dir)
+    assert on_disk is not None and [s.id for s in on_disk.results.structures] == ["0"]
+
+
 # ---------------------------------------------------------------------------
 # An output the filesystem will not let the run read
 # ---------------------------------------------------------------------------

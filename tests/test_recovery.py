@@ -338,6 +338,115 @@ def test_resume_is_incremental_resubmits_only_failed(tmp_path: Path):
         ENGINES.pop("flaky", None)
 
 
+def _stopped_at_the_cache_write(where: str):
+    """A stand-in for ``cache.save`` that stops the driver there, and how the stop arrives.
+
+    ``a refused write`` is the filesystem refusing the cache; ``a kill`` stops the driver
+    before the cache is written; ``a kill after the save`` stops it once the cache is on
+    disk, before anything after it runs.
+    """
+    from chemrefine.errors import OutputTreeError
+
+    saved = cache.save
+
+    def then_killed(**written):
+        saved(**written)
+        raise SystemExit(143)
+
+    if where == "a refused write":
+        return OutputTreeError("cannot write arrays.npz: No space left on device"), OutputTreeError
+    return (then_killed if where == "a kill after the save" else SystemExit(143)), SystemExit
+
+
+@pytest.mark.parametrize("stopped", ["a refused write", "a kill", "a kill after the save"])
+def test_a_structure_a_resume_repaired_is_owed_until_its_cache_is_saved(
+    tmp_path: Path, stopped: str
+):
+    """What a resume repaired stays on the ledger until the cache holding it is on disk.
+
+    The step fails "1" and halts, and the engine recovers. The resume that runs "1" again is
+    stopped at its cache write. Stopped before the cache is saved, the cache on disk is the
+    first run's: its key still matches and it lacks "1", so with "1" off the ledger the next
+    resume would serve it whole, with "1" gone from every later step and nothing halted.
+    Stopped after, the ledger names a structure the cache already holds. Either way the next
+    resume reads "1"'s output where it lies, runs nothing, and ends the step clean.
+    """
+    from unittest.mock import patch
+
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_flaky()
+    try:
+        cfg = _seeded_config(
+            tmp_path,
+            [StepConfig(step=1, name="s", engine="flaky", operation="opt_sp", on_failure="stop")],
+        )
+        step_dir = (cfg.output_dir / "step1_s").resolve()
+        eng.fail_ids = {"1"}
+        with pytest.raises(ChemRefineError, match="step 1 halted"):
+            execute(cfg, Action.RESUME)
+        eng.fail_ids = set()
+
+        stop, raised = _stopped_at_the_cache_write(stopped)
+        with patch.object(cache, "save", side_effect=stop), pytest.raises(raised):
+            execute(cfg, Action.RESUME)
+        assert [r.structure_id for r in cache.load_failure_records(step_dir)] == ["1"]
+        cached = {s.id for s in cache.load(step_dir).results.structures}
+        assert cached == ({"0", "1"} if stopped == "a kill after the save" else {"0"})
+
+        eng.submitted = []
+        assert execute(cfg, Action.RESUME) == 0
+        assert eng.submitted == [], "its output is read where it lies, not computed again"
+        assert cache.load_failure_records(step_dir) == []
+        assert {s.id for s in cache.load(step_dir).results.structures} == {"0", "1"}
+    finally:
+        eng.fail_ids, eng.submitted = set(), []
+        ENGINES.pop("flaky", None)
+
+
+@pytest.mark.parametrize("stopped", ["a kill", "a kill after the save"])
+def test_a_first_run_stopped_at_its_cache_write_still_owes_its_failures(
+    tmp_path: Path, stopped: str
+):
+    """A failure is on the ledger before the cache that leaves it out is saved.
+
+    The step's first run fails "1" and is killed at its cache write. Killed after the save,
+    the cache holds "0" alone under a key that matches: only the ledger entry makes the next
+    resume run "1", where a ledger written after the cache would have left a clean hit
+    without it.
+    """
+    from unittest.mock import patch
+
+    from chemrefine.engines.api import ENGINES
+
+    eng = _register_flaky()
+    try:
+        cfg = _seeded_config(
+            tmp_path,
+            [StepConfig(step=1, name="s", engine="flaky", operation="opt_sp", on_failure="stop")],
+        )
+        step_dir = (cfg.output_dir / "step1_s").resolve()
+        eng.fail_ids = {"1"}
+        stop, raised = _stopped_at_the_cache_write(stopped)
+        with patch.object(cache, "save", side_effect=stop), pytest.raises(raised):
+            execute(cfg, Action.RESUME)
+        assert [r.structure_id for r in cache.load_failure_records(step_dir)] == ["1"]
+        on_disk = cache.load(step_dir)
+        if stopped == "a kill":
+            assert on_disk is None, "killed before the save: there is no cache yet"
+        else:
+            assert on_disk is not None and {s.id for s in on_disk.results.structures} == {"0"}
+
+        eng.fail_ids, eng.submitted = set(), []
+        assert execute(cfg, Action.RESUME) == 0
+        assert eng.submitted == ["1"], "the one structure with no output, and only that one"
+        assert cache.load_failure_records(step_dir) == []
+        assert {s.id for s in cache.load(step_dir).results.structures} == {"0", "1"}
+    finally:
+        eng.fail_ids, eng.submitted = set(), []
+        ENGINES.pop("flaky", None)
+
+
 def test_rerun_redoes_whole_step(tmp_path: Path):
     """`rerun` invalidates the step and re-executes it end-to-end (all structures)."""
     from chemrefine.engines.api import ENGINES
@@ -1443,6 +1552,54 @@ def test_rebuild_cache_reparses_without_submitting(tmp_path: Path):
         assert execute(cfg, Action.REBUILD_CACHE, target=1) == 0
         assert eng.submitted == []  # parse-only, nothing resubmitted
         assert {s.id for s in cache.load(step_dir).results.structures} == {"0", "1"}
+    finally:
+        eng.fail_ids, eng.submitted = set(), []
+        ENGINES.pop("flaky", None)
+
+
+@pytest.mark.parametrize("policy", ["stop", "skip"])
+def test_rebuild_cache_replaces_a_ledger_this_version_cannot_read(tmp_path: Path, policy: str):
+    """``rebuild-cache`` is the repair for a ledger that is not this version's, failures or not.
+
+    A v1.3.1 tree's entries carry no ``kind``. Beside a cache, such a ledger stops every run
+    that would serve it, and the rebuild named as the way out has to end by replacing it:
+    reading it on the way to its own write, the rebuild of a step that still has a failure
+    stopped on the same error it was run to repair.
+    """
+    from chemrefine.engines.api import ENGINES
+    from chemrefine.errors import CacheError
+
+    eng = _register_flaky()
+    try:
+        cfg = _seeded_config(
+            tmp_path,
+            [StepConfig(step=1, name="s", engine="flaky", operation="opt_sp", on_failure=policy)],
+        )
+        step_dir = (cfg.output_dir / "step1_s").resolve()
+        eng.fail_ids = {"1"}
+        if policy == "stop":
+            with pytest.raises(ChemRefineError, match="step 1 halted"):
+                execute(cfg, Action.RESUME)
+        else:
+            assert execute(cfg, Action.RESUME) == 0
+        cache.failed_jobs_path(step_dir).write_text(
+            '[{"step": "step1_s", "structure_id": "step1_structure_1.out", "reason": "x"}]',
+            encoding="utf-8",
+        )
+        with pytest.raises(CacheError, match="failed-jobs ledger"):
+            execute(cfg, Action.RESUME)
+
+        eng.submitted = []
+        if policy == "stop":
+            with pytest.raises(ChemRefineError, match="step 1 halted"):
+                execute(cfg, Action.REBUILD_CACHE, target=1)
+        else:
+            assert execute(cfg, Action.REBUILD_CACHE, target=1) == 0
+        assert eng.submitted == []
+        assert [(r.structure_id, r.kind) for r in cache.load_failure_records(step_dir)] == [
+            ("1", FailureKind.MISSING_OUTPUT)
+        ]
+        assert {s.id for s in cache.load(step_dir).results.structures} == {"0"}
     finally:
         eng.fail_ids, eng.submitted = set(), []
         ENGINES.pop("flaky", None)

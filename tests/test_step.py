@@ -1029,12 +1029,9 @@ def test_on_failure_best_drops_failure_with_no_fallback(tmp_path: Path):
 
     cfg = _config(tmp_path, on_failure="best")
     ctx = build_context(cfg, cfg.steps[0], _seed_state(["0"]), get_engine(cfg.steps[0].engine))
-    ctx.step_dir.mkdir(parents=True, exist_ok=True)
     failures = [Failure(sid="ghost", kind=FailureKind.MISSING_OUTPUT, best=None)]
     assert apply_failure_policy([], failures, ctx, cfg.steps[0]) == ()
-    assert [(r.structure_id, r.kind) for r in cache.load_failure_records(ctx.step_dir)] == [
-        ("ghost", FailureKind.MISSING_OUTPUT)
-    ]
+    assert not ctx.step_dir.exists(), "resolving reads and writes nothing: the ledger is finalize's"
 
 
 def test_run_step_writes_canonical_result_records(tmp_path: Path):

@@ -18,9 +18,9 @@ The phases:
   work: a re-run, or a :class:`ChildRound` (NMS round 2), starts as soon as the job that
   earned it frees a slot rather than after the batch drains.
 * :func:`run_child_rounds` — the same queue for a caller whose parents finished elsewhere.
-* :func:`apply_failure_policy` — ``stop | skip | best``, and the ledger that records it.
+* :func:`apply_failure_policy` — ``stop | skip | best``: what the policy keeps.
 * :func:`finalize` — the tail every step ends with: the policy, the parents' order, the cache
-  write.
+  write, and the failure ledger on both sides of it.
 
 It does **not** own the order of a whole step. :mod:`chemrefine.step` interleaves phases with
 work of its own — the manifest is written between ``prepare`` and ``submit``, so an interrupted
@@ -39,7 +39,12 @@ from typing import Protocol
 from chemrefine import __version__, attempts, cache, ids, io
 from chemrefine.config import StepConfig
 from chemrefine.engines.api import CalculationEngine, StreamingSubmit, sweep
-from chemrefine.errors import ChemRefineError, OutputParseError, OutputTerminationError
+from chemrefine.errors import (
+    CacheError,
+    ChemRefineError,
+    OutputParseError,
+    OutputTerminationError,
+)
 from chemrefine.state import (
     Failure,
     FailureKind,
@@ -809,11 +814,9 @@ def apply_failure_policy(
     ctx: StepContext,
     step_cfg: StepConfig,
 ) -> tuple[Structure, ...]:
-    """Record failures to the ledger and resolve them per ``step_cfg.on_failure``.
+    """Resolve a step's failures per ``step_cfg.on_failure``: what the policy keeps.
 
-    The ``failed_jobs.json`` ledger is **always** written for any failures (so
-    they're visible regardless of policy) and cleared on a clean step. ``skip``
-    drops the failures and keeps the successes; ``best`` keeps every
+    ``skip`` drops the failures and keeps the successes; ``best`` keeps every
     structure, backfilling a failure with the best geometry obtained for it
     (else its submitted input, as a geometry alone — :func:`_backfill_for`);
     ``stop`` (the default) keeps the successes too but the run is
@@ -821,14 +824,15 @@ def apply_failure_policy(
     *after* the cache is written (so ``resume`` / ``rerun-errors`` re-attempt
     only those failed jobs).
 
+    The ``failed_jobs.json`` ledger is :func:`finalize`'s to write, on both sides of the
+    cache; nothing is read or written here.
+
     Returns what the policy keeps, in the order it met them; :func:`finalize` puts that
     in the parents' order before it is stored.
     """
     if not failures:
-        cache.clear_failed_jobs(ctx.step_dir)
         return tuple(successes)
 
-    cache.save_failure_records(ctx.step_dir, [FailureRecord.of(f) for f in failures])
     for f in failures:
         logger.debug("step %d: structure %s failed — %s", step_cfg.step, f.sid, f.reason)
     logger.warning(
@@ -939,20 +943,60 @@ def finalize(
 ) -> StepResults:
     """Resolve a step's failures and persist the result — the one way a step ends.
 
-    Every path that finishes a step does the same things in the same order: apply
-    ``on_failure`` (:func:`apply_failure_policy`), put everything it keeps — survivors and
-    ``best`` backfills alike — in their parents' order (:func:`_in_parent_order`), then write
-    the cache (:func:`chemrefine.cache.save`).
-    Four callers need it — the full run, ``rebuild-cache``, the failed-job resubmit, and the
-    NMS re-attempt — and how they *reach* this point differs (some retry unconverged
-    structures first, some run NMS, some filter afterwards and some return the raw
-    results), which is why only the tail is shared and only the tail is extracted.
+    Every path that finishes a step does the same things in the same order: put this run's
+    failures on the ``failed_jobs.json`` ledger, apply ``on_failure``
+    (:func:`apply_failure_policy`), put everything it keeps — survivors and ``best``
+    backfills alike — in their parents' order (:func:`_in_parent_order`), write the cache
+    (:func:`chemrefine.cache.save`), then take off the ledger what this run repaired.
+    Every route that ends a step calls it — the full run, a continued one, an artifact
+    step, ``rebuild-cache``, the failed-job resubmit and the NMS re-attempt — and how they
+    *reach* this point differs (some retry unconverged structures first, some run NMS,
+    some filter afterwards and some return the raw results), which is why only the tail is
+    shared and only the tail is extracted.
 
     One function rather than a convention, because a site that applies the policy and skips
     the write — or writes under a key of its own derivation — produces no crash, just a
     silent re-run or a silent reuse much later. The key is a value
     (:class:`chemrefine.cache.StepKey`), so this takes the one its caller already built.
+
+    **The ledger and the cache are two documents, and the order of their writes is the
+    rule.** A cache whose key matches is served whole, and only a ledger entry makes a
+    later ``resume`` read a structure's output again. So the ledger is written on both
+    sides of the save. Before it, the ledger is only added to: this run's failures join
+    what an earlier run left, so a failure is on record before the cache that leaves it
+    out, whatever the policy (it is visible under ``skip`` and ``best`` too). After it,
+    the ledger is this run's verdict alone, which takes off what this run repaired.
+    Beside a cache whose key matches, a structure the step was given is therefore in that
+    cache or on the ledger wherever a run stops.
+
+    A write the filesystem refuses between the two, or a kill, leaves a ledger that names
+    too much and never one that names too little. What too much costs depends on the
+    policy. Under ``stop`` the next ``resume`` re-attempts what the ledger names and ends
+    here again, which settles it: a plain step reads the outputs once more and runs
+    nothing, and an NMS step runs a round of displaced children for a parent it does not
+    find at its target, which under ``random`` is every parent. Under ``skip`` and
+    ``best`` the ledger is a record and nothing re-attempts it, so an entry for a
+    structure the cache holds stays until the step is rebuilt or run again.
+
+    A ledger already there that cannot be read — another version's, a corrupt one — cannot
+    be added to. It is left as it is until the cache is saved and is replaced then: as it
+    is, it stops every run that would serve the cache beside it
+    (:func:`chemrefine.cache.load_failure_records` raises), and replaced before the save
+    it would be the ledger that names too little.
     """
+    records = [FailureRecord.of(f) for f in failures]
+    ledgered: list[FailureRecord] | None = None
+    if records:
+        try:
+            earlier = cache.load_failure_records(ctx.step_dir)
+        except CacheError:
+            pass  # not a ledger this can add to: it stays as it is until the cache is saved
+        else:
+            # Added to, never replaced. A clean step has nothing to add and writes nothing
+            # here: what an earlier run ledgered stays as it is until the cache is saved.
+            failed = {record.structure_id for record in records}
+            ledgered = [*(r for r in earlier if r.structure_id not in failed), *records]
+            cache.save_failure_records(ctx.step_dir, ledgered)
     kept = apply_failure_policy(successes, failures, ctx, step_cfg)
     results = StepResults(structures=_in_parent_order(kept, ctx.prev_state))
     cache.save(
@@ -962,4 +1006,8 @@ def finalize(
         step_dir=ctx.step_dir,
         chemrefine_version=__version__,
     )
+    if not records:
+        cache.clear_failed_jobs(ctx.step_dir)
+    elif ledgered != records:
+        cache.save_failure_records(ctx.step_dir, records)
     return results

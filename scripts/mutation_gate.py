@@ -743,6 +743,75 @@ _BUNDLED: tuple[Mutation, ...] = (
         "re-key every step after it, and an mlip-train step retrains on a new split",
     ),
     Mutation(
+        id="ledger-settles-after-the-cache",
+        path="src/chemrefine/lifecycle.py",
+        old=(
+            "    cache.save(\n"
+            "        step_cfg=step_cfg,\n"
+            "        key=key,\n"
+            "        results=results,\n"
+            "        step_dir=ctx.step_dir,\n"
+            "        chemrefine_version=__version__,\n"
+            "    )\n"
+            "    if not records:\n"
+            "        cache.clear_failed_jobs(ctx.step_dir)\n"
+            "    elif ledgered != records:\n"
+            "        cache.save_failure_records(ctx.step_dir, records)\n"
+        ),
+        new=(
+            "    if not records:\n"
+            "        cache.clear_failed_jobs(ctx.step_dir)\n"
+            "    elif ledgered != records:\n"
+            "        cache.save_failure_records(ctx.step_dir, records)\n"
+            "    cache.save(\n"
+            "        step_cfg=step_cfg,\n"
+            "        key=key,\n"
+            "        results=results,\n"
+            "        step_dir=ctx.step_dir,\n"
+            "        chemrefine_version=__version__,\n"
+            "    )\n"
+        ),
+        tests="tests/test_recovery.py",
+        breaks="a resume stopped at its cache write has already taken what it repaired off "
+        "the ledger — the earlier cache still matches its key, so the next resume serves it "
+        "whole and the repaired structure is gone from every later step, with nothing halted",
+    ),
+    Mutation(
+        id="failures-ledgered-before-the-cache",
+        path="src/chemrefine/lifecycle.py",
+        old="            cache.save_failure_records(ctx.step_dir, ledgered)\n",
+        new="            ledgered = None\n",
+        tests="tests/test_recovery.py",
+        breaks="a step's failures reach the ledger only after its cache — killed between the "
+        "two, the cache holds the successes under a key that matches, so the next resume is "
+        "a clean hit and the failed structures are never run again",
+    ),
+    Mutation(
+        id="ledger-added-to-before-the-cache",
+        path="src/chemrefine/lifecycle.py",
+        old=(
+            "            ledgered = [*(r for r in earlier if r.structure_id not in failed), "
+            "*records]\n"
+        ),
+        new="            ledgered = list(records)\n",
+        tests="tests/test_lifecycle.py",
+        breaks="a run that repairs one structure and fails another drops the repaired one "
+        "from the ledger before its cache is saved — stopped there, the earlier cache still "
+        "matches its key and the structure is on neither document: an NMS re-attempt, which "
+        "reads only what the ledger names, and every skip or best step serve the cache "
+        "without it",
+    ),
+    Mutation(
+        id="unreadable-ledger-does-not-stop-a-step",
+        path="src/chemrefine/lifecycle.py",
+        old="        except CacheError:\n            pass  # not a ledger this can add to",
+        new="        except KeyError:\n            pass  # not a ledger this can add to",
+        tests="tests/test_lifecycle.py",
+        breaks="a step that ends with a failure beside a ledger this version cannot read — a "
+        "v1.3.1 tree's, a corrupt one — stops on that ledger after its jobs have run, and "
+        "`rebuild-cache`, the documented repair for both, stops the same way",
+    ),
+    Mutation(
         id="orca-scan-block-bound",
         path="src/chemrefine/engines/orca/inspect.py",
         old='_GEOM_BLOCK_RE = re.compile(r"%geom\\b([^%*!]*)", re.IGNORECASE)',
