@@ -142,8 +142,8 @@ So each run holds an advisory lock — `<output_dir>/.chemrefine.lock`, naming
 its pid, host and start time — for its whole duration, and a second run against
 the same tree fails fast with exit code `10` instead. A lock whose holder died
 on the same host is detected and reclaimed automatically; one left by a run
-killed on *another* host cannot be liveness-checked from here and must be
-deleted by hand — see
+killed on *another* host, or inside a container on this one, cannot be
+liveness-checked from here and must be deleted by hand — see
 [troubleshooting](when-a-run-fails.md#another-run-holds-this-output-tree).
 
 ## Result records

@@ -1137,6 +1137,207 @@ def test_a_foreign_hosts_lock_is_never_reclaimed(tmp_path: Path):
         pass
 
 
+def _plant_namespaced_lock(output_dir: Path, *, pid: int, namespace: str | None) -> Path:
+    """A lock on this host as a driver in ``namespace`` would have written it."""
+    import json
+    import socket
+
+    lock = _write_lock(output_dir, host=socket.gethostname(), pid=pid)
+    record = json.loads(lock.read_text(encoding="utf-8"))
+    if namespace is not None:
+        record["pidns"] = namespace
+    lock.write_text(json.dumps(record), encoding="utf-8")
+    return lock
+
+
+def test_a_lock_naming_this_pid_that_this_process_did_not_take_is_another_drivers(
+    tmp_path: Path,
+):
+    """Reentrancy is what this process holds, not what the file says.
+
+    Two containers on one host each have a pid 1, and commonly the host's name. Read off
+    the file, a lock naming this host and this pid was this process's own, taken further
+    out: a second driver whose pid was the same number in another container yielded
+    straight into a tree the first was working in. The lock here names this very pid and
+    was never taken by this process, so it is another driver's, and it stands.
+    """
+    import socket
+
+    from chemrefine.errors import RunLockError
+
+    outputs = tmp_path / "outputs"
+    lock = _write_lock(outputs, host=socket.gethostname(), pid=os.getpid())
+    planted = lock.read_text(encoding="utf-8")
+    with (
+        pytest.raises(RunLockError, match=rf"names pid {os.getpid()} on "),
+        pipeline.run_lock(outputs),
+    ):
+        pass
+    assert lock.read_text(encoding="utf-8") == planted
+    assert pipeline._HELD == {}
+
+
+def test_a_holder_in_another_pid_namespace_is_never_probed_or_reclaimed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A pid means nothing outside the container that recorded it.
+
+    A driver inside a container holds the tree; from the host, or from a second container,
+    its pid names some other process or none at all. Probed all the same, a live holder
+    read as dead and its lock was reclaimed from under it. The record now says which
+    namespace its pid belongs to, and from any other the holder cannot be probed — held,
+    like a lock on another host — while one recorded in this namespace, or with none, is
+    probed and reclaimed as before.
+    """
+    from chemrefine import slurm
+    from chemrefine.errors import RunLockError
+
+    outputs = tmp_path / "outputs"
+    monkeypatch.setattr(slurm, "pid_namespace", lambda: "pid:[4026531836]")
+
+    lock = _plant_namespaced_lock(outputs, pid=_dead_pid(), namespace="pid:[4026532999]")
+    status = pipeline.lock_status(outputs)
+    assert (status.held, status.alive) == (True, None)
+    with (
+        pytest.raises(RunLockError, match="in another PID namespace") as refused,
+        pipeline.run_lock(outputs),
+    ):
+        pass
+    assert "delete the lock file and retry" in str(refused.value)
+    assert lock.exists(), "a holder that cannot be probed is never reclaimed"
+
+    for same in ("pid:[4026531836]", None):
+        _plant_namespaced_lock(outputs, pid=_dead_pid(), namespace=same)
+        assert pipeline.lock_status(outputs).held is False
+        with pipeline.run_lock(outputs):
+            pass
+        assert not lock.exists()
+
+    # A host whose kernel names no namespace cannot say the record's is its own.
+    monkeypatch.setattr(slurm, "pid_namespace", lambda: None)
+    _plant_namespaced_lock(outputs, pid=_dead_pid(), namespace="pid:[4026531836]")
+    with pytest.raises(RunLockError, match="in another PID namespace"), pipeline.run_lock(outputs):
+        pass
+
+
+def test_the_lock_records_the_namespace_its_pid_belongs_to(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Written where the kernel names one, left out where it names none.
+
+    The record on a host with no ``/proc`` is the three fields it always was, so a lock
+    written there reads as one written before namespaces were recorded.
+    """
+    import json
+    import socket
+
+    from chemrefine import slurm
+
+    outputs = tmp_path / "outputs"
+    lock = outputs / pipeline.RUN_LOCK_NAME
+    monkeypatch.setattr(slurm, "pid_namespace", lambda: "pid:[4026531836]")
+    with pipeline.run_lock(outputs):
+        record = json.loads(lock.read_text(encoding="utf-8"))
+        assert record.pop("started")
+        assert record == {
+            "pid": os.getpid(),
+            "host": socket.gethostname(),
+            "pidns": "pid:[4026531836]",
+        }
+        with pipeline.run_lock(outputs):
+            assert lock.exists(), "its own lock, taken further out, is still its own"
+    assert not lock.exists()
+
+    monkeypatch.setattr(slurm, "pid_namespace", lambda: None)
+    with pipeline.run_lock(outputs):
+        assert set(json.loads(lock.read_text(encoding="utf-8"))) == {"pid", "host", "started"}
+        with pipeline.run_lock(outputs):
+            pass
+    assert not lock.exists()
+
+
+def test_a_lock_whose_namespace_is_no_name_is_unreadable(tmp_path: Path):
+    """A record damaged from outside names no holder, and is refused as every such lock is."""
+    import json
+    import socket
+
+    from chemrefine.errors import RunLockError
+
+    outputs = tmp_path / "outputs"
+    lock = _write_lock(outputs, host=socket.gethostname(), pid=_dead_pid())
+    record = json.loads(lock.read_text(encoding="utf-8")) | {"pidns": 7}
+    lock.write_text(json.dumps(record), encoding="utf-8")
+    assert pipeline._lock_holder(lock) is None
+    lock.write_text("[1, 2]", encoding="utf-8")
+    assert pipeline._lock_holder(lock) is None
+    with pytest.raises(RunLockError, match="exists but is unreadable"), pipeline.run_lock(outputs):
+        pass
+
+
+def test_a_forked_childs_inherited_table_is_no_lock_of_its_own(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """What the process holds is asked of the table *and* the pid.
+
+    A child forked while its parent holds the lock inherits the table with the parent's
+    record in it. It took nothing: the record names the parent's pid, so the child is
+    refused like any other second driver.
+    """
+    from chemrefine.errors import RunLockError
+
+    outputs = tmp_path / "outputs"
+    lock = _plant_namespaced_lock(outputs, pid=os.getppid(), namespace=None)
+    parent = pipeline._lock_holder(lock)
+    assert parent is not None
+    monkeypatch.setitem(pipeline._HELD, lock, parent)
+    with pytest.raises(RunLockError, match=rf"pid {os.getppid()}"), pipeline.run_lock(outputs):
+        pass
+    assert lock.exists()
+
+
+def test_a_lock_replaced_under_its_holder_is_not_reentered(tmp_path: Path):
+    """The inner acquisition answers to whoever holds the path now.
+
+    The table says this process took the lock; the file says another driver holds it since
+    — an operator deleted a lock believed dead and a new run locked the tree. The inner
+    acquisition is then a second driver's, and is refused rather than waved through.
+    """
+    import socket
+
+    from chemrefine.errors import RunLockError
+
+    outputs = tmp_path / "outputs"
+    lock = outputs / pipeline.RUN_LOCK_NAME
+    with pipeline.run_lock(outputs):
+        lock.unlink()
+        _write_lock(outputs, host=socket.gethostname(), pid=os.getppid())
+        with pytest.raises(RunLockError, match=rf"pid {os.getppid()}"), pipeline.run_lock(outputs):
+            pass
+    assert pipeline._HELD == {}
+    holder = pipeline._lock_holder(lock)
+    assert holder is not None and holder.pid == os.getppid(), "the new holder's lock survives"
+
+
+def test_a_lock_deleted_under_its_holder_is_taken_anew_and_released_once(tmp_path: Path):
+    """With its lock gone from disk, the inner acquisition holds nothing to re-enter.
+
+    The table still names this process, the file no longer does, so the inner acquisition
+    claims the tree as any driver would and releases what it claimed. The outer exit then
+    finds neither its file nor its entry, and removes neither.
+    """
+    outputs = tmp_path / "outputs"
+    lock = outputs / pipeline.RUN_LOCK_NAME
+    with pipeline.run_lock(outputs):
+        outer = pipeline._HELD[lock]
+        lock.unlink()  # an operator deletes it, believing this run dead
+        with pipeline.run_lock(outputs):
+            inner = pipeline._lock_holder(lock)
+            assert inner is not None and pipeline._HELD[lock] is not outer
+        assert not lock.exists(), "the inner exit released the lock it took"
+        assert pipeline._HELD == {}
+    assert pipeline._HELD == {} and not lock.exists()
+
+
 @pytest.mark.parametrize(
     "code",
     [errno.EPERM, errno.EOPNOTSUPP, errno.ENOSYS, errno.EXDEV],
@@ -2021,6 +2222,39 @@ def test_the_fence_refuses_a_local_lease_whose_pid_proves_nothing(tmp_path: Path
     with pytest.raises(RunLockError, match="local-1 is not provably dead"):
         pipeline.run(cfg)
     assert slurm.lease_path(step_dir).is_file()
+
+
+def test_the_fence_never_probes_a_local_job_recorded_in_another_pid_namespace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A job a containerised driver left running is not proven dead by a pid that is not here.
+
+    Its lease names this host and a pid of the container's own numbering. Probed from
+    outside, that number names nothing: the fence read the job as gone, swept its lease and
+    let a new run archive the directory the job's exit trap was still copying into. The
+    lease says which namespace its pid belongs to, and from any other the fence refuses and
+    keeps the record; recorded in this one, a dead pid is swept as before.
+    """
+    import socket
+
+    from chemrefine import slurm
+    from chemrefine.errors import RunLockError
+
+    seed = tmp_path / "step0_seed.xyz"
+    io.write_single_xyz(_h2(), seed)
+    cfg = _config(tmp_path, input=seed)
+    step_dir = cfg.step_dir(cfg.steps[0])
+    monkeypatch.setattr(slurm, "pid_namespace", lambda: "pid:[4026531836]")
+    lease = {"id": "local-1", "host": socket.gethostname(), "pid": _dead_pid()}
+
+    _plant_leases(step_dir, lease | {"pidns": "pid:[4026532999]"})
+    with pytest.raises(RunLockError, match="local-1 was started in another PID namespace"):
+        pipeline.run(cfg)
+    assert slurm.lease_path(step_dir).is_file()
+
+    _plant_leases(step_dir, lease | {"pidns": "pid:[4026531836]"})
+    assert pipeline.run(cfg)
+    assert not slurm.lease_path(step_dir).exists()
 
 
 def test_a_dead_local_lease_alone_is_swept_without_asking_the_queue(tmp_path: Path):

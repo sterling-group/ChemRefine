@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from types import FrameType
-from typing import NoReturn
+from typing import NamedTuple, NoReturn
 
 import numpy as np
 from ase import Atoms
@@ -196,8 +196,35 @@ RUN_LOCK_NAME = ".chemrefine.lock"
 """The advisory lock file :func:`run_lock` holds at the root of ``output_dir``."""
 
 
-def _lock_holder(lock: Path) -> tuple[str, int, str] | None:
-    """The ``(host, pid, started)`` recorded in ``lock``, or ``None`` if unreadable.
+class _Holder(NamedTuple):
+    """Who a run lock names, as :func:`run_lock` writes it and :func:`_lock_holder` reads it."""
+
+    host: str
+    pid: int
+    started: str
+    namespace: str | None = None
+    """The PID namespace ``pid`` was read in (:func:`chemrefine.slurm.pid_namespace`);
+    ``None`` where the kernel names none, and for a lock written before it was recorded."""
+
+    def record(self) -> dict[str, object]:
+        """The lock file's document. The namespace is written only where there is one, so a
+        host that names none writes the record it always wrote."""
+        document: dict[str, object] = {"pid": self.pid, "host": self.host, "started": self.started}
+        return document if self.namespace is None else document | {"pidns": self.namespace}
+
+    def named(self) -> str:
+        """The holder as a refusal names it, saying so when its pid cannot be probed from here."""
+        who = f"pid {self.pid} on {self.host}, started {self.started}"
+        if self.host == socket.gethostname() and _elsewhere(self.namespace):
+            who += (
+                ", in another PID namespace (a container on this host), where its pid cannot "
+                "be probed from here"
+            )
+        return who
+
+
+def _lock_holder(lock: Path) -> _Holder | None:
+    """The holder recorded in ``lock``, or ``None`` if unreadable.
 
     ``None`` covers both a lock vacated between the failed claim and this read, and one
     damaged from outside — a partial copy, a truncating editor. This program never creates
@@ -207,14 +234,24 @@ def _lock_holder(lock: Path) -> tuple[str, int, str] | None:
     """
     try:
         record = json.loads(lock.read_text(encoding="utf-8"))
-        if type(record["pid"]) is not int:
+        namespace = record.get("pidns")
+        if type(record["pid"]) is not int or not isinstance(namespace, (str, type(None))):
             return None
-        return str(record["host"]), record["pid"], str(record["started"])
-    except (OSError, ValueError, KeyError, TypeError):
+        return _Holder(str(record["host"]), record["pid"], str(record["started"]), namespace)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None
 
 
-def _pid_alive(pid: int) -> bool | None:
+def _elsewhere(namespace: str | None) -> bool:
+    """Whether a recorded PID namespace is one this process does not run in.
+
+    A record that names none — a host whose kernel exposes none, a record written before
+    they were kept — is taken to be this one's, which is how every such record was read.
+    """
+    return namespace is not None and namespace != slurm.pid_namespace()
+
+
+def _pid_alive(pid: int, namespace: str | None = None) -> bool | None:
     """Whether ``pid`` names a live process on *this* host; ``None`` where that cannot be asked.
 
     ``PermissionError`` means the process exists and belongs to someone else — alive.
@@ -226,8 +263,13 @@ def _pid_alive(pid: int) -> bool | None:
     damaged from outside, and it proves nothing about the driver or job that wrote it.
     Three answers rather than two, so no caller takes "cannot be asked" for "gone": a
     holder is reclaimed, and a lease swept, on ``False`` alone.
+
+    ``None`` too for a pid recorded in another PID ``namespace`` (:func:`_elsewhere`) — a
+    driver or a job inside a container on this host. The number names another process
+    here, or none: asked all the same, a live holder whose pid does not exist outside its
+    container would read as dead and be reclaimed from under it.
     """
-    if pid <= 0:
+    if pid <= 0 or _elsewhere(namespace):
         return None
     try:
         os.kill(pid, 0)
@@ -282,12 +324,12 @@ def lock_status(output_dir: Path) -> LockStatus:
     holder = _lock_holder(lock)
     if holder is None:
         return LockStatus(held=not io.absent(lock), host=None, pid=None, started=None, alive=None)
-    host, pid, started = holder
-    alive = _pid_alive(pid) if host == socket.gethostname() else None
+    host, pid, started, namespace = holder
+    alive = _pid_alive(pid, namespace) if host == socket.gethostname() else None
     return LockStatus(held=alive is not False, host=host, pid=pid, started=started, alive=alive)
 
 
-def _reclaim_stale(lock: Path, holder: tuple[str, int, str]) -> bool:
+def _reclaim_stale(lock: Path, holder: _Holder) -> bool:
     """Atomically take a dead holder's lock off its path; ``True`` if this process did.
 
     Reclaiming by ``unlink()`` would be a race: two drivers that both probed the same dead
@@ -332,7 +374,7 @@ def _reclaim_stale(lock: Path, holder: tuple[str, int, str]) -> bool:
                         "restore it, the path now being held by %s, so two drivers may share "
                         "this tree; %s",
                         lock,
-                        f"pid {current[1]} on {current[0]}" if current else "an unreadable lock",
+                        f"pid {current.pid} on {current.host}" if current else "an unreadable lock",
                         _unrestored(claim, swept),
                     )
                     return False
@@ -348,9 +390,9 @@ def _reclaim_stale(lock: Path, holder: tuple[str, int, str]) -> bool:
     return True
 
 
-def _unrestored(claim: Path, swept: tuple[str, int, str] | None) -> str:
+def _unrestored(claim: Path, swept: _Holder | None) -> str:
     """What a swept-up live lock that could not be put back leaves: its run and its record."""
-    who = f"pid {swept[1]} on {swept[0]}, started {swept[2]}" if swept else "unreadable"
+    who = f"pid {swept.pid} on {swept.host}, started {swept.started}" if swept else "unreadable"
     return f"the run it belongs to ({who}) holds no lock, and its record is kept at {claim}"
 
 
@@ -430,30 +472,35 @@ def _link_claim(claim: Path, lock: Path, output_dir: Path) -> None:
         # Decided past the handler, so the refusal below carries no FileExistsError in its
         # traceback.
         holder = _lock_holder(lock)
-        if holder is not None and holder[0] == socket.gethostname():
-            host, pid, started = holder
-            if not reclaimed and _pid_alive(pid) is False:
-                reclaimed = True
-                if _reclaim_stale(lock, holder):
-                    logger.warning(
-                        "reclaiming stale run lock %s (pid %d on %s, started %s, now dead)",
-                        lock,
-                        pid,
-                        host,
-                        started,
-                    )
-                continue
+        if (
+            holder is not None
+            and holder.host == socket.gethostname()
+            and not reclaimed
+            and _pid_alive(holder.pid, holder.namespace) is False
+        ):
+            reclaimed = True
+            if _reclaim_stale(lock, holder):
+                logger.warning(
+                    "reclaiming stale run lock %s (pid %d on %s, started %s, now dead)",
+                    lock,
+                    holder.pid,
+                    holder.host,
+                    holder.started,
+                )
+            continue
         raise RunLockError(
             f"another ChemRefine run holds this output tree: {lock} "
-            + (
-                f"names pid {holder[1]} on {holder[0]}, started {holder[2]}"
-                if holder is not None
-                else "exists but is unreadable"
-            )
+            + (f"names {holder.named()}" if holder is not None else "exists but is unreadable")
             + ". Two drivers on one tree archive and resubmit each other's work, so "
             "this run stops here. Wait for that run to finish — or, if it is known "
             "dead (e.g. killed on another node), delete the lock file and retry."
         )
+
+
+_HELD: dict[Path, _Holder] = {}
+"""The run locks this process has taken and not yet released: lock path → the record it
+wrote. What :func:`run_lock` asks to tell its own lock, taken further out, from another
+driver's."""
 
 
 @contextlib.contextmanager
@@ -478,8 +525,9 @@ def run_lock(output_dir: Path) -> Generator[None]:
     :func:`_sigterm_unwinds` narrows that to SIGKILL alone — a ``scancel`` or walltime
     SIGTERM unwinds and releases — and a SIGKILLed holder on *this* host is probed with
     ``os.kill(pid, 0)`` and reclaimed when dead. A holder on another host cannot be probed
-    from here — that lock is treated as live, and the error says to delete it once its run
-    is known dead.
+    from here, and neither can one in another PID namespace on this host — a driver inside
+    a container, whose pid is another process's number outside it, or no process's. Either
+    lock is treated as live, and the error says to delete it once its run is known dead.
 
     **The record and the lock are one operation.** The record is written to a per-pid
     claim beside the lock and *linked* into place, so the lock never exists without a
@@ -503,12 +551,15 @@ def run_lock(output_dir: Path) -> Generator[None]:
     is on its way out it is logged beside it instead (:func:`chemrefine.io.cleanup`), so a
     SIGTERM's ``143`` stays ``143``.
 
-    **Reentrant by pid**: :func:`chemrefine.recovery.execute` takes the lock around a
-    whole action — ``run``'s cache invalidation mutates the tree *before*
-    :func:`run` starts — and :func:`run` takes it again for callers that drive the
-    pipeline directly. The inner acquisition reads its own pid in the lock before it writes
-    anything and yields without ownership: it writes no claim of its own, and the one
-    release still happens at the outermost exit.
+    **Reentrant within the process that holds it**: :func:`chemrefine.recovery.execute`
+    takes the lock around a whole action — ``run``'s cache invalidation mutates the tree
+    *before* :func:`run` starts — and :func:`run` takes it again for callers that drive the
+    pipeline directly. The inner acquisition finds the lock among the ones this process
+    took (:data:`_HELD`), still on disk as it wrote it, before it writes anything, and
+    yields without ownership: it writes no claim of its own, and the one release still
+    happens at the outermost exit. What the process holds is decided in the process. Read
+    off the file alone, a lock naming this host and this pid would be taken for this
+    process's own by a driver in another container whose pid is the same number.
 
     **The lock fences drivers, not their jobs.** A dead holder's SLURM jobs run on
     after its lock is reclaimed (and a SIGKILLed holder's local ones too); the leases
@@ -518,26 +569,33 @@ def run_lock(output_dir: Path) -> Generator[None]:
     """
     with _sigterm_unwinds():
         lock = output_dir / RUN_LOCK_NAME
-        held = _lock_holder(lock)
-        if held is not None and held[:2] == (socket.gethostname(), os.getpid()):
-            # Ours, taken further out — see "reentrant by pid" above.
+        mine = _HELD.get(lock)
+        if mine is not None and mine.pid == os.getpid() and _lock_holder(lock) == mine:
+            # Ours, taken further out — see "reentrant within the process" above. The pid
+            # is asked as well as the table: a forked child inherits its parent's table
+            # and holds nothing.
             yield
             return
         with io.tree_write(output_dir):
             output_dir.mkdir(parents=True, exist_ok=True)
-        # The record in `_lock_holder`'s field order, so the release below compares whole.
-        me = (socket.gethostname(), os.getpid(), datetime.now(UTC).isoformat(timespec="seconds"))
+        me = _Holder(
+            socket.gethostname(),
+            os.getpid(),
+            datetime.now(UTC).isoformat(timespec="seconds"),
+            slurm.pid_namespace(),
+        )
         # Complete on disk before the lock exists — see "the record and the lock are one
         # operation" above. `os.link` is the fail-if-exists primitive `_reclaim_stale`
         # already relies on; exactly one claimant's link lands.
-        claim = lock.with_name(f"{RUN_LOCK_NAME}.claim.{me[1]}")
+        claim = lock.with_name(f"{RUN_LOCK_NAME}.claim.{me.pid}")
         try:
-            io.write_tree_file(claim, json.dumps({"pid": me[1], "host": me[0], "started": me[2]}))
+            io.write_tree_file(claim, json.dumps(me.record()))
             _link_claim(claim, lock, output_dir)
         except BaseException:
             with io.cleanup():
                 io.remove_tree_file(claim)
             raise
+        _HELD[lock] = me
         try:
             # Linked, the claim is a second name for the lock's record. Removed inside the
             # release's guard, so a refusal here still lets go of the lock just taken.
@@ -547,6 +605,8 @@ def run_lock(output_dir: Path) -> Generator[None]:
             # On success and on failure alike: a raise must not leave the tree locked, and
             # back-to-back runs in one process (tests, notebooks) must each acquire cleanly.
             # Only while the file is still ours — see "release is ownership-checked".
+            if _HELD.get(lock) is me:
+                del _HELD[lock]
             with io.cleanup():
                 if _lock_holder(lock) == me:
                     io.remove_tree_file(lock)
@@ -577,9 +637,10 @@ def require_no_live_jobs(config: Config) -> None:
       produce. Those leases stay on record in every step this run submits nothing in; a
       batch writes its step's ledger as its own.
     * a **local job** is probed by pid on its own host, and refused unless the probe
-      proves it gone (:func:`_pid_alive`); recorded on another host it cannot be probed
-      from here, and the fence refuses until someone who knows that run is dead deletes
-      the record — the lock's own escape, worded the same way.
+      proves it gone (:func:`_pid_alive`); recorded on another host, or in another PID
+      namespace on this one, it cannot be probed from here, and the fence refuses until
+      someone who knows that run is dead deletes the record — the lock's own escape,
+      worded the same way.
 
     Leases every probe proves dead are garbage from a run that never unwound; the fence
     deletes them (it holds the lock, so they are its to clean), which is also what keeps
@@ -606,11 +667,17 @@ def require_no_live_jobs(config: Config) -> None:
                     f"run stops here. If that run is known dead, delete the record and retry."
                 )
             else:
-                alive = None if lease.pid is None else _pid_alive(lease.pid)
+                alive = None if lease.pid is None else _pid_alive(lease.pid, lease.namespace)
                 if alive is not False:
-                    state = (
-                        f"(pid {lease.pid}) is still running" if alive else "is not provably dead"
-                    )
+                    if alive:
+                        state = f"(pid {lease.pid}) is still running"
+                    elif _elsewhere(lease.namespace):
+                        state = (
+                            "was started in another PID namespace (a container), where its "
+                            "pid cannot be probed from here, and is not provably dead"
+                        )
+                    else:
+                        state = "is not provably dead"
                     raise RunLockError(
                         f"a previous run's local job {lease.id} {state} on this host "
                         f"({ledger} records it), and its exit trap will still write into "

@@ -439,6 +439,32 @@ _BUNDLED: tuple[Mutation, ...] = (
         "beside them",
     ),
     Mutation(
+        id="lock-reentry-is-decided-in-the-process",
+        path="src/chemrefine/pipeline.py",
+        old=(
+            "        if mine is not None and mine.pid == os.getpid() and "
+            "_lock_holder(lock) == mine:\n"
+        ),
+        new=(
+            "        mine = _lock_holder(lock)\n"
+            "        if mine is not None and mine[:2] == (socket.gethostname(), os.getpid()):\n"
+        ),
+        tests="tests/test_pipeline.py",
+        breaks="a driver whose pid is the same number as the holder's in another container "
+        "on the host reads the holder's lock as its own, taken further out, and both "
+        "drive one tree",
+    ),
+    Mutation(
+        id="another-namespaces-pid-is-not-probed",
+        path="src/chemrefine/pipeline.py",
+        old="    if pid <= 0 or _elsewhere(namespace):\n",
+        new="    if pid <= 0:\n",
+        tests="tests/test_pipeline.py",
+        breaks="a live driver or job inside a container is probed from outside by a pid "
+        "that names no process there, read as dead, and its lock is reclaimed and its "
+        "lease swept while it still writes into the tree",
+    ),
+    Mutation(
         id="lease-batch-jobs-found-by-tag",
         path="src/chemrefine/slurm/dispatch.py",
         old="mine = {row[0] for row in queued if row[-1].endswith(_name_tail(jid))}",

@@ -1945,6 +1945,52 @@ def test_leases_round_trip_and_an_absent_ledger_reads_empty(tmp_path: Path):
     assert all(lease.host for lease in by_id.values())
 
 
+def test_a_local_lease_says_which_pid_namespace_its_pid_belongs_to(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A pid is a process's name only inside its namespace, so the lease carries both.
+
+    Two containers on one host each number their processes from 1. A lease that named a
+    local job by host and pid alone was probed, from outside its container, as whatever
+    process has that number there. The kernel's own name for the namespace travels with the
+    pid; a scheduler's job has no pid and so none, and a host that names no namespace
+    writes the row it always wrote.
+    """
+    import json
+
+    asked: list[str] = []
+
+    def the_kernels_name(link: Path) -> Path:
+        asked.append(str(link))
+        return Path("pid:[4026531836]")
+
+    def no_proc(link: Path) -> Path:
+        raise FileNotFoundError(str(link))
+
+    proc = subprocess.Popen(["sleep", "5"])
+    try:
+        with patch.dict(dispatch._LOCAL_PROCS, {"local-7": (proc, None, None)}):
+            monkeypatch.setattr(Path, "readlink", the_kernels_name)
+            slurm.record_leases(tmp_path, ["12345", "local-7"], batch="cr0123456789")
+            assert asked == ["/proc/self/ns/pid"]
+            rows = json.loads(slurm.lease_path(tmp_path).read_text(encoding="utf-8"))
+            assert [row.get("pidns") for row in rows] == [None, None, "pid:[4026531836]"]
+            assert [lease.namespace for lease in slurm.load_leases(tmp_path)] == [
+                None,
+                None,
+                "pid:[4026531836]",
+            ]
+
+            monkeypatch.setattr(Path, "readlink", no_proc)
+            assert slurm.pid_namespace() is None
+            slurm.record_leases(tmp_path, ["local-7"], batch=None)
+            rows = json.loads(slurm.lease_path(tmp_path).read_text(encoding="utf-8"))
+            assert rows == [{"id": "local-7", "host": rows[0]["host"], "pid": proc.pid}]
+    finally:
+        proc.kill()
+        proc.wait()
+
+
 def test_the_ledger_is_written_whole_as_the_jobs_in_flight(tmp_path: Path):
     """Each write replaces the ledger: a job no longer in flight leaves it."""
     slurm.record_leases(tmp_path, ["local-1", "local-2"], batch=None)
@@ -2027,6 +2073,17 @@ def test_a_lease_pid_that_is_no_integer_is_a_corrupt_ledger(tmp_path: Path, pid:
     path = slurm.lease_path(tmp_path)
     path.parent.mkdir(parents=True)
     path.write_text(f'[{{"id": "local-1", "host": "here", "pid": {pid}}}]', encoding="utf-8")
+    with pytest.raises(CacheError, match=r"^corrupt job lease .* delete it"):
+        slurm.load_leases(tmp_path)
+
+
+def test_a_lease_namespace_that_is_no_name_is_a_corrupt_ledger(tmp_path: Path):
+    """The namespace is read back as the string it was written as, like the pid's integer."""
+    from chemrefine.errors import CacheError
+
+    path = slurm.lease_path(tmp_path)
+    path.parent.mkdir(parents=True)
+    path.write_text('[{"id": "local-1", "host": "here", "pid": 7, "pidns": 4026531836}]', "utf-8")
     with pytest.raises(CacheError, match=r"^corrupt job lease .* delete it"):
         slurm.load_leases(tmp_path)
 

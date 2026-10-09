@@ -447,21 +447,41 @@ A scheduler's job id is digits and a local one starts ``local-``, so a lease's `
 which of the three it is, and :func:`poll_jobs` asks the queue for a tag by job name."""
 
 
+def pid_namespace() -> str | None:
+    """The PID namespace this process runs in, as the kernel names it; ``None`` where it does not.
+
+    ``pid:[4026531836]`` on Linux, the link ``/proc/self/ns/pid``. A pid names a process
+    only inside its namespace: two containers on one host each have a pid 1, and a process
+    of the one does not exist under its number in the other. A record that names a process
+    by host and pid alone therefore cannot be probed from another namespace on that host,
+    and this is what such a record carries to say where its pid was read — the run lock's,
+    and a local job's lease. ``None`` on a system that does not expose it (no ``/proc``): a
+    record made there carries no namespace and is read as one made before there was any.
+    """
+    try:
+        return str(Path("/proc/self/ns/pid").readlink())
+    except OSError:
+        return None
+
+
 @dataclass(frozen=True)
 class JobLease:
     """One thing a driver had in flight when the lease was last written.
 
     A local job, by its ``local-N`` id and ``pid``, its session leader (probe-able with
-    ``os.kill(pid, 0)`` on ``host``). A scheduler job, by the id the scheduler returned. Or a
-    batch of scheduler jobs, by the tag every one of their names carries
-    (:func:`lease_batch`), which names a job the scheduler holds whether or not its id ever
-    reached the driver. ``pid`` is ``None`` for the last two, whose liveness is the queue's to
-    answer.
+    ``os.kill(pid, 0)`` on ``host``, from inside ``namespace``). A scheduler job, by the id
+    the scheduler returned. Or a batch of scheduler jobs, by the tag every one of their
+    names carries (:func:`lease_batch`), which names a job the scheduler holds whether or
+    not its id ever reached the driver. ``pid`` is ``None`` for the last two, whose
+    liveness is the queue's to answer.
     """
 
     id: str
     host: str
     pid: int | None = None
+    namespace: str | None = None
+    """The PID namespace ``pid`` was read in (:func:`pid_namespace`); ``None`` where the
+    kernel names none, and for a record written before leases carried one."""
 
     @property
     def local(self) -> bool:
@@ -491,7 +511,15 @@ def load_leases(step_dir: Path) -> list[JobLease]:
     path = lease_path(step_dir)
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-        return [JobLease(str(r["id"]), str(r["host"]), _recorded_pid(r.get("pid"))) for r in raw]
+        return [
+            JobLease(
+                str(r["id"]),
+                str(r["host"]),
+                _recorded_pid(r.get("pid")),
+                _recorded_namespace(r.get("pidns")),
+            )
+            for r in raw
+        ]
     except FileNotFoundError:
         return []
     except OSError as e:
@@ -518,13 +546,24 @@ def _recorded_pid(value: object) -> int | None:
     raise TypeError(f"pid {value!r} is no integer")
 
 
+def _recorded_namespace(value: object) -> str | None:
+    """A lease's PID namespace as it was written: the kernel's name for it, or ``None``."""
+    if value is None or type(value) is str:
+        return value
+    raise TypeError(f"pidns {value!r} is no namespace name")
+
+
 def _write_leases(path: Path, leases: list[JobLease]) -> None:
     """The ledger, replaced whole (:func:`chemrefine.io.write_tree_file`) in a plain file's mode.
 
     The resume fence reads it from whichever account next drives the tree, which the docs
     direct to inspect it, so it gets the mode a plain write would give, not a private one.
     """
-    rows = [{"id": j.id, "host": j.host, "pid": j.pid} for j in leases]
+    rows = [
+        {"id": j.id, "host": j.host, "pid": j.pid}
+        | ({} if j.namespace is None else {"pidns": j.namespace})
+        for j in leases
+    ]
     io.write_tree_file(path, json.dumps(rows), atomic=True)
 
 
@@ -560,7 +599,8 @@ def record_leases(step_dir: Path, job_ids: Iterable[str], *, batch: str | None) 
     job its batch ever submitted: a job that finished has left the set the caller passes,
     so the ledger stays bounded by the batch's concurrency, and the fence probes only what
     could still be alive. A local job carries its session leader's pid (the process
-    :func:`terminate_local_jobs` signals); a scheduler id carries none.
+    :func:`terminate_local_jobs` signals) and the PID namespace that number belongs to
+    (:func:`pid_namespace`); a scheduler id carries neither.
 
     ``batch`` is the tag :func:`lease_batch` returned, ``None`` for a batch that asks the
     scheduler for nothing. It stays on every write: the ids beside it are what the driver
@@ -570,9 +610,13 @@ def record_leases(step_dir: Path, job_ids: Iterable[str], *, batch: str | None) 
     terminates.
     """
     host = socket.gethostname()
+    namespace = pid_namespace()
     leases = [JobLease(batch, host)] if batch is not None else []
     leases += [
-        JobLease(j, host, _LOCAL_PROCS[j][0].pid if j in _LOCAL_PROCS else None) for j in job_ids
+        JobLease(j, host, _LOCAL_PROCS[j][0].pid, namespace)
+        if j in _LOCAL_PROCS
+        else JobLease(j, host)
+        for j in job_ids
     ]
     _write_leases(lease_path(step_dir), leases)
 

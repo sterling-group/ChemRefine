@@ -123,7 +123,14 @@ holder:
   host detects the dead pid and reclaims the lock by itself.
 - **It died on *another* host** (a batch job's node was drained, `kill -9` on a
   different login node): liveness cannot be probed across hosts, so the lock
-  stays. Once you know that run is dead, delete the lock file and re-run:
+  stays.
+- **It ran in a container on this host** (a PID namespace of its own): its pid
+  is that container's number for it, and names another process outside, or none.
+  From anywhere else it cannot be probed, so the lock stays, and the message
+  says so.
+
+In the last two cases, once you know that run is dead, delete the lock file and
+re-run:
 
 ```bash
 rm outputs/.chemrefine.lock
@@ -158,8 +165,9 @@ copy results into it.
   no `squeue` nothing can be checked; the run warns and proceeds, so a tree
   copied off-cluster stays usable.
 - **Local jobs**: probed by pid on the host that submitted them. From any other
-  host they cannot be probed — once you know that run's jobs are dead, delete
-  the named `active_jobs.json` and re-run.
+  host, or from outside the container that started them, they cannot be probed —
+  once you know that run's jobs are dead, delete the named `active_jobs.json`
+  and re-run.
 
 A record the filesystem refuses stops the run with code `11`, and the batch's
 SLURM jobs are on record all the same, under the tag written before the first of
