@@ -295,9 +295,9 @@ def user_write(path: Path) -> contextlib.AbstractContextManager[None]:
     run's output tree and a refusal named for one would send its reader to ``resume``. What
     they do instead is free space, fix the permissions or name another place, and ask again.
 
-    Never :class:`~chemrefine.errors.ConfigError`: the text was judged before the write, and
-    a class that says "fix the config" about a full disk has an agent rewrite a YAML that
-    was right.
+    Never :class:`~chemrefine.errors.ConfigError`: the refusal says nothing about the text,
+    and a class that says "fix the config" about a full disk has an agent rewrite a YAML
+    that was right.
     """
     return _net(path, WriteRefusedError)
 
@@ -424,7 +424,7 @@ def cleanup() -> Generator[None]:
     is running for, in this frame or in any caller's. Cleanup reached from inside a
     caller's handler therefore counts the handled exception as in flight, which is why only
     cleanup belongs in here, never a write the run needs. A refusal is an :class:`OSError`,
-    or what a net of this module turns one into — the
+    or what this package turns one into — the
     :class:`~chemrefine.errors.WriteRefusedError` of a refused write, the
     :class:`~chemrefine.errors.CacheError` of a record the cleanup reads back before it
     writes; anything else — a bug, a second ``KeyboardInterrupt`` — surfaces.

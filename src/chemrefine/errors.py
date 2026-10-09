@@ -175,13 +175,17 @@ class WriteRefusedError(ChemRefineError):
     ``cannot write <file>: <reason>`` either way, with the file the filesystem refused
     before the reason when that was another: a directory it could not create.
 
-    Nothing is wrong with the config: what was to be saved had already been judged, and a
-    file that was there before is there still, whole. Its own code, for the reason
-    :class:`BackendProvisionError` has one: the fix is the machine's — free space, fix the
-    permissions — or another destination, and a script wrapping ``chemrefine scaffold``
-    must tell a full disk from a config it should send back to its author. One code for
-    both classes, because no command and no tool writes both kinds of file: which one ran
-    says whose file it was, and the class and the message say it again.
+    Nothing is wrong with the config: the refusal says nothing about the text that was to
+    be saved. A config or a template that was at the path is there still, whole. A seed set
+    is the exception: it is cleared before it is built and a refused build takes back what
+    it wrote, so its directory may be left without seeds.
+
+    Its own code, for the reason :class:`BackendProvisionError` has one: the fix is the
+    machine's — free space, fix the permissions — or another destination, and a script
+    wrapping ``chemrefine scaffold`` must tell a full disk from a config it should send back
+    to its author. One code for both classes, because no command and no tool writes both
+    kinds of file: which one ran says whose file it was, and the class and the message say
+    it again.
 
     Not an :class:`OSError`, though the filesystem's refusal is its ``__cause__``: every
     ``except OSError`` between the write and the surface that shows it would take it for one

@@ -581,14 +581,14 @@ def build_structures(
     failed attempt — would seed the run with a molecule this call never reported. The
     stale set is cleared before writing, and a call that stops partway — a bad molecule, a
     file the filesystem refuses (:class:`~chemrefine.errors.WriteRefusedError`) — takes
-    back what it wrote: the directory afterwards holds this call's structures, or none.
+    back what it wrote: no part of its set stays behind to be read as the ensemble.
 
-    Which is why a source that names **no** structures is refused before anything is
-    deleted, on both branches. Owning the seed set means an empty call would empty the
-    directory and report ``written: []`` as a success — the caller's seeds gone, and the
-    payload saying the tool did its job. The XYZ branch refuses its own spelling of
-    this (an ``xyz_text`` that parses to zero frames); an empty ``smiles``
-    list is the same claim and gets the same answer.
+    Which is why an empty ``smiles`` list is refused before anything is deleted. Owning the
+    seed set means an empty call would empty the directory and report ``written: []`` as a
+    success — the caller's seeds gone, and the payload saying the tool did its job. The XYZ
+    branch refuses its own spelling of this, an ``xyz_text`` that parses to zero frames,
+    where the reader says so: after the clear, as a molecule that will not embed is, and
+    with its file taken back.
     """
     if (smiles is None) == (xyz_text is None):
         raise ConfigError("provide exactly one of smiles or xyz_text")
@@ -619,8 +619,10 @@ def build_structures(
                 except ValueError as e:
                     raise ConfigError(str(e)) from e
                 path = out / f"structure_{i}.xyz"
-                io.write_user_file(path, io.plain_xyz_text(rows, comment=f"SMILES: {one}"))
+                # On the list before it is on disk, so a call stopped between the two takes
+                # it back with the rest.
                 written.append(path)
+                io.write_user_file(path, io.plain_xyz_text(rows, comment=f"SMILES: {one}"))
                 mol = Chem.MolFromSmiles(one)
                 formal = Chem.GetFormalCharge(mol)
                 if formal != charge:
@@ -632,8 +634,8 @@ def build_structures(
                     build_warnings.append(f"structure_{i}: {parity}")
         else:
             path = out / "structure_0.xyz"
-            io.write_user_file(path, xyz_text or "")
             written.append(path)
+            io.write_user_file(path, xyz_text or "")
             try:
                 frames = io.read_xyz_frames(path)
             except (ValueError, IndexError, KeyError, OSError) as e:
@@ -906,7 +908,8 @@ def read_structure_text(name: str, text: str) -> dict[str, Any]:
     and every one of ASE's ninety readers work exactly as they do for a path — several of
     them seek, and a few open sibling files relative to their own. A temporary directory
     that refuses the copy — full, or not this account's to write — is
-    :class:`~chemrefine.errors.WriteRefusedError` naming it.
+    :class:`~chemrefine.errors.WriteRefusedError` naming it, and a machine with no directory
+    that takes one is the same refusal, naming the copy.
     """
     import tempfile
 
@@ -927,7 +930,10 @@ def read_structure_text(name: str, text: str) -> dict[str, Any]:
     safe = Path(name).name
     if safe in ("", ".", ".."):
         safe = "structure"
-    staging = Path(tempfile.gettempdir())
+    # Asked for inside the net: with no directory that takes a temporary file, the answer
+    # is an `OSError` about this copy like any other.
+    with io.user_write(Path(safe)):
+        staging = Path(tempfile.gettempdir())
     with contextlib.ExitStack() as stack:
         with io.user_write(staging):
             scratch = stack.enter_context(tempfile.TemporaryDirectory(dir=staging))

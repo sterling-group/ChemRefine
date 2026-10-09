@@ -387,6 +387,28 @@ def test_a_dropped_file_the_temp_directory_refuses_is_named(
     assert list(fortress.iterdir()) == []
 
 
+def test_a_dropped_file_no_temp_directory_takes_is_named(monkeypatch: pytest.MonkeyPatch):
+    """With no directory that takes a temporary file, the refusal names the copy.
+
+    The standard library answers that with an ``OSError`` of its own before any directory is
+    chosen, so there is no directory to name: the refusal is of the dropped file's copy, with
+    the library's sentence as the reason.
+    """
+    import errno
+    import tempfile
+
+    def nowhere() -> str:
+        raise FileNotFoundError(errno.ENOENT, "No usable temporary directory found in ['/tmp']")
+
+    monkeypatch.setattr(tempfile, "gettempdir", nowhere)
+    with pytest.raises(WriteRefusedError) as refusal:
+        agent_tools.read_structure_text("../h2.xyz", "2\n\nH 0 0 0\nH 0.74 0 0\n")
+    assert type(refusal.value) is WriteRefusedError
+    assert str(refusal.value) == (
+        "cannot write h2.xyz: No usable temporary directory found in ['/tmp']"
+    )
+
+
 def test_read_template_answers_an_unreadable_file_with_the_contract(tmp_path: Path):
     """The same rule for the read: a ConfigError naming the path, not a raw OSError."""
     if os.geteuid() == 0:

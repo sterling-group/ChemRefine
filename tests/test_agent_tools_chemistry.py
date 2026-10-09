@@ -260,6 +260,33 @@ def test_a_seed_set_the_disk_cuts_short_is_taken_back_and_seeds_no_run(
         pipeline.bootstrap(load_config(config))
 
 
+@pytest.mark.parametrize(
+    "source",
+    [{"smiles": ["O", "CCO"]}, {"xyz_text": "2\n\nH 0 0 0\nH 0.74 0 0\n"}],
+    ids=["smiles", "xyz"],
+)
+def test_a_seed_whose_write_landed_as_the_call_was_stopped_is_taken_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: dict[str, Any]
+):
+    """A call interrupted just after a seed reached the disk takes that seed back too.
+
+    The interrupt arrives once the file is in place and before the call does anything else.
+    A seed counted only after its write returned would be the one this call forgets: a lone
+    ``structure_0.xyz``, which directory-seeding reads as the whole ensemble.
+    """
+    seeds = tmp_path / "seeds"
+    real = io.atomic_write
+
+    def lands_then_stops(path: Path, data: bytes, *, mode: int | None = None) -> None:
+        real(path, data, mode=mode)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(io, "atomic_write", lands_then_stops)
+    with pytest.raises(KeyboardInterrupt):
+        agent_tools.build_structures(str(seeds), **source)
+    assert list(seeds.iterdir()) == []
+
+
 def test_a_seed_set_an_interrupt_cuts_short_is_taken_back(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):

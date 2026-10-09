@@ -161,8 +161,8 @@ def scaffold_templates(config: Config, *, overwrite: bool = False) -> tuple[Path
     HPC scratch is the everyday case) — is :class:`~chemrefine.errors.WriteRefusedError`
     naming the starter it could not write, or ``template_dir`` when that could not be
     created. Starters are written in plan order, each whole or not at all, so the ones
-    planned before the named file are on disk and the named one is not: scaffolding again
-    keeps those and writes the rest.
+    planned before the named file are on disk and the named one is as it was before the
+    call: scaffolding again writes the rest, and those too under ``overwrite``.
     """
     written: list[Path] = []
     with user_write(config.template_dir):
