@@ -1244,9 +1244,8 @@ def load_manifest_provenance(step_dir: Path) -> ManifestProvenance:
     manifest alike — neither can equal a real stamp, so no reader adopts on it: a resume
     runs a step that has no manifest and refuses by name one whose manifest names jobs
     and proves nothing, and only ``rebuild-cache`` adopts that on the caller's word. A
-    manifest of
-    the wrong shape is :func:`_read_manifest`'s :class:`CacheError` — the same one
-    :func:`load_manifest` raises over the same file.
+    manifest of the wrong shape is :func:`_read_manifest`'s :class:`CacheError` — the same
+    one :func:`load_manifest` raises over the same file.
     """
     manifest = _read_manifest(step_dir)
     if manifest is None:

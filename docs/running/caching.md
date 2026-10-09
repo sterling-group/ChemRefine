@@ -111,13 +111,13 @@ support recovery:
   what lets a later `resume` prove, structure by structure, that an output on disk is
   the one this configuration would compute: matching rows are **adopted** (a usable
   output is re-parsed, and nothing is prepared or submitted for it, so it keeps the
-  input files of the job that wrote it) and only the rest run. A manifest *without* that provenance — one
-  hand-written for a v1 adoption — is never silently trusted or silently discarded:
-  `resume` stops and names the fix, `chemrefine rebuild-cache N`, which re-parses the
-  outputs under the current rules, submits nothing, and records the provenance. A
-  training step has one job and no rows, so its one product is proven by the step's
-  fingerprint together with the job's own runlog: `resume` adopts a model that was
-  trained for this configuration by a job that finished, and trains nothing.
+  input files of the job that wrote it) and only the rest run. A manifest *without*
+  that provenance — one hand-written for a v1 adoption — is never silently trusted or
+  silently discarded: `resume` stops and names the fix, `chemrefine rebuild-cache N`,
+  which re-parses the outputs under the current rules, submits nothing, and records the
+  provenance. A training step has one job and no rows, so its one product is proven by
+  the step's fingerprint together with the job's own runlog: `resume` adopts a model
+  that was trained for this configuration by a job that finished, and trains nothing.
 - **`failed_jobs.json`** — the ledger of failed structures (`structure_id`,
   `reason`); always written for visibility, but only `stop` failures are *pending*.
 

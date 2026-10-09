@@ -419,19 +419,19 @@ for those and the full map.
   reads (criterion and search), and a step fingerprint composed from the ordered rows.
   The manifest records that identity per row, and `resume` adopts every row whose stored
   key matches — a usable output is re-parsed from disk, with nothing prepared or
-  submitted for it — computing only the rest. What that means in practice: turning `nms: true` on over a finished frequency
-  step submits only the imaginary parents' displacement children (round 1 and the
-  clean minima are adopted, byte-identical); follow-up steps recompute only rows whose
-  parent actually changed; a search retune re-reads round 1; a criterion change
-  re-resolves and nothing more; an interrupted NMS step adopts its finished round 1; a
-  retrained model re-runs the steps whose options name its file; an edited file an
-  ORCA template names by quoted reference (a `%DOCKER GUEST` geometry, a
-  `%pointcharges` file) re-runs the steps that read it; a typo'd option key nothing
-  declares invalidates nothing (`validate` already warns about it). Row keys hash the
-  **effective** charge and multiplicity each job renders — inherited workflow-level
-  values included — so editing a workflow-level `charge:`/`multiplicity:` invalidates
-  every step that inherits it. v1.3.1 stored one sha1 per step and never compared it:
-  `--skip` restored whatever cache a step held.
+  submitted for it — computing only the rest. What that means in practice: turning
+  `nms: true` on over a finished frequency step submits only the imaginary parents'
+  displacement children (round 1 and the clean minima are adopted, byte-identical);
+  follow-up steps recompute only rows whose parent actually changed; a search retune
+  re-reads round 1; a criterion change re-resolves and nothing more; an interrupted NMS
+  step adopts its finished round 1; a retrained model re-runs the steps whose options
+  name its file; an edited file an ORCA template names by quoted reference (a
+  `%DOCKER GUEST` geometry, a `%pointcharges` file) re-runs the steps that read it; a
+  typo'd option key nothing declares invalidates nothing (`validate` already warns
+  about it). Row keys hash the **effective** charge and multiplicity each job renders —
+  inherited workflow-level values included — so editing a workflow-level
+  `charge:`/`multiplicity:` invalidates every step that inherits it. v1.3.1 stored one
+  sha1 per step and never compared it: `--skip` restored whatever cache a step held.
 - **An output tree has a new layout.** Each structure has a directory of its own
   (`step1/0/step1_0.out` where v1.3.1 wrote `step1/step1_structure_0.out`), and each step
   a `_cache/manifest.json` with paths relative to the step directory. A reason in

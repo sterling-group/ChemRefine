@@ -373,17 +373,16 @@ applies wins, and `EXECUTE` skips straight to the full run:
    row's own key. Rows whose stored key matches are **adopted** (re-parsed from disk);
    the rest — changed or new parents, jobs a config edit actually reaches, jobs with no
    usable output — are computed. An adopted row whose output this account cannot read is
-   neither: it stays an `unreadable` failure and is not run again. NMS resolution then runs on the
-   assembled round 1: clean parents pass through, `attemptK/` resolutions are honoured
-   only under the criterion they were written for, and unresolved parents fan out fresh
-   children.
-   An artifact step — one job and one product, such as a trained model — is
-   continued at its own grain: its product is adopted when the manifest's step
-   stamp matches this configuration and its job's runlog says the job finished,
-   and otherwise its job runs. A manifest *without* provenance at its grain —
-   row keys, or for an artifact step the step stamp — stops the resume by name:
-   run `chemrefine rebuild-cache N` to adopt the tree under the current rules
-   first, or `chemrefine rerun N` to compute it again.
+   neither: it stays an `unreadable` failure and is not run again. NMS resolution then
+   runs on the assembled round 1: clean parents pass through, `attemptK/` resolutions are
+   honoured only under the criterion they were written for, and unresolved parents fan
+   out fresh children. An artifact step — one job and one product, such as a trained
+   model — is continued at its own grain: its product is adopted when the manifest's
+   step stamp matches this configuration and its job's runlog says the job finished, and
+   otherwise its job runs. A manifest *without* provenance at its grain — row keys, or
+   for an artifact step the step stamp — stops the resume by name: run
+   `chemrefine rebuild-cache N` to adopt the tree under the current rules first, or
+   `chemrefine rerun N` to compute it again.
 3. **Full run** — prepare, stamp the manifest with its row provenance, submit, retry
    unconverged once, resolve NMS, apply `on_failure`, cache. A mode that may not submit
    raises here instead, naming `resume` and `rerun` as the fixes.

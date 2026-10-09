@@ -676,10 +676,9 @@ def _prepare_stamped(
     same crash re-reads as MISSING_OUTPUT and the row is resubmitted. The inputs are
     prepared before the manifest is written, so the manifest describes files that exist for
     every row it prepares; the stamp is on disk before any job goes out, so an interrupted
-    run leaves proof of
-    what its outputs were computed for — the per-row provenance is that proof at
-    structure grain, for the incremental resume, and the step stamp is that proof for an
-    artifact step's one product (:func:`_adopt_product`).
+    run leaves proof of what its outputs were computed for — the per-row provenance is that
+    proof at structure grain, for the incremental resume, and the step stamp is that proof
+    for an artifact step's one product (:func:`_adopt_product`).
 
     ``adopted`` are the jobs a route takes from the manifest on disk instead of preparing
     them: the incremental resume's matching rows. They enter the manifest as they stand,
@@ -872,10 +871,10 @@ def _adopt_product(
     needs. It is **this configuration's**: :func:`_prepare_stamped` archives the run
     directory, then stamps, then the job goes out, so a product beside a stamp equal to
     this key was written by a job this configuration submitted, or adopted for it by
-    ``rebuild-cache``. And its job **finished**
-    (:func:`_unfinished`, the success test every route shares). With both, the product is
-    cached with nothing submitted: a driver that stops while its job runs on, or a write
-    the output tree refuses once the product exists, costs a resume and not the job again.
+    ``rebuild-cache``. And its job **finished** (:func:`_unfinished`, the success test
+    every route shares). With both, the product is cached with nothing submitted: a driver
+    that stops while its job runs on, or a write the output tree refuses once the product
+    exists, costs a resume and not the job again.
 
     With either missing the job runs, as a step with no manifest runs it. A stamp for
     another key is another configuration's product — a changed template, option or
@@ -1008,13 +1007,16 @@ def _unfinished(engine: ArtifactEngine, ctx: StepContext, inputs: StepInputs) ->
     if io.absent(artifact):
         return _Unfinished(f"the job finished without writing {artifact}", adoptable=False)
     silent = f"nothing says the job that wrote {artifact} finished"
-    unvouched = None if inputs.files else _Unfinished(f"{silent}: its manifest names no job", True)
+    unvouched: _Unfinished | None = None
+    if not inputs.files:
+        unvouched = _Unfinished(f"{silent}: its manifest names no job", adoptable=True)
     for config, output, _id in inputs.files:
         runlog = job_log.runlog_path(output.parent, config.stem)
         footer = job_log.read_footer(runlog)
         if footer is None:
             unvouched = unvouched or _Unfinished(
-                f"{silent}: {runlog} is missing or holds no footer of its last run", True
+                f"{silent}: {runlog} is missing or holds no footer of its last run",
+                adoptable=True,
             )
         elif footer.exit_code != 0:
             return _Unfinished(
