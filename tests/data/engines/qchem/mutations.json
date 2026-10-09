@@ -8,6 +8,14 @@
     "breaks": "a template that sets input_bohr runs every structure on its Ångström geometry read as Bohr, a molecule scaled by 1/0.529"
   },
   {
+    "id": "qchem-fragment-separator-of-any-length",
+    "path": "src/chemrefine/engines/qchem/input.py",
+    "old": "_FRAGMENT_SEPARATOR_RE = re.compile(r\"^[ \\t]*--\", re.MULTILINE)",
+    "new": "_FRAGMENT_SEPARATOR_RE = re.compile(r\"^[ \\t]*--[ \\t]*$\", re.MULTILINE)",
+    "tests": "tests/test_engines_qchem_input.py",
+    "breaks": "a template that rules its fragments apart with --- is not refused, and every structure runs as one flattened molecule instead of the fragment calculation the template describes"
+  },
+  {
     "id": "qcaux-exported-only-when-configured",
     "path": "src/chemrefine/engines/qchem/engine.py",
     "old": "        elif qcaux:\n            lines.append(f\"export QCAUX={shlex.quote(qcaux)}\")\n",

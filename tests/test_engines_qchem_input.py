@@ -92,21 +92,35 @@ def test_a_chain_whose_first_job_has_no_block_gets_one_in_job_1(tmp_path: Path):
     assert "$molecule\nread\n$end" in job2 and "0.740000" not in job2
 
 
-def test_a_fragment_partitioned_block_is_refused_by_name(tmp_path: Path):
-    """``--`` fragment separators (EDA / SCFMI) cannot survive a regenerated block.
+@pytest.mark.parametrize("separator", ["--", "---", "----", "  ---  ", "-- fragment 1"])
+def test_a_fragment_partitioned_block_is_refused_by_name(tmp_path: Path, separator: str):
+    """Fragment separators (EDA / SCFMI) cannot survive a regenerated block.
 
     The writer builds the block from one whole-molecule geometry and cannot assign the
     new atoms to fragments, so a flattened block would run a different calculation than
     the template describes — refused up front, like ``input_bohr``.
+
+    A separator is a line that starts with two dashes, however it goes on: Q-Chem runs a
+    block ruled with ``---`` as the fragment job a ``--`` one is, and a pattern that knew
+    only the two-dash spelling let such a template through to be flattened.
     """
     with pytest.raises(ConfigError, match="fragments"):
         require_fillable(
             _template(
                 tmp_path,
-                "$molecule\n0 1\n--\n0 1\nHe 0.0 0.0 0.0\n--\n0 1\nNe 3.0 0.0 0.0\n$end\n"
-                "$rem\n  jobtype sp\n  frgm_method stoll\n$end\n",
+                f"$molecule\n0 1\n{separator}\n0 1\nHe 0.0 0.0 0.0\n{separator}\n0 1\n"
+                "Ne 3.0 0.0 0.0\n$end\n$rem\n  jobtype sp\n  frgm_method stoll\n$end\n",
             )
         )
+
+
+def test_a_negative_charge_is_not_a_fragment_separator(tmp_path: Path):
+    """One dash and a digit is the block's charge line, and the template stays fillable."""
+    text = "$molecule\n-1 2\nHe 0.0 0.0 0.0\n$end\n$rem\n  jobtype sp\n$end\n"
+    require_fillable(_template(tmp_path, text))
+    assert "$molecule\n-1 2\nH  0.000000 0.000000 0.000000\n" in _render(
+        tmp_path, text, charge=-1, multiplicity=2
+    )
 
 
 def test_a_later_jobs_fragments_are_its_own(tmp_path: Path):

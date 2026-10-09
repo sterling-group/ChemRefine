@@ -12,11 +12,11 @@ and nowhere else:
   gets the block prepended; every later job passes through byte-for-byte, the ``read`` idiom
   included. Splitting first is what keeps a chain whose job 1 leaves the block to ChemRefine
   from having the geometry spliced over job 2's ``read`` while job 1 runs with no molecule;
-* a job-1 block partitioned into fragments (``--`` separators — the EDA / SCFMI idiom) is
-  refused by name (:func:`require_fillable`, asked when the run starts): the block is
-  regenerated from one whole-molecule geometry, and nothing can say which of the new atoms
-  belong to which fragment, so a flattened block would run a different calculation than
-  the template describes.
+* a job-1 block partitioned into fragments (separator lines that start with ``--``, the
+  EDA / SCFMI idiom) is refused by name (:func:`require_fillable`, asked when the run
+  starts): the block is regenerated from one whole-molecule geometry, and nothing can say
+  which of the new atoms belong to which fragment, so a flattened block would run a
+  different calculation than the template describes.
 
 Q-Chem reads its sections in any order within a job, so the replacement never has to move a
 block — position is preserved, and the diff between template and rendered input is exactly
@@ -47,10 +47,13 @@ _MOLECULE_BLOCK_RE = re.compile(
 # rem cannot trip it.
 _INPUT_BOHR_RE = re.compile(r"^[ \t]*input_bohr[ \t=]+(?:true|1)\b", re.IGNORECASE | re.MULTILINE)
 
-# The multi-job separator and a fragment separator, each on a line of its own — where
-# Q-Chem reads them.
+# The multi-job separator, on a line of its own — where Q-Chem reads it.
 _JOB_SEPARATOR_RE = re.compile(r"^[ \t]*@@@[ \t]*$", re.MULTILINE)
-_FRAGMENT_SEPARATOR_RE = re.compile(r"^[ \t]*--[ \t]*$", re.MULTILINE)
+
+# A fragment separator is a line that *starts* with two dashes: Q-Chem reads ``---`` and
+# longer rules as it reads ``--``. No other line of a ``$molecule`` block starts that
+# way — a negative charge is one dash and a digit — so nothing else is caught.
+_FRAGMENT_SEPARATOR_RE = re.compile(r"^[ \t]*--", re.MULTILINE)
 
 
 def _molecule_block(xyz_path: Path, charge: int, multiplicity: int) -> str:
