@@ -141,16 +141,20 @@ copy results into it.
 
 - **SLURM jobs**: a batch records a tag of its own before it asks `sbatch` for
   its first job, and every job of the batch is submitted under a name that ends
-  in it — `squeue` lists `step1_0.cr1f3a9c21b0` for structure `0` of step 1, an
-  array as `step1_array.cr1f3a9c21b0`. Each job's id joins the tag in the record
-  as `sbatch` returns it. The new run asks `squeue` once, for the recorded ids
-  and for any job named under a recorded tag, so it also finds a job whose id
-  never reached the record: the driver was killed, or `sbatch` failed, after the
-  scheduler had taken the job. The message names the jobs the queue listed. Wait
-  for them to drain (or `scancel` them), then re-run. When `squeue` itself
-  fails, the run stops and says so: run the command again once the scheduler
-  answers. On a host with no `squeue` nothing can be checked; the run warns and
-  proceeds, so a tree copied off-cluster stays usable.
+  in it — `step1_0.cr1f3a9c21b0` for structure `0` of step 1, an array as
+  `step1_array.cr1f3a9c21b0`. A plain `squeue` cuts a name to its first eight
+  characters; `squeue -u $USER -o "%i %j"` prints it whole. Each job's id joins
+  the tag in the record as `sbatch` returns it. The new run asks `squeue` once,
+  for the recorded ids and for any job named under a recorded tag, so it also
+  finds a job whose id never reached the record: the driver was killed, or
+  `sbatch` failed, after the scheduler had taken the job. The message names the
+  jobs the queue listed. Wait for them to drain (or `scancel` them), then
+  re-run. The queue answers for the jobs it lists: after a `kill -9` of a run
+  that was submitting, see that no `sbatch` of it is still waiting for the
+  scheduler before you run again. When `squeue` itself fails, the run stops and
+  says so: run the command again once the scheduler answers. On a host with no
+  `squeue` nothing can be checked; the run warns and proceeds, so a tree copied
+  off-cluster stays usable.
 - **Local jobs**: probed by pid on the host that submitted them. From any other
   host they cannot be probed — once you know that run's jobs are dead, delete
   the named `active_jobs.json` and re-run.

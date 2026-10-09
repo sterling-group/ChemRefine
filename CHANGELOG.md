@@ -188,8 +188,8 @@ for those and the full map.
   releasing the lock and terminating its local jobs — only a genuine SIGKILL
   can strand a lock, and the same-host dead-pid reclaim covers that case. A
   driver's jobs hold the tree after it as well: each batch records a tag before
-  it asks `sbatch` for its first job and names every job under it (`squeue`
-  lists `step1_0.cr1f3a9c21b0`, where v1.3.1 named a job after its input file
+  it asks `sbatch` for its first job and names every job under it
+  (`step1_0.cr1f3a9c21b0`, where v1.3.1 named a job after its input file
   alone), each submission records the job's id or a local job's pid, and a new
   run that finds a recorded job still queued or running — by id, by pid, or by
   a name under a recorded tag — exits with code `10` before it touches the tree.

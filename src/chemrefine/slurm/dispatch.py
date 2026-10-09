@@ -540,6 +540,10 @@ def lease_batch(step_dir: Path) -> str:
     of every job's name (:func:`submit`, :func:`submit_array`), so the queue answers for the
     batch's jobs by a name the ledger already holds (:func:`poll_jobs`).
 
+    The queue answers for a job it lists. A submission still on its way — the ``sbatch`` a
+    killed driver left waiting on a slow controller — has no job to list yet, and a run that
+    asks in that moment reads the tag as drained.
+
     Forty random bits, so no two batches an account has in the queue share one: a job
     listed under a tag is a job of the batch whose ledger holds it.
     """

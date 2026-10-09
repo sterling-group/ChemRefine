@@ -565,7 +565,8 @@ def require_no_live_jobs(config: Config) -> None:
       the jobs the queue listed, not the record. A host with no ``squeue`` cannot verify
       them, and a tree copied to a laptop must not be fenced harder than the original —
       so that case warns and proceeds instead of refusing on evidence no one there can
-      produce, keeping those leases on record for the next run that can ask.
+      produce. Those leases stay on record in every step this run submits nothing in; a
+      batch writes its step's ledger as its own.
     * a **local job** is probed by pid on its own host, and refused unless the probe
       proves it gone (:func:`_pid_alive`); recorded on another host it cannot be probed
       from here, and the fence refuses until someone who knows that run is dead deletes
