@@ -187,6 +187,9 @@ _MEM_DIRECTIVE_RE = re.compile(r"--mem(?:-per-cpu)?[=\s]+(\d+)([KkMmGgTt]?)")
 # directive `_apply_memory` replaces.
 _MEM_STRIP_RE = re.compile(r"[ \t]*--mem(?:-per-cpu)?[=\s]+\d+[KkMmGgTt]?(?=\s|$)")
 
+# A header that grants its memory per GPU, with the value as written for the log line.
+_MEM_PER_GPU_RE = re.compile(r"--mem-per-gpu[=\s]+(\S+)")
+
 
 def _directive_mb(value: int, unit: str) -> int:
     """One SLURM memory value in MB. Bare numbers are MB (SLURM's default unit).
@@ -241,11 +244,30 @@ def _apply_memory(
     policy wins whenever it is adequate. Only a short or absent allocation is replaced, with
     the derived ``--mem-per-cpu`` and one log line naming both numbers, so an override never
     happens silently.
+
+    A header that grants its memory **per GPU** stands as written too, whatever the
+    requirement. ``sbatch`` takes one of ``--mem``, ``--mem-per-cpu`` and ``--mem-per-gpu``
+    and refuses a script that carries two, so a ``--mem-per-cpu`` added beside the header's
+    own directive would leave the step with no job it can submit. What the grant comes to
+    depends on the GPU count, which a header spells in several ways and this does not read;
+    the requirement is therefore not held against it, and a warning says so with both
+    values.
     """
     if memory_mb is None:
         return sbatch
     granted = _header_memory_mb(sbatch, ntasks=ntasks, cpus_per_task=cpus_per_task)
     if granted is not None and granted >= memory_mb:
+        return sbatch
+    per_gpu = _MEM_PER_GPU_RE.search("\n".join(sbatch))
+    if per_gpu is not None:
+        logger.warning(
+            "%s: the input declares %d MB; the header grants its memory per GPU "
+            "(--mem-per-gpu=%s), and sbatch takes no second memory directive — the header "
+            "stands as written and the declared requirement is not enforced",
+            job_name,
+            memory_mb,
+            per_gpu.group(1),
+        )
         return sbatch
     per_cpu = -(-memory_mb // (ntasks * cpus_per_task))  # ceil
     logger.info(
@@ -452,8 +474,9 @@ def build_script(
       the way the program will actually use it.
     * ``memory_mb`` → the engine's declared requirement
       (:meth:`~chemrefine.engines.api.JobExecutable.memory_mb`). A header allocation that
-      covers it stands untouched; a short or absent one is replaced by the derived
-      ``--mem-per-cpu`` — see :func:`_apply_memory`. ``None`` never touches the header.
+      covers it stands untouched, and so does one granted per GPU; a short or absent one
+      is replaced by the derived ``--mem-per-cpu`` — see :func:`_apply_memory`. ``None``
+      never touches the header.
     * ``single_node`` → ``#SBATCH --nodes=1`` when the engine's processes must share a
       node (:meth:`~chemrefine.engines.api.JobExecutable.single_node`); ``False`` never
       touches the header — see :func:`_apply_single_node`.

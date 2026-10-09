@@ -314,12 +314,8 @@ def test_a_sufficient_total_memory_header_counts_its_units(tmp_path: Path):
 def test_a_short_header_memory_allocation_is_extended(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ):
-    """A header grant below the input's requirement is replaced, loudly; GPU memory is not.
-
-    ``--mem-per-gpu`` only shares a prefix with the directives this owns — stripping it
-    would starve a GPU job of the memory its header deliberately granted.
-    """
-    header = _write_header_with(tmp_path, "--mem-per-cpu=1000", "--mem-per-gpu=8G")
+    """A header grant below the input's requirement is replaced, loudly."""
+    header = _write_header_with(tmp_path, "--mem-per-cpu=1000")
     with caplog.at_level("INFO"):
         script = slurm.build_script(
             **_build_kwargs(
@@ -333,8 +329,44 @@ def test_a_short_header_memory_allocation_is_extended(
     text = script.read_text(encoding="utf-8")
     assert "#SBATCH --mem-per-cpu=4000" in text  # ceil(32000 / 8)
     assert "--mem-per-cpu=1000" not in text
-    assert "#SBATCH --mem-per-gpu=8G" in text
     assert "32000" in caplog.text and "8000 MB" in caplog.text
+
+
+@pytest.mark.parametrize("directive", ["--mem-per-gpu=8G", "--mem-per-gpu 8G --gres=gpu:1"])
+def test_a_header_that_grants_memory_per_gpu_stands_as_written(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, directive: str
+):
+    """``--mem-per-gpu`` is the header's whole memory policy, and no directive joins it.
+
+    ``sbatch`` takes one of ``--mem``, ``--mem-per-cpu`` and ``--mem-per-gpu``: a script
+    carrying two is refused ("--mem, --mem-per-cpu, and --mem-per-gpu are mutually
+    exclusive"), so a derived ``--mem-per-cpu`` appended beside the header's own directive
+    left a GPU step whose input declares its memory with no job it could submit. The grant
+    depends on a GPU count this does not read, so the requirement is not held against it —
+    said once, as a warning with both values, never silently.
+    """
+    header = _write_header_with(tmp_path, directive)
+    with caplog.at_level("INFO"):
+        script = slurm.build_script(
+            **_build_kwargs(
+                tmp_path,
+                slurm_header=slurm.read_header(header),
+                ntasks=1,
+                cpus_per_task=8,
+                memory_mb=32000,
+            )
+        )
+    text = script.read_text(encoding="utf-8")
+    assert f"#SBATCH {directive}" in text
+    assert "--mem-per-cpu" not in text and "--mem=" not in text
+    [said] = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert "32000 MB" in said.getMessage() and "--mem-per-gpu=8G" in said.getMessage()
+    assert "not enforced" in said.getMessage()
+
+    # An input that declares nothing is not spoken to: the header is the whole policy.
+    caplog.clear()
+    slurm.build_script(**_build_kwargs(tmp_path, slurm_header=slurm.read_header(header)))
+    assert not caplog.records
 
 
 def test_an_absent_header_memory_grant_is_requested(tmp_path: Path):

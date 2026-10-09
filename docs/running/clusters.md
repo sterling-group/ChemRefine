@@ -68,6 +68,20 @@ needs no `--nodes` line of its own to keep a job on one machine, and a `--ntasks
 `--cpus-per-task` or (for an ExtOpt step) `--nodes` it does carry is replaced rather than
 honoured.
 
+## How a job's memory is requested
+
+An input that declares its memory shapes the request: ORCA's `%maxcore` asks for
+`ceil(maxcore × pal ÷ 0.75)` MB, Q-Chem's `mem_total` for its declared peak. A header
+whose own `--mem` or `--mem-per-cpu` already covers that stands untouched; a short or
+absent one is replaced by the `--mem-per-cpu` that covers it, and the log names both
+numbers. An input that declares nothing keeps the header's memory as written.
+
+A header that grants its memory per GPU (`--mem-per-gpu`) stands as written too, whatever
+the input declares: `sbatch` accepts one of `--mem`, `--mem-per-cpu` and `--mem-per-gpu`
+and refuses a script that carries two. What such a grant comes to depends on the GPU
+count, so the declared requirement is not held against it, and a warning in the log says
+so with both values — size `--mem-per-gpu` for the job yourself.
+
 ## Job arrays
 
 `slurm_array: true` submits each step as SLURM job array(s) instead of one job per

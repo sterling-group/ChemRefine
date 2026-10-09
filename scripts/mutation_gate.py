@@ -448,6 +448,16 @@ _BUNDLED: tuple[Mutation, ...] = (
         "every job the ledger names by tag alone and the run resubmits beside it",
     ),
     Mutation(
+        id="mem-per-gpu-header-stands-alone",
+        path="src/chemrefine/slurm/script.py",
+        old="    if per_gpu is not None:\n        logger.warning(",
+        new="    if False:\n        logger.warning(",
+        tests="tests/test_slurm.py",
+        breaks="a GPU header that grants --mem-per-gpu gets a derived --mem-per-cpu appended "
+        "beside it for an input that declares its memory — a pair sbatch refuses as "
+        "mutually exclusive, so the step cannot submit one job",
+    ),
+    Mutation(
         id="tree-write-names-the-refusal",
         path="src/chemrefine/io.py",
         old='        raise refusal(f"cannot write {path}: {reason}") from e\n',

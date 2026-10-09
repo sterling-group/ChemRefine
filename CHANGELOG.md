@@ -166,7 +166,9 @@ for those and the full map.
   peak (the scaffolded Q-Chem starter declares one: without it Q-Chem runs at its own
   2000 MB default, however much SLURM grants). A header whose own `--mem`/`--mem-per-cpu`
   already covers the requirement stands untouched; a short or absent one is extended to
-  `--mem-per-cpu`, with the override logged. Inputs that declare nothing keep the
+  `--mem-per-cpu`, with the override logged. A header that grants its memory with
+  `--mem-per-gpu` stands as written — `sbatch` takes one memory directive — and a
+  warning says the requirement is not enforced. Inputs that declare nothing keep the
   header's policy.
 - Per-step ensemble XYZ files: every step leaves `stepN_ensemble.xyz` (all of
   its final structures, one multi-frame XYZ) and `stepN_survivors.xyz` (the
