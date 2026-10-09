@@ -12,6 +12,7 @@ suite (the contract fixtures, the per-engine invariants) to prove something abou
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import ClassVar
 from unittest.mock import patch
@@ -433,6 +434,70 @@ def test_resume_adopts_a_finished_product_whose_cache_was_lost(tmp_path: Path):
     assert not (_run_dir(config) / "attempt1").exists()
     assert [s.id for s in outcome.state.structures] == [s.id for s in seeds.structures]
     assert (_step_dir(config) / "_cache" / "step.json").exists()
+
+
+class _RecordingArtifactEngine(_StubArtifactEngine):
+    """A stub whose ``parse`` reads its product, as a trainer does to record its digest."""
+
+    def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
+        """Read the product, then hand the ensemble on."""
+        self.artifact(ctx).read_bytes()
+        return super().parse(inputs, ctx)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
+def test_a_product_the_run_cannot_read_back_is_named_and_adopted_once_it_can(tmp_path: Path):
+    """A finished training whose model cannot be read is no traceback, and is not trained again.
+
+    The job finished and its runlog says so; what fails is the read that records the
+    product. That is the filesystem's refusal, so the step stops as a cache error naming
+    the file, with nothing cached and nothing moved aside, and the resume that follows the
+    restored access adopts the product with nothing submitted.
+    """
+    config = _config(tmp_path)
+    seeds = _seeds(4)
+    run_step(config, config.steps[0], seeds, engine=_StubArtifactEngine(weights="first"))
+    cache.invalidate(_step_dir(config))
+    model = _run_dir(config) / ARTIFACT_NAME
+    refused = _RecordingArtifactEngine(weights="second")
+
+    model.chmod(0)
+    try:
+        with pytest.raises(CacheError, match="Permission denied") as caught:
+            run_step(config, config.steps[0], seeds, engine=refused)
+    finally:
+        model.chmod(0o644)
+
+    assert f"cannot read {model}" in str(caught.value)
+    assert refused.submits == 0
+    assert not (_step_dir(config) / "_cache" / "step.json").exists()
+
+    resumed = _RecordingArtifactEngine(weights="second")
+    outcome = run_step(config, config.steps[0], seeds, engine=resumed)
+
+    assert resumed.submits == 0
+    assert _product(config) == "first"
+    assert not (_run_dir(config) / "attempt1").exists()
+    assert [s.id for s in outcome.state.structures] == [s.id for s in seeds.structures]
+
+
+def test_an_error_of_the_engines_own_is_not_worded_as_a_refused_read(tmp_path: Path):
+    """An ``OSError`` that carries no errno is no refusal of the filesystem's.
+
+    A decoder's own error class can be an ``OSError`` without being one the system raised.
+    Worded as a file to restore access to, it would send its reader after a permission that
+    was never missing, so it leaves the step as the defect it is.
+    """
+
+    class _Broken(_StubArtifactEngine):
+        def parse(self, inputs: StepInputs, ctx: StepContext) -> StepResults:
+            """Fail the way a decoder does, with no errno."""
+            raise OSError("not the filesystem's")
+
+    config = _config(tmp_path)
+
+    with pytest.raises(OSError, match="not the filesystem's"):
+        run_step(config, config.steps[0], _seeds(2), engine=_Broken())
 
 
 def test_resume_trains_again_over_another_configurations_product(tmp_path: Path):

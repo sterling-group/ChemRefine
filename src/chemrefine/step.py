@@ -1057,6 +1057,11 @@ def _finish_artifact_step(
     ``on_the_callers_word`` is ``rebuild-cache``'s: a product nothing vouches for whole —
     unprovable, never proven wrong — is adopted with a warning, as that command adopts a
     manifest without provenance. A run that failed is refused there as everywhere.
+
+    The engine's ``parse`` reads the product to record it. A read the filesystem refuses
+    there says nothing against the job, so it is :class:`~chemrefine.errors.CacheError`
+    naming the file, with nothing cached: once the file can be read, a resume adopts the
+    product (:func:`_adopt_product`) and the job does not run again.
     """
     unfinished = _unfinished(engine, ctx, inputs)
     if unfinished is not None and not (on_the_callers_word and unfinished.adoptable):
@@ -1079,7 +1084,18 @@ def _finish_artifact_step(
         )
     artifact = engine.artifact(ctx)
     logger.info("step %d: produced %s", step_cfg.step, artifact)
-    results = engine.parse(StepInputs(files=()), ctx)
+    try:
+        results = engine.parse(StepInputs(files=()), ctx)
+    except OSError as e:
+        if e.errno is None:
+            # No refusal of the filesystem's: an error of the engine's own, and its defect.
+            raise
+        raise CacheError(
+            f"step {step_cfg.step} ({step_cfg.engine}): cannot read {e.filename or artifact}: "
+            f"{e.strerror or e} — so the step's product was not cached. Restore read access, "
+            f"then `chemrefine resume` (or the `rebuild-cache` that stopped here) adopts it "
+            f"without running the job again."
+        ) from e
     results = lifecycle.finalize(ctx, step_cfg, key, list(results.structures), [])
     return _step_outcome(ctx, step_cfg, results, cache_hit=False)
 

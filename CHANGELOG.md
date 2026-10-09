@@ -216,8 +216,9 @@ for those and the full map.
 - Per-step result cache: filter-only (`sample:`) edits refilter cached results
   without re-running calculations, and a step cache that is corrupt or cannot
   be read is treated as missing, where v1.3.1 stopped with a traceback; any
-  other `_cache/` document that cannot be read, or a directory of the run's
-  tree that cannot be listed, stops the run as a cache error (exit code 7).
+  other `_cache/` document that cannot be read, a directory of the run's tree
+  that cannot be listed, or a trained model that cannot be read to record it,
+  stops the run as a cache error (exit code 7).
 - Per-step failure policy `on_failure: stop | skip | best`. Failures are
   ledgered in `failed_jobs.json`, and `resume` / `rerun-errors` re-attempt only
   the still-failed structures of a `stop` step. Changing a step's `on_failure`
