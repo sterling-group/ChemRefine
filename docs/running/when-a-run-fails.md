@@ -248,7 +248,9 @@ output it left reads:
 The reason names that runlog, relative to the step's directory, and what it shows; what
 the program said is in the `.err` beside it and at the end of its output. An exit status
 of zero proves nothing by itself: a launcher that returns success for a program that died
-is past this check, and only an engine reading the output's own ending closes that.
+is past this check, and only an engine reading the output's own ending closes that. The
+reverse holds too: a launcher that returns a failing status for a calculation that ended
+well fails the structure here, until its engine reads the ending for itself.
 
 `resume` and `rerun-errors` run such a structure again for an `on_failure: stop` step and
 keep the failed attempt under `attemptK/`, its runlog included; for a `skip` or `best`

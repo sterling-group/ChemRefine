@@ -228,7 +228,10 @@ scattered through the parser:
   what the output itself says of how the program ended. Left unset, a structure is held
   to its job's own account — a job script that exited non-zero, or was cut down before
   it could say, fails it — where a flag set to `True` without reading would vouch for a
-  program that died after printing an energy and a geometry.
+  program that died after printing an energy and a geometry. That account is only as
+  good as the launcher's exit status: one that returns success for a program that died,
+  or failure for a run that ended well, is a launcher whose engine has to read the
+  ending.
 
 For **method-dependent scalars** — "the" energy differs between a plain SCF and a correlated
 run that prints both — declare a priority chain over the *output text*: rows tried highest

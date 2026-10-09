@@ -173,7 +173,10 @@ def _held_to_exit_status(
     A runlog that records no run is no account, never a failure: a tree copied without
     its runlogs must still rebuild. And an exit status of zero vouches for nothing by
     itself — a launcher can return it for a program that died — so this narrows what
-    passes and replaces no engine's own reading of its output.
+    passes and replaces no engine's own reading of its output. A status that is not zero
+    is taken at its word, which is the other reason an engine reads the ending itself: a
+    launcher that returns one for a run that ended well fails every structure its engine
+    leaves undecided.
 
     The runlog is the one beside the output, named after the input
     (:func:`chemrefine.job_log.runlog_path`). It is the account of the calculation at that
