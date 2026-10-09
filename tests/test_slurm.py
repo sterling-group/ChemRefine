@@ -1490,7 +1490,7 @@ def test_generated_script_reports_a_cancelled_job_as_failed(tmp_path: Path):
     before the explicit TERM trap a `scancel`-ed run recorded `exit_code=0`, i.e. it looked
     like it had finished cleanly. 143 is the conventional 128+SIGTERM.
     """
-    script = _runnable(tmp_path, "echo run-block-reached; sleep 30")
+    script = _runnable(tmp_path, "bash -c 'echo run-block-reached; exec sleep 30'")
 
     # Signal the whole process group, which is what `scancel` does. Signalling bash alone
     # would leave the foreground `sleep` running -- and bash defers a trap until its
@@ -1500,14 +1500,15 @@ def test_generated_script_reports_a_cancelled_job_as_failed(tmp_path: Path):
         proc = subprocess.Popen(
             ["bash", str(script)], stdout=fh, stderr=subprocess.DEVNULL, start_new_session=True
         )
-        # Wait for the run block's own first line, not for a guessed interval: the handler
-        # is armed just before the block runs, and how long the scratch setup above it
-        # takes is the filesystem's to say. On a cluster's shared scratch half a second
-        # was not enough, and the signal landed on a script that had recorded nothing yet.
+        # Wait for the line the block's own process writes, not for a guessed interval and
+        # not for a line the script's shell writes ahead of it. A group signalled before the
+        # child exists reaches the shell alone: the child then starts unsignalled and the
+        # trap waits out its 30 seconds. How long the shell takes to get there is the
+        # filesystem's to say (the scratch setup, then the lookup of the program on `PATH`),
+        # and on a cluster's shared filesystems it was long enough to lose both ways.
         deadline = time.monotonic() + 30
-        while time.monotonic() < deadline:
-            if "run-block-reached" in log.read_text(encoding="utf-8"):
-                break
+        while "run-block-reached" not in log.read_text(encoding="utf-8"):
+            assert time.monotonic() < deadline, "the run block never started"
             time.sleep(0.02)
         os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
         proc.wait(timeout=30)
