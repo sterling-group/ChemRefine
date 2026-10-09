@@ -147,14 +147,16 @@ copy results into it.
   the tag in the record as `sbatch` returns it. The new run asks `squeue` once,
   for the recorded ids and for any job named under a recorded tag, so it also
   finds a job whose id never reached the record: the driver was killed, or
-  `sbatch` failed, after the scheduler had taken the job. The message names the
-  jobs the queue listed. Wait for them to drain (or `scancel` them), then
-  re-run. The queue answers for the jobs it lists: after a `kill -9` of a run
-  that was submitting, see that no `sbatch` of it is still waiting for the
-  scheduler before you run again. When `squeue` itself fails, the run stops and
-  says so: run the command again once the scheduler answers. On a host with no
-  `squeue` nothing can be checked; the run warns and proceeds, so a tree copied
-  off-cluster stays usable.
+  `sbatch` failed, after the scheduler had taken the job. It asks about every
+  account's jobs, so a colleague's run in a shared tree is found too — on a
+  cluster that hides other users' jobs, ask them before you resume theirs. The
+  message names the jobs the queue listed. Wait for them to drain (or `scancel`
+  them), then re-run. The queue answers for the jobs it lists: after a `kill -9`
+  of a run that was submitting, see that no `sbatch` of it is still waiting for
+  the scheduler before you run again. When `squeue` itself fails, the run stops
+  and says so: run the command again once the scheduler answers. On a host with
+  no `squeue` nothing can be checked; the run warns and proceeds, so a tree
+  copied off-cluster stays usable.
 - **Local jobs**: probed by pid on the host that submitted them. From any other
   host they cannot be probed — once you know that run's jobs are dead, delete
   the named `active_jobs.json` and re-run.

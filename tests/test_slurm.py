@@ -2170,6 +2170,16 @@ def test_poll_jobs_asks_for_names_only_when_a_tag_is_asked_about():
     assert run.call_args.args[0][-2:] == ["-o", "%i"]
 
 
+def test_poll_jobs_asks_about_this_accounts_jobs_unless_told_every_accounts():
+    """A batch polls for its own jobs; the fence asks the queue without the account filter."""
+    with patch.object(subprocess, "run", return_value=_squeue_says("4241\n")) as run:
+        slurm.poll_jobs(["4241"])
+        slurm.poll_jobs(["4241"], every_account=True)
+    own, every = (call.args[0] for call in run.call_args_list)
+    assert own == ["squeue", "--noheader", "-u", slurm.current_user(), "-o", "%i"]
+    assert every == ["squeue", "--noheader", "-o", "%i"]
+
+
 def test_a_job_name_that_cannot_be_decoded_is_some_other_jobs(tmp_path: Path):
     """A name is bytes whoever submitted the job chose; one this locale cannot decode stops
     nothing.

@@ -557,8 +557,9 @@ def require_no_live_jobs(config: Config) -> None:
     and this fence — called with the lock already held, before anything mutates the
     tree — walks every step's ledger and answers each lease by kind:
 
-    * a **SLURM lease** is put to the queue, all of them in one probe: an id the
-      scheduler returned, and the tag a batch recorded before it asked for its first job
+    * a **SLURM lease** is put to the queue, all of them in one probe and of every
+      account's jobs, since the driver that recorded them may have been another's: an id
+      the scheduler returned, and the tag a batch recorded before it asked for its first job
       (:func:`chemrefine.slurm.dispatch.lease_batch`), which the queue answers by job
       name. The tag is what finds a job whose id never reached the ledger — the driver
       was killed, or ``sbatch`` failed, once the scheduler had it — and the refusal names
@@ -626,7 +627,7 @@ def require_no_live_jobs(config: Config) -> None:
             for step_dir in visited:
                 slurm.release_leases(step_dir, keep_slurm=True)
             return
-        queue = slurm.poll_jobs(tuple(scheduled))
+        queue = slurm.poll_jobs(tuple(scheduled), every_account=True)
         if queue.rows is None:
             raise RunLockError(
                 f"squeue could not say whether a previous run's SLURM jobs are still "

@@ -429,6 +429,16 @@ _BUNDLED: tuple[Mutation, ...] = (
         "it is still writing",
     ),
     Mutation(
+        id="fence-asks-every-accounts-queue",
+        path="src/chemrefine/pipeline.py",
+        old="queue = slurm.poll_jobs(tuple(scheduled), every_account=True)",
+        new="queue = slurm.poll_jobs(tuple(scheduled))",
+        tests="tests/test_pipeline.py",
+        breaks="a resume by a second account asks for its own jobs alone, reads every job "
+        "the first account's driver recorded as drained, sweeps the ledgers and resubmits "
+        "beside them",
+    ),
+    Mutation(
         id="lease-batch-jobs-found-by-tag",
         path="src/chemrefine/slurm/dispatch.py",
         old="mine = {row[0] for row in queued if row[-1].endswith(_name_tail(jid))}",

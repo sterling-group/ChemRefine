@@ -718,7 +718,9 @@ class QueueState:
     fire."""
 
 
-def poll_jobs(job_ids: Collection[str], *, squeue_cmd: str = "squeue") -> QueueState:
+def poll_jobs(
+    job_ids: Collection[str], *, squeue_cmd: str = "squeue", every_account: bool = False
+) -> QueueState:
     """Poll the whole batch's state in **one** ``squeue``.
 
     The whole set is answered by a single scheduler query. Asking per job means a step
@@ -730,9 +732,15 @@ def poll_jobs(job_ids: Collection[str], *, squeue_cmd: str = "squeue") -> QueueS
 
     ``"local-N"`` ids are polled via their background process
     (:func:`_local_is_finished`, which also reaps them, so each is polled exactly once
-    per call); real SLURM ids are matched against the current user's queue. An array's
+    per call); real SLURM ids are matched against the queue. An array's
     parent id matches its task rows by prefix — ``squeue`` prints running tasks as
     ``12345_0`` and pending ones as ``12345_[5-999]``, never the bare parent id.
+
+    The queue asked is this account's, unless ``every_account``. A batch polls for the jobs
+    it submitted, which are this account's, and the filter holds each answer to them on a
+    queue of many thousands. The resume fence asks for what a ledger records, and the
+    account that submitted those jobs need not be the one asking — a tree two people drive
+    in turn — so it asks about every account's, as far as the site shows them.
 
     A batch's tag (:func:`lease_batch`) is answered from the same query, by name: its rows
     are the queue's jobs whose name ends in the tag, as :func:`submit` and
@@ -767,13 +775,14 @@ def poll_jobs(job_ids: Collection[str], *, squeue_cmd: str = "squeue") -> QueueS
     if not scheduled:
         return QueueState(frozenset(done), frozenset(rows))
     batches = {jid for jid in scheduled if jid.startswith(_BATCH_TAG_PREFIX)}
+    account = [] if every_account else ["-u", current_user()]
     try:
         # No shell. Every element is either a literal or resolved here: `squeue_cmd` is the
         # scheduler binary the caller named, and the user comes from `getpass.getuser()`.
         # A name this locale cannot decode is some other job's: the names asked about are
         # ASCII, so it is read with a replacement character rather than refused.
         result = subprocess.run(  # noqa: S603
-            [squeue_cmd, "--noheader", "-u", current_user(), "-o", "%i %j" if batches else "%i"],
+            [squeue_cmd, "--noheader", *account, "-o", "%i %j" if batches else "%i"],
             capture_output=True,
             text=True,
             errors="replace",

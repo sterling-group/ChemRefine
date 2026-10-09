@@ -1694,6 +1694,42 @@ def test_the_fence_finds_a_job_whose_id_was_never_recorded_by_its_batchs_tag(tmp
     assert [lease.id for lease in slurm.load_leases(step_dir)] == ["cr0123456789", "4241"]
 
 
+def test_the_fence_finds_a_recorded_job_another_account_submitted(tmp_path: Path):
+    """The ledger says which jobs hold the tree, not whose they are.
+
+    A tree two people drive in turn: the first one's driver is gone and its job is still
+    queued. The queue here lists that job only when it is asked about every account, as a
+    scheduler does for a job that is not the asker's, and the fence refuses beside it.
+    """
+    import subprocess
+    from unittest.mock import patch
+
+    from chemrefine import slurm
+    from chemrefine.errors import RunLockError
+
+    cfg = _config(tmp_path, input=None)
+    step_dir = cfg.step_dir(cfg.steps[0])
+    _plant_leases(
+        step_dir,
+        {"id": "cr0123456789", "host": "cluster-login", "pid": None},
+        {"id": "4241", "host": "cluster-login", "pid": None},
+    )
+
+    def a_colleagues_queue(argv: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        assert argv[0] == "squeue", argv
+        listed = "" if "-u" in argv else "4241 step1_0.cr0123456789\n"
+        return subprocess.CompletedProcess(argv, 0, listed, "")
+
+    with (
+        patch.object(slurm, "scheduler_reachable", return_value=True),
+        patch.object(subprocess, "run", a_colleagues_queue),
+        pytest.raises(RunLockError, match=r"SLURM job\(s\) 4241 are still queued or running"),
+    ):
+        pipeline.run(cfg)
+
+    assert [lease.id for lease in slurm.load_leases(step_dir)] == ["cr0123456789", "4241"]
+
+
 def test_the_fence_names_an_array_once_by_its_parent_id(tmp_path: Path):
     """The queue lists an array task by task; the refusal names what ``scancel`` takes."""
     import subprocess
