@@ -341,10 +341,10 @@ def test_an_exclusion_nothing_needs_is_stale() -> None:
 def _conformers(run: Replayed) -> None:
     """Formic acid: a lean GOAT, a Boltzmann cut that drops E, a seeded kick, a cation.
 
-    GOAT runs one worker at one temperature for one global iteration and still finds both
-    planar conformers, with E about 7.1 kcal/mol above Z. The 99% cut, recomputed here from
-    the ensemble ORCA wrote, keeps Z alone. The template's ``nprocs 8`` reaches ORCA as
-    ``max_cores``. The kick is ``random`` NMS on a minimum: seed 7 draws one of the nine
+    GOAT runs one worker at one temperature for one global iteration, on a fixed seed, and
+    finds both planar conformers, with E about 7.1 kcal/mol above Z. The 99% cut, recomputed
+    here from the ensemble ORCA wrote, keeps Z alone. The template's ``nprocs 8`` reaches
+    ORCA as ``max_cores``. The kick is ``random`` NMS on a minimum: seed 7 draws one of the nine
     vibrations the parse names, and the two children start ±0.3 along it from the round-1
     geometry and relax back to Z. Both are refined as a cation doublet: ORCA echoes UHF,
     the charge, the multiplicity and one electron fewer, and each energy sits a vertical
@@ -362,6 +362,12 @@ def _conformers(run: Replayed) -> None:
     # default temperature, and splits each in two: 8 workers and 40 s.
     assert re.findall(r"Final number of workers\s+\.{3}\s+(\d+)", goat_text) == ["1"]
     assert "Reached the maximum number of global iterations (1)!" in goat_text
+    # A fixed seed, in ORCA's echo of the input it read: on its own seed the random numbers
+    # differ from run to run, and one run in twelve of a search this lean found Z alone,
+    # which leaves the cut below nothing to drop.
+    assert re.search(r"^\|\s*\d+>\s*RANDOMSEED\s+FALSE\s*$", goat_text, re.MULTILINE), (
+        "GOAT searched on the fixed seed"
+    )
     template = (config.template_dir / "step1.inp").read_text(encoding="utf-8")
     goat_dir = config.step_dir(goat).resolve()
     rendered = (goat_dir / "0" / "step1_0.inp").read_text(encoding="utf-8")
