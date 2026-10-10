@@ -119,8 +119,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-      # The mlip-* extras are the likeliest thing here to rot — they pin `e3nn==0.4.4`,
-      # `torch>=2.8,<2.9`, and an `orb-models; python_version >= '3.12'` marker — and a
+      # The mlip-* extras are the likeliest thing here to rot — they carry an exact `e3nn`
+      # pin, a ceiling on `torch` and `python_version` markers on the backends — and a
       # broken one reaches users by both supported routes: `pip install chemrefine[mlip]`
       # into their own environment (the first backend can share it), and `chemrefine
       # backends install <extra>`, which resolves the same requirement into a fresh env.

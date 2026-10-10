@@ -564,7 +564,7 @@ def test_every_backend_extra_claims_the_pythons_it_can_install_on():
     ]
     capped = {
         "mlip-orb": ("3.12",),  # orb pins dm-tree==0.1.8, whose newest wheels are cp312
-        "mlip-mace": ("3.13", "3.12", "3.11"),  # our torch<2.9 pin has no cp314 wheels
+        "mlip-mace": ("3.13", "3.12", "3.11"),  # mace-torch names no Python past 3.13
         "mlip-chgnet": ("3.12", "3.11"),  # chgnet 0.4.2 ships cp310-cp312 only
     }
     for extra in sorted(known_backend_extras()):
