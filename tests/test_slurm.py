@@ -1529,6 +1529,41 @@ def test_generated_script_records_the_real_exit_code(tmp_path: Path):
     assert "exit_code=7" in result.stdout
 
 
+def _stopped_once_it_says(script: Path, marker: str, log: Path) -> int:
+    """Run ``script`` in a group of its own, stop the group once its program says ``marker``.
+
+    Returns the script's exit status; ``log`` takes its stdout. The whole process group is
+    signalled, which is what ``scancel`` does: signalling bash alone would leave its
+    foreground child running, and bash defers a trap until that child returns.
+
+    ``marker`` is a line the run block's own process writes, not a guessed interval and not
+    a line the script's shell writes ahead of it. A group signalled before the child exists
+    reaches the shell alone: the child then starts unsignalled and the trap waits it out.
+    How long the shell takes to get there is the filesystem's to say (the scratch setup,
+    then the lookup of the program on ``PATH``), and on a cluster's shared filesystems it
+    was long enough to lose both ways.
+
+    The group is never left running. A marker that never came, or a wait that ran out,
+    kills and reaps it: an abandoned ``Popen`` fails whichever test is running when it is
+    collected, and its ``sleep`` outlives this one.
+    """
+    with log.open("w", encoding="utf-8") as fh:
+        proc = subprocess.Popen(
+            ["bash", str(script)], stdout=fh, stderr=subprocess.DEVNULL, start_new_session=True
+        )
+        try:
+            deadline = time.monotonic() + 30
+            while marker not in log.read_text(encoding="utf-8"):
+                assert time.monotonic() < deadline, f"the run block never said {marker!r}"
+                time.sleep(0.02)
+            os.killpg(proc.pid, signal.SIGTERM)
+            return proc.wait(timeout=30)
+        finally:
+            if proc.poll() is None:
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait()
+
+
 def test_generated_script_reports_a_cancelled_job_as_failed(tmp_path: Path):
     """A SIGTERM'd job must not read as a success in its runlog.
 
@@ -1537,27 +1572,9 @@ def test_generated_script_reports_a_cancelled_job_as_failed(tmp_path: Path):
     like it had finished cleanly. 143 is the conventional 128+SIGTERM.
     """
     script = _runnable(tmp_path, "bash -c 'echo run-block-reached; exec sleep 30'")
-
-    # Signal the whole process group, which is what `scancel` does. Signalling bash alone
-    # would leave the foreground `sleep` running -- and bash defers a trap until its
-    # foreground child returns, so the handler would not fire for another 30 seconds.
     log = tmp_path / "run.log"
-    with log.open("w", encoding="utf-8") as fh:
-        proc = subprocess.Popen(
-            ["bash", str(script)], stdout=fh, stderr=subprocess.DEVNULL, start_new_session=True
-        )
-        # Wait for the line the block's own process writes, not for a guessed interval and
-        # not for a line the script's shell writes ahead of it. A group signalled before the
-        # child exists reaches the shell alone: the child then starts unsignalled and the
-        # trap waits out its 30 seconds. How long the shell takes to get there is the
-        # filesystem's to say (the scratch setup, then the lookup of the program on `PATH`),
-        # and on a cluster's shared filesystems it was long enough to lose both ways.
-        deadline = time.monotonic() + 30
-        while "run-block-reached" not in log.read_text(encoding="utf-8"):
-            assert time.monotonic() < deadline, "the run block never started"
-            time.sleep(0.02)
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-        proc.wait(timeout=30)
+
+    _stopped_once_it_says(script, "run-block-reached", log)
     stdout = log.read_text(encoding="utf-8")
 
     assert "exit_code=143" in stdout, stdout
@@ -1720,20 +1737,9 @@ def test_a_stopped_job_exits_143_whatever_its_program_made_of_the_signal(tmp_pat
     status say so. The signal is sent once the program has said its trap is armed.
     """
     script = _runnable(tmp_path, "bash -c 'trap \"exit 0\" TERM; echo READY; sleep 30 & wait'")
-
     log = tmp_path / "run.log"
-    with log.open("w", encoding="utf-8") as fh:
-        proc = subprocess.Popen(
-            ["bash", str(script)], stdout=fh, stderr=subprocess.DEVNULL, start_new_session=True
-        )
-        deadline = time.monotonic() + 30
-        while "READY" not in log.read_text(encoding="utf-8"):
-            assert time.monotonic() < deadline, "the program never armed its trap"
-            time.sleep(0.05)
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-        status = proc.wait(timeout=30)
 
-    assert status == 143
+    assert _stopped_once_it_says(script, "READY", log) == 143
     assert "exit_code=143" in log.read_text(encoding="utf-8")
 
 
