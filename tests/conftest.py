@@ -392,8 +392,8 @@ def unsearchable() -> Iterator[Callable[[Path], Path]]:
     locked: list[Path] = []
 
     def lock(directory: Path) -> Path:
-        directory.chmod(0)
         locked.append(directory)
+        directory.chmod(0)
         return directory
 
     yield lock
@@ -402,7 +402,7 @@ def unsearchable() -> Iterator[Callable[[Path], Path]]:
 
 
 _HOLD_SECONDS = 5.0
-"""How long a mode gets to take hold before the test that set it is skipped."""
+"""How long a mode gets to take hold before the test that set it fails."""
 
 
 def _answers(ask: Callable[[Any], object], path: Any) -> bool:
@@ -420,17 +420,25 @@ def _first_entry(directory: Any) -> None:
         next(scan, None)
 
 
-def _is_directory(path: Any) -> bool:
-    """Whether ``path`` is a directory itself, not a link to one, as far as can be asked."""
+def _directory_mode(path: Any, how: dict[str, Any]) -> int | None:
+    """The mode of the directory a ``chmod(path, …, **how)`` is about to change, if it is one.
+
+    Asked as ``chmod`` itself resolves ``path``: a link is followed unless ``how`` says
+    not to. ``None`` for what the wait has nothing to ask of — a file, an open file's
+    number, a name relative to a directory's, a path out of reach.
+    """
+    if not isinstance(path, str | os.PathLike) or how.get("dir_fd") is not None:
+        return None
     try:
-        return stat.S_ISDIR(os.lstat(path).st_mode)
-    except (OSError, TypeError):
-        return False  # out of reach, or an open file's number: nothing to wait on
+        status = Path(os.fsdecode(path)).stat(follow_symlinks=how.get("follow_symlinks", True))
+    except OSError:
+        return None
+    return stat.S_IMODE(status.st_mode) if stat.S_ISDIR(status.st_mode) else None
 
 
 @pytest.fixture(autouse=True)
 def _modes_take_hold(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A mode that walls a directory off is in force when ``chmod`` returns, on any filesystem.
+    """A mode that walls a directory off is in force by the time ``chmod`` returns.
 
     A test that takes search or read permission off a directory and then asks for something
     inside assumes the filesystem answers by the new mode at once. A local disk does. A
@@ -439,31 +447,32 @@ def _modes_take_hold(monkeypatch: pytest.MonkeyPatch) -> None:
     refusal such a test is about came or not by timing. The wait is made here, once for
     every test: after a ``chmod`` that takes search permission off a directory this returns
     when every entry it held is refused, and after one that takes read permission off, when
-    its listing is. Where that never comes the test is skipped, as it is for an account no
-    mode binds.
+    its listing is. A wall that has not come within ``_HOLD_SECONDS`` is taken down again
+    and fails the test, as it would have failed it unwaited-for.
     """
     if os.geteuid() == 0:
         return  # nothing is refused to root, and each test of a wall skips itself there
     chmod = os.chmod
 
-    def taking_hold(path: Any, mode: int, *args: Any, **kwargs: Any) -> None:
+    def taking_hold(path: Any, mode: int, **how: Any) -> None:
         searched, listed = bool(mode & 0o100), bool(mode & 0o400)
-        walls_off = not (searched and listed) and _is_directory(path)
+        was = None if searched and listed else _directory_mode(path, how)
         held: list[Path] = []
-        if walls_off and not searched:
+        if was is not None and not searched:
             try:
                 held = list(Path(os.fsdecode(path)).iterdir())
             except OSError:
                 held = []  # walled off already: it holds nothing known to be answered for
-        chmod(path, mode, *args, **kwargs)
-        if not walls_off:
+        chmod(path, mode, **how)
+        if was is None:
             return
         deadline = time.monotonic() + _HOLD_SECONDS
         while any(_answers(os.lstat, entry) for entry in held) or (
             not listed and _answers(_first_entry, path)
         ):
             if time.monotonic() > deadline:
-                pytest.skip(
+                chmod(path, was, **how)
+                pytest.fail(
                     f"this filesystem still answers behind mode {mode:03o} on {path} "
                     f"{_HOLD_SECONDS:g} s after it was set"
                 )
@@ -473,29 +482,28 @@ def _modes_take_hold(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def list_only() -> Iterator[Callable[[Path], bool]]:
-    """Leave a directory listable and not searchable, and say whether this filesystem lists it.
+def list_only() -> Iterator[Callable[[Path], Path]]:
+    """Leave a directory listable and not searchable; given back when the test ends.
 
     Mode ``r--``: another account's directory that lets this one read its names. A local
     disk lists it and says of each entry whether it is a directory, with nothing searched
-    for. A network filesystem may refuse the listing outright, and one that names the
-    entries without their kind leaves the kind to a search, which is refused. Which it is
-    belongs to the filesystem, so it is asked here, of the system's own listing, and the
-    test holds the code to the answer that goes with each: what the listing says where
-    there is one, its refusal where there is none. Given back when the test ends.
+    for, and that listing is what the test asks about. A filesystem need not have one: a
+    network share may refuse the listing outright, or name the entries without their kind
+    and leave the kind to a search it refuses. There the directory is one that cannot be
+    listed, which the tests of those hold, and this one is skipped.
     """
     left: list[Path] = []
 
-    def leave(directory: Path) -> bool:
-        directory.chmod(0o444)
+    def leave(directory: Path) -> Path:
         left.append(directory)
+        directory.chmod(0o444)
         try:
             with os.scandir(directory) as scan:
                 for entry in scan:
                     entry.is_dir()
         except PermissionError:
-            return False
-        return True
+            pytest.skip("this filesystem lists no directory it may not search")
+        return directory
 
     yield leave
     for directory in left:
@@ -507,22 +515,27 @@ _LONG_PAST_NS = 1_000_000_000 * 10**9
 filesystem that keeps only those gives the same number back."""
 
 
-@pytest.fixture
-def back_dated() -> Callable[[Path], tuple[int, int]]:
-    """Back-date a file and return its identity, for a test of whether it is written again.
+def _identity(path: Path) -> tuple[int, int]:
+    """What a file is the same file by: its inode and its modification time."""
+    status = path.stat()
+    return status.st_ino, status.st_mtime_ns
 
-    The identity is the inode and the modification time. A document saved atomically comes
-    back under a new inode. A file rewritten in place keeps its inode and takes the time of
-    the write, and that time, read off the filesystem's clock before and after, proves
-    nothing: a filesystem that keeps whole seconds gives a file rewritten a moment later
-    the time it had. Set first to a time long past, the second field is told from any
-    write on every filesystem, and only a write that never happened keeps both.
+
+@pytest.fixture
+def back_dated() -> Callable[[Path], Callable[[], bool]]:
+    """Back-date a file and return the question of whether it has been written since.
+
+    A document saved atomically comes back under a new inode. A file rewritten in place
+    keeps its inode and takes the time of the write, and that time, read off the
+    filesystem's clock before and after, proves nothing: a filesystem that keeps whole
+    seconds gives a file rewritten a moment later the time it had. Set first to a time
+    long past, it is told from any write, and only a write that never happened keeps both.
     """
 
-    def back_date(path: Path) -> tuple[int, int]:
+    def back_date(path: Path) -> Callable[[], bool]:
         os.utime(path, ns=(_LONG_PAST_NS, _LONG_PAST_NS))
-        status = path.stat()
-        return status.st_ino, status.st_mtime_ns
+        before = _identity(path)
+        return lambda: _identity(path) != before
 
     return back_date
 

@@ -259,17 +259,16 @@ def test_a_rewrite_never_changes_the_wrapper_a_job_already_has_open(tmp_path: Pa
 
 
 def test_a_wrapper_that_already_says_it_is_left_alone(
-    tmp_path: Path, back_dated: Callable[[Path], tuple[int, int]]
+    tmp_path: Path, back_dated: Callable[[Path], Callable[[], bool]]
 ):
     """Every prepare of a step writes the same bytes, so after the first there is no write."""
     out = tmp_path / "mlip_extopt.sh"
     protocol.write_wrapper_script(path=out, backend="mlip", url_file=tmp_path / "server.url")
     # Back-dated, so a rewrite in place (same inode, fresh mtime) is as visible as a
     # replacement (new inode): only a write that never happened keeps both.
-    before = back_dated(out)
+    rewritten = back_dated(out)
     protocol.write_wrapper_script(path=out, backend="mlip", url_file=tmp_path / "server.url")
-    after = out.stat()
-    assert (after.st_ino, after.st_mtime_ns) == before
+    assert not rewritten()
 
 
 def test_a_wrapper_that_lost_its_exec_bit_is_written_again(tmp_path: Path):

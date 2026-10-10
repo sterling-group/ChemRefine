@@ -160,22 +160,13 @@ def test_a_structure_directory_that_cannot_be_listed_is_not_one_with_no_attempts
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
 def test_a_directory_listed_but_not_searched_still_numbers_its_attempts(tmp_path, list_only):
-    """The same answer on every Python where ``Path.is_dir`` gives two and neither is it.
-
-    On every filesystem too. One that will not list such a directory has it refused by
-    name, as any directory that cannot be listed is; none has it numbered as if empty.
-    """
+    """The same answer on every Python where ``Path.is_dir`` gives two and neither is it."""
     structure_dir = tmp_path / "0"
     (structure_dir / "attempt1").mkdir(parents=True)
     (structure_dir / "attempt2").mkdir()
-    if list_only(structure_dir):
-        answers = (ids.next_attempt_dir(structure_dir), ids.latest_attempt_dir(structure_dir))
-        assert answers == (structure_dir / "attempt3", structure_dir / "attempt2")
-        return
-    for ask in (ids.next_attempt_dir, ids.latest_attempt_dir):
-        with pytest.raises(CacheError) as excinfo:
-            ask(structure_dir)
-        assert str(excinfo.value) == f"cannot read {structure_dir}: Permission denied"
+    list_only(structure_dir)
+    answers = (ids.next_attempt_dir(structure_dir), ids.latest_attempt_dir(structure_dir))
+    assert answers == (structure_dir / "attempt3", structure_dir / "attempt2")
 
 
 def test_the_output_trees_bookkeeping_names():

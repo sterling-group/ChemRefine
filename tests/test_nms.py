@@ -903,7 +903,7 @@ def test_rng_for_is_deterministic_and_distinct_per_structure():
 
 
 def test_rebuilding_does_not_rewrite_the_children_it_reads(
-    tmp_path: Path, back_dated: Callable[[Path], tuple[int, int]]
+    tmp_path: Path, back_dated: Callable[[Path], Callable[[], bool]]
 ):
     """``rebuild_nms`` re-reads round-2 outputs to re-derive a decision, and writes nothing.
 
@@ -922,18 +922,12 @@ def test_rebuilding_does_not_rewrite_the_children_it_reads(
     round1 = _seed_round1(engine, ctx)
     nms.run_nms(engine, round1, [], ctx)
 
-    before = {
-        p: (p.read_bytes(), back_dated(p)) for p in sorted(ctx.step_dir.rglob("*")) if p.is_file()
-    }
+    before = {p: back_dated(p) for p in sorted(ctx.step_dir.rglob("*")) if p.is_file()}
     nms.rebuild_nms(engine, round1, [], ctx)
-    after = {
-        p: (p.read_bytes(), (p.stat().st_ino, p.stat().st_mtime_ns))
-        for p in sorted(ctx.step_dir.rglob("*"))
-        if p.is_file()
-    }
+    after = sorted(p for p in ctx.step_dir.rglob("*") if p.is_file())
 
-    assert after.keys() == before.keys(), "a rebuild must not add or remove files"
-    rewritten = [p.name for p in before if after[p] != before[p]]
+    assert after == list(before), "a rebuild must not add or remove files"
+    rewritten = [p.name for p, written in before.items() if written()]
     assert rewritten == [], f"a rebuild rewrote {rewritten}"
 
 
