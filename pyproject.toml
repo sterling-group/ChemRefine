@@ -249,8 +249,15 @@ chemrefine = "chemrefine.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/chemrefine"]
+# The core metadata version is this project's to state. Left to the backend it is whatever
+# the hatchling of the day defaults to, and a version newer than the uploader, an index
+# mirror or a site's own tools were released to read is refused by them. 2.4 is the first
+# with `License-Expression`, which this project declares, and nothing here needs a later
+# one. Raise it for a field of a later version, in both targets.
+core-metadata-version = "2.4"
 
 [tool.hatch.build.targets.sdist]
+core-metadata-version = "2.4"  # as the wheel states it, and for its reason
 # `tests` ships so a distro packager can actually run the suite from the sdist —
 # the fixtures are a megabyte or so, most of it trimmed real ORCA output and the
 # compressed e2e recordings, which is what makes the tests meaningful in the first
