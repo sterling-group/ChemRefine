@@ -449,6 +449,30 @@ def test_build_script_emits_absolute_runlog_output_directives(tmp_path: Path):
     assert f'#SBATCH --error="{out}/step1_structure_0.err"' in text
 
 
+def test_a_percent_sign_in_a_run_directory_reaches_sbatch_as_itself(tmp_path: Path):
+    """``sbatch`` reads ``--output`` and ``--error`` as patterns, in every part of the path.
+
+    A directory named with ``%j`` had its jobs' logs written under the job's id instead, in
+    a directory the scheduler made, on ganymede2's SLURM 25.05: for an absolute path, for a
+    bare file name submitted from that directory, and under ``--chdir``. Written ``%%`` the
+    character is kept. The rest of the script is bash, where it is no pattern at all.
+    """
+    out = (tmp_path / "scan_50%" / "run_%j").resolve()
+    script = slurm.build_script(
+        **_build_kwargs(
+            tmp_path, output_dir=out, script_path=out / "step1_structure_0.slurm", scratch_dir=None
+        )
+    )
+    text = script.read_text(encoding="utf-8")
+
+    as_itself = str(out).replace("%", "%%")
+    assert f'#SBATCH --output="{as_itself}/step1_structure_0.runlog"' in text
+    assert f'#SBATCH --error="{as_itself}/step1_structure_0.err"' in text
+    assert f'export OUTPUT_DIR="{out}"' in text
+    assert f'export WORK_DIR="{out}/_work_' in text
+    assert f"  output={out}\n" in text, "and the runlog names the directory as it is"
+
+
 def test_build_script_includes_runlog_header_and_footer_fields(tmp_path: Path):
     """The generated script must wrap the run_block with job_log header + footer."""
     script = slurm.build_script(
@@ -1071,6 +1095,29 @@ def test_build_array_script_resolves_task_from_manifest(tmp_path: Path):
     # Runlog fields resolve at runtime; the fallback log catches early failures.
     assert "structure_id=$SID" in text
     assert "array_%A_%a.log" in text
+
+
+def test_an_array_scripts_fallback_log_is_a_pattern_in_its_file_name_alone(tmp_path: Path):
+    """The step directory reaches ``sbatch`` as itself; ``%A`` and ``%a`` stay its to fill in."""
+    out = tmp_path / "scan_50%" / "run_%j"
+    script = slurm.build_array_script(
+        step_label="step2_refine",
+        ntasks=1,
+        slurm_header=slurm.read_header(_write_header(tmp_path)),
+        script_path=out / "step2_refine_array.slurm",
+        output_dir=out,
+        scratch_dir=None,
+        run_block=RunBlock(body="orca $INP_NAME > $OUTPUT_DIR/$OUT_NAME"),
+        engine="orca",
+        operation="opt_sp",
+        step=2,
+        output_globs=("*.out",),
+    )
+    text = script.read_text(encoding="utf-8")
+
+    fallback = f"{str(out).replace('%', '%%')}/array_%A_%a.log"
+    assert f'#SBATCH --output="{fallback}"' in text
+    assert f'#SBATCH --error="{fallback}"' in text
 
 
 def test_write_array_manifests_chunks_at_max_array_size(tmp_path: Path):

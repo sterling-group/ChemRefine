@@ -437,6 +437,20 @@ def _run_body_lines(
     ]
 
 
+def _as_itself(path: Path | str) -> str:
+    """``path`` spelled so that ``sbatch`` takes it for the path it is.
+
+    ``--output`` and ``--error`` are filename *patterns*: ``sbatch`` puts the job's id for
+    ``%j``, its name for ``%x`` and so on, wherever they stand in the value — in a
+    directory's name as much as in the file's. Writing the file's name alone is no way
+    round it, since the directory the job was submitted from is expanded along with it. A
+    run directory called ``scan_50%`` or ``run_%j`` would have each job's runlog and
+    stderr written under another name, in a directory the scheduler makes for them, and the
+    step would find no account of its jobs. ``%%`` is the pattern for the character.
+    """
+    return str(path).replace("%", "%%")
+
+
 def build_script(
     *,
     job_name: str,
@@ -522,8 +536,8 @@ def build_script(
         "",
         *sbatch,
         f"#SBATCH --job-name={job_name}",
-        f'#SBATCH --output="{runlog_path}"',
-        f'#SBATCH --error="{err_path}"',
+        f'#SBATCH --output="{_as_itself(runlog_path)}"',
+        f'#SBATCH --error="{_as_itself(err_path)}"',
         f"#SBATCH --ntasks={ntasks}",
         f"#SBATCH --cpus-per-task={cpus_per_task}",
         "",
@@ -631,7 +645,8 @@ def build_array_script(
         ),
         single_node,
     )
-    fallback_log = output_dir / "array_%A_%a.log"
+    # The step directory as itself; the file's own name is the one pattern meant as one.
+    fallback_log = f"{_as_itself(output_dir)}/array_%A_%a.log"
     # ``$SID`` expands inside the runlog heredoc at runtime, like $(hostname).
     header = job_log.bash_header(
         engine=engine,

@@ -474,6 +474,16 @@ _BUNDLED: tuple[Mutation, ...] = (
         "every job the ledger names by tag alone and the run resubmits beside it",
     ),
     Mutation(
+        id="sbatch-paths-are-not-patterns",
+        path="src/chemrefine/slurm/script.py",
+        old='    return str(path).replace("%", "%%")',
+        new="    return str(path)",
+        tests="tests/test_slurm.py",
+        breaks="a run directory with a % in its name is expanded by sbatch as a filename "
+        "pattern, so every job's runlog and stderr are written under another name in a "
+        "directory the scheduler makes, and the step finds no account of its jobs",
+    ),
+    Mutation(
         id="mem-per-gpu-header-stands-alone",
         path="src/chemrefine/slurm/script.py",
         old="    if per_gpu is not None:\n        logger.warning(",
