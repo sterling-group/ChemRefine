@@ -479,9 +479,10 @@ _BUNDLED: tuple[Mutation, ...] = (
         old='    return str(path).replace("%", "%%")',
         new="    return str(path)",
         tests="tests/test_slurm.py",
-        breaks="a run directory with a % in its name is expanded by sbatch as a filename "
-        "pattern, so every job's runlog and stderr are written under another name in a "
-        "directory the scheduler makes, and the step finds no account of its jobs",
+        breaks="a run directory named with a % that sbatch reads as a filename pattern "
+        "(run_%j, 5%NaCl, mix_50%25) has every job's runlog and stderr written under "
+        "another name, in a directory the scheduler makes, and the step finds no account "
+        "of its jobs",
     ),
     Mutation(
         id="mem-per-gpu-header-stands-alone",

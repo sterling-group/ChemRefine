@@ -201,7 +201,7 @@ def test_the_documented_runlog_path_and_glob_are_both_real(tmp_path: Path):
     )
     emitted = re.search(r'#SBATCH --output="([^"]+)"', script.read_text(encoding="utf-8"))
     assert emitted is not None
-    runlog = Path(emitted.group(1))
+    runlog = Path(emitted.group(1).replace("%%", "%"))  # the pattern, as sbatch reads it
     runlog.write_text("", encoding="utf-8")  # so the glob below has something to find
 
     doc = job_log.__doc__ or ""

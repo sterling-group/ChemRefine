@@ -445,19 +445,21 @@ def test_build_script_emits_absolute_runlog_output_directives(tmp_path: Path):
     out = (tmp_path / "out").resolve()
     script = slurm.build_script(**_build_kwargs(tmp_path, output_dir=out))
     text = script.read_text(encoding="utf-8")
-    assert f'#SBATCH --output="{out}/step1_structure_0.runlog"' in text
-    assert f'#SBATCH --error="{out}/step1_structure_0.err"' in text
+    home = str(out).replace("%", "%%")  # as sbatch is told it, wherever this test's own tree is
+    assert f'#SBATCH --output="{home}/step1_structure_0.runlog"' in text
+    assert f'#SBATCH --error="{home}/step1_structure_0.err"' in text
 
 
 def test_a_percent_sign_in_a_run_directory_reaches_sbatch_as_itself(tmp_path: Path):
     """``sbatch`` reads ``--output`` and ``--error`` as patterns, in every part of the path.
 
-    A directory named with ``%j`` had its jobs' logs written under the job's id instead, in
-    a directory the scheduler made, on ganymede2's SLURM 25.05: for an absolute path, for a
-    bare file name submitted from that directory, and under ``--chdir``. Written ``%%`` the
-    character is kept. The rest of the script is bash, where it is no pattern at all.
+    Both directories here are ones SLURM 25.05 was seen to rewrite: ``5%NaCl`` to a node's
+    name in place of ``%N``, ``run_%j`` to the job's id. It did so for an absolute path,
+    for a bare file name submitted from the directory, and under ``--chdir``, and left each
+    alone once its ``%`` was doubled. The rest of the script is bash, where the character
+    is no pattern at all.
     """
-    out = (tmp_path / "scan_50%" / "run_%j").resolve()
+    out = (tmp_path / "5%NaCl" / "run_%j").resolve()
     script = slurm.build_script(
         **_build_kwargs(
             tmp_path, output_dir=out, script_path=out / "step1_structure_0.slurm", scratch_dir=None
@@ -465,9 +467,8 @@ def test_a_percent_sign_in_a_run_directory_reaches_sbatch_as_itself(tmp_path: Pa
     )
     text = script.read_text(encoding="utf-8")
 
-    as_itself = str(out).replace("%", "%%")
-    assert f'#SBATCH --output="{as_itself}/step1_structure_0.runlog"' in text
-    assert f'#SBATCH --error="{as_itself}/step1_structure_0.err"' in text
+    assert '/5%%NaCl/run_%%j/step1_structure_0.runlog"\n' in text
+    assert '/5%%NaCl/run_%%j/step1_structure_0.err"\n' in text
     assert f'export OUTPUT_DIR="{out}"' in text
     assert f'export WORK_DIR="{out}/_work_' in text
     assert f"  output={out}\n" in text, "and the runlog names the directory as it is"
@@ -1099,7 +1100,7 @@ def test_build_array_script_resolves_task_from_manifest(tmp_path: Path):
 
 def test_an_array_scripts_fallback_log_is_a_pattern_in_its_file_name_alone(tmp_path: Path):
     """The step directory reaches ``sbatch`` as itself; ``%A`` and ``%a`` stay its to fill in."""
-    out = tmp_path / "scan_50%" / "run_%j"
+    out = tmp_path / "5%NaCl" / "run_%j"
     script = slurm.build_array_script(
         step_label="step2_refine",
         ntasks=1,
@@ -1115,9 +1116,7 @@ def test_an_array_scripts_fallback_log_is_a_pattern_in_its_file_name_alone(tmp_p
     )
     text = script.read_text(encoding="utf-8")
 
-    fallback = f"{str(out).replace('%', '%%')}/array_%A_%a.log"
-    assert f'#SBATCH --output="{fallback}"' in text
-    assert f'#SBATCH --error="{fallback}"' in text
+    assert text.count('/5%%NaCl/run_%%j/array_%A_%a.log"\n') == 2, "--output and --error"
 
 
 def test_write_array_manifests_chunks_at_max_array_size(tmp_path: Path):

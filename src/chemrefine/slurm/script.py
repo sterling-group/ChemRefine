@@ -437,16 +437,19 @@ def _run_body_lines(
     ]
 
 
-def _as_itself(path: Path | str) -> str:
+def _sbatch_literal(path: Path) -> str:
     """``path`` spelled so that ``sbatch`` takes it for the path it is.
 
-    ``--output`` and ``--error`` are filename *patterns*: ``sbatch`` puts the job's id for
-    ``%j``, its name for ``%x`` and so on, wherever they stand in the value — in a
-    directory's name as much as in the file's. Writing the file's name alone is no way
-    round it, since the directory the job was submitted from is expanded along with it. A
-    run directory called ``scan_50%`` or ``run_%j`` would have each job's runlog and
-    stderr written under another name, in a directory the scheduler makes for them, and the
-    step would find no account of its jobs. ``%%`` is the pattern for the character.
+    ``--output`` and ``--error`` are filename *patterns*, in every part of the value, the
+    directories included. A ``%`` that one of the scheduler's letters follows, digits
+    between or not, is replaced: ``run_%j`` by the job's id, ``5%NaCl`` by a node's name,
+    ``10%acetone`` by an array index. One that digits and anything else follow is dropped
+    with all but the last digit, so ``mix_50%25`` becomes ``mix_505``. Writing the file's
+    name alone is no way round it, since the directory the job was submitted from is
+    expanded along with it. Under such a directory each job's runlog and stderr are written
+    under another name, in a directory the scheduler makes for them, and the step finds no
+    account of its jobs. ``%%`` is the pattern for the character, and doubling every one
+    needs no list of the letters.
     """
     return str(path).replace("%", "%%")
 
@@ -536,8 +539,8 @@ def build_script(
         "",
         *sbatch,
         f"#SBATCH --job-name={job_name}",
-        f'#SBATCH --output="{_as_itself(runlog_path)}"',
-        f'#SBATCH --error="{_as_itself(err_path)}"',
+        f'#SBATCH --output="{_sbatch_literal(runlog_path)}"',
+        f'#SBATCH --error="{_sbatch_literal(err_path)}"',
         f"#SBATCH --ntasks={ntasks}",
         f"#SBATCH --cpus-per-task={cpus_per_task}",
         "",
@@ -645,8 +648,8 @@ def build_array_script(
         ),
         single_node,
     )
-    # The step directory as itself; the file's own name is the one pattern meant as one.
-    fallback_log = f"{_as_itself(output_dir)}/array_%A_%a.log"
+    # `%A` and `%a` are the one pattern meant as one.
+    fallback_log = f"{_sbatch_literal(output_dir)}/array_%A_%a.log"
     # ``$SID`` expands inside the runlog heredoc at runtime, like $(hostname).
     header = job_log.bash_header(
         engine=engine,

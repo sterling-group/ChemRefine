@@ -295,7 +295,8 @@ def test_a_job_whose_program_failed_is_never_a_success(
     runlog = job_log.runlog_path(out_dir, job[0].stem)
     if not array:
         # Where `sbatch` and the local runner put this script's stdout.
-        assert f'#SBATCH --output="{runlog}"' in script.read_text(encoding="utf-8")
+        told = str(runlog).replace("%", "%%")  # a pattern to sbatch: `%%` is the character
+        assert f'#SBATCH --output="{told}"' in script.read_text(encoding="utf-8")
         runlog.write_text(result.stdout, encoding="utf-8")
     footer = job_log.read_footer(runlog)
     assert footer is not None, f"{engine_name}: the job wrote no footer\n{result.stderr}"
