@@ -1392,8 +1392,16 @@ def _fairchem_sp(run: Replayed) -> None:
 
     Held to the default backend's own energy, bitwise repeatable, in the window the direct
     MLIP engine's checks use — a window an Eh wide was one ORB's omol head and MACE-OFF reach
-    too, so a default that dispatched to either passed it.
+    too, so a default that dispatched to either passed it. The script hands the model the
+    step's charge and multiplicity, as the starter does: left out, FAIRChem assumes a neutral
+    singlet and says so only on the job's stderr.
     """
+    (step,) = run.config.steps
+    rendered = (run.config.step_dir(step).resolve() / "0" / "step1_0.py").read_text(
+        encoding="utf-8"
+    )
+    for line in ("charge=0,", "multiplicity=1,"):
+        assert line in rendered, f"{line!r} is not rendered"
     (structure,) = run.outcomes[0].state.structures
     assert structure.energy_hartree is not None
     assert abs(structure.energy_hartree - -76.43356970) < 1e-5, structure.energy_hartree
