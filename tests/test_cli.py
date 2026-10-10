@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import textwrap
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -311,7 +312,9 @@ def test_run_executes_full_pipeline(tmp_path: Path):
     assert (tmp_path / "outputs" / "step2_refine" / "_cache" / "step.json").is_file()
 
 
-def test_resume_after_run_is_cache_hit(tmp_path: Path):
+def test_resume_after_run_is_cache_hit(
+    tmp_path: Path, back_dated: Callable[[Path], tuple[int, int]]
+):
     """A resume over a finished run serves both steps from cache: no cache document is rewritten.
 
     Exit 0 alone was true of a resume that recomputed everything; the cache documents'
@@ -324,7 +327,7 @@ def test_resume_after_run_is_cache_hit(tmp_path: Path):
         tmp_path / "outputs" / "step1_screen" / "_cache" / "step.json",
         tmp_path / "outputs" / "step2_refine" / "_cache" / "step.json",
     ]
-    before = [(p.stat().st_ino, p.stat().st_mtime_ns) for p in documents]
+    before = [back_dated(p) for p in documents]
 
     assert runner.invoke(app, ["resume", str(config_path)]).exit_code == 0
 
@@ -356,7 +359,7 @@ def test_an_unreadable_cache_document_exits_with_the_cache_error_code(tmp_path: 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root reads through any mode")
 def test_an_output_the_run_cannot_read_is_not_run_again_and_is_read_once_it_can_be(
-    tmp_path: Path,
+    tmp_path: Path, back_dated: Callable[[Path], tuple[int, int]]
 ):
     """An unreadable output fails its structure, halts its step and costs no job.
 
@@ -378,7 +381,7 @@ def test_an_output_the_run_cannot_read_is_not_run_again_and_is_read_once_it_can_
     assert runner.invoke(app, ["run", str(config_path)]).exit_code == 0
     step_dir = tmp_path / "outputs" / "step1_screen"
     output = step_dir / "1" / "step1_1.out"
-    written = (output.stat().st_ino, output.stat().st_mtime_ns)
+    written = back_dated(output)
 
     def tree() -> tuple[list[tuple[str, str]], list[str], list[str]]:
         cached = load(step_dir)
@@ -480,26 +483,35 @@ def test_dry_run_with_target_step_prints_target(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def _assert_rebuilds_step_2(tmp_path: Path, config_path: Path, target: str) -> None:
+def _assert_rebuilds_step_2(
+    tmp_path: Path, config_path: Path, target: str, back_dated: Callable[[Path], tuple[int, int]]
+) -> None:
     """``rebuild-cache TARGET`` re-parses step 2, so its cache document is rewritten."""
     document = tmp_path / "outputs" / "step2_refine" / "_cache" / "step.json"
-    before = document.stat().st_mtime_ns
+    before = back_dated(document)
     result = runner.invoke(app, ["rebuild-cache", str(config_path), target])
     assert result.exit_code == 0, result.output
-    assert document.stat().st_mtime_ns != before, f"step 2's cache was not rewritten for {target!r}"
+    after = document.stat()
+    assert (after.st_ino, after.st_mtime_ns) != before, (
+        f"step 2's cache was not rewritten for {target!r}"
+    )
 
 
-def test_rebuild_cache_targets_by_step_number(tmp_path: Path):
+def test_rebuild_cache_targets_by_step_number(
+    tmp_path: Path, back_dated: Callable[[Path], tuple[int, int]]
+):
     config_path = _write_config(tmp_path)
     runner.invoke(app, ["run", str(config_path)])
-    _assert_rebuilds_step_2(tmp_path, config_path, "2")
+    _assert_rebuilds_step_2(tmp_path, config_path, "2", back_dated)
 
 
-def test_rebuild_cache_targets_by_step_name(tmp_path: Path):
+def test_rebuild_cache_targets_by_step_name(
+    tmp_path: Path, back_dated: Callable[[Path], tuple[int, int]]
+):
     """A name reaches the same step its number does."""
     config_path = _write_config(tmp_path)
     runner.invoke(app, ["run", str(config_path)])
-    _assert_rebuilds_step_2(tmp_path, config_path, "refine")
+    _assert_rebuilds_step_2(tmp_path, config_path, "refine", back_dated)
 
 
 def test_rerun_with_missing_target_errors(tmp_path: Path):

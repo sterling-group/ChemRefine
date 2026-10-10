@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 from collections import namedtuple
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -901,7 +902,9 @@ def test_rng_for_is_deterministic_and_distinct_per_structure():
     )
 
 
-def test_rebuilding_does_not_rewrite_the_children_it_reads(tmp_path: Path):
+def test_rebuilding_does_not_rewrite_the_children_it_reads(
+    tmp_path: Path, back_dated: Callable[[Path], tuple[int, int]]
+):
     """``rebuild_nms`` re-reads round-2 outputs to re-derive a decision, and writes nothing.
 
     It exists to reconstruct a cache from a finished tree. Re-recording each child's parsed
@@ -920,13 +923,11 @@ def test_rebuilding_does_not_rewrite_the_children_it_reads(tmp_path: Path):
     nms.run_nms(engine, round1, [], ctx)
 
     before = {
-        p: (p.read_bytes(), p.stat().st_mtime_ns)
-        for p in sorted(ctx.step_dir.rglob("*"))
-        if p.is_file()
+        p: (p.read_bytes(), back_dated(p)) for p in sorted(ctx.step_dir.rglob("*")) if p.is_file()
     }
     nms.rebuild_nms(engine, round1, [], ctx)
     after = {
-        p: (p.read_bytes(), p.stat().st_mtime_ns)
+        p: (p.read_bytes(), (p.stat().st_ino, p.stat().st_mtime_ns))
         for p in sorted(ctx.step_dir.rglob("*"))
         if p.is_file()
     }

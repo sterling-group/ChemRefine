@@ -3,7 +3,9 @@
 import builtins
 import importlib
 import os
+import stat
 import sys
+import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -397,6 +399,132 @@ def unsearchable() -> Iterator[Callable[[Path], Path]]:
     yield lock
     for directory in locked:
         directory.chmod(0o755)
+
+
+_HOLD_SECONDS = 5.0
+"""How long a mode gets to take hold before the test that set it is skipped."""
+
+
+def _answers(ask: Callable[[Any], object], path: Any) -> bool:
+    """Whether the filesystem still answers ``ask`` of ``path`` rather than refusing it."""
+    try:
+        ask(path)
+    except OSError:
+        return False  # refused, or gone: either way nothing is answered for it
+    return True
+
+
+def _first_entry(directory: Any) -> None:
+    """Open ``directory``'s listing and read from it, which is where a refusal shows."""
+    with os.scandir(directory) as scan:
+        next(scan, None)
+
+
+def _is_directory(path: Any) -> bool:
+    """Whether ``path`` is a directory itself, not a link to one, as far as can be asked."""
+    try:
+        return stat.S_ISDIR(os.lstat(path).st_mode)
+    except (OSError, TypeError):
+        return False  # out of reach, or an open file's number: nothing to wait on
+
+
+@pytest.fixture(autouse=True)
+def _modes_take_hold(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A mode that walls a directory off is in force when ``chmod`` returns, on any filesystem.
+
+    A test that takes search or read permission off a directory and then asks for something
+    inside assumes the filesystem answers by the new mode at once. A local disk does. A
+    network filesystem may go on answering from what it remembers: the group share this was
+    met on resolves the directories inside a walled-off one for about a second more, so the
+    refusal such a test is about came or not by timing. The wait is made here, once for
+    every test: after a ``chmod`` that takes search permission off a directory this returns
+    when every entry it held is refused, and after one that takes read permission off, when
+    its listing is. Where that never comes the test is skipped, as it is for an account no
+    mode binds.
+    """
+    if os.geteuid() == 0:
+        return  # nothing is refused to root, and each test of a wall skips itself there
+    chmod = os.chmod
+
+    def taking_hold(path: Any, mode: int, *args: Any, **kwargs: Any) -> None:
+        searched, listed = bool(mode & 0o100), bool(mode & 0o400)
+        walls_off = not (searched and listed) and _is_directory(path)
+        held: list[Path] = []
+        if walls_off and not searched:
+            try:
+                held = list(Path(os.fsdecode(path)).iterdir())
+            except OSError:
+                held = []  # walled off already: it holds nothing known to be answered for
+        chmod(path, mode, *args, **kwargs)
+        if not walls_off:
+            return
+        deadline = time.monotonic() + _HOLD_SECONDS
+        while any(_answers(os.lstat, entry) for entry in held) or (
+            not listed and _answers(_first_entry, path)
+        ):
+            if time.monotonic() > deadline:
+                pytest.skip(
+                    f"this filesystem still answers behind mode {mode:03o} on {path} "
+                    f"{_HOLD_SECONDS:g} s after it was set"
+                )
+            time.sleep(0.05)
+
+    monkeypatch.setattr(os, "chmod", taking_hold)
+
+
+@pytest.fixture
+def list_only() -> Iterator[Callable[[Path], bool]]:
+    """Leave a directory listable and not searchable, and say whether this filesystem lists it.
+
+    Mode ``r--``: another account's directory that lets this one read its names. A local
+    disk lists it and says of each entry whether it is a directory, with nothing searched
+    for. A network filesystem may refuse the listing outright, and one that names the
+    entries without their kind leaves the kind to a search, which is refused. Which it is
+    belongs to the filesystem, so it is asked here, of the system's own listing, and the
+    test holds the code to the answer that goes with each: what the listing says where
+    there is one, its refusal where there is none. Given back when the test ends.
+    """
+    left: list[Path] = []
+
+    def leave(directory: Path) -> bool:
+        directory.chmod(0o444)
+        left.append(directory)
+        try:
+            with os.scandir(directory) as scan:
+                for entry in scan:
+                    entry.is_dir()
+        except PermissionError:
+            return False
+        return True
+
+    yield leave
+    for directory in left:
+        directory.chmod(0o755)
+
+
+_LONG_PAST_NS = 1_000_000_000 * 10**9
+"""A modification time no write leaves on a file: September 2001, in whole seconds, so a
+filesystem that keeps only those gives the same number back."""
+
+
+@pytest.fixture
+def back_dated() -> Callable[[Path], tuple[int, int]]:
+    """Back-date a file and return its identity, for a test of whether it is written again.
+
+    The identity is the inode and the modification time. A document saved atomically comes
+    back under a new inode. A file rewritten in place keeps its inode and takes the time of
+    the write, and that time, read off the filesystem's clock before and after, proves
+    nothing: a filesystem that keeps whole seconds gives a file rewritten a moment later
+    the time it had. Set first to a time long past, the second field is told from any
+    write on every filesystem, and only a write that never happened keeps both.
+    """
+
+    def back_date(path: Path) -> tuple[int, int]:
+        os.utime(path, ns=(_LONG_PAST_NS, _LONG_PAST_NS))
+        status = path.stat()
+        return status.st_ino, status.st_mtime_ns
+
+    return back_date
 
 
 @pytest.fixture

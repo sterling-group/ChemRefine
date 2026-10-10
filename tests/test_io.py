@@ -1396,18 +1396,24 @@ def test_a_directory_the_filesystem_will_not_list_is_refused_not_read_as_empty(
 
 
 @pytest.mark.skipif(_AS_ROOT, reason="root reads through any mode")
-def test_a_directory_listed_but_not_searched_still_says_what_it_holds(tmp_path: Path):
+def test_a_directory_listed_but_not_searched_still_says_what_it_holds(
+    tmp_path: Path, list_only: Callable[[Path], bool]
+):
     """Whether an entry is a directory comes with the listing, not from a stat that is refused.
 
     Asked of ``Path.is_dir``, a directory that can be listed and not searched raises on
-    Python 3.11 to 3.13 and calls every attempt a file on 3.14.
+    Python 3.11 to 3.13 and calls every attempt a file on 3.14. A filesystem that will not
+    list such a directory, or names its entries without their kind, has it refused by name.
     """
     structure_dir = tmp_path / "0"
     (structure_dir / "attempt1").mkdir(parents=True)
     (structure_dir / "step1_0.out").write_text("", encoding="utf-8")
-    structure_dir.chmod(0o444)
-    try:
-        entries = chemrefine_io.tree_entries(structure_dir)
-    finally:
-        structure_dir.chmod(0o755)
-    assert entries == [(structure_dir / "attempt1", True), (structure_dir / "step1_0.out", False)]
+    if list_only(structure_dir):
+        assert chemrefine_io.tree_entries(structure_dir) == [
+            (structure_dir / "attempt1", True),
+            (structure_dir / "step1_0.out", False),
+        ]
+        return
+    with pytest.raises(CacheError) as excinfo:
+        chemrefine_io.tree_entries(structure_dir)
+    assert str(excinfo.value) == f"cannot read {structure_dir}: Permission denied"

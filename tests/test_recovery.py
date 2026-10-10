@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -112,7 +113,9 @@ def test_no_action_reaches_prepare_for_a_step_its_preflight_refuses(tmp_path: Pa
         ENGINES.pop("fake-refusing", None)
 
 
-def test_execute_run_invalidates_and_re_executes(tmp_path: Path):
+def test_execute_run_invalidates_and_re_executes(
+    tmp_path: Path, back_dated: Callable[[Path], tuple[int, int]]
+):
     """``run`` recomputes both steps: every cache document and output is rewritten.
 
     Asserted by identity (:func:`_stamp`), not existence — a file that exists before and
@@ -127,7 +130,7 @@ def test_execute_run_invalidates_and_re_executes(tmp_path: Path):
         outputs / "step1_screen" / "0" / "step1_0.out",
         outputs / "step2_refine" / "0" / "step2_0.out",
     ]
-    before = [_stamp(p) for p in watched]
+    before = [back_dated(p) for p in watched]
 
     assert execute(cfg, Action.RUN) == 0
 
@@ -139,14 +142,15 @@ def _stamp(path: Path) -> tuple[int, int]:
     """A file's identity for "was it rewritten": inode and mtime.
 
     The cache's atomic writes replace the inode, so a re-saved document differs on the first
-    field however fine the clock; the fake engine rewrites an output in place, which the
-    second field catches.
+    field; the fake engine rewrites an output in place, which the second field catches. The
+    reading before the action is the ``back_dated`` fixture's, so that it catches it on a
+    filesystem whose clock keeps whole seconds too.
     """
     st = path.stat()
     return st.st_ino, st.st_mtime_ns
 
 
-def test_execute_resume_keeps_caches(tmp_path: Path):
+def test_execute_resume_keeps_caches(tmp_path: Path, back_dated: Callable[[Path], tuple[int, int]]):
     """A second resume serves both steps from their caches: nothing is re-run or re-saved.
 
     ``== 0`` alone was true of a resume that recomputed everything; the cache documents
@@ -161,7 +165,7 @@ def test_execute_resume_keeps_caches(tmp_path: Path):
         outputs / "step1_screen" / "0" / "step1_0.out",
         outputs / "step2_refine" / "0" / "step2_0.out",
     ]
-    before = [_stamp(p) for p in watched]
+    before = [back_dated(p) for p in watched]
 
     assert execute(cfg, Action.RESUME) == 0
 
@@ -169,7 +173,9 @@ def test_execute_resume_keeps_caches(tmp_path: Path):
     assert not (outputs / "step1_screen" / "0" / "attempt1").exists()
 
 
-def test_execute_rebuild_cache_invalidates_only_target(tmp_path: Path):
+def test_execute_rebuild_cache_invalidates_only_target(
+    tmp_path: Path, back_dated: Callable[[Path], tuple[int, int]]
+):
     """``rebuild-cache 2`` rewrites step 2's document from its outputs and touches nothing else.
 
     Step 1's document and both steps' outputs keep their identity (:func:`_stamp`): the
@@ -185,8 +191,8 @@ def test_execute_rebuild_cache_invalidates_only_target(tmp_path: Path):
         outputs / "step1_screen" / "0" / "step1_0.out",
         outputs / "step2_refine" / "0" / "step2_0.out",
     ]
-    before = [_stamp(p) for p in untouched]
-    rebuilt_before = _stamp(step2_cache)
+    before = [back_dated(p) for p in untouched]
+    rebuilt_before = back_dated(step2_cache)
 
     assert execute(cfg, Action.REBUILD_CACHE, target=2) == 0
 
@@ -194,14 +200,16 @@ def test_execute_rebuild_cache_invalidates_only_target(tmp_path: Path):
     assert _stamp(step2_cache) != rebuilt_before
 
 
-def test_execute_rerun_target_by_name(tmp_path: Path):
+def test_execute_rerun_target_by_name(
+    tmp_path: Path, back_dated: Callable[[Path], tuple[int, int]]
+):
     """``rerun screen`` redoes step 1 — outputs archived and rewritten — and leaves step 2 alone."""
     cfg = _two_step_config(tmp_path)
     execute(cfg, Action.RESUME)
     outputs = cfg.output_dir.resolve()
     step1_out = outputs / "step1_screen" / "0" / "step1_0.out"
     step2_out = outputs / "step2_refine" / "0" / "step2_0.out"
-    before = (_stamp(step1_out), _stamp(step2_out))
+    before = (back_dated(step1_out), back_dated(step2_out))
 
     assert execute(cfg, Action.RERUN, target="screen") == 0
 
@@ -211,7 +219,9 @@ def test_execute_rerun_target_by_name(tmp_path: Path):
     assert not (outputs / "step2_refine" / "0" / "attempt1").exists()
 
 
-def test_execute_rebuild_cache_no_target_uses_last_step(tmp_path: Path):
+def test_execute_rebuild_cache_no_target_uses_last_step(
+    tmp_path: Path, back_dated: Callable[[Path], tuple[int, int]]
+):
     """With no target, ``rebuild-cache`` re-parses the last step and re-saves only its cache."""
     cfg = _two_step_config(tmp_path)
     execute(cfg, Action.RESUME)
@@ -219,7 +229,7 @@ def test_execute_rebuild_cache_no_target_uses_last_step(tmp_path: Path):
     step1_doc = outputs / "step1_screen" / "_cache" / "step.json"
     step2_doc = outputs / "step2_refine" / "_cache" / "step.json"
     step2_out = outputs / "step2_refine" / "0" / "step2_0.out"
-    before = (_stamp(step1_doc), _stamp(step2_doc), _stamp(step2_out))
+    before = (back_dated(step1_doc), back_dated(step2_doc), back_dated(step2_out))
 
     assert execute(cfg, Action.REBUILD_CACHE) == 0
 
@@ -1918,7 +1928,9 @@ def _nms_config(tmp_path: Path, *, second_nms: bool = False) -> Config:
 
 
 @pytest.mark.parametrize("target", [None, 1], ids=["found-by-nms-flag", "named-explicitly"])
-def test_rebuild_nms_rebuilds_the_nms_step_without_submitting(tmp_path: Path, target):
+def test_rebuild_nms_rebuilds_the_nms_step_without_submitting(
+    tmp_path: Path, target, back_dated: Callable[[Path], tuple[int, int]]
+):
     """The command's whole point: re-read the round-2 children, do not recompute round 1.
 
     Round 1 is a frequency calculation — the expensive part of an NMS step, and already on
@@ -1936,7 +1948,7 @@ def test_rebuild_nms_rebuilds_the_nms_step_without_submitting(tmp_path: Path, ta
         eng.resolved = {"0", "1"}
         execute(cfg, Action.RESUME)
         document = (cfg.output_dir / "step1_s" / "_cache" / "step.json").resolve()
-        before = document.stat().st_mtime_ns
+        before = back_dated(document)
         eng.submitted, eng.children_submitted, eng.nms_seen = [], [], []
 
         assert execute(cfg, Action.REBUILD_NMS, target=target) == 0
@@ -1945,14 +1957,16 @@ def test_rebuild_nms_rebuilds_the_nms_step_without_submitting(tmp_path: Path, ta
         # parents, so on its own it would stay empty while a mutated rebuild fanned out
         # and submitted fresh round-2 displacement children.
         assert eng.submitted == [] and eng.children_submitted == [], "a rebuild submits nothing"
-        assert document.stat().st_mtime_ns != before, "the NMS step's cache was rewritten"
+        assert _stamp(document) != before, "the NMS step's cache was rewritten"
         assert eng.nms_seen, "round 1 was re-parsed, which is where the frequencies come from"
     finally:
         eng.resolved, eng.submitted, eng.nms_seen = set(), [], []
         ENGINES.pop("fake-nms2", None)
 
 
-def test_rebuild_nms_finds_the_nms_step_rather_than_the_last(tmp_path: Path):
+def test_rebuild_nms_finds_the_nms_step_rather_than_the_last(
+    tmp_path: Path, back_dated: Callable[[Path], tuple[int, int]]
+):
     """With no target it goes by `nms: true`, where every other action takes the last step."""
     from chemrefine.engines.api import ENGINES
 
@@ -1962,11 +1976,11 @@ def test_rebuild_nms_finds_the_nms_step_rather_than_the_last(tmp_path: Path):
         eng.resolved = {"0", "1"}
         execute(cfg, Action.RESUME)
         step2_doc = (cfg.output_dir / "step2_after" / "_cache" / "step.json").resolve()
-        before = step2_doc.stat().st_mtime_ns
+        before = back_dated(step2_doc)
 
         assert execute(cfg, Action.REBUILD_NMS) == 0
 
-        assert step2_doc.stat().st_mtime_ns == before, (
+        assert _stamp(step2_doc) == before, (
             "step 2 is the last step but not the NMS one, so it was never touched"
         )
     finally:

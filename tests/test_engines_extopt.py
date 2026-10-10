@@ -22,6 +22,7 @@ import shlex
 import subprocess
 import sys
 import threading
+from collections.abc import Callable
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -257,17 +258,18 @@ def test_a_rewrite_never_changes_the_wrapper_a_job_already_has_open(tmp_path: Pa
     assert sorted(p.name for p in tmp_path.iterdir()) == ["mlip_extopt.sh"]  # no temp left
 
 
-def test_a_wrapper_that_already_says_it_is_left_alone(tmp_path: Path):
+def test_a_wrapper_that_already_says_it_is_left_alone(
+    tmp_path: Path, back_dated: Callable[[Path], tuple[int, int]]
+):
     """Every prepare of a step writes the same bytes, so after the first there is no write."""
     out = tmp_path / "mlip_extopt.sh"
     protocol.write_wrapper_script(path=out, backend="mlip", url_file=tmp_path / "server.url")
     # Back-dated, so a rewrite in place (same inode, fresh mtime) is as visible as a
     # replacement (new inode): only a write that never happened keeps both.
-    os.utime(out, ns=(1_000_000_000, 1_000_000_000))
-    before = out.stat()
+    before = back_dated(out)
     protocol.write_wrapper_script(path=out, backend="mlip", url_file=tmp_path / "server.url")
     after = out.stat()
-    assert (after.st_ino, after.st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
+    assert (after.st_ino, after.st_mtime_ns) == before
 
 
 def test_a_wrapper_that_lost_its_exec_bit_is_written_again(tmp_path: Path):
