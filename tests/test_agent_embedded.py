@@ -16,6 +16,7 @@ import asyncio
 import contextlib
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Self
 
 import pytest
@@ -1151,6 +1152,55 @@ def test_chat_repl_remembers_what_a_failed_turn_did(
         [("scaffold_templates", "success")],
         ["scaffold my templates", "what happened?"],
     )
+
+
+def test_chat_repl_prints_a_failed_turn_on_stderr_and_goes_on_from_its_record(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The loop's own half of a failed turn, with ``run_turn`` itself the stand-in.
+
+    The two tests above prove that a dead endpoint arrives here as a
+    :class:`~chemrefine.agent.harness.TurnFailed`. This one holds what the loop then does
+    and nothing else: the failure's text goes to stderr, the next turn starts from the
+    failed one's ``messages``, and the reply that follows is printed like any other.
+
+    No event loop runs here, which keeps these lines measurable on every interpreter. On
+    Python 3.11 a failed run can reach a line tracer as one ``return`` event more than
+    ``call`` events (an async generator of PydanticAI's is the frame), and a tracer that
+    keeps a stack of frames then files the lines of every frame still open under its
+    caller.
+    """
+    import typer
+
+    from chemrefine.agent import chat
+
+    record: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart("hello")])]
+    turns = iter(
+        [
+            harness.TurnFailed(ConnectionError("connection refused"), record),
+            SimpleNamespace(output="recovered", all_messages=lambda: record),
+        ]
+    )
+    handed: list[list[ModelMessage] | None] = []
+
+    def turn(agent: Any, prompt: str, *, message_history: list[ModelMessage] | None) -> Any:
+        handed.append(message_history)
+        outcome = next(turns)
+        if isinstance(outcome, harness.TurnFailed):
+            raise outcome
+        return outcome
+
+    monkeypatch.setenv("CHEMREFINE_LLM_MODEL", "test-model")
+    monkeypatch.setattr(ProviderConfig, "build_model", lambda self: TestModel())
+    monkeypatch.setattr(chat, "run_turn", turn)
+    prompts = iter(["hello", "again", "exit"])
+    monkeypatch.setattr(typer, "prompt", lambda *a, **k: next(prompts))
+    echoed: list[tuple[str, bool]] = []
+    monkeypatch.setattr(typer, "echo", lambda m, **k: echoed.append((str(m), k.get("err", False))))
+
+    chat.main(provider="custom")
+    assert echoed[1:] == [("model endpoint failed: connection refused", True), ("recovered", False)]
+    assert handed == [None, record]
 
 
 def test_chat_repl_prints_what_the_model_made_of_a_refusal(
