@@ -238,6 +238,44 @@ def test_every_case_has_one_recording_and_one_check() -> None:
     assert set(LIVE_CHECKS) <= set(cases), "a live check for a case that does not exist"
 
 
+def _files(root: Path, *, apart_from: tuple[Path, ...] = ()) -> dict[str, bytes]:
+    """Every file under ``root`` by its relative name, less what lies at or under ``apart_from``."""
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file() and not any(path.is_relative_to(other) for other in apart_from)
+    }
+
+
+def test_every_recording_carries_its_case_as_the_tree_has_it(tmp_path: Path) -> None:
+    """A recording replays the copy of the case it carries; the live tier runs the tree's.
+
+    The two are one case only while the copies agree. An ``input.yaml``, a template or a
+    seed changed in the tree and not recorded again leaves the replay proving a case nobody
+    runs live any more, with every test green. So they are held together byte for byte,
+    comments included: the archive's copy is the one a reader of a recording sees.
+    ``case.yaml`` is held to its scenario, the part a replay follows. Its budget and its
+    ``heavy`` mark are the live tier's, and raising one records nothing new.
+    """
+    stale: dict[str, list[str]] = {}
+    for name in recorded_cases():
+        case = extract_case(recording(name), tmp_path / name)
+        carried = _files(case.root, apart_from=(case.captured, case.root / SUBMISSIONS))
+        in_tree = _files(CASES_DIR / name)
+        differing = sorted(
+            rel
+            for rel in carried.keys() | in_tree.keys()
+            if rel != CASE_SPEC and carried.get(rel) != in_tree.get(rel)
+        )
+        if (CASE_SPEC in carried) != (CASE_SPEC in in_tree) or (
+            CaseSpec.read(case.root).scenario != CaseSpec.read(CASES_DIR / name).scenario
+        ):
+            differing.append(CASE_SPEC)
+        if differing:
+            stale[name] = differing
+    assert not stale, f"recorded from another state of the case; record again: {stale}"
+
+
 NOT_LIVE: dict[str, str] = {
     "engine fake": "the suite's in-memory engine, not a shipped one",
     "engine qchem": "no Q-Chem binary on the machines that record",
