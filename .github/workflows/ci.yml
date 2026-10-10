@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Weekly, on what `main` holds. Every job below installs today's releases of what it
+  # needs, so a release of somebody else's package can break one with no commit of ours,
+  # and without this the first to find out is the next pull request, whose author changed
+  # nothing that matters. Monday, ahead of the week's other sweeps.
+  schedule:
+    - cron: "47 2 * * 1"
   # Re-run the matrix without needing a push (a flaky runner, a dependency that
   # just published a fix).
   workflow_dispatch:
