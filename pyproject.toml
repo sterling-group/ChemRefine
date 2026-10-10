@@ -116,20 +116,30 @@ agent = ["pydantic-ai-slim[openai]>=2.16,<3"]
 # defaults to FAIRChem / UMA (`uma-s-1p2`).
 #
 # A `python_version` marker on a backend's own requirements is a claim: this extra installs
-# here, from wheels. Both pip and the provisioner read it — `engines/_provision` builds a
-# backend's managed env on the newest Python its extra claims rather than on whatever the
-# orchestrator runs — so a capped extra carries the marker on *every* requirement of its
-# own; half-installing around the pin the cap exists to hold is a subtler kind of broken.
-# An sdist here is not a slow install but torch or a vendored abseil compiling on a login
-# node, and ci.yml fails a cap that has outlived the missing wheel behind it.
+# here, from wheels, on a Python its backend names. Both pip and the provisioner read it —
+# `engines/_provision` builds a backend's managed env on the newest Python its extra claims
+# rather than on whatever the orchestrator runs — so a capped extra carries the marker on
+# *every* requirement of its own; half-installing around the pin the cap exists to hold is
+# a subtler kind of broken. An sdist here is not a slow install but torch or a vendored
+# abseil compiling on a login node, and ci.yml fails a cap that has outlived its reason:
+# the missing wheel behind it, or the backend's own claim to stop there.
 mlip-fairchem = [
     "fairchem-core>=2.18",
     "chemrefine[server]",
 ]
-# Capped at 3.13: our own `torch>=2.8,<2.9` pin has no cp314 wheels — cp314 first appears in
-# torch 2.9 — so 3.14 would build torch from source. Lift when the torch pin can move up.
+# torch from 2.8 to 2.14 is where the MACE live cases have run, and the two ends give the
+# same energies to 1e-8 eV. The ceiling is where that stops rather than the next major:
+# mace-torch pins `e3nn==0.4.4`, which is built on TorchScript, and torch has deprecated
+# TorchScript, so a line past the ceiling may be the one that drops it. Raise it by running
+# those cases on the new line; the weekly audit asks for that once the range holds an
+# advisory.
+#
+# Capped at 3.13, where the backend's own claim stops: mace-torch names no Python past it,
+# and torch calls TorchScript "not supported in Python 3.14+". The stack does install there
+# from wheels, so this cap is not a wheel fact, and ci.yml holds it by that claim instead:
+# it fails once mace-torch names a Python this extra excludes.
 mlip-mace = [
-    "torch>=2.8.0,<2.9.0; python_version < '3.14'",
+    "torch>=2.8.0,<2.15; python_version < '3.14'",
     "e3nn==0.4.4; python_version < '3.14'",
     "mace-torch>=0.3.16; python_version < '3.14'",
     "chemrefine[server]",

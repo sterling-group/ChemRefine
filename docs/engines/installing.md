@@ -64,9 +64,10 @@ there is no `custom_<library>` task for any of them.
 A backend's dependency stack is isolated so it never has to match anyone else's, and the
 **interpreter is part of that stack**. Some backends have no wheels for the newest Pythons —
 today `mlip-orb` installs only on 3.12 (orb-models pins `dm-tree==0.1.8`, whose newest wheels
-are cp312) and `mlip-chgnet` only up to 3.12 (chgnet ships no cp313 wheel), while `mlip-mace`
-stops at 3.13 (its pinned torch line has no cp314 wheel). Without wheels, pip falls back to
-building from source, which for those packages means compiling C++ or torch itself.
+are cp312) and `mlip-chgnet` only up to 3.12 (chgnet ships no cp313 wheel). Without wheels,
+pip falls back to building from source, which for those packages means compiling C++.
+`mlip-mace` stops at 3.13 for a reason of its own: MACE names no Python past it, and torch
+does not support TorchScript, which MACE is built on, on 3.14.
 
 So `chemrefine backends install` builds each environment on the newest Python that backend's
 extra installs on, and says which one it picked:

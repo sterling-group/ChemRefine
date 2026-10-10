@@ -150,31 +150,39 @@ jobs:
           print("marker holds: orb-models excluded on 3.11")
           PY
 
-      # A `python_version` ceiling on a backend extra is a claim about wheels, and the way it
-      # rots is by being *fixed upstream*: the wheel that was missing is published, and the
-      # cap goes on excluding a Python that works, silently, forever. Nobody re-checks a pin
-      # that is not failing. So the cap is asked, on every matrix Python above it, whether it
-      # is still buying anything.
+      # A `python_version` ceiling on a backend extra is a claim about what its backend offers
+      # there, and the way it rots is by being *fixed upstream*: the wheel that was missing is
+      # published, or the backend starts naming the Python it stopped at, and the cap goes on
+      # excluding a Python that works, silently, forever. Nobody re-checks a pin that is not
+      # failing. So the cap is asked, on every matrix Python above it, whether it is still
+      # buying anything.
       #
       # Which extras are capped, and what each cap holds back, come out of pyproject —
       # nothing is named here. A backend added or re-capped later is covered on the commit
       # that changes the marker, with no matching edit to this file.
       #
-      # A cap holds when either of two things would be built from source here. The first is
-      # the held-back requirement itself: `--only-binary` names it, never `:all:`, because
+      # A cap holds for one of three reasons, asked in turn. The first is that the held-back
+      # requirement itself has no wheel here: `--only-binary` names it, never `:all:`, because
       # resolution is transitive, and a wheels-only rule over the whole tree fails on mace's
       # `python-hostlist` and chgnet's `nvidia-ml-py3` — source-only pure-Python packages
       # that build in a second anywhere — *regardless* of whether the capped package gained
       # wheels, so the reminder could never fire for those two extras.
       #
-      # The second is a native build behind it, which that resolution cannot show: `--dry-run`
-      # prepares metadata, and a source archive yields metadata without compiling anything.
+      # The second is that the backend stops there by its own word: a held-back package whose
+      # classifiers name the newest Python the extra claims and do not name this one.
+      # mace-torch installs on 3.14 from wheels and names nothing past 3.13, since torch does
+      # not support TorchScript there. A package that names neither Python says nothing
+      # either way — e3nn 0.4.4 names none past 3.10 — and is not asked.
+      #
+      # The third is a native build behind the requirement, which the resolution cannot show:
+      # `--dry-run` prepares metadata, and a source archive yields metadata without compiling
+      # anything.
       # orb-models is a pure wheel on every Python, and its cap is for the `dm-tree==0.1.8` it
       # pins, whose vendored abseil is what would compile for an hour. So what the resolution
       # would install is read off pip's report, and each package it takes as a source archive
       # is asked for again as a wheel for the newest Python the extra claims. One that has a
       # wheel there is a native build here, and the cap holds; one that has no wheel on any
-      # Python is the bystander of the paragraph above, and is passed over.
+      # Python is the bystander of the first reason, and is passed over.
       #
       # Ceilings only. A floor is policy rather than a wheel fact — orb-models resolves fine
       # below its floor, to a 2024 release, which is what the floor refuses — and the step
@@ -185,6 +193,7 @@ jobs:
           python - <<'PY'
           import json, subprocess, sys, tempfile, tomllib
           from packaging.requirements import Requirement
+          from packaging.utils import canonicalize_name
 
           here = f"{sys.version_info.major}.{sys.version_info.minor}"
 
@@ -196,6 +205,20 @@ jobs:
                   [sys.executable, "-m", "pip", "install", "--dry-run", *args],
                   capture_output=True, text=True,
               )
+
+          def pythons_named(metadata):
+              return {c.rsplit(" ", 1)[1] for c in metadata.get("classifier", [])
+                      if c.startswith("Programming Language :: Python :: 3.")}
+
+          def stops_before_here(report, names, claimed):
+              """The held-back packages whose classifiers name `claimed` and not this Python."""
+              return [
+                  f"{item['metadata']['name']} {item['metadata']['version']}"
+                  for item in json.load(open(report))["install"]
+                  if canonicalize_name(item["metadata"]["name"]) in names
+                  and claimed in (named := pythons_named(item["metadata"]))
+                  and here not in named
+              ]
 
           def built_here(report, claimed):
               """What pip would build from source here although `claimed` has a wheel for it."""
@@ -244,16 +267,21 @@ jobs:
                   if r.name not in named[here]
               ]
               wheels_only = ",".join(Requirement(spec).name for spec in held_back)
+              names = {canonicalize_name(name) for name in wheels_only.split(",")}
               print(f"::group::[{extra}] claims {claimed}; on {here} it holds back {held_back}")
               with tempfile.TemporaryDirectory() as tmp:
                   report = f"{tmp}/report.json"
                   done = dry_run("--report", report, "--only-binary", wheels_only, *held_back)
                   print(done.stdout or done.stderr)
-                  built = built_here(report, claimed[-1]) if done.returncode == 0 else []
+                  resolved = done.returncode == 0
+                  stops = stops_before_here(report, names, claimed[-1]) if resolved else []
+                  built = built_here(report, claimed[-1]) if resolved else []
+              for name in stops:
+                  print(f"{name} names Python {claimed[-1]} and not {here}")
               for pin in built:
                   print(f"{pin}: a wheel on {claimed[-1]}, a source build on {here}")
               print("::endgroup::")
-              if done.returncode == 0 and not built:
+              if resolved and not stops and not built:
                   problems.append(
                       f"[{extra}] excludes Python {here}, but {' '.join(held_back)} now "
                       f"installs there from wheels — the cap has outlived its reason. Lift "
