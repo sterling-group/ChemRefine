@@ -400,9 +400,9 @@ def _conformers(run: Replayed) -> None:
     # default temperature, and splits each in two: 8 workers and 40 s.
     assert re.findall(r"Final number of workers\s+\.{3}\s+(\d+)", goat_text) == ["1"]
     assert "Reached the maximum number of global iterations (1)!" in goat_text
-    # A fixed seed, in ORCA's echo of the input it read: on its own seed the random numbers
-    # differ from run to run, and one run in twelve of a search this lean found Z alone,
-    # which leaves the cut below nothing to drop.
+    # A fixed seed, in ORCA's echo of the input it read: drawing a fresh one each run, one
+    # run in twelve of a search this lean found Z alone, which leaves the cut below nothing
+    # to drop.
     assert re.search(r"^\|\s*\d+>\s*RANDOMSEED\s+FALSE\s*$", goat_text, re.MULTILINE), (
         "GOAT searched on the fixed seed"
     )

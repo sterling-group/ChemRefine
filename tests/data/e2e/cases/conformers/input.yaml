@@ -25,8 +25,9 @@ steps:
   # `! GOAT XTB` (the template): one worker at one temperature (NWORKERS 1, TEMPLIST) for one
   # global iteration (MAXGLOBALITER 1), 15 optimisations in 5 to 6 s. Without NWORKERS and
   # TEMPLIST, ORCA splits the search over 8 workers: 120 optimisations and 40 s.
-  # `RANDOMSEED FALSE` gives every run the same random numbers, and so the same search and
-  # the same ensemble. On ORCA's own seed, one run in twelve of a search this lean found Z
+  # `RANDOMSEED FALSE` has GOAT draw the same random numbers on every run. ORCA's manual
+  # allows that an optimisation may still differ numerically; twenty runs of this search on
+  # two machines wrote one ensemble. Drawing a fresh seed each run, one in twelve found Z
   # alone.
   - step: 1
     name: goat
