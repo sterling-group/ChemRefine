@@ -437,21 +437,36 @@ def _run_body_lines(
     ]
 
 
-def _sbatch_literal(path: Path) -> str:
+def sbatch_literal(path: Path) -> str:
     """``path`` spelled so that ``sbatch`` takes it for the path it is.
 
-    ``--output`` and ``--error`` are filename *patterns*, in every part of the value, the
-    directories included. A ``%`` that one of the scheduler's letters follows, digits
-    between or not, is replaced: ``run_%j`` by the job's id, ``5%NaCl`` by a node's name,
-    ``10%acetone`` by an array index. One that digits and anything else follow is dropped
-    with all but the last digit, so ``mix_50%25`` becomes ``mix_505``. Writing the file's
-    name alone is no way round it, since the directory the job was submitted from is
-    expanded along with it. Under such a directory each job's runlog and stderr are written
-    under another name, in a directory the scheduler makes for them, and the step finds no
-    account of its jobs. ``%%`` is the pattern for the character, and doubling every one
-    needs no list of the letters.
+    ``--output`` and ``--error`` are filename *patterns*, in a script's directive and on the
+    command line alike, and in every part of the value, the directories included. A ``%``
+    that one of the scheduler's letters follows, digits between or not, is replaced:
+    ``run_%j`` by the job's id, ``5%NaCl`` by a node's name, ``10%acetone`` by an array
+    index. One that digits and anything else follow is dropped with all but the last digit,
+    so ``mix_50%25`` becomes ``mix_505``. Writing the file's name alone is no way round it,
+    since the directory the job was submitted from is expanded along with it. Under such a
+    directory each job's runlog and stderr are written under another name, in a directory
+    the scheduler makes for them, and the step finds no account of its jobs. ``%%`` is the
+    pattern for the character, and doubling every one needs no list of the letters.
+
+    Public, not underscored, because :mod:`chemrefine.slurm.dispatch` imports it: the paths
+    it hands ``sbatch`` as arguments are read as the ones in a directive are.
     """
     return str(path).replace("%", "%%")
+
+
+def array_fallback_log(output_dir: Path) -> str:
+    """Where an array task's output goes until it has redirected itself, as ``sbatch`` reads it.
+
+    One file per task, in the step's directory. ``%A`` and ``%a`` are the one pattern in it
+    meant as one; the directory is spelled as itself (:func:`sbatch_literal`).
+
+    Public, not underscored, because :mod:`chemrefine.slurm.dispatch` imports it: the
+    submission names on its command line the file the script names in its directives.
+    """
+    return f"{sbatch_literal(output_dir)}/array_%A_%a.log"
 
 
 def build_script(
@@ -539,8 +554,8 @@ def build_script(
         "",
         *sbatch,
         f"#SBATCH --job-name={job_name}",
-        f'#SBATCH --output="{_sbatch_literal(runlog_path)}"',
-        f'#SBATCH --error="{_sbatch_literal(err_path)}"',
+        f'#SBATCH --output="{sbatch_literal(runlog_path)}"',
+        f'#SBATCH --error="{sbatch_literal(err_path)}"',
         f"#SBATCH --ntasks={ntasks}",
         f"#SBATCH --cpus-per-task={cpus_per_task}",
         "",
@@ -648,8 +663,7 @@ def build_array_script(
         ),
         single_node,
     )
-    # `%A` and `%a` are the one pattern meant as one.
-    fallback_log = f"{_sbatch_literal(output_dir)}/array_%A_%a.log"
+    fallback_log = array_fallback_log(output_dir)
     # ``$SID`` expands inside the runlog heredoc at runtime, like $(hostname).
     header = job_log.bash_header(
         engine=engine,

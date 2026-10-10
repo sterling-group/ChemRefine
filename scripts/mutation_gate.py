@@ -485,6 +485,16 @@ _BUNDLED: tuple[Mutation, ...] = (
         "of its jobs",
     ),
     Mutation(
+        id="sbatch-is-told-the-logs-on-its-command-line",
+        path="src/chemrefine/slurm/dispatch.py",
+        old='    return [f"--output={output}", f"--error={error}"]',
+        new="    return []",
+        tests="tests/test_slurm.py",
+        breaks="an SBATCH_OUTPUT or SBATCH_ERROR exported in the driver's shell outranks the "
+        "script's own directives, so every job's runlog and stderr are written where the "
+        "environment says and a job that finished is taken for one that did not",
+    ),
+    Mutation(
         id="mem-per-gpu-header-stands-alone",
         path="src/chemrefine/slurm/script.py",
         old="    if per_gpu is not None:\n        logger.warning(",

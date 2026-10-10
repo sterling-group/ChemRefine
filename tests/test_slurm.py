@@ -2247,7 +2247,8 @@ def test_the_batchs_tag_stays_on_the_ledger_through_every_submission(tmp_path: P
 
 def test_a_job_is_submitted_under_its_batchs_tag():
     """``--job-name`` on the command line, where neither the script nor the environment
-    outranks it; a job outside a batch is named by its script alone."""
+    outranks it; a job outside a batch is named by its script alone. Its two logs are named
+    there either way."""
     fake = MagicMock(returncode=0, stdout="4242\n", stderr="")
     with (
         patch("chemrefine.slurm.dispatch.shutil.which", return_value="/usr/bin/sbatch"),
@@ -2256,13 +2257,48 @@ def test_a_job_is_submitted_under_its_batchs_tag():
         slurm.submit("out/step1/0/step1_0.slurm", batch="cr0123456789")
         slurm.submit("out/step1/0/step1_0.slurm")
     tagged, plain = (call.args[0] for call in run.call_args_list)
+    logs = ["--output=out/step1/0/step1_0.runlog", "--error=out/step1/0/step1_0.err"]
     assert tagged == [
         "sbatch",
         "--parsable",
         "--job-name=step1_0.cr0123456789",
+        *logs,
         "out/step1/0/step1_0.slurm",
     ]
-    assert plain == ["sbatch", "--parsable", "out/step1/0/step1_0.slurm"]
+    assert plain == ["sbatch", "--parsable", *logs, "out/step1/0/step1_0.slurm"]
+
+
+def test_a_jobs_two_logs_are_named_on_the_command_line(tmp_path: Path):
+    """``--output`` and ``--error`` reach ``sbatch`` as arguments, as the name does.
+
+    ``sbatch`` reads ``SBATCH_OUTPUT`` and ``SBATCH_ERROR`` ahead of a script's own
+    directives and behind its command line, for one job and for an array (measured on SLURM
+    25.05 with held jobs). Left to the directives, a runlog goes where an exported variable
+    says, and the step reads a job that ended with ``exit_code=0`` as one that never
+    finished. The values on the command line are filename patterns as the directives are, so
+    a ``%`` in a directory is doubled here too.
+    """
+    out = tmp_path / "5%NaCl" / "run_%j"
+    fake = MagicMock(returncode=0, stdout="4242\n", stderr="")
+    with (
+        patch("chemrefine.slurm.dispatch.shutil.which", return_value="/usr/bin/sbatch"),
+        patch.object(subprocess, "run", return_value=fake) as run,
+    ):
+        slurm.submit(out / "step1_0.slurm")
+        slurm.submit_array(
+            out / "step1_array.slurm",
+            n_tasks=2,
+            max_concurrent=1,
+            manifest=out / "m.0",
+            batch="cr0123456789",
+        )
+    job, array = (call.args[0] for call in run.call_args_list)
+    home = str(out).replace("%", "%%")  # as sbatch is told it, wherever this test's own tree is
+    assert job[2:4] == [f"--output={home}/step1_0.runlog", f"--error={home}/step1_0.err"]
+    assert [arg for arg in array if arg.startswith(("--output=", "--error="))] == [
+        f"--output={home}/array_%A_%a.log",
+        f"--error={home}/array_%A_%a.log",
+    ]
 
 
 def _squeue_says(stdout: str) -> MagicMock:

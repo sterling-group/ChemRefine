@@ -215,9 +215,10 @@ def runlog_path(output_dir: Path, job_name: str) -> Path:
 
     The canonical path of this module's docstring, for the writers that are Python and for
     the reader: the generated script's ``#SBATCH --output``
-    (:func:`chemrefine.slurm.script.build_script`), the local runner's redirect
-    (:func:`chemrefine.slurm.dispatch.submit`, which names the job by its script, written
-    beside its output) and :func:`read_footer`'s callers. An array task redirects to the
+    (:func:`chemrefine.slurm.script.build_script`), the local runner's redirect and the
+    ``--output`` handed to ``sbatch`` (:func:`chemrefine.slurm.dispatch.submit`, which names
+    the job by its script, written beside its output) and :func:`read_footer`'s callers. An
+    array task redirects to the
     same path in bash, from its own input and output
     (:func:`chemrefine.slurm.script.build_array_script`). A job is named after its input,
     so for a prepared ``(input, output, id)`` triple this is

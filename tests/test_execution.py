@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import errno
 import os
+import re
 import subprocess
 from collections.abc import Callable
 from dataclasses import replace
@@ -556,6 +557,43 @@ def test_an_array_batch_is_on_record_before_its_first_chunk_is_asked_for(tmp_pat
     assert second_ledger == [batch, "4241"]
     assert f"--job-name=step1_array.{batch}" in first_argv
     assert f"--job-name=step1_array.{batch}" in second_argv
+
+
+@pytest.mark.parametrize("array", [False, True], ids=["one job each", "an array"])
+def test_sbatch_is_told_on_its_command_line_what_the_script_says_of_its_logs(
+    tmp_path: Path, array: bool
+):
+    """A script's own ``--output`` and ``--error`` are the ones on its command line.
+
+    One fact, spelled by the builder and by the dispatcher: the first writes the directives
+    a submission by hand reads, the second the arguments that outrank the environment. Read
+    back from each script as it was handed to ``sbatch``, they are the same strings.
+    """
+    engine = _FakeJobEngine()
+    ctx = replace(
+        _ctx(tmp_path / "5%NaCl", ids=("0", "1"), slurm_array=array, dispatch="slurm"),
+        max_cores=2,
+    )
+    seen: list[tuple[list[str], list[str]]] = []
+    with (
+        patch.object(dispatch, "sbatch_available", return_value=True),
+        patch.object(
+            dispatch.subprocess, "run", _scheduler_answers(ctx.step_dir, ["4241", "4242"], seen)
+        ),
+        patch.object(slurm, "finished_jobs", side_effect=lambda ids, **_: set(ids)),
+        patch.object(slurm, "wait_for_jobs"),
+    ):
+        _execution.run_batch(engine, engine.prepare(ctx), ctx)
+
+    assert len(seen) == (1 if array else 2)
+    for _ledger, argv in seen:
+        script = Path(argv[-2] if array else argv[-1]).read_text(encoding="utf-8")
+        for option in ("--output", "--error"):
+            (directive,) = re.findall(rf'^#SBATCH {option}="(.+)"$', script, re.MULTILINE)
+            assert [arg.partition("=")[2] for arg in argv if arg.startswith(f"{option}=")] == [
+                directive
+            ]
+            assert "/5%%NaCl/" in directive
 
 
 @pytest.mark.parametrize(

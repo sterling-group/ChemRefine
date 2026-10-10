@@ -82,6 +82,23 @@ and refuses a script that carries two. What such a grant comes to depends on the
 count, so the declared requirement is not held against it, and a warning in the log says
 so with both values — size `--mem-per-gpu` for the job yourself.
 
+## Where a job's output goes
+
+Every job leaves two files beside its input: `<name>.runlog`, the job's own account of
+how it ran, and `<name>.err`. A step reads the runlog to learn how its job ended, so the
+file has to be where the step looks for it. ChemRefine therefore decides both itself: on
+the `sbatch` command line, which `sbatch` reads ahead of its environment, and for the
+tasks of a [job array](#job-arrays) inside the script, where each task redirects its own
+output. An exported `SBATCH_OUTPUT` moves no runlog and an exported `SBATCH_ERROR` no
+`.err`; the job's name is on the command line too, so `SBATCH_JOB_NAME` does not rename
+it.
+
+What the command line does not name is read as `sbatch` documents it, the environment
+ahead of the header: an exported `SBATCH_PARTITION` or `SBATCH_ACCOUNT` replaces the
+header's. Memory follows the same order, kind by kind: `SBATCH_MEM_PER_CPU` replaces a
+script's `--mem-per-cpu`, the one ChemRefine derived included, and `SBATCH_MEM_PER_NODE`
+a header's `--mem`.
+
 ## Job arrays
 
 `slurm_array: true` submits each step as SLURM job array(s) instead of one job per

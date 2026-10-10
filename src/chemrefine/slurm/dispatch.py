@@ -34,6 +34,7 @@ from typing import TextIO
 
 from chemrefine import ids, io, job_log
 from chemrefine.errors import CacheError, ConfigError, JobSubmissionError
+from chemrefine.slurm.script import array_fallback_log, sbatch_literal
 from chemrefine.throttle import GpuBudget, StallDeadline
 
 logger = logging.getLogger(__name__)
@@ -312,8 +313,7 @@ def _submit_local(script_path: str | Path, *, env: dict[str, str] | None = None)
     # only after a ``ResourceWarning``.
     # ``pop_all`` hands them over on success, where ``_LOCAL_PROCS`` owns them until
     # :func:`_local_is_finished` or :func:`terminate_local_jobs` closes them.
-    runlog = job_log.runlog_path(script_path.parent, script_path.stem)
-    errlog = script_path.with_suffix(".err")
+    runlog, errlog = _logs(script_path)
     with contextlib.ExitStack() as stack:
         with io.tree_write(runlog):
             out_handle = stack.enter_context(runlog.open("w", encoding="utf-8"))
@@ -677,6 +677,32 @@ def _named(script_path: str | Path, batch: str | None) -> list[str]:
     return [f"--job-name={Path(script_path).stem}{_name_tail(batch)}"]
 
 
+def _logs(script_path: Path) -> tuple[Path, Path]:
+    """The two files a job's output and error go to: its runlog and its ``.err``.
+
+    Named by its script, the same stem beside it, for a local job and a scheduled one alike:
+    :func:`_submit_local` opens them itself, and :func:`submit` names them to ``sbatch``.
+    """
+    return job_log.runlog_path(script_path.parent, script_path.stem), script_path.with_suffix(
+        ".err"
+    )
+
+
+def _logged(output: str, error: str) -> list[str]:
+    """The ``sbatch`` options that say where a job's output and its error go.
+
+    On the command line for the reason the name is (:func:`_named`). ``sbatch`` reads
+    ``SBATCH_OUTPUT`` and ``SBATCH_ERROR`` ahead of a script's own directives. With the
+    first exported in the driver's shell and only a directive against it, the runlog is
+    written wherever the environment says: the step finds no account of its jobs, and a job
+    that finished is taken for one that did not. With the second, a failure's reason loses
+    the job's stderr. The script keeps its directives, which are what a submission by hand
+    reads. Both values are filename patterns here as they are there
+    (:func:`~chemrefine.slurm.script.sbatch_literal`).
+    """
+    return [f"--output={output}", f"--error={error}"]
+
+
 def submit(
     script_path: str | Path,
     *,
@@ -703,16 +729,24 @@ def submit(
     ``env`` (e.g. ``{"CUDA_VISIBLE_DEVICES": "1"}``) is applied only on the
     local fallback; under SLURM the scheduler sets the per-job GPU environment.
     ``batch`` is the tag the job's batch is on record under (:func:`lease_batch`), and
-    reaches ``sbatch`` only: a local job is leased by its pid.
+    reaches ``sbatch`` only: a local job is leased by its pid. The job's two logs are named
+    to ``sbatch`` on the command line as well (:func:`_logged`).
     """
     if dispatch_locally(dispatch, sbatch_cmd=sbatch_cmd):
         return _submit_local(script_path, env=env)
+    runlog, errlog = _logs(Path(script_path))
     try:
         # No shell. `sbatch_cmd` is the scheduler binary the caller named (a config value
         # held to `reject_shell_unsafe`, defaulting to the literal below), and the script is
         # one this process generated moments ago — passed as argv, never interpolated.
         result = subprocess.run(  # noqa: S603
-            [sbatch_cmd, "--parsable", *_named(script_path, batch), str(script_path)],
+            [
+                sbatch_cmd,
+                "--parsable",
+                *_named(script_path, batch),
+                *_logged(sbatch_literal(runlog), sbatch_literal(errlog)),
+                str(script_path),
+            ],
             capture_output=True,
             text=True,
             check=True,
@@ -926,10 +960,12 @@ def submit_array(
     (the caller computes this chunk's *share* of ``max_cores // PAL``, so all
     of a step's arrays together respect the same core budget the per-job
     throttler enforces — a per-array limit alone would grant it once per
-    chunk). Raises
+    chunk). The log a task writes to before it has redirected itself is named on the
+    command line, as a job's two logs are (:func:`_logged`). Raises
     :class:`~chemrefine.errors.JobSubmissionError` like :func:`submit`.
     There is no local fallback — the engine only takes this path under SLURM.
     """
+    fallback = array_fallback_log(Path(script_path).parent)
     try:
         # remaining argv entries are paths we generated.
         result = subprocess.run(  # noqa: S603
@@ -938,6 +974,7 @@ def submit_array(
                 "--parsable",
                 "--export=ALL",
                 *_named(script_path, batch),
+                *_logged(fallback, fallback),
                 f"--array=0-{n_tasks - 1}%{max_concurrent}",
                 str(script_path),
                 str(manifest),
