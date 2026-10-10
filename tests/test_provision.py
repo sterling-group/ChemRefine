@@ -158,10 +158,20 @@ def test_require_backend_importable_ok(monkeypatch, tmp_path: Path):
 
 
 def test_require_backend_missing_raises_actionable(monkeypatch, tmp_path: Path):
+    """Where the extra installs on this Python, both ways to get the backend are named.
+
+    The premise is pinned, not left to the host. Which Pythons an extra installs on is a
+    fact of the day's pyproject, and where this one does not, the right advice is the
+    other one — which shares the half of the sentence that names the command.
+    """
     monkeypatch.setenv("CHEMREFINE_HOME", str(tmp_path))
     monkeypatch.setattr(provision.importlib.util, "find_spec", lambda _n: None)
-    with pytest.raises(ConfigError, match="chemrefine backends install mlip-mace"):
+    _supports(monkeypatch, (provision.this_python(),))
+    with pytest.raises(ConfigError) as excinfo:
         provision.require_backend(_REQ)
+    message = str(excinfo.value)
+    assert "Provision it once with `chemrefine backends install mlip-mace`" in message
+    assert "(or install `chemrefine[mlip-mace]` into this environment)" in message
 
 
 def test_require_backend_does_not_advise_an_install_that_would_do_nothing(
