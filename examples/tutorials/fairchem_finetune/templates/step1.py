@@ -5,7 +5,13 @@ from ase.io import read
 from chemrefine.engines.mlip.calculator import MlipCalculator
 from chemrefine.quantities import HARTREE_PER_BOHR_TO_EV_PER_A, HARTREE_TO_EV
 
-mlip = MlipCalculator(model_name="$MODEL_NAME", task_name="$TASK_NAME", device="$DEVICE")
+mlip = MlipCalculator(
+    model_name="$MODEL_NAME",
+    task_name="$TASK_NAME",
+    device="$DEVICE",
+    charge=$CHARGE,
+    multiplicity=$MULTIPLICITY,
+)
 atoms = read("$XYZ_PATH")
 energy_ev, gradient_ev_per_a = mlip.single_point(atoms)
 

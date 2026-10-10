@@ -8,7 +8,13 @@ from ase.units import Hartree
 
 from chemrefine.engines.mlip.calculator import MlipCalculator
 
-mlip = MlipCalculator(model_name="$MODEL_NAME", task_name="$TASK_NAME", device="$DEVICE")
+mlip = MlipCalculator(
+    model_name="$MODEL_NAME",
+    task_name="$TASK_NAME",
+    device="$DEVICE",
+    charge=$CHARGE,
+    multiplicity=$MULTIPLICITY,
+)
 atoms = mlip.optimize(read("$XYZ_PATH"), fmax=0.03)
 
 energy_hartree = atoms.get_potential_energy() / Hartree

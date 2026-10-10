@@ -10,7 +10,9 @@ full text, so wording can evolve without rewriting these tests.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
+from string import Template
 from typing import Literal
 
 import pytest
@@ -18,6 +20,7 @@ import yaml
 
 from chemrefine import io
 from chemrefine.config import Config, load_config
+from chemrefine.engines._script.engine import ScriptEngine
 from chemrefine.errors import EngineNotFoundError, WriteRefusedError
 from chemrefine.scaffold import TemplatePlan, _starter_for, plan_templates, scaffold_templates
 
@@ -275,6 +278,55 @@ def test_the_template_driven_starters_render_the_real_geometry(tmp_path: Path):
     assert inspect.inspect_template(ExtOptOrcaEngine.template_starter) == inspect.OrcaInputInfo(
         operation="opt_sp", is_ts=False, has_freq=False, has_extopt=True, pal=4, maxcore=None
     )
+
+
+def _hands_the_species_to_its_code(template: str) -> bool:
+    """Whether a step's charge and multiplicity reach what a script template *runs*.
+
+    Rendered with two numbers nothing else would put there, both must be constants of the
+    parsed program. A placeholder named in a comment is no part of it, and neither is one
+    inside a string.
+    """
+    charge, multiplicity = 97, 89
+    values = {"CHARGE": charge, "MULTIPLICITY": multiplicity}
+    script = Template(template)
+    rendered = script.safe_substitute({n: values.get(n, 0) for n in script.get_identifiers()})
+    constants = [n.value for n in ast.walk(ast.parse(rendered)) if isinstance(n, ast.Constant)]
+    return charge in constants and multiplicity in constants
+
+
+def test_every_script_template_chemrefine_ships_hands_the_species_to_its_code(
+    tmp_path: Path, shipped_engines: dict[str, type]
+):
+    """A starter, an example or a live case that left them out would teach leaving them out.
+
+    A user's script may set its own charge and spin, and nothing asks it not to. One of ours
+    that does not pass the step's on runs every charged or open-shell step as whatever its
+    library assumes, the result filed under the species the config declares. Asked of the
+    code, not the text: an example named both placeholders in its opening comment and
+    handed neither to its calculator.
+    """
+    repo = Path(__file__).resolve().parents[1]
+    scripted = sorted(n for n, cls in shipped_engines.items() if issubclass(cls, ScriptEngine))
+    config = _config(tmp_path, *({"step": i, "engine": n} for i, n in enumerate(scripted, 1)))
+    starters = [path for path in scaffold_templates(config) if path.suffix == ".py"]
+    assert len(starters) == len(scripted) > 0, "one starter for each script engine"
+    shipped = {
+        **{f"the {name} starter": path for name, path in zip(scripted, starters, strict=True)},
+        **{
+            path.relative_to(repo).as_posix(): path
+            for home in ("examples", "tests/data/e2e/cases")
+            for path in sorted((repo / home).rglob("templates/*.py"))
+        },
+    }
+    assert len(shipped) > len(starters), "the examples and the live cases are found"
+
+    without = [
+        name
+        for name, path in shipped.items()
+        if not _hands_the_species_to_its_code(path.read_text(encoding="utf-8"))
+    ]
+    assert without == []
 
 
 def test_a_template_dir_the_filesystem_refuses_is_a_write_refusal_naming_it(tmp_path: Path):
