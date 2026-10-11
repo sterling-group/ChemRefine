@@ -171,10 +171,11 @@ around those fields is load-bearing. Refusing the character at the boundary is.
 
 Every release carries two artifacts beyond the package itself. **Build provenance**
 (PEP 740 plus a GitHub attestation) says the wheel was built by this workflow from this
-commit — verify it with `gh attestation verify`. A **CycloneDX SBOM** says what is inside
-it, resolved at build time; reconstructing that from the version floors in
-`pyproject.toml` after the fact gives the wrong answer, because the floors are not what
-the resolver actually picked.
+commit — verify it with `gh attestation verify`. A **CycloneDX SBOM** says what the
+package brings with it: the release run installs the wheel built from that commit into an
+empty environment and lists what the resolver picked. Reconstructing that from the version
+floors in `pyproject.toml` after the fact gives the wrong answer, because the floors are
+not what the resolver actually picked.
 
 ### Managed backend environments are not hash-pinned
 

@@ -465,6 +465,41 @@ spec = importlib.util.find_spec("chemrefine")
 marker = pathlib.Path(spec.submodule_search_locations[0]) / "py.typed"
 sys.exit("py.typed missing from the wheel" if not marker.is_file() else 0)
 PY
+    # The SBOM CI's install job makes, and a release attaches: of an environment that holds
+    # the wheel and what it depends on and nothing else, by a tool kept in another, and then
+    # asked whether it lists exactly that. Run here so that a tool whose command has moved is
+    # met before a tag and not at one. Like twine, the tool is no project dependency.
+    "$PY" -m venv --without-pip "$work/installed"
+    "$bin/pip" --python "$work/installed/bin/python" install --disable-pip-version-check --quiet dist/*.whl
+    "$PY" -m venv "$work/sbom-tool"
+    "$work/sbom-tool/bin/pip" install --disable-pip-version-check --quiet cyclonedx-bom
+    "$work/sbom-tool/bin/cyclonedx-py" environment --pyproject pyproject.toml \
+        --output-format JSON --output-file "$work/chemrefine-sbom.cdx.json" \
+        "$work/installed/bin/python"
+    "$work/installed/bin/python" - "$work/chemrefine-sbom.cdx.json" <<'PY'
+import json, sys
+from importlib.metadata import distributions, version
+from packaging.utils import canonicalize_name
+
+bom = json.load(open(sys.argv[1]))
+subject = bom.get("metadata", {}).get("component") or {}
+named = (subject.get("name"), subject.get("version"))
+listed = {canonicalize_name(c["name"]) for c in bom.get("components", [])}
+held = {canonicalize_name(d.metadata["Name"]) for d in distributions()} - {"chemrefine"}
+problems = []
+if (canonicalize_name(named[0] or ""), named[1]) != ("chemrefine", version("chemrefine")):
+    problems.append(
+        f"its subject is {named[0]} {named[1]}, and chemrefine "
+        f"{version('chemrefine')} is what is installed"
+    )
+if listed - held:
+    problems.append(f"it lists {sorted(listed - held)}, which the install does not hold")
+if held - listed:
+    problems.append(f"it leaves out {sorted(held - listed)}, which the install holds")
+if problems:
+    sys.exit("the SBOM does not describe this install: " + "; ".join(problems))
+print(f"  the SBOM is of chemrefine {named[1]} and the {len(listed)} distributions installed with it")
+PY
     "$work/smoke/bin/pip" uninstall --disable-pip-version-check --quiet -y chemrefine
     "$work/smoke/bin/pip" install --disable-pip-version-check --quiet --no-binary chemrefine dist/*.tar.gz
     "$work/smoke/bin/chemrefine" --version
