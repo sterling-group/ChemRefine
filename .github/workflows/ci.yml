@@ -58,7 +58,15 @@ jobs:
           cache: pip
       - name: Install package
         run: pip install -e ".[dev]"
-      - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
+      # The hooks are run here rather than through pre-commit/action, whose own steps these
+      # two are: that action reaches `actions/cache` by a tag, and no action runs in this
+      # repository, nested or not, that is not pinned to a commit. `[dev]` brings pre-commit.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-3|${{ env.pythonLocation }}|${{ hashFiles('.pre-commit-config.yaml') }}
+      - name: Run the hooks
+        run: pre-commit run --show-diff-on-failure --color=always --all-files
 
   test:
     runs-on: ubuntu-latest
