@@ -11,9 +11,11 @@ on:
 permissions:
   contents: read
 
+# As in ci.yml: a pull request's newer push supersedes its run in flight, and a run on
+# main, pushed or scheduled, is never cut short by a later one.
 concurrency:
   group: codeql-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   analyze:

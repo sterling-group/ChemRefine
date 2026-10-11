@@ -22,10 +22,14 @@ on:
 permissions:
   contents: read
 
-# Supersede in-flight runs of the same branch/PR — only the newest push matters.
+# One run at a time per ref. On a pull request a newer push supersedes the run in flight:
+# only the newest head matters there. Anywhere else — a push to main, the weekly run, a
+# manual one, a release calling this file — a run in flight is never cut short, and a
+# later one waits for it: a cancelled run reads as a failed one, on a commit that has
+# nothing wrong with it.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   FORCE_COLOR: "1"
