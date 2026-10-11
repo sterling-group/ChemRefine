@@ -177,6 +177,10 @@ empty environment and lists what the resolver picked. Reconstructing that from t
 floors in `pyproject.toml` after the fact gives the wrong answer, because the floors are
 not what the resolver actually picked.
 
+The files that reach an index are the ones the build job made. That job records their
+checksums where no other job of the release run can write, and each publish job compares
+the artifact it downloaded against them before it uploads anything.
+
 ### Managed backend environments are not hash-pinned
 
 `chemrefine backends install <extra>` runs an ordinary `pip install` into the managed

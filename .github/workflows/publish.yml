@@ -37,9 +37,12 @@ jobs:
       id-token: write
 
     # Where this run's artifact goes, decided once, below, and read by every job that
-    # releases anything: `pypi`, `testpypi`, or `none`.
+    # releases anything: `pypi`, `testpypi`, or `none`. And what was built, for the jobs
+    # that upload to an index to compare with: `sha256sum`'s lines for the sdist and the
+    # wheel, base64-encoded onto one.
     outputs:
       channel: ${{ steps.route.outputs.channel }}
+      built: ${{ steps.built.outputs.sums }}
 
     # No step of this job's own fetches a package: whatever runs here can sign in this
     # repository's name, so beyond the checkout and the pinned build action there is only
@@ -61,6 +64,20 @@ jobs:
         with:
           attest-build-provenance-github: true
           upload-name-suffix: "-release"
+
+      # An artifact belongs to the run, and any job of the run can replace one: the jobs of
+      # the `ci` call install what an index serves that day, in the same run. A job's
+      # outputs are its own. So this job states what it built where no other job can
+      # write, and the jobs that upload to an index send nothing else.
+      - name: Record what was built
+        id: built
+        env:
+          DIST: ${{ steps.baipp.outputs.dist }}
+        run: |
+          set -o pipefail
+          cd "$DIST"
+          sums="$(sha256sum -- *.tar.gz *.whl | base64 --wrap=0)"
+          echo "sums=$sums" >> "$GITHUB_OUTPUT"
 
       # Where this run's artifact goes, decided once and read off the artifact. On a v* tag
       # push or a published release — both run at the tag, so GITHUB_REF_NAME is the tag —
@@ -140,6 +157,20 @@ jobs:
           name: Packages-release
           path: dist
 
+      # The build job's own account of its sdist and wheel, against everything the
+      # artifact holds now, dot-named files included: a file changed, missing or added
+      # since fails here, before anything is signed or sent.
+      - name: The files to upload are the files that were built
+        env:
+          BUILT: ${{ needs.build-package.outputs.built }}
+        run: |
+          set -o pipefail
+          shopt -s dotglob
+          cd dist
+          echo "$BUILT" | base64 --decode | LC_ALL=C sort > "$RUNNER_TEMP/built"
+          sha256sum -- * | LC_ALL=C sort > "$RUNNER_TEMP/found"
+          diff "$RUNNER_TEMP/built" "$RUNNER_TEMP/found"
+
       - name: Upload package to Test PyPI
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
@@ -177,6 +208,18 @@ jobs:
         with:
           name: Packages-release
           path: dist
+
+      # As in the TestPyPI job: only what the build job says it built is uploaded.
+      - name: The files to upload are the files that were built
+        env:
+          BUILT: ${{ needs.build-package.outputs.built }}
+        run: |
+          set -o pipefail
+          shopt -s dotglob
+          cd dist
+          echo "$BUILT" | base64 --decode | LC_ALL=C sort > "$RUNNER_TEMP/built"
+          sha256sum -- * | LC_ALL=C sort > "$RUNNER_TEMP/found"
+          diff "$RUNNER_TEMP/built" "$RUNNER_TEMP/found"
 
       - name: Upload package to PyPI
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
