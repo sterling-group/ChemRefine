@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/dependency-review-action@bc41886e18ea39df68b1b1245f4184881938e050 # v4.6.0
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: high
 
@@ -41,7 +41,7 @@ jobs:
       # nothing on a Python it excludes: on 3.13 `mlip-orb` and `mlip-chgnet` are empty lists,
       # audited clean. 3.12 is the one Python every extra installs on, and the last step
       # fails when that stops being true.
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
           cache: pip
