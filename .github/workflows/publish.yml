@@ -41,6 +41,9 @@ jobs:
     outputs:
       channel: ${{ steps.route.outputs.channel }}
 
+    # No step of this job's own fetches a package: whatever runs here can sign in this
+    # repository's name, so beyond the checkout and the pinned build action there is only
+    # shell. The SBOM a release attaches is made in ci.yml's install job.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -59,31 +62,17 @@ jobs:
           attest-build-provenance-github: true
           upload-name-suffix: "-release"
 
-      # Provenance says who built the artifact; the SBOM says what is inside it. A user
-      # auditing a CVE against their install needs the second, and reconstructing it from
-      # pyproject floors after the fact gives the wrong answer — the floors are not what
-      # the resolver actually picked.
-      - name: Generate a CycloneDX SBOM
-        run: |
-          python -m pip install --quiet cyclonedx-bom
-          python -m cyclonedx_py environment \
-            --output-format JSON \
-            --outfile chemrefine-sbom.cdx.json
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: SBOM
-          path: chemrefine-sbom.cdx.json
-          if-no-files-found: error
-
       # Where this run's artifact goes, decided once and read off the artifact. On a v* tag
       # push or a published release — both run at the tag, so GITHUB_REF_NAME is the tag —
       # the tag must name the version that was built, and then a dev version goes to
       # TestPyPI and anything else to PyPI; any other event (a manual dispatch, a tag
-      # without the `v`) releases nothing. After the SBOM so this interpreter is not the
-      # environment that SBOM describes.
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.13"
+      # without the `v`) releases nothing.
+      #
+      # The version is read with PEP 440's own pattern for a canonical public version,
+      # which is the form the build backend writes, and in the shell, which needs nothing
+      # installed. In that form a dev release is the one whose last segment is `.devN`. A
+      # version the pattern does not take fails the step instead of reading as "not a dev
+      # release" and routing to PyPI.
       - name: Route the release by the version that was built
         id: route
         env:
@@ -91,10 +80,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           EVENT_ACTION: ${{ github.event.action }}
         run: |
-          python -m pip install --quiet packaging
-          # Printed rather than an exit status, so a version that does not parse fails
-          # this step instead of reading as "not a dev release" and routing to PyPI.
-          by_version='import sys; from packaging.version import Version as V; print("testpypi" if V(sys.argv[1]).is_devrelease else "pypi")'
+          canonical='^([1-9][0-9]*!)?(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))*((a|b|rc)(0|[1-9][0-9]*))?(\.post(0|[1-9][0-9]*))?(\.dev(0|[1-9][0-9]*))?$'
           channel=none
           if { [ "$EVENT_NAME" = push ] && [[ "$GITHUB_REF" == refs/tags/v* ]]; } \
              || { [ "$EVENT_NAME" = release ] && [ "$EVENT_ACTION" = published ]; }; then
@@ -102,7 +88,12 @@ jobs:
               echo "::error::tag $GITHUB_REF_NAME does not match the built version $VERSION; bump pyproject.toml first"
               exit 1
             fi
-            channel="$(python -c "$by_version" "$VERSION")"
+            if ! [[ "$VERSION" =~ $canonical ]]; then
+              echo "::error::the built version $VERSION is not a canonical PEP 440 version; nothing is released"
+              exit 1
+            fi
+            channel=pypi
+            if [[ "$VERSION" == *.dev* ]]; then channel=testpypi; fi
           fi
           echo "version $VERSION, $EVENT_NAME at $GITHUB_REF: channel $channel"
           echo "channel=$channel" >> "$GITHUB_OUTPUT"
@@ -121,7 +112,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Download the SBOM built alongside the package
+      # Made by the `ci` job above, where ci.yml installs the wheel it built from this
+      # commit: what that install resolved to is what the SBOM lists.
+      - name: Download the SBOM of this commit's install
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: SBOM

@@ -435,9 +435,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-package
     steps:
-      # The tree is here for one thing: the shipped quickstart the installed CLI validates
-      # below. The package under test is the downloaded artifact, never this checkout —
-      # the src layout keeps the tree off sys.path.
+      # The tree is here for what the steps below read from it: the shipped quickstart the
+      # installed CLI validates, and the project file that names the SBOM's subject. The
+      # package under test is the downloaded artifact, never this checkout — the src layout
+      # keeps the tree off sys.path.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -464,6 +465,62 @@ jobs:
           chemrefine validate examples/first_run/input.yaml
           chemrefine schema > /dev/null
           chemrefine engines --json > /dev/null
+
+      # What the wheel brings with it, as a CycloneDX SBOM: the package and every
+      # dependency the resolver picks for it today, which the version floors in pyproject
+      # cannot say. The wheel is installed once more for it, into an environment that holds
+      # nothing else — not even pip, which the interpreter above carries and which is no
+      # part of this package — and the tool is kept in another, so the SBOM lists neither
+      # the installer nor itself. Made here, on every run, because a release attaches this
+      # file — publish.yml calls this workflow and takes the artifact from the same run —
+      # and a command only a release runs is one nobody has run.
+      - name: Describe what the wheel brings with it
+        run: |
+          python -m venv --without-pip "$RUNNER_TEMP/installed"
+          pip --python "$RUNNER_TEMP/installed/bin/python" install --quiet dist/*.whl
+          python -m venv "$RUNNER_TEMP/sbom-tool"
+          "$RUNNER_TEMP/sbom-tool/bin/pip" install --quiet cyclonedx-bom
+          "$RUNNER_TEMP/sbom-tool/bin/cyclonedx-py" environment \
+            --pyproject pyproject.toml \
+            --output-format JSON \
+            --output-file chemrefine-sbom.cdx.json \
+            "$RUNNER_TEMP/installed/bin/python"
+
+      # An SBOM is believed, not read, so it is asked what makes it this install's: that its
+      # subject is the version installed, and that its components are the distributions the
+      # environment holds beside the package, no more and no fewer.
+      - name: The SBOM must describe that install
+        run: |
+          "$RUNNER_TEMP/installed/bin/python" - <<'PY'
+          import json, sys
+          from importlib.metadata import distributions, version
+          from packaging.utils import canonicalize_name
+
+          bom = json.load(open("chemrefine-sbom.cdx.json"))
+          subject = bom.get("metadata", {}).get("component") or {}
+          named = (subject.get("name"), subject.get("version"))
+          listed = {canonicalize_name(c["name"]) for c in bom.get("components", [])}
+          held = {canonicalize_name(d.metadata["Name"]) for d in distributions()} - {"chemrefine"}
+          problems = []
+          if (canonicalize_name(named[0] or ""), named[1]) != ("chemrefine", version("chemrefine")):
+              problems.append(
+                  f"its subject is {named[0]} {named[1]}, and chemrefine "
+                  f"{version('chemrefine')} is what is installed"
+              )
+          if listed - held:
+              problems.append(f"it lists {sorted(listed - held)}, which the install does not hold")
+          if held - listed:
+              problems.append(f"it leaves out {sorted(held - listed)}, which the install holds")
+          if problems:
+              sys.exit("the SBOM does not describe this install: " + "; ".join(problems))
+          print(f"the SBOM is of chemrefine {named[1]} and the {len(listed)} distributions installed with it")
+          PY
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: SBOM
+          path: chemrefine-sbom.cdx.json
+          if-no-files-found: error
 
       # The sdist is the second artifact PyPI serves, and a distro packager builds from
       # it — so it needs the same proof the wheel gets. `--no-binary` forces a real build
