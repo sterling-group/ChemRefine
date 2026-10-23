@@ -3044,3 +3044,15 @@ def test_a_scheduled_engine_that_reads_no_template_is_not_asked_for_one(
         _config(tmp_path), [StepConfig(step=2, engine="fake")], local=True
     )
     assert {"slurm_layout", "memory_mb"} <= set(asked), "its batch was planned"
+
+
+def test_an_unreadable_record_is_ignored_and_said(tmp_path: Path, caplog):
+    from chemrefine.resolution import recorded_choice
+
+    cfg = _config(tmp_path, engine="mlip", options=_AUTO)
+    record = step_dir_for(cfg, cfg.steps[0]) / "_cache" / "resolved_options.json"
+    record.parent.mkdir(parents=True)
+    record.write_text("{not json", encoding="utf-8")
+    with caplog.at_level("WARNING"):
+        assert recorded_choice(cfg, cfg.steps[0]) is None
+    assert "is unreadable, ignored" in caplog.text

@@ -659,3 +659,136 @@ def test_a_first_run_the_same_choice_or_a_better_one_goes_ahead(
     assert MlipEngine().resolve_options(_AUTO, "/env/bin/python", previous) == {
         "solvation_model": now
     }
+
+
+# ---------------------------------------------------------------------------
+# The edges: malformed libraries, environments that cannot answer
+# ---------------------------------------------------------------------------
+
+
+def _library(**overrides: object) -> SolvationLibrary:
+    fields: dict[str, object] = {
+        "name": "edge_solv",
+        "requirement": PythonRequirement(package="edge", import_name="edge"),
+        "models": {"a": "lib_a", "b": "lib_b"},
+        "default_model": "a",
+        "pairs_with": frozenset({"mlip-harmonic"}),
+    }
+    return SolvationLibrary(**{**fields, **overrides})
+
+
+def _never_here(model: str, weights: str | None) -> str:
+    raise WeightsMissing(f"{model} is nowhere")
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"default_model": "c"}, "default_model 'c' is not one of its models"),
+        ({"auto": ("a", "z")}, r"\['z'\] are not among its models"),
+        ({"models": {"auto": "x", "a": "lib_a"}}, "'auto' cannot name a model"),
+        ({"weighted": frozenset({"b"})}, "need a `locate`"),
+    ],
+)
+def test_a_malformed_library_is_refused_where_it_is_declared(overrides, message):
+    with pytest.raises(TypeError, match=message):
+        _library(**overrides)
+
+
+def test_a_library_that_finds_its_own_weights_has_none_to_name():
+    assert _library().weights_of("a", None) is None
+
+
+def test_auto_with_no_model_installed_says_what_it_looked_for():
+    library = _library(auto=("b", "a"), locate=_never_here)
+    with pytest.raises(ConfigError, match="none of edge_solv's models is installed") as refused:
+        library.choose(None)
+    assert "lib_b is nowhere" in str(refused.value) and "lib_a is nowhere" in str(refused.value)
+
+
+def test_an_unchosen_auto_is_refused_by_a_reader_that_cannot_choose():
+    with pytest.raises(ConfigError, match="chosen before the run"):
+        _library(auto=("a",), locate=lambda model, weights: model).model("auto")
+
+
+def test_a_second_library_cannot_take_a_registered_name():
+    _fake_library(_Seen())
+    other = _library(name="fake_solv")
+    with pytest.raises(ValueError, match="'fake_solv' is already registered"):
+        other.correction(lambda spec: lambda atoms, charge, multiplicity: (0.0, atoms.positions))
+
+
+def test_a_missing_program_is_its_own_error_not_an_install_hint():
+    """The install hint is for an import; a program a library runs is not pip's to fix."""
+    from chemrefine.engines.mlip.solvation import ExecutableRequirement
+
+    library = _library(name="prog_solv", requirement=ExecutableRequirement(key="prog"))
+
+    @library.correction
+    def _build(spec: SolvationSpec) -> Correction:
+        raise ImportError("the program's own wrapper is missing")
+
+    with pytest.raises(ImportError, match="the program's own wrapper is missing"):
+        build_correction(solvation="prog_solv", solvation_model=None, solvent="w", device="cpu")
+
+
+def test_a_solvated_calculator_asked_about_no_atoms_says_so():
+    _fake_library(_Seen())
+    calc = build_calculator(task_name=_base(), solvation="fake_solv", solvent="water")
+    with pytest.raises(CalculatorSetupError, match="no atoms to evaluate"):
+        calc.get_potential_energy()
+
+
+def test_options_that_are_not_a_mapping_are_pydantics_to_refuse():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="valid dictionary"):
+        MlipOptions.model_validate(["solvation", "anysolv"])
+
+
+def test_an_interpreter_that_is_not_there_is_refused_before_the_run(tmp_path: Path):
+    with pytest.raises(ConfigError, match="could not ask"):
+        choose_in_environment(str(tmp_path / "no-python"), "anysolv", None)
+
+
+def test_an_interpreter_that_answers_nothing_is_refused_before_the_run():
+    import shutil
+
+    silent = shutil.which("true")
+    assert silent is not None
+    with pytest.raises(ConfigError, match="gave no answer"):
+        choose_in_environment(silent, "anysolv", None)
+
+
+def test_the_chooser_answers_in_json_whatever_happens(
+    fake_anysolv: Path, monkeypatch: pytest.MonkeyPatch, capsys
+):
+    """A choice, an uninstalled library, and a library with nothing installed."""
+    import json
+
+    from chemrefine.engines.mlip.solvation._choose import main
+
+    main(["anysolv", ""])
+    assert json.loads(capsys.readouterr().out)["model"] == "compact"
+
+    (fake_anysolv / "models" / "model_compact.pt").unlink()
+    main(["anysolv", ""])
+    assert "none of anysolv's models is installed" in json.loads(capsys.readouterr().out)["error"]
+
+    monkeypatch.setitem(sys.modules, "anysolv", None)
+    monkeypatch.setitem(sys.modules, "anysolv.models", None)
+    main(["anysolv", ""])
+    assert "not installed in this environment" in json.loads(capsys.readouterr().out)["error"]
+
+
+def test_the_chooser_runs_as_a_program(fake_anysolv: Path, monkeypatch: pytest.MonkeyPatch, capsys):
+    import json
+    import runpy
+
+    module = "chemrefine.engines.mlip.solvation._choose"
+    monkeypatch.delitem(sys.modules, module, raising=False)
+    monkeypatch.setattr(sys, "argv", [module, "anysolv", ""])
+    with pytest.raises(SystemExit) as finished:
+        runpy.run_module(module, run_name="__main__")
+    assert finished.value.code == 0
+    assert json.loads(capsys.readouterr().out)["model"] == "compact"
