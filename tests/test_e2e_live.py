@@ -6,7 +6,8 @@ default (``addopts = "-m 'not integration'"``); opt in with ``pytest -m integrat
 machine with the binaries, and leave out the one case whose load cannot be made small with
 ``-m "integration and not heavy"``.
 
-What a case needs is read off its config: ORCA for any ORCA-family step, and whatever
+What a case needs is read off its config: ORCA for any ORCA-family step, xtb for an xtb
+step (``CHEMREFINE_XTB``, or on ``PATH``), and whatever
 :func:`~chemrefine.engines._provision.preflight_backends` requires of the rest — the same
 answer the pipeline itself would give. A run is held to its declared budget and to what
 every live run must leave (:func:`replay.assert_live_invariants`), and to the facts only a
@@ -36,6 +37,7 @@ from chemrefine.engines import _execution
 from chemrefine.engines._provision import preflight_backends
 from chemrefine.engines.api import get_engine
 from chemrefine.engines.orca.engine import OrcaEngine
+from chemrefine.engines.xtb.engine import XtbEngine
 from chemrefine.errors import ConfigError
 from chemrefine.io import read_xyz_frames
 
@@ -62,6 +64,16 @@ _ORCA = _real_orca()
 """Resolved once: it reads ``PATH``, which no fixture rewrites."""
 
 
+def real_xtb() -> str | None:
+    """The xtb binary under test: ``CHEMREFINE_XTB``, else the ``xtb`` on ``PATH``, or None.
+
+    The variable is how a build that is not on ``PATH`` — a cluster's, a new compiler's — is
+    put through the live tier, the numerical checks in ``test_engines_xtb_numerics.py``
+    included. ORCA's own bundled xTB is ``otool_xtb``, so it is never found by mistake.
+    """
+    return os.environ.get("CHEMREFINE_XTB") or shutil.which("xtb")
+
+
 def _cases() -> list[ParameterSet]:
     """Every case directory, marked ``heavy`` where its ``case.yaml`` says so."""
     return [
@@ -79,6 +91,10 @@ def _needs_orca(config: Config) -> bool:
     return any(isinstance(get_engine(step.engine), OrcaEngine) for step in config.steps)
 
 
+def _needs_xtb(config: Config) -> bool:
+    return any(isinstance(get_engine(step.engine), XtbEngine) for step in config.steps)
+
+
 def _skip_unless_runnable(config: Config) -> None:
     """Skip a case this machine cannot run — or fail, under ``CHEMREFINE_REQUIRE_LIVE``.
 
@@ -91,6 +107,8 @@ def _skip_unless_runnable(config: Config) -> None:
     missing = []
     if _needs_orca(config) and _ORCA is None:
         missing.append("ORCA on PATH")
+    if _needs_xtb(config) and real_xtb() is None:
+        missing.append("xtb (CHEMREFINE_XTB, or on PATH)")
     try:
         preflight_backends(config.steps)
     except ConfigError as e:
@@ -223,6 +241,13 @@ def test_live_case(
         # ORCA needs its absolute path for MPI; the case config ships a placeholder.
         config = config.model_copy(
             update={"executables": {**config.executables, "orca": str(Path(_ORCA).resolve())}}
+        )
+    if _needs_xtb(config):
+        xtb = real_xtb()
+        assert xtb is not None
+        # Absolute, so the run block finds GFN0's parameters beside it (`XTBPATH`).
+        config = config.model_copy(
+            update={"executables": {**config.executables, "xtb": str(Path(xtb).resolve())}}
         )
 
     recorder = replay.SubmissionRecorder(_execution.run_batch, config.output_dir)

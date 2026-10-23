@@ -1,0 +1,17 @@
+{
+  "model": "XtbOptions",
+  "note": "No shipped example runs xtb yet: the ORCA `! XTB2` examples stay as they are until the engine has been used in anger, so every knob is tests-only until one ships.",
+  "examples": [],
+  "tests_only": [
+    "method",
+    "solvation",
+    "solvent",
+    "solvation_reference",
+    "opt_level",
+    "accuracy",
+    "etemp",
+    "device",
+    "cores",
+    "backend_python"
+  ]
+}

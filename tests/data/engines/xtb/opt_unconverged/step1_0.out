@@ -1,0 +1,17 @@
+   * xtb version 6.7.1 (26b2801) compiled by 'alistair@spark-478e' on 2026-10-09
+
+          program call               : xtb $OUTPUT_DIR/step1_0_inp.xyz --input step1_0.xcontrol --namespace step1_0 --opt --grad --gfn 2 --chrg 0 --uhf 0 -P 1
+
+   *** FAILED TO CONVERGE GEOMETRY OPTIMIZATION IN 3 ITERATIONS ***
+
+optimized geometry written to: xtbopt.xyz
+
+           -------------------------------------------------
+          | TOTAL ENERGY               -8.226099639623 Eh   |
+          | GRADIENT NORM               0.005097959468 Eh/α |
+          | HOMO-LUMO GAP              13.061204255189 eV   |
+           -------------------------------------------------
+
+------------------------------------------------------------------------
+ * finished run on 2026/10/23 at 17:33:48.534     
+------------------------------------------------------------------------

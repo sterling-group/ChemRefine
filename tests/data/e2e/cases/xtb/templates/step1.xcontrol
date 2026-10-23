@@ -1,0 +1,6 @@
+# xtb xcontrol input for this step, passed to xtb as --input.
+# ChemRefine passes the run type (the step's operation), the method, solvation,
+# charge and multiplicity on xtb's command line, so they do not belong here.
+# Add what only xcontrol can say: constraints, a wall, a scan, optimiser or SCC
+# settings. See `man 7 xcontrol`.
+$end

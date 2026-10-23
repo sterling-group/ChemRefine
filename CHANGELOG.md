@@ -130,6 +130,23 @@ for those and the full map.
   reads the outputs unlike what the template runs (`opt_sp` over a `! GOAT` template reads
   one structure, never the ensemble) draws a warning when the run starts and from
   `chemrefine validate`.
+- **xtb engine** (`engine: xtb`): runs the xtb binary itself, one job per structure, so an
+  xTB step needs no ORCA install. `operation:` is required and is the run type — `sp`
+  (`--grad`), `opt_sp` (`--opt`), `freq` (`--hess`), `opt_freq` (`--ohess`, new) — and
+  every run computes the gradient, so every structure carries forces. The template
+  `stepN.xcontrol` is an xtb xcontrol file for constraints, walls, scans and optimiser or
+  SCC settings; one that sets `$chrg`, `$spin`, the `$gfn` method or a solvent is refused,
+  since the command line, which xtb lets win, sets those from the step. Options: `method`
+  (`gfn2` / `gfn1` / `gfn0` / `gfnff`), `solvation` (`alpb` / `gbsa` / `cpcmx`, CPCM-X on
+  `sp` only) with `solvent` and `solvation_reference`, `opt_level`, `accuracy`, `etemp`,
+  and `cores` as `-P` / `OMP_NUM_THREADS`. Convergence is read from xtb's stdout, not from
+  `.xtboptok`, which xtb 6.7.1 leaves behind an optimisation that failed to converge.
+  NMS-capable on `freq` / `opt_freq`, from `g98.out`. The output readers
+  (`chemrefine.engines.xtb.output`) and the command-line builder
+  (`chemrefine.engines.xtb.command`) take no step context, for code that runs xtb itself.
+  `CHEMREFINE_XTB=/path/to/xtb pytest -m integration tests/test_engines_xtb_numerics.py`
+  checks a build's gradients against its energies and its Hessian against its gradients;
+  conda-forge's xtb 6.7.1 aarch64 gfortran build fails it on GFN1 and GFN2.
 - **Q-Chem engine** (`engine: qchem`): per-structure Q-Chem jobs from a `stepN.in`
   template, with the geometry generated into job 1's `$molecule` block (only job 1 of a
   multi-job `@@@` chain is edited — a later `$molecule read $end` survives untouched —

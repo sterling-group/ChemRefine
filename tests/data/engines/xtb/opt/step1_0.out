@@ -1,0 +1,17 @@
+   * xtb version 6.7.1 (26b2801) compiled by 'alistair@spark-478e' on 2026-10-09
+
+          program call               : xtb $OUTPUT_DIR/step1_0_inp.xyz --input step1_0.xcontrol --namespace step1_0 --opt tight --grad --gfn 2 --chrg 0 --uhf 0 -P 2
+
+   *** GEOMETRY OPTIMIZATION CONVERGED AFTER 10 ITERATIONS ***
+
+optimized geometry written to: xtbopt.xyz
+
+           -------------------------------------------------
+          | TOTAL ENERGY               -8.226118418278 Eh   |
+          | GRADIENT NORM               0.000125300932 Eh/α |
+          | HOMO-LUMO GAP              13.098872269837 eV   |
+           -------------------------------------------------
+
+------------------------------------------------------------------------
+ * finished run on 2026/10/23 at 17:33:47.478     
+------------------------------------------------------------------------

@@ -906,6 +906,7 @@ _BASE_OPTIONS: dict[str, dict[str, object]] = {
     "mlip-train": {"task_name": "mace_off"},
     "pyscf-extopt": {"method": "dft", "xc": "b3lyp", "basis": "def2-svp"},
     "qchem": {},
+    "xtb": {},
 }
 
 
@@ -926,6 +927,7 @@ def _row_keys(root: Path, engine_name: str, **options: object) -> tuple[str, ...
         ("mlip", "cores", 8),
         ("mlip-extopt", "gradient_timeout_seconds", 3600.0),
         ("qchem", "nprocs", 4),
+        ("xtb", "cores", 8),
     ],
 )
 def test_where_and_how_a_job_runs_is_not_part_of_its_key(
@@ -949,6 +951,7 @@ def test_where_and_how_a_job_runs_is_not_part_of_its_key(
         ("mlip-train", "gpus", 2),
         ("pyscf-extopt", "tensor_folder", "density"),
         ("qchem", "save", True),
+        ("xtb", "method", "gfn1"),
     ],
 )
 def test_what_a_job_computes_or_keeps_still_moves_its_key(
