@@ -17,8 +17,8 @@ behind the code. Reading it:
   engine's section below says what it reads.
 - **NMS** — whether `nms: true` is honoured. Detected by `isinstance`, never a flag.
 - **Backend env** — the Python stack the engine needs, if any, and the name
-  [`chemrefine backends install`](installing.md) takes. ORCA and Q-Chem need none: they
-  are programs you install yourself and name in `executables:`.
+  [`chemrefine backends install`](installing.md) takes. ORCA, Q-Chem and xtb need none:
+  they are programs you install yourself and name in `executables:`.
 
 An engine that documents itself on a page of its own is linked from its row in the table.
 

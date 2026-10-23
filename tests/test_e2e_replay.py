@@ -54,6 +54,7 @@ from chemrefine.config import BoltzmannSample, Config, StepConfig, load_config
 from chemrefine.engines.api import NULL_SINK, ArtifactEngine, get_engine
 from chemrefine.engines.mlip.train.engine import SIDECAR_NAME
 from chemrefine.engines.orca.output import parse_output
+from chemrefine.engines.xtb.engine import XtbEngine
 from chemrefine.errors import ChemRefineError
 from chemrefine.io import read_xyz_frames
 from chemrefine.quantities import HARTREE_PER_BOHR_TO_EV_PER_A, HARTREE_TO_EV, HARTREE_TO_KCALMOL
@@ -1445,6 +1446,60 @@ def _fairchem_sp(run: Replayed) -> None:
     assert abs(structure.energy_hartree - -76.43356970) < 1e-5, structure.energy_hartree
 
 
+def _xtb(run: Replayed) -> None:
+    """The xtb binary at its own seam: the command line, the files beside stdout, and NMS.
+
+    Both templates are the starter ``chemrefine scaffold`` writes. Round 1 of step 1 ran
+    ``--ohess`` in ALPB water on exactly planar NH3: xtb's optimiser stayed on the saddle by
+    symmetry and called it converged, and the Hessian beside the output holds the one
+    imaginary umbrella mode. Displaced along it, both children ran once and relaxed to the
+    pyramid, 6.7 kcal/mol lower with no imaginary mode, and the winner was promoted with
+    its files: the step's survivor reads its own optimised geometry and modes at the
+    parent's name. Step 2 ran ``--gfn 1 --chrg 1 --uhf 1`` on that pyramid, the step's
+    charge and multiplicity on xtb's command line, and every structure carries forces.
+    """
+    invert, ionise = run.config.steps
+    fresh = run.config.model_copy(update={"template_dir": run.case.root / "starters"})
+    for starter in scaffold_templates(fresh):
+        assert (run.config.template_dir / starter.name).read_text(encoding="utf-8") == (
+            starter.read_text(encoding="utf-8")
+        ), f"the case runs the starter `chemrefine scaffold` writes for {starter.name}"
+
+    first_dir = run.config.step_dir(invert).resolve().name
+    second_dir = run.config.step_dir(ionise).resolve().name
+    children = sorted(rel for rel in run.submitter.served if rel.startswith(f"{first_dir}/0/"))
+    assert [rel.rsplit("/", 1)[1] for rel in children] == ["0_m6_neg", "0_m6_pos"], children
+    assert set(run.submitter.served.values()) == {1}, "each job ran once"
+
+    engine = XtbEngine()
+    saddle_out = run.case.submitted_file(f"{first_dir}/0", 0, "step1_0.out")
+    (saddle,) = engine.parse_frequency_output(saddle_out)
+    assert saddle.converged is True and saddle.imaginary_freqs is not None
+    ((mode, frequency),) = saddle.imaginary_freqs.items()
+    assert mode == 6 and frequency < -900, saddle.imaginary_freqs
+    assert np.abs(saddle.positions[:, 2]).max() < 1e-3, "the optimiser stayed on the plane"
+    said = saddle_out.read_text(encoding="utf-8")
+    assert "--ohess --grad --gfn 2 --alpb water --chrg 0 --uhf 0 -P 1" in said
+
+    (pyramid,) = run.outcomes[0].state.structures
+    assert pyramid.resolved_from is not None and pyramid.resolved_from.startswith("0_m6_")
+    assert pyramid.imaginary_freqs == {} and pyramid.converged is True
+    assert pyramid.energy_hartree is not None and saddle.energy_hartree is not None
+    barrier = (saddle.energy_hartree - pyramid.energy_hartree) * HARTREE_TO_KCALMOL
+    assert 6.0 < barrier < 7.5, f"inversion barrier {barrier:.2f} kcal/mol"
+    canonical = run.config.step_dir(invert).resolve() / "0" / "step1_0.out"
+    (reread,) = engine.parse_frequency_output(canonical)
+    assert reread.frequencies == pyramid.frequencies, "the promoted output reads its own files"
+
+    (cation,) = run.outcomes[1].state.structures
+    ionise_out = run.case.submitted_file(f"{second_dir}/0", 0, "step2_0.out")
+    assert "--grad --gfn 1 --chrg 1 --uhf 1 -P 1" in ionise_out.read_text(encoding="utf-8")
+    assert cation.energy_hartree is not None and cation.terminated_normally is True
+    for structure in (pyramid, cation):
+        assert structure.forces_ev_per_a is not None
+        assert structure.forces_ev_per_a.shape == (4, 3)
+
+
 CHECKS: dict[str, Callable[[Replayed], None]] = {
     "conformers": _conformers,
     "fairchem_sp": _fairchem_sp,
@@ -1457,6 +1512,7 @@ CHECKS: dict[str, Callable[[Replayed], None]] = {
     "pyscf_extopt": _pyscf_extopt,
     "triage": _triage,
     "ts_path": _ts_path,
+    "xtb": _xtb,
 }
 """What each case exists for, beyond what every recording is held to."""
 

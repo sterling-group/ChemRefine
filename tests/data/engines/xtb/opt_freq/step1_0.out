@@ -1,0 +1,35 @@
+   * xtb version 6.7.1 (26b2801) compiled by 'alistair@spark-478e' on 2026-10-09
+
+          program call               : xtb $OUTPUT_DIR/step1_0_inp.xyz --input step1_0.xcontrol --namespace step1_0 --ohess --grad --gfn 2 --alpb water bar1M --chrg 0 --uhf 0 -P 2
+
+   *** GEOMETRY OPTIMIZATION CONVERGED AFTER 9 ITERATIONS ***
+
+ writing <g98.out> molden fake output.
+
+       T/K    H(0)-H(T)+PV         H(T)/Eh          T*S/Eh         G(T)/Eh
+   ------------------------------------------------------------------------
+    298.15    0.426201E-02    0.534691E-01    0.269710E-01    0.264981E-01
+   ------------------------------------------------------------------------
+
+         :::::::::::::::::::::::::::::::::::::::::::::::::::::
+         ::                  THERMODYNAMIC                  ::
+         :::::::::::::::::::::::::::::::::::::::::::::::::::::
+         :: total free energy          -8.203862859141 Eh   ::
+         ::.................................................::
+         :: total energy               -8.230360925893 Eh   ::
+         :: zero point energy           0.049207094173 Eh   ::
+         :: G(RRHO) w/o ZPVE           -0.022709027421 Eh   ::
+         :: G(RRHO) contrib.            0.026498066751 Eh   ::
+         :::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+optimized geometry written to: xtbopt.xyz
+
+           -------------------------------------------------
+          | TOTAL ENERGY               -8.230360925893 Eh   |
+          | TOTAL ENTHALPY             -8.176891822876 Eh   |
+          | TOTAL FREE ENERGY          -8.203862859141 Eh   |
+          | GRADIENT NORM               0.000597179319 Eh/α |
+
+------------------------------------------------------------------------
+ * finished run on 2026/10/23 at 17:33:50.178     
+------------------------------------------------------------------------

@@ -1,0 +1,6 @@
+{
+  "operation": "opt_freq",
+  "charge": 0,
+  "multiplicity": 1,
+  "source": "Methanol, GFN2-xTB --ohess in ALPB water (bar1M reference state): thermochemistry and modes. xtb 6.7.1 (26b2801), run through the xtb engine; stdout trimmed to the blocks the parsers read, the paths in its program call shortened to what the run block wrote"
+}

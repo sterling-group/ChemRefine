@@ -543,6 +543,13 @@ KEEP_PATTERNS = (
     "*.docker.struc1.all.optimized.xyz",  # ORCA 6.1.1's docker sidecar name
     "*.solventbuild.xyz",  # also matches 6.1.1's *.solvator.solventbuild.xyz
     "*.json",
+    # xtb leaves its results beside its stdout, in its namespace (the structure's stem),
+    # and the parse reads them there: the optimised geometry, the gradient, and (by
+    # `*.out`) the modes. A run that moves no atoms is read at the structure's input
+    # geometry, so that is kept too.
+    "*.xtbopt.xyz",
+    "*.gradient",
+    "*_inp.xyz",
 )
 
 # Derived / native-convenience artifacts a fresh replay must re-create itself —

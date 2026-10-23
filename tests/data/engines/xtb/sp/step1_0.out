@@ -1,0 +1,13 @@
+   * xtb version 6.7.1 (26b2801) compiled by 'alistair@spark-478e' on 2026-10-09
+
+          program call               : xtb $OUTPUT_DIR/step1_0_inp.xyz --input step1_0.xcontrol --namespace step1_0 --grad --gfn 2 --alpb water --chrg 1 --uhf 1 -P 2
+
+           -------------------------------------------------
+          | TOTAL ENERGY               -7.775858661319 Eh   |
+          | GRADIENT NORM               0.132838807142 Eh/α |
+          | HOMO-LUMO GAP              11.798610813814 eV   |
+           -------------------------------------------------
+
+------------------------------------------------------------------------
+ * finished run on 2026/10/23 at 17:33:46.674     
+------------------------------------------------------------------------

@@ -1,0 +1,39 @@
+# The xtb engine at its own seam: the binary run directly, no ORCA. One frame, planar NH3,
+# the saddle of ammonia's inversion, through two steps at one core:
+#   1  invert  `opt_freq` in ALPB water: xtb's optimiser, started exactly planar, stays on
+#              the saddle by symmetry and converges there, and the Hessian finds the one
+#              imaginary umbrella mode (about -990 cm-1). `nms: true` (target `minimum`)
+#              displaces along it, and both children re-run `opt_freq` down to the
+#              pyramidal minimum, 6.7 kcal/mol lower, with no imaginary mode: resolved,
+#              and the winner promoted to the parent's name with its files
+#   2  ionise  `sp` with GFN1-xTB in gas on the pyramid as the step's cation doublet
+#              (`--chrg 1 --uhf 1`): the method and the charge and spin reach the command
+#              line (code-only: another method in another medium, so no ionisation energy)
+# The templates are the starter `chemrefine scaffold` writes, unmodified: nothing the
+# engine passes on xtb's command line can be in them.
+template_dir: ./templates
+output_dir: ./outputs
+executables: { xtb: xtb }  # the live harness injects the resolved absolute path
+dispatch: auto
+max_cores: 1
+
+input: ./planar_nh3.xyz
+charge: 0
+multiplicity: 1
+
+steps:
+  - step: 1
+    name: invert
+    engine: xtb
+    operation: opt_freq
+    nms: true
+    options: { solvation: alpb, solvent: water, displacement_value: 0.3 }
+    sample: { method: min, count: 1 }
+
+  - step: 2
+    name: ionise
+    engine: xtb
+    operation: sp
+    charge: 1
+    multiplicity: 2
+    options: { method: gfn1 }

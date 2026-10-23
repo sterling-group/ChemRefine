@@ -454,7 +454,13 @@ def test_every_engine_that_declares_operations_is_held_to_them_up_front():
     its own to forget; derived from the registry, so a new one is covered by existing.
     """
     declaring = sorted(n for n in ENGINES if isinstance(get_engine(n), OperationsDeclaring))
-    assert declaring == ["mlip-extopt", "orca", "pyscf-extopt", "qchem"], "the declaring set moved"
+    assert declaring == [
+        "mlip-extopt",
+        "orca",
+        "pyscf-extopt",
+        "qchem",
+        "xtb",
+    ], "the declaring set moved"
     for name in declaring:
         step_cfg = StepConfig(
             step=1, engine=name, operation="opt-sp", options=_REQUIRED_OPTIONS.get(name, {})
@@ -947,10 +953,21 @@ _FREQUENCY_SPELLINGS: dict[str, dict[str, str]] = {
 }
 """Each spelling a shipped engine's ``frequency_request`` quotes, written into a template."""
 
+_FREQUENCY_OPERATIONS: dict[str, dict[str, str]] = {
+    "xtb": {"`operation: freq`": "freq", "`operation: opt_freq`": "opt_freq"},
+}
+"""Each spelling a ``frequency_request`` quotes that is a step's operation rather than
+template text — an engine whose template cannot name its run type — and the operation."""
+
 
 @pytest.mark.parametrize(
     ("engine_name", "spelling"),
-    [(name, spelling) for name, rows in _FREQUENCY_SPELLINGS.items() for spelling in rows],
+    [
+        (name, spelling)
+        for table in (_FREQUENCY_SPELLINGS, _FREQUENCY_OPERATIONS)
+        for name, rows in table.items()
+        for spelling in rows
+    ],
 )
 def test_every_spelling_a_frequency_request_quotes_requests_frequencies(
     engine_name: str, spelling: str, tmp_path: Path
@@ -958,22 +975,28 @@ def test_every_spelling_a_frequency_request_quotes_requests_frequencies(
     """The refusal tells a user how to ask; each way it names has to be one that counts."""
     engine = get_engine(engine_name)
     assert isinstance(engine, NmsCapableEngine)
-    (tmp_path / f"step1.{engine.template_suffix}").write_text(
-        _FREQUENCY_SPELLINGS[engine_name][spelling], encoding="utf-8"
-    )
-    assert engine.nms_input_info(_ctx(tmp_path, engine_name, {})).computes_frequencies
+    operation = _FREQUENCY_OPERATIONS.get(engine_name, {}).get(spelling)
+    if operation is None:
+        (tmp_path / f"step1.{engine.template_suffix}").write_text(
+            _FREQUENCY_SPELLINGS[engine_name][spelling], encoding="utf-8"
+        )
+        ctx = _ctx(tmp_path, engine_name, {})
+    else:
+        ctx = _ctx(tmp_path, engine_name, {}, operation=operation)
+    assert engine.nms_input_info(ctx).computes_frequencies
 
 
 def test_every_frequency_request_is_held_to_its_spellings():
     """A sentence quotes exactly the spellings above, so one it gains is one fed to the
     inspector — and every sampling engine has its row."""
     capable = sorted(n for n in ENGINES if isinstance(get_engine(n), NmsCapableEngine))
-    assert capable == sorted(_FREQUENCY_SPELLINGS)
+    assert capable == sorted({*_FREQUENCY_SPELLINGS, *_FREQUENCY_OPERATIONS})
     for name in capable:
         engine = get_engine(name)
         assert isinstance(engine, NmsCapableEngine)
         quoted = set(re.findall(r"`[^`]+`", engine.frequency_request))
-        assert quoted == set(_FREQUENCY_SPELLINGS[name]), name
+        spellings = {*_FREQUENCY_SPELLINGS.get(name, {}), *_FREQUENCY_OPERATIONS.get(name, {})}
+        assert quoted == spellings, name
 
 
 def test_every_nms_capable_engine_can_reparse_its_frequency_output():

@@ -154,6 +154,7 @@ nav:
       - AI agents: workflow/agents.md
   - Engines & backends:
       - engines/index.md
+      - xtb: engines/xtb.md
       - Installing engines & backends: engines/installing.md
   - Running a workflow:
       - Command line: running/cli.md

@@ -1,0 +1,4 @@
+# One run (no scenario): four xtb jobs (round 1, the two NMS children, the cation), one
+# after the other on one core. The whole process took 1.6 s on the recording machine
+# (three runs, 135 MB peak), imports included; the budget is about twice that, rounded up.
+budget_s: 4

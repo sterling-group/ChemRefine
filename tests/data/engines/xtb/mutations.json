@@ -1,0 +1,42 @@
+[
+  {
+    "id": "xtb-forces-are-the-negative-gradient",
+    "path": "src/chemrefine/engines/xtb/output/coordinator.py",
+    "old": "    return -cycle.gradient_hartree_per_bohr * HARTREE_PER_BOHR_TO_EV_PER_A",
+    "new": "    return cycle.gradient_hartree_per_bohr * HARTREE_PER_BOHR_TO_EV_PER_A",
+    "tests": "tests/test_engines_xtb_output.py",
+    "breaks": "every xtb structure carries forces pointing uphill, and an mlip-train step fits a potential to the gradient with its sign flipped"
+  },
+  {
+    "id": "xtb-gradient-of-another-calculation-is-refused",
+    "path": "src/chemrefine/engines/xtb/output/coordinator.py",
+    "old": "    if abs(cycle.energy_hartree - energy) > _ENERGY_TOLERANCE_HARTREE:",
+    "new": "    if False:",
+    "tests": "tests/test_engines_xtb_output.py",
+    "breaks": "a gradient file another method or solvent left beside the output is attached as this structure's forces"
+  },
+  {
+    "id": "xtb-convergence-is-the-last-verdict",
+    "path": "src/chemrefine/engines/xtb/output/stdout.py",
+    "old": "    return bool(verdicts[-1]) if verdicts else None",
+    "new": "    return bool(verdicts[0]) if verdicts else None",
+    "tests": "tests/test_engines_xtb_output.py",
+    "breaks": "an optimisation that failed after an earlier converged stage reads as converged, and the unconverged geometry goes on to the next step"
+  },
+  {
+    "id": "xtb-files-are-named-in-the-namespace",
+    "path": "src/chemrefine/engines/xtb/engine.py",
+    "old": "            f'--namespace \"$XTB_STEM\" {shlex.join(args)} -P {threads} '",
+    "new": "            f'{shlex.join(args)} -P {threads} '",
+    "tests": "tests/test_engines_xtb_engine.py",
+    "breaks": "xtb writes xtbopt.xyz and g98.out under fixed names, an NMS winner's promotion leaves them behind in the attempt, and its promoted output can no longer be read"
+  },
+  {
+    "id": "xtb-optimised-geometry-only-on-evidence",
+    "path": "src/chemrefine/engines/xtb/output/coordinator.py",
+    "old": "    geometry_path = directory / f\"{namespace}.{written}\" if written else input_geometry",
+    "new": "    geometry_path = directory / f\"{namespace}.xtbopt.xyz\"",
+    "tests": "tests/test_engines_xtb_output.py",
+    "breaks": "a single point is reported at whatever optimised geometry an earlier run left in its directory, or refused when there is none"
+  }
+]

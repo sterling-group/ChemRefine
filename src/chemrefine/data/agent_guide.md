@@ -3,7 +3,7 @@
 ChemRefine runs **multi-step refinement pipelines** for computational chemistry: an
 ensemble of candidate structures flows through ordered steps (conformer generation →
 cheap screening → expensive refinement), each step runs one *engine* (ORCA, Q-Chem,
-PySCF, MLIP potentials, MLIP training), and a *sample* filter between steps keeps only
+xtb, PySCF, MLIP potentials, MLIP training), and a *sample* filter between steps keeps only
 the survivors worth the next step's cost. The workflow is a **YAML file plus a
 `templates/` directory** — a reproducible artifact the user can inspect, version, and
 rerun. Your job is to author and triage that artifact; ChemRefine's engine executes it
@@ -44,6 +44,13 @@ The ORCA-family `operation:` vocabulary (each engine's own list is in `get_schem
 `engines.<name>.operations`; the top-level `operations` is the union across engines):
 `opt_sp` (optimize + single point), `sp`, `freq`, `pes` (scans), and the ensemble
 generators `goat` (conformers), `docker` (poses), `solvator` (explicit solvent).
+
+**xtb without ORCA**: the `xtb` engine runs the xtb binary itself (`executables: {xtb:
+…}`). Its `operation:` is **required** and is the run type: `sp`, `opt_sp`, `freq`, or
+`opt_freq` (optimise, then frequencies, in one run — the NMS-ready one). Method and
+implicit solvent are options (`method: gfn2`, `solvation: alpb`, `solvent: water`); the
+`.xcontrol` template holds only what xtb reads there (constraints, walls, scans,
+optimiser settings), and is refused if it sets charge, spin, method or solvent.
 
 **Conformer funnel** (the canonical ChemRefine job): step 1 generates/screens cheaply
 (`operation: goat` on an xtb-keyword ORCA template, or an MLIP step — `mlip`, the direct

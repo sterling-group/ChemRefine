@@ -606,8 +606,10 @@ def _run_in_node(script: str) -> str:
     """
     node = _node_or_skip("execute the GUI's pure form logic")
     source = (STATIC / "forms.js").read_text(encoding="utf-8") + "\n" + script
+    # On stdin rather than as `-e SOURCE`: Linux caps one argv string at 128 KiB, and the
+    # sources carry every engine's schema, so each engine added brings the cap closer.
     result = subprocess.run(  # argv list, no shell
-        [node, "-e", source], capture_output=True, text=True, check=False, timeout=120
+        [node, "-"], input=source, capture_output=True, text=True, check=False, timeout=120
     )
     assert result.returncode == 0, result.stderr
     return result.stdout.strip()
@@ -647,8 +649,10 @@ def _run_component_in_node(script: str) -> str:
     # files are top-level function declarations, which hoist — which is also why the
     # page's own load order is not something this has to reproduce.
     source = preamble + _component_source() + "\n" + script
+    # On stdin rather than as `-e SOURCE`: Linux caps one argv string at 128 KiB, and the
+    # sources carry every engine's schema, so each engine added brings the cap closer.
     result = subprocess.run(  # argv list, no shell
-        [node, "-e", source], capture_output=True, text=True, check=False, timeout=120
+        [node, "-"], input=source, capture_output=True, text=True, check=False, timeout=120
     )
     assert result.returncode == 0, result.stderr
     return result.stdout.strip()

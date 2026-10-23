@@ -47,8 +47,15 @@ pytestmark = pytest.mark.slow
 RECORDINGS = Path(__file__).resolve().parent / "data" / "e2e" / "recordings"
 
 
+_ORCA_BANNER = "O   R   C   A"
+"""The banner every ORCA output opens with, an aborted one included."""
+
+
 def _recorded_outputs() -> Iterator[tuple[str, str]]:
-    """Yield ``(label, text)`` once per distinct ``.out`` in the recording archives.
+    """Yield ``(label, text)`` once per distinct ORCA ``.out`` in the recording archives.
+
+    ORCA's only: another engine's ``.out`` (xtb's stdout, its ``g98.out``) is not this
+    corpus's to judge, and is told apart by ORCA's banner, which it does not carry.
 
     Deduplicated by member name on purpose. ``tar`` permits the same path to appear several
     times in one archive, so a plain member walk can count one recorded output several times
@@ -65,7 +72,9 @@ def _recorded_outputs() -> Iterator[tuple[str, str]]:
                 handle = tf.extractfile(member)
                 if handle is None:  # a directory member has no payload to read
                     continue
-                yield f"{archive.stem}:{member.name}", handle.read().decode("utf-8", "replace")
+                text = handle.read().decode("utf-8", "replace")
+                if _ORCA_BANNER in text:
+                    yield f"{archive.stem}:{member.name}", text
 
 
 def test_the_corpus_is_actually_there():
