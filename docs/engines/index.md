@@ -170,8 +170,56 @@ validated model as `$OPTIONS_JSON`, for `options = json.loads("$OPTIONS_JSON")`.
 | `device` | `cpu` | `cuda` or `cpu`. CPU is the floor that always runs; asking for a GPU is one line, whereas a wrong `cuda` default schedules a CPU job whose script then asks for a device it wasn't given. |
 | `cores` | `1` | Per-structure core budget. |
 | `backend_python` | `None` | Explicit interpreter for the backend (escape hatch). Normally unset: the step's managed env is resolved by name — see [Installing engines & backends](installing.md#available-backends). |
+| `solvation` | `None` | The library whose implicit-solvent correction is added to the MLIP: `anysolv`. The step then runs on `E_MLIP + ΔE` and `F_MLIP + ΔF`, in a single point, an ASE optimisation, and ORCA's Opt / OptTS / GOAT / Freq through ExtOpt alike. No default, and required whenever `solvent` is set. AnySolv pairs with the FAIRChem backend for now. See [Implicit solvation](#implicit-solvation). |
+| `solvation_model` | the library's default | The `solvation` library's model. AnySolv: `compact` (the default; ships with the package), `moe` (the paper's model; gated weights, FAIR Chemistry License), or `auto`: `moe` where its weights are found, else `compact`. `auto` is chosen once per step, before the run, in the step's own environment, and the step runs as the model chosen. The default, and an `auto` choice, are written into the options, so the cache key names the model that ran. |
+| `solvent` | `None` | The solvent, by a name in the library's own table (AnySolv: its SMD table, `anysolv.solvent.list_solvents()`). An unknown name, or a gas-phase one such as `vacuum`, is refused when the calculator is built. |
+| `solvation_weights` | `None` | A weights file for a model the library downloads separately (AnySolv's `moe`), looked at before the library's own places. Relative paths resolve against the config file's directory, and the key holds the file's bytes, so replacing it recomputes the step. A path that is not a file is refused, never passed over by `auto`. |
 | `extra` *(direct only)* | `{}` | Free knobs for your own `stepN.py`, as a mapping: validated only as a mapping, rendered as `$EXTRA` (a Python dict literal) and inside `$OPTIONS_JSON`. Declared, so a key you invent is deliberate while a typo of a real knob still warns; `mlip-extopt` and `mlip-train` render no template and refuse it. |
 | `gradient_timeout_seconds` *(ExtOpt only)* | `600` | How long the bridge ORCA invokes per geometry waits on one gradient before giving it up — a bound on a single server call, not on the optimisation. Raise it when a healthy server takes longer per geometry; on expiry the step records a timeout that names this knob, not an unreachable server. |
+
+### Implicit solvation
+
+```yaml
+options:
+  task_name: omol
+  solvation: anysolv
+  solvation_model: compact   # optional; the library's default
+  solvent: water
+```
+
+**AnySolv's MoE model.** `solvation_model: moe` needs its weights, gated on Hugging Face
+under the FAIR Chemistry License: accept the licence at
+[huggingface.co/antonknee/anysolv](https://huggingface.co/antonknee/anysolv), then either
+download them into the step environment's Hugging Face cache
+
+```bash
+"$(chemrefine backends path mlip-fairchem)" -m pip install huggingface_hub
+"$(dirname "$(chemrefine backends path mlip-fairchem)")/hf" auth login
+"$(dirname "$(chemrefine backends path mlip-fairchem)")/hf" download antonknee/anysolv model_moe.pt
+```
+
+or download them anywhere and name the file as `solvation_weights`. They are looked for in
+that order: `solvation_weights`, the Hugging Face cache, then AnySolv's own `models/`
+directory. `solvation_model: auto` uses `moe` where they are found and `compact` where they
+are not, and says which it chose and why in the run log. It chooses once per step, before
+anything is submitted, so every structure in a step runs on the same model. The step's
+`_cache/resolved_options.json` records the choice, which is what `rebuild-cache` and a
+cache-only step reuse. Where the MoE weights have appeared since a `compact` run, a resume
+recomputes the step on `moe`. Where they have gone since a `moe` run, the run is refused
+before anything is submitted rather than replacing `moe` results with `compact`'s: restore
+the weights, set `solvation_model: compact` to recompute on it deliberately, or
+`chemrefine rerun` the step, which forgets the old choice. One MoE model serves every species in a step:
+it mixes its experts per structure, by composition, charge, multiplicity and solvent.
+
+The correction is computed from the structure's elements, positions, charge, multiplicity
+and solvent alone, and it never sees the base potential, so it is added to whichever MLIP
+`task_name` selects. It wraps the step's calculator, outside the vacuum box a periodic-only
+library uses, so it sees the molecule. ORCA's frequencies through `mlip-extopt` are finite
+differences of the corrected gradients, so they are solvated too. The step's charge and
+multiplicity reach the correction even under a charge-blind base model, and a calculator
+used without them is refused rather than assumed neutral. A direct `stepN.py` passes the
+three knobs to `MlipCalculator` as `$SOLVATION`, `$SOLVATION_MODEL` and `$SOLVENT`, as the
+starter does.
 
 ## Training a potential (`mlip-train`)
 
@@ -188,6 +236,7 @@ validated model as `$OPTIONS_JSON`, for `options = json.loads("$OPTIONS_JSON")`.
 | `seed` | `42` | Seed for the split, so a re-run partitions identically. |
 | `backend_python` | `None` | Explicit interpreter for the trainer (escape hatch). Normally unset: the managed env is resolved by name. |
 | `extra` | — (refused) | Inherited from the direct engine's model and refused by name here: a training step renders no `stepN.py` for free knobs to reach. |
+| `solvation`, `solvation_model`, `solvent`, `solvation_weights` | — (refused) | Inherited from the inference model and refused here: a training step fits a model and evaluates none, so a correction has nothing to apply to. |
 
 The step's template is the **trainer's own config** (`stepN.yaml`), rendered rather than
 patched: ChemRefine substitutes `$TRAIN_SET`, `$VALID_SET`, `$TEST_SET`, `$RUN_DIR`,

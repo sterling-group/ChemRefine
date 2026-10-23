@@ -11,6 +11,10 @@
     "cores",
     "backend_python",
     "extra",
-    "gradient_timeout_seconds"
+    "gradient_timeout_seconds",
+    "solvation",
+    "solvation_model",
+    "solvent",
+    "solvation_weights"
   ]
 }

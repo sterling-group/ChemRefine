@@ -706,6 +706,36 @@ class ProvisionableEngine(CalculationEngine, Protocol):
 
 
 @runtime_checkable
+class OptionsResolving(Protocol):
+    """An engine with an option whose value only the step's own environment can decide.
+
+    An option like ``solvation_model: auto`` names the best model whose weights are
+    installed, and which that is depends on the environment the step runs in. Left to each job, two
+    jobs on two nodes could choose differently, and the cache key could not say which ran.
+    So the choice is made once, before the run, by asking the step's own interpreter
+    (:func:`chemrefine.engines._provision.resolve_step_options`), and the step runs with the
+    options it returns: the key, the jobs and the step's record of the choice
+    (:func:`chemrefine.resolution.resolved_step`) all hold the chosen value.
+    """
+
+    def resolve_options(
+        self,
+        options: Mapping[str, Any],
+        launcher: str,
+        previous: Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        """The options whose values ``launcher``'s environment decides, as chosen there.
+
+        Only what is chosen, never the whole mapping: empty when the step asks for no
+        choice. ``previous`` is what the step's last run chose for these same options, or
+        ``None``; an engine refuses a choice that would recompute that run's results with
+        less than it had. A :class:`~chemrefine.errors.ConfigError` when the environment
+        cannot choose, or refuses to.
+        """
+        ...
+
+
+@runtime_checkable
 class PreflightChecking(Protocol):
     """An engine that can vet a step's configuration before the run starts.
 
