@@ -480,11 +480,19 @@ def requirement_from_options(
     refused here too, for every MLIP engine: before any step submits, and again when its run
     block is built, which asks for the same launcher; ``chemrefine validate`` reports it as
     the step's backend row. An unset one is each library's own default and is not asked.
+    So is a ``solvation`` library that has not been run with this backend's environment
+    (:meth:`~chemrefine.engines.mlip.solvation.SolvationLibrary.require_pairing`).
     """
+    # Function-level import: `chemrefine.engines.mlip.solvation` runs the
+    # `chemrefine.engines.mlip` package, which imports this module.
+    from chemrefine.engines.mlip.solvation import solvation_library
+
     opts = (options_cls or MlipOptions).from_raw_lenient(dict(options or {}))
     spec = backend_spec(opts.task_name)
     if require_trainer:
         trainer_for(opts.task_name)
     if opts.model_name:
         spec.library.release(opts.task_name, opts.model_name)
+    if opts.solvation:
+        solvation_library(opts.solvation).require_pairing(spec.extra)
     return BackendRequirement(extra=spec.extra, import_name=spec.import_name)

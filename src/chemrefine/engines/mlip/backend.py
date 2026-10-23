@@ -18,11 +18,16 @@ first, that is the difference between a typo caught in seconds and one caught on
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import Any
 
 from chemrefine.engines.api import BackendRequirement
+from chemrefine.engines.mlip.options import MlipOptions
 from chemrefine.engines.mlip.registry import registered_extras, requirement_from_options
+from chemrefine.errors import ConfigError
+
+logger = logging.getLogger(__name__)
 
 
 class MlipBackend:
@@ -46,3 +51,41 @@ class MlipBackend:
     def backend_extras(self) -> frozenset[str]:
         """Every extra a registered MLIP library declares."""
         return registered_extras()
+
+    def resolve_options(
+        self,
+        options: Mapping[str, Any],
+        launcher: str,
+        previous: Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        """``solvation_model: auto``, chosen in the step's own environment; else nothing.
+
+        Satisfies :class:`~chemrefine.engines.api.OptionsResolving`. Each model ``auto``
+        passed over is logged with where its weights were looked for, so a run that falls
+        back says why it did.
+
+        A step whose last run chose a model ``auto`` prefers to the one chosen now (it ran
+        on ``moe``, and the MoE weights are gone) is refused rather than recomputed: the
+        fallback would replace that run's results with ones from a lesser model. Choosing a
+        better model than last time is allowed, and recomputes the step with it.
+        """
+        from chemrefine.engines.mlip.solvation import AUTO, solvation_library
+        from chemrefine.engines.mlip.solvation._choose import choose_in_environment
+
+        opts = MlipOptions.from_raw_lenient(dict(options))
+        if not (opts.solvation and opts.solvation_model == AUTO):
+            return {}
+        chosen, skipped = choose_in_environment(launcher, opts.solvation, opts.solvation_weights)
+        before = (previous or {}).get("solvation_model")
+        order = solvation_library(opts.solvation).auto
+        if before in order and chosen in order and order.index(before) < order.index(chosen):
+            raise ConfigError(
+                f"solvation_model: {AUTO} chose {before} when this step last ran, and "
+                f"{before} is not available now ({'; '.join(skipped)}). Recomputing would "
+                f"replace those results with {chosen}'s. Restore the {before} weights, set "
+                f"`solvation_model: {chosen}` to recompute on {chosen} deliberately, or "
+                f"`chemrefine rerun` the step."
+            )
+        for why in skipped:
+            logger.warning("solvation_model: %s passed over %s", AUTO, why)
+        return {"solvation_model": chosen}

@@ -164,6 +164,11 @@ def cache_dir(step_dir: Path) -> Path:
     return step_dir / "_cache"
 
 
+def resolved_options_path(step_dir: Path) -> Path:
+    """A step's record of the options its environment chose before its last run."""
+    return cache_dir(step_dir) / "resolved_options.json"
+
+
 def steps_report_path(output_dir: Path) -> Path:
     """The cumulative per-step report every step appends to."""
     return output_dir / "steps.csv"

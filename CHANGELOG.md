@@ -31,6 +31,19 @@ for those and the full map.
 
 ### Added
 
+- **Implicit solvation for MLIP steps.** `solvation: anysolv` and `solvent: <name>` on an
+  `mlip` or `mlip-extopt` step add AnySolv's ΔE / ΔF correction to the base potential,
+  so single points, ASE optimisations and ORCA's Opt / OptTS / GOAT / Freq through ExtOpt
+  all run on the solvated surface. `solvation_model` picks AnySolv's `compact` (the
+  default) or `moe` model, or `auto`: `moe` where its weights are found, else `compact`,
+  chosen once per step before anything is submitted, by the step's own environment, and
+  keyed and recorded (`_cache/resolved_options.json`) as the model chosen. A resume that
+  could only fall back from a recorded `moe` to `compact` is refused instead of
+  recomputing; `rerun` forgets the recorded choice. The MoE weights
+  are looked for in `solvation_weights` (a path option, keyed by its bytes), then the
+  Hugging Face cache, then AnySolv's own `models/`. Solvation libraries are a registry beside the MLIP backends,
+  one module each (#80). Unset, the three knobs leave a step's cache key as it was, so
+  finished MLIP trees stay cache hits.
 - **A per-step gradient timeout for the ExtOpt engines.** `gradient_timeout_seconds`
   (default `600`) bounds one call of the bridge ORCA invokes per geometry, where v1.3.1's
   wrapper waited on its server indefinitely. Expiry is recorded as a timeout that names

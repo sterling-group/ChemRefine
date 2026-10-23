@@ -625,6 +625,10 @@ _ALLOWED_RAW_READS = {
     # so its reads of `task_name` / `model_name` decide what v1.3.1 ran before any engine
     # model exists to read through -- the loader's position, one stage earlier.
     "config_legacy.py",
+    # `resolved_step` records what a step's raw options *asked* beside what its environment
+    # chose, and reuses the choice only while the raw options still ask the same: the raw
+    # mapping is the record's subject, compared key by key for the keys an engine chose.
+    "resolution.py",
 }
 
 _DYNAMIC_KEY = "<dynamic key>"

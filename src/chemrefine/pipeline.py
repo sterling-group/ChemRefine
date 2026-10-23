@@ -37,16 +37,17 @@ from ase import Atoms
 
 from chemrefine import filtering, ids, io, slurm
 from chemrefine.config import Config, StepConfig
-from chemrefine.engines import preflight_backends, preflight_steps
+from chemrefine.engines import preflight_backends, preflight_steps, resolve_step_options
 from chemrefine.errors import ConfigError, NoUsableCacheError, OutputTreeError, RunLockError
 from chemrefine.quantities import DEFAULT_TEMPERATURE_K
-from chemrefine.state import PipelineState, Structure
 
 # Importing :mod:`chemrefine.step` pulls in :mod:`chemrefine.engines.api`,
 # which runs :mod:`chemrefine.engines`'s ``__init__`` and self-registers every
 # bundled engine. No explicit ``import chemrefine.engines`` needed.
 # No ``StepMode`` import: with every question about it answered by the enum's own
 # predicates, this module composes modes without naming a single member.
+from chemrefine.resolution import recorded_choice, resolved_step
+from chemrefine.state import PipelineState, Structure
 from chemrefine.step import (
     RunPlan,
     StepOutcome,
@@ -807,6 +808,12 @@ def run(config: Config, plan: RunPlan | None = None) -> list[StepOutcome]:
         submittable = [cfg for cfg in config.steps if plan.for_step(cfg.step).may_submit()]
         preflight_backends(submittable)
         preflight_steps(submittable, charge=config.charge, multiplicity=config.multiplicity)
+        # What a step's own environment decides (`solvation_model: auto`) is decided now,
+        # once per step, by that environment's interpreter: the step's key and every one of
+        # its jobs then hold the same choice, and the step's `_cache/` records it. Each
+        # engine sees its step's last recorded choice, to refuse recomputing it with less.
+        recorded = {s.step: c for s in submittable if (c := recorded_choice(config, s))}
+        chosen = resolve_step_options(submittable, recorded)
         # A key no reader declares changes nothing, and the walk says so as `chemrefine
         # validate` does, because a `resume` after an edit, the GUI's Run button and an
         # agent's `start_run` never pass through validate. A warning rather than a refusal,
@@ -821,6 +828,7 @@ def run(config: Config, plan: RunPlan | None = None) -> list[StepOutcome]:
 
         outcomes: list[StepOutcome] = []
         for step_cfg in config.steps:
+            step_cfg = resolved_step(config, step_cfg, chosen.get(step_cfg.step))
             logger.info(
                 "=== step %d (%s, engine=%s) ===",
                 step_cfg.step,

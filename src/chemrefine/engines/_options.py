@@ -49,6 +49,23 @@ UNKEYED = Unkeyed()
 """The :class:`Unkeyed` marker an options field carries (:meth:`EngineOptions.unkeyed`)."""
 
 
+class KeyedWhenSet:
+    """Marks an options field the cache key leaves out while it is ``None``.
+
+    For a knob added to a model whose steps already have finished trees, and which changes
+    nothing a step computes while it is unset. A key that held its ``None`` would move every
+    such step's key the day the knob ships, so ``resume`` would recompute finished trees whose
+    results the knob cannot have changed, and ``rebuild-cache`` would refuse them as another
+    configuration's. Once set, the field is keyed like any other.
+    """
+
+
+KEYED_WHEN_SET = KeyedWhenSet()
+"""The :class:`KeyedWhenSet` marker an options field carries.
+
+Read by :meth:`EngineOptions.key_exclusions`."""
+
+
 class EngineOptions(BaseModel):
     """Base for an engine's validated ``step.options`` model."""
 
@@ -80,6 +97,16 @@ class EngineOptions(BaseModel):
     def unkeyed(cls) -> set[str]:
         """The fields marked :data:`UNKEYED`, which the cache key leaves out."""
         return {name for name, field in cls.model_fields.items() if UNKEYED in field.metadata}
+
+    def key_exclusions(self) -> set[str]:
+        """What the cache key leaves out of these options: :meth:`unkeyed`, and each unset
+        :data:`KEYED_WHEN_SET` field."""
+        unset = {
+            name
+            for name, field in type(self).model_fields.items()
+            if KEYED_WHEN_SET in field.metadata and getattr(self, name) is None
+        }
+        return self.unkeyed() | unset
 
     @property
     def gpu_demand(self) -> int:

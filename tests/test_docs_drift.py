@@ -167,6 +167,19 @@ _STATED_RULES: dict[tuple[str, str], str] = {
     ("options[mlip-train]", "extra"): (
         "chemrefine.engines.mlip.options.MlipTrainOptions._no_template_knobs"
     ),
+    **dict.fromkeys(
+        [
+            ("options[mlip-train]", "solvation"),
+            ("options[mlip-train]", "solvation_model"),
+            ("options[mlip-train]", "solvent"),
+            ("options[mlip-train]", "solvation_weights"),
+        ],
+        "chemrefine.engines.mlip.options.MlipTrainOptions._no_solvation",
+    ),
+    **dict.fromkeys(
+        [("options[mlip]", "solvation_model"), ("options[mlip-extopt]", "solvation_model")],
+        "chemrefine.engines.mlip.options.SolvationKnobs._fill_default_model",
+    ),
     ("options[pyscf]", "xc"): f"{_PYSCF}.require_level_of_theory",
     ("options[pyscf]", "basis"): f"{_PYSCF}.require_level_of_theory",
     ("options[pyscf]", "gpu"): f"{_PYSCF}._derive_gpu_from_device",
