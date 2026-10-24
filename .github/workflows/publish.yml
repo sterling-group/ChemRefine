@@ -59,7 +59,7 @@ jobs:
       # (`Packages`, `Package Metadata`, `PyPI README`) collide. upload-artifact refuses a
       # duplicate name, so one of the two jobs fails and every publish job below, which
       # needs them both, is skipped.
-      - uses: hynek/build-and-inspect-python-package@2abe76da66d0a6a4a227101f9348ee855797cfa5 # v3.0.1
+      - uses: hynek/build-and-inspect-python-package@67230f7b8410ae0052b39c1efc89d89fff43ff10 # v3.0.2
         id: baipp
         with:
           attest-build-provenance-github: true
@@ -172,7 +172,7 @@ jobs:
           diff "$RUNNER_TEMP/built" "$RUNNER_TEMP/found"
 
       - name: Upload package to Test PyPI
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           repository-url: https://test.pypi.org/legacy/
 
@@ -222,4 +222,4 @@ jobs:
           diff "$RUNNER_TEMP/built" "$RUNNER_TEMP/found"
 
       - name: Upload package to PyPI
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
