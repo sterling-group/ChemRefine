@@ -18,7 +18,7 @@ ci:
 
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: 7c55798a78262d14b2074abf623d8a992ebb70d4  # frozen: v0.16.2
+    rev: 25bcf95026b96e2dd3c0aec3090c3d6ef6ca2e6c  # frozen: v0.17.3
     hooks:
       - id: ruff-check
         args: [--fix]
@@ -43,7 +43,7 @@ repos:
   # is the thing pre-commit.ci's autoupdate maintains. Naming the version twice would
   # leave one copy the bot bumps and one it never touches.
   - repo: https://github.com/biomejs/pre-commit
-    rev: 3a0c6458e3d46fb8d931600cd3970f2053768ce3  # frozen: v2.5.9
+    rev: bc3c1d9acd69eaa1e5912f282ca563f914fd78d3  # frozen: v2.6.4
     hooks:
       - id: biome-check
         # `biome check --write` is format + lint + fix, the same shape as the ruff hook's
