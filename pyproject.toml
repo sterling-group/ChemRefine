@@ -134,14 +134,14 @@ mlip-fairchem = [
 # those cases on the new line; the weekly audit asks for that once the range holds an
 # advisory.
 #
-# Capped at 3.13, where the backend's own claim stops: mace-torch names no Python past it,
-# and torch calls TorchScript "not supported in Python 3.14+". The stack does install there
-# from wheels, so this cap is not a wheel fact, and ci.yml holds it by that claim instead:
-# it fails once mace-torch names a Python this extra excludes.
+# 0.3.17 is the first release to name Python 3.14. torch warns there that TorchScript, which
+# e3nn 0.4.4 runs whenever a model is built or loaded, "is not supported in Python 3.14+ and
+# may break". On torch 2.14 the live cases pass, and MACE-OFF small's energy and forces equal
+# those on 3.13, so that warning is what to retest when the ceiling moves.
 mlip-mace = [
-    "torch>=2.8.0,<2.15; python_version < '3.14'",
-    "e3nn==0.4.4; python_version < '3.14'",
-    "mace-torch>=0.3.16; python_version < '3.14'",
+    "torch>=2.8.0,<2.15",
+    "e3nn==0.4.4",
+    "mace-torch>=0.3.17",
     "chemrefine[server]",
 ]
 # 0.11.1 is the first release with the unified `sevenn` CLI ("CLI interface changed

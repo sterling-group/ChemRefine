@@ -329,7 +329,7 @@ for those and the full map.
   `chemrefine backends install <extra>` that reconciles it. Each env is
   built on **the Python its backend supports**, not the orchestrator's:
   every backend extra states which Pythons it installs on (`mlip-orb` 3.12
-  only; `mlip-chgnet` up to 3.12; `mlip-mace` up to 3.13),
+  only; `mlip-chgnet` up to 3.12),
   `backends install` builds on the newest one it claims — stopping with the
   ways out when no such interpreter is available — and `--python` (a
   version, a command name, or a path) overrides the choice. An env built on
