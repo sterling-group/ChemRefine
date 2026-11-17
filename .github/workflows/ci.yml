@@ -181,16 +181,14 @@ jobs:
       #
       # A cap holds for one of three reasons, asked in turn. The first is that the held-back
       # requirement itself has no wheel here: `--only-binary` names it, never `:all:`, because
-      # resolution is transitive, and a wheels-only rule over the whole tree fails on mace's
-      # `python-hostlist` and chgnet's `nvidia-ml-py3` — source-only pure-Python packages
-      # that build in a second anywhere — *regardless* of whether the capped package gained
-      # wheels, so the reminder could never fire for those two extras.
+      # resolution is transitive, and a wheels-only rule over the whole tree fails on chgnet's
+      # `nvidia-ml-py3` — a source-only pure-Python package that builds in a second anywhere —
+      # *regardless* of whether the capped package gained wheels, so the reminder could never
+      # fire for that extra.
       #
       # The second is that the backend stops there by its own word: a held-back package whose
-      # classifiers name the newest Python the extra claims and do not name this one.
-      # mace-torch installs on 3.14 from wheels and names nothing past 3.13, since torch does
-      # not support TorchScript there. A package that names neither Python says nothing
-      # either way — e3nn 0.4.4 names none past 3.10 — and is not asked.
+      # classifiers name the newest Python the extra claims and do not name this one. A
+      # package that names neither Python says nothing either way and is not asked.
       #
       # The third is a native build behind the requirement, which the resolution cannot show:
       # `--dry-run` prepares metadata, and a source archive yields metadata without compiling
