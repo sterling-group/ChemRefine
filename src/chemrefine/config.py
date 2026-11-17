@@ -992,7 +992,7 @@ def resolve_relative_paths(cfg: Config, *, base: Path) -> Config:
     return type(cfg).model_validate(cfg.model_copy(update=updates)) if updates else cfg
 
 
-STEP_OPTION_PATHS = ("model_path",)
+STEP_OPTION_PATHS = ("model_path", "solvation_weights")
 """``step.options`` keys whose value is a filesystem path, resolved like the config's own.
 
 A deliberately short list rather than "anything that looks like a path": an option is

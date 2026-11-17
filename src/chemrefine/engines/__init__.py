@@ -30,6 +30,7 @@ from chemrefine.engines._provision import (
     known_backend_extras,
     preflight_backends,
     resolve_base_python,
+    resolve_step_options,
 )
 from chemrefine.engines.api import get_engine, preflight_steps, register
 
@@ -45,6 +46,7 @@ __all__ = [
     "preflight_steps",
     "register",
     "resolve_base_python",
+    "resolve_step_options",
 ]
 
 

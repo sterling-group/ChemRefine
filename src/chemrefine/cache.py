@@ -1079,9 +1079,14 @@ def discard_step(step_dir: Path) -> None:
     So leaving the manifest behind would make a step the user deliberately invalidated
     indistinguishable from one the driver was killed in the middle of — and ``rerun`` would
     re-parse the very outputs it was asked to discard instead of resubmitting them.
+
+    The record of what its environment chose goes too
+    (:func:`chemrefine.ids.resolved_options_path`): it protects results computed with that
+    choice, and a discarded step has none, so its next run chooses afresh.
     """
     invalidate(step_dir)
     remove_tree_file(manifest_path(step_dir))
+    remove_tree_file(ids.resolved_options_path(step_dir))
 
 
 # ---------------------------------------------------------------------------

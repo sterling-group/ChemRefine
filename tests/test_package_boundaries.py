@@ -780,6 +780,7 @@ _A_PERSONS_SEEDS = "the seed files of a directory a person names, which it has j
 _A_STATUS_READ = "a status read of a tree it does not drive: it reports, and holds no lock"
 _A_MANAGED_ENVIRONMENT = "a managed environment, outside every run tree"
 _INSIDE_THE_JOB = "a file of the job's own, asked inside the job"
+_AN_INSTALLED_PACKAGE = "a file an installed library ships, asked inside the job"
 
 #: Functions that ask one of those of something that is no run's tree read by its driver, as
 #: ``(package-relative path, function)`` like :data:`_RAW_WRITERS`, each with what it asks
@@ -820,6 +821,7 @@ _RAW_ASKERS: dict[tuple[str, str], str] = {
         ],
         _INSIDE_THE_JOB,
     ),
+    ("engines/mlip/solvation/anysolv.py", "_locate"): _AN_INSTALLED_PACKAGE,
 }
 
 

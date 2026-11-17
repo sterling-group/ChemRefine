@@ -44,7 +44,7 @@ import shlex
 import shutil
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -60,6 +60,7 @@ from chemrefine.engines.api import (
     BackendRequirement,
     CalculationEngine,
     OptionsDeclaring,
+    OptionsResolving,
     ProvisionableEngine,
     get_engine,
 )
@@ -364,6 +365,30 @@ def preflight_backends(steps: Sequence[StepConfig]) -> None:
                 and resolve_launcher(requirement, override) == sys.executable
             ):
                 _require_server_deps(requirement)
+
+
+def resolve_step_options(
+    steps: Sequence[StepConfig], previous: Mapping[int, Mapping[str, Any]] | None = None
+) -> dict[int, dict[str, Any]]:
+    """The options each step's environment decides, chosen there, by step number.
+
+    Asked of each :class:`~chemrefine.engines.api.OptionsResolving` engine's step, through
+    the interpreter its jobs launch with, after :func:`preflight_backends` has proved that
+    interpreter is there. ``previous`` is each step's recorded last choice
+    (:func:`chemrefine.resolution.recorded_choice`), handed to its engine so it can refuse
+    to recompute that run's results with less. Steps with nothing to choose are absent.
+    Called for the steps that can submit; a step that cannot reuses its recorded choice
+    (:func:`chemrefine.resolution.resolved_step`).
+    """
+    resolved: dict[int, dict[str, Any]] = {}
+    for step_cfg in steps:
+        engine = get_engine(step_cfg.engine)
+        if isinstance(engine, OptionsResolving):
+            raw = step_cfg.options or {}
+            last = (previous or {}).get(step_cfg.step)
+            if chosen := engine.resolve_options(raw, launcher_for(engine, raw), last):
+                resolved[step_cfg.step] = chosen
+    return resolved
 
 
 @functools.lru_cache(maxsize=1)

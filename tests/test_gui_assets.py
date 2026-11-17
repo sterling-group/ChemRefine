@@ -647,8 +647,10 @@ def _run_component_in_node(script: str) -> str:
     # files are top-level function declarations, which hoist — which is also why the
     # page's own load order is not something this has to reproduce.
     source = preamble + _component_source() + "\n" + script
+    # On stdin, not as `-e <source>`: Linux caps one argv string at 128 KiB, and the two
+    # component files plus a test's embedded schema document already come close to it.
     result = subprocess.run(  # argv list, no shell
-        [node, "-e", source], capture_output=True, text=True, check=False, timeout=120
+        [node, "-"], input=source, capture_output=True, text=True, check=False, timeout=120
     )
     assert result.returncode == 0, result.stderr
     return result.stdout.strip()

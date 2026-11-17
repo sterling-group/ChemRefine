@@ -52,6 +52,7 @@ from chemrefine.engines.mlip.registry import (
     backend_spec,
     calculator_for,
 )
+from chemrefine.engines.mlip.solvation import Correction, build_correction
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,10 @@ def build_calculator(
     model_path: str | Path | None = None,
     charge: int | None = None,
     multiplicity: int | None = None,
+    solvation: str | None = None,
+    solvation_model: str | None = None,
+    solvent: str | None = None,
+    solvation_weights: str | Path | None = None,
 ) -> Any:
     """Vet the selection into a :class:`CalculatorSpec` and hand it to the one builder.
 
@@ -103,12 +108,28 @@ def build_calculator(
     every caller — a single point, an optimisation, the ExtOpt server — evaluates a
     structure with no cell in a vacuum box rather than failing inside the library.
 
+    ``solvation`` / ``solvation_model`` / ``solvent`` / ``solvation_weights`` add an
+    implicit-solvent correction
+    (:mod:`chemrefine.engines.mlip.solvation`) and are not part of the spec: the correction
+    never sees the base potential, so no builder has anything to read in them. They wrap
+    the calculator instead (:class:`_Solvated`), outside the vacuum box, so the solvation
+    library sees the molecule rather than its box. An empty string is unset, as a template
+    placeholder renders an unset knob. The correction is built first, so an unknown solvent
+    is refused before the base model loads.
+
     Raises :class:`~chemrefine.errors.ConfigError` listing known keys if nothing is
     registered; a missing backend *library* surfaces as an ``ImportError`` naming the
     extra to install.
     """
     registered = backend_spec(task_name)
     builder = calculator_for(task_name)
+    correction = build_correction(
+        solvation=solvation or None,
+        solvation_model=solvation_model or None,
+        solvent=solvent or None,
+        device=device,
+        solvation_weights=str(solvation_weights) if solvation_weights else None,
+    )
     weights: Path | None = None
     if model_path:
         weights = Path(model_path)
@@ -130,7 +151,9 @@ def build_calculator(
             f"`pip install chemrefine[{registered.extra}]` (in its own environment)."
         ) from exc
     if registered.library.periodic_only:
-        return _VacuumBoxed(calculator, registered.library)
+        calculator = _VacuumBoxed(calculator, registered.library)
+    if correction is not None:
+        calculator = _Solvated(calculator, correction)
     return calculator
 
 
@@ -183,6 +206,53 @@ class _VacuumBoxed(Calculator):
         self.results = {"energy": energy, "free_energy": energy, "forces": box.get_forces()}
 
 
+class _Solvated(Calculator):
+    """A gas-phase calculator plus an implicit-solvent correction: ``E + ΔE``, ``F + ΔF``.
+
+    The correction is evaluated on the structure's own geometry, charge and multiplicity,
+    read off ``atoms.info`` where :func:`stamp_species` puts them. It does not take them from
+    the base calculator, so it sees the true charge even under a charge-blind base model.
+    Missing values are refused rather than assumed: a solvation energy depends strongly on
+    the charge, and a neutral singlet assumed for an ion would be wrong with no warning.
+    ``stress`` is not offered, since the correction has none.
+    """
+
+    def __init__(self, inner: Any, correction: Correction) -> None:
+        """Wrap ``inner``, the (possibly boxed) calculator, with ``correction``."""
+        Calculator.__init__(self)
+        self.inner = inner
+        self.correction = correction
+        self.implemented_properties = [p for p in inner.implemented_properties if p != "stress"]
+
+    def calculate(
+        self,
+        atoms: Atoms | None = None,
+        properties: Any = ("energy",),
+        system_changes: Any = all_changes,
+    ) -> None:
+        """Evaluate the base calculator on a copy of ``atoms`` and add the correction."""
+        Calculator.calculate(self, atoms, properties, system_changes)
+        if self.atoms is None:
+            raise CalculatorSetupError(
+                "no atoms to evaluate: pass them, or attach this calculator to them"
+            )
+        charge = self.atoms.info.get("charge")
+        multiplicity = self.atoms.info.get("spin")
+        if charge is None or multiplicity is None:
+            raise CalculatorSetupError(
+                "a solvated step needs the structure's charge and multiplicity: pass "
+                "charge= and multiplicity= to MlipCalculator, or set atoms.info['charge'] "
+                "and atoms.info['spin']"
+            )
+        base = self.atoms.copy()
+        base.calc = self.inner
+        energy = float(base.get_potential_energy())
+        forces = base.get_forces()
+        delta_e, delta_f = self.correction(self.atoms, int(charge), int(multiplicity))
+        total = energy + delta_e
+        self.results = {"energy": total, "free_energy": total, "forces": forces + delta_f}
+
+
 def stamp_species(atoms: Atoms, *, charge: int | None, multiplicity: int | None) -> None:
     """Put a species' charge and multiplicity where the charge-aware libraries read them.
 
@@ -231,6 +301,10 @@ class MlipCalculator:
         model_path: str | Path | None = None,
         charge: int | None = None,
         multiplicity: int | None = None,
+        solvation: str | None = None,
+        solvation_model: str | None = None,
+        solvent: str | None = None,
+        solvation_weights: str | Path | None = None,
     ):
         """``task_name`` selects the library; ``model_path`` only says where its weights are.
 
@@ -238,8 +312,9 @@ class MlipCalculator:
         where they take effect for the shipped libraries: both charge-aware backends
         read them per geometry off ``atoms.info`` (see :func:`stamp_species`), so the
         values are kept and stamped at each call rather than only handed to the builder.
-        A charge-blind library never reads the keys. Everything else is the shape the
-        shipped templates call.
+        A charge-blind library never reads the keys. The solvation knobs go to
+        :func:`build_calculator`, and a solvated step needs the charge and multiplicity
+        too. Everything else is the shape the shipped templates call.
         """
         self.model_name = model_name
         self.task_name = task_name
@@ -259,6 +334,10 @@ class MlipCalculator:
             model_path=self.model_path,
             charge=charge,
             multiplicity=multiplicity,
+            solvation=solvation,
+            solvation_model=solvation_model,
+            solvent=solvent,
+            solvation_weights=solvation_weights,
         )
 
     # -- inference ---------------------------------------------------------

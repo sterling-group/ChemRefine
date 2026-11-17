@@ -965,6 +965,151 @@ def test_what_a_job_computes_or_keeps_still_moves_its_key(
     )
 
 
+@pytest.mark.parametrize("engine_name", ["mlip", "mlip-extopt"])
+def test_every_solvation_choice_has_a_key_of_its_own(tmp_path: Path, engine_name: str):
+    """Another solvent, another model, or none at all is another surface, so another key.
+
+    Gas phase is the key the step had before the knobs existed. Naming the default model is
+    the same step as leaving it to the default, since the options write the default in.
+    """
+    from chemrefine.engines.mlip.solvation import SolvationLibrary
+    from chemrefine.engines.mlip.solvation._registry import PythonRequirement
+
+    other = SolvationLibrary(
+        name="other_solv",
+        requirement=PythonRequirement(package="other", import_name="other"),
+        models={"compact": "c"},
+        default_model="compact",
+        pairs_with=frozenset({"mlip-mace"}),
+    )
+    other.correction(
+        lambda _spec: lambda atoms, _charge, _multiplicity: (0.0, 0.0 * atoms.positions)
+    )
+    choices = {
+        "gas phase": {},
+        "water": {"solvation": "anysolv", "solvent": "water"},
+        "thf": {"solvation": "anysolv", "solvent": "thf"},
+        "water, moe": {"solvation": "anysolv", "solvation_model": "moe", "solvent": "water"},
+        "water, another library": {"solvation": "other_solv", "solvent": "water"},
+    }
+    keys = {
+        name: _row_keys(tmp_path / str(i), engine_name, **options)
+        for i, (name, options) in enumerate(choices.items())
+    }
+    assert len(set(keys.values())) == len(choices), keys
+
+    named = {"solvation": "anysolv", "solvation_model": "compact", "solvent": "water"}
+    assert _row_keys(tmp_path / "named", engine_name, **named) == keys["water"]
+
+
+_AUTO = {"task_name": "omol", "solvation": "anysolv", "solvation_model": "auto", "solvent": "water"}
+
+
+def test_a_step_that_chose_auto_is_keyed_as_the_model_it_chose(tmp_path: Path):
+    """Not as ``auto``: a moe run and a compact run of one config never share a key."""
+    from chemrefine.resolution import resolved_step
+    from chemrefine.step import derive_step_key
+
+    def key(root: Path, options: dict[str, object], chosen: dict[str, object] | None):
+        cfg = _config(root, engine="mlip", options=options)
+        step_cfg = resolved_step(cfg, cfg.steps[0], chosen)
+        engine = get_engine("mlip")
+        ctx = build_context(cfg, step_cfg, _seed_state(["0"]), engine)
+        return derive_step_key(ctx, step_cfg, engine).row_keys
+
+    chose_moe = key(tmp_path / "a", _AUTO, {"solvation_model": "moe"})
+    chose_compact = key(tmp_path / "b", _AUTO, {"solvation_model": "compact"})
+    assert chose_moe == key(tmp_path / "c", {**_AUTO, "solvation_model": "moe"}, None)
+    assert chose_compact == key(tmp_path / "d", {**_AUTO, "solvation_model": "compact"}, None)
+    assert chose_moe != chose_compact
+
+
+def test_a_step_that_cannot_submit_reuses_the_choice_its_run_recorded(tmp_path: Path):
+    """A cache-only step or a rebuild, where the step's environment may not be there."""
+    from chemrefine.resolution import resolved_step
+
+    cfg = _config(tmp_path, engine="mlip", options=_AUTO)
+    ran = resolved_step(cfg, cfg.steps[0], {"solvation_model": "moe"})
+    record = step_dir_for(cfg, cfg.steps[0]) / "_cache" / "resolved_options.json"
+    assert json.loads(record.read_text(encoding="utf-8")) == {
+        "asked": {"solvation_model": "auto"},
+        "chosen": {"solvation_model": "moe"},
+    }
+
+    recalled = resolved_step(cfg, cfg.steps[0], None)
+    assert recalled.options == ran.options
+    assert recalled.options is not None and recalled.options["solvation_model"] == "moe"
+
+
+def test_a_recorded_choice_is_not_reused_once_the_options_ask_something_else(tmp_path: Path):
+    from chemrefine.resolution import resolved_step
+
+    cfg = _config(tmp_path, engine="mlip", options=_AUTO)
+    resolved_step(cfg, cfg.steps[0], {"solvation_model": "moe"})
+
+    edited = _config(tmp_path, engine="mlip", options={**_AUTO, "solvation_model": "compact"})
+    assert resolved_step(edited, edited.steps[0], None) == edited.steps[0]
+    fresh = _config(tmp_path / "never-ran", engine="mlip", options=_AUTO)
+    assert resolved_step(fresh, fresh.steps[0], None) == fresh.steps[0]
+
+
+def test_the_run_asks_each_steps_own_interpreter_and_only_for_auto(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from chemrefine.engines import resolve_step_options
+
+    asked: list[str] = []
+
+    def choose(launcher: str, solvation: str, weights: str | None):
+        asked.append(launcher)
+        return "moe", ()
+
+    monkeypatch.setattr("chemrefine.engines.mlip.solvation._choose.choose_in_environment", choose)
+    monkeypatch.setattr(
+        "chemrefine.engines._provision.launcher_for", lambda engine, options: "/env/bin/python"
+    )
+    steps = [
+        StepConfig(step=1, engine="mlip", options=_AUTO),
+        StepConfig(step=2, engine="mlip", options={**_AUTO, "solvation_model": "compact"}),
+        StepConfig(step=3, engine="fake", operation="opt_sp"),
+    ]
+    assert resolve_step_options(steps) == {1: {"solvation_model": "moe"}}
+    assert asked == ["/env/bin/python"]
+
+
+def test_the_run_refuses_a_step_whose_last_choice_it_can_no_longer_make(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Its record says moe; this machine has only compact; nothing is submitted."""
+    from chemrefine.engines import resolve_step_options
+    from chemrefine.resolution import recorded_choice, resolved_step
+
+    monkeypatch.setattr(
+        "chemrefine.engines.mlip.solvation._choose.choose_in_environment",
+        lambda launcher, solvation, weights: ("compact", ("moe: weights not found",)),
+    )
+    monkeypatch.setattr(
+        "chemrefine.engines._provision.launcher_for", lambda engine, options: "/env/bin/python"
+    )
+    cfg = _config(tmp_path, engine="mlip", options=_AUTO)
+    resolved_step(cfg, cfg.steps[0], {"solvation_model": "moe"})  # the last run
+
+    recorded = {1: recorded_choice(cfg, cfg.steps[0]) or {}}
+    with pytest.raises(ConfigError, match="chose moe when this step last ran"):
+        resolve_step_options(cfg.steps, recorded)
+
+
+def test_a_discarded_step_forgets_its_choice_so_rerun_chooses_afresh(tmp_path: Path):
+    from chemrefine.resolution import recorded_choice, resolved_step
+
+    cfg = _config(tmp_path, engine="mlip", options=_AUTO)
+    resolved_step(cfg, cfg.steps[0], {"solvation_model": "moe"})
+    assert recorded_choice(cfg, cfg.steps[0]) == {"solvation_model": "moe"}
+
+    cache.discard_step(step_dir_for(cfg, cfg.steps[0]))
+    assert recorded_choice(cfg, cfg.steps[0]) is None
+
+
 def test_run_step_nms_branch_routes_through_coordinator(tmp_path: Path, monkeypatch):
     """run_step routes an `nms: true` step through the generic coordinator (nms.run_nms),
     then applies the on_failure policy to its survivors/failures."""
@@ -2899,3 +3044,15 @@ def test_a_scheduled_engine_that_reads_no_template_is_not_asked_for_one(
         _config(tmp_path), [StepConfig(step=2, engine="fake")], local=True
     )
     assert {"slurm_layout", "memory_mb"} <= set(asked), "its batch was planned"
+
+
+def test_an_unreadable_record_is_ignored_and_said(tmp_path: Path, caplog):
+    from chemrefine.resolution import recorded_choice
+
+    cfg = _config(tmp_path, engine="mlip", options=_AUTO)
+    record = step_dir_for(cfg, cfg.steps[0]) / "_cache" / "resolved_options.json"
+    record.parent.mkdir(parents=True)
+    record.write_text("{not json", encoding="utf-8")
+    with caplog.at_level("WARNING"):
+        assert recorded_choice(cfg, cfg.steps[0]) is None
+    assert "is unreadable, ignored" in caplog.text

@@ -413,12 +413,13 @@ def derive_step_key(
     tell two same-byte files with different names apart, and nothing that names a machine.
     A field that chooses where or how the job runs rather than what it computes — marked
     :data:`~chemrefine.engines._options.UNKEYED` where its model declares it — is not keyed
-    at all.
+    at all, and one marked :data:`~chemrefine.engines._options.KEYED_WHEN_SET` is keyed only
+    once it is set.
     """
     engine_options: Mapping[str, object] = {}
     if isinstance(engine, OptionsDeclaring):
         model = engine.options_cls.from_raw_lenient(step_cfg.options)
-        dumped = model.model_dump(mode="json", exclude=model.unkeyed())
+        dumped = model.model_dump(mode="json", exclude=model.key_exclusions())
         engine_options = {
             key: (
                 Path(value).name if key in STEP_OPTION_PATHS and isinstance(value, str) else value

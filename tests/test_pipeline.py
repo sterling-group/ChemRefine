@@ -2325,3 +2325,51 @@ def test_a_step_that_cannot_run_from_its_directory_stops_the_run_before_any_step
     with pytest.raises(ConfigError, match=r"^step 2's directory contains whitespace"):
         pipeline.run(cfg)
     assert not cfg.step_dir(cfg.steps[0]).exists()
+
+
+def test_a_run_chooses_what_the_steps_environment_decides_once_and_runs_with_it(
+    tmp_path: Path,
+):
+    """``solvation_model: auto``'s shape on a stand-in engine: asked once per run, before it."""
+    import json
+
+    from fake_engine import FakeEngine
+
+    from chemrefine.engines.api import ENGINES, register
+
+    asked: list[tuple[dict[str, object], object]] = []
+    prepared: list[dict[str, object]] = []
+
+    @register("choosing-fake")
+    class _ChoosingEngine(FakeEngine):
+        name = "choosing-fake"
+
+        def resolve_options(self, options, launcher, previous):
+            asked.append((dict(options), previous))
+            return {"pick": "b"} if options.get("pick") == "auto" else {}
+
+        def prepare(self, ctx):
+            prepared.append(dict(ctx.step_cfg.options or {}))
+            return super().prepare(ctx)
+
+    try:
+        seed = tmp_path / "step0_seed.xyz"
+        io.write_single_xyz(_h2(), seed)
+        cfg = _config(
+            tmp_path,
+            input=seed,
+            steps=[
+                StepConfig(
+                    step=1, engine="choosing-fake", operation="opt_sp", options={"pick": "auto"}
+                )
+            ],
+        )
+        pipeline.run(cfg)
+        pipeline.run(cfg)  # a resume: asked again, with what the first run chose
+    finally:
+        ENGINES.pop("choosing-fake", None)
+
+    assert asked == [({"pick": "auto"}, None), ({"pick": "auto"}, {"pick": "b"})]
+    assert prepared[0] == {"pick": "b"}
+    record = cfg.step_dir(cfg.steps[0]) / "_cache" / "resolved_options.json"
+    assert json.loads(record.read_text(encoding="utf-8"))["chosen"] == {"pick": "b"}

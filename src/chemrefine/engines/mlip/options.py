@@ -8,16 +8,90 @@ reading the raw YAML dict.
 
 from __future__ import annotations
 
-from typing import Any, Self
+from typing import Annotated, Any, Self
 
-from pydantic import AliasChoices, ConfigDict, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from chemrefine.config import reject_shell_unsafe
-from chemrefine.engines._options import EngineOptions, refuse_template_knobs
+from chemrefine.engines._options import KEYED_WHEN_SET, EngineOptions, refuse_template_knobs
 from chemrefine.engines.orca.extopt.engine import ExtOptOptions
 
+_SOLVATION_KNOBS = ("solvation", "solvation_model", "solvent", "solvation_weights")
 
-class MlipOptions(EngineOptions):
+
+class SolvationKnobs(BaseModel):
+    """The implicit-solvation knobs an MLIP step's ``options`` may carry.
+
+    Grouped like :class:`~chemrefine.config.NmsKnobs` and inherited by :class:`MlipOptions`,
+    so in YAML they sit flat beside the other engine options. All three unset is a
+    gas-phase step. The rules between them, and the libraries, live in
+    :mod:`chemrefine.engines.mlip.solvation`.
+
+    The registry is imported inside the validators rather than at module top: importing
+    :mod:`chemrefine.engines.mlip.solvation` runs the ``chemrefine.engines.mlip`` package,
+    which imports this module back while it is still initialising.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    solvation: Annotated[str | None, KEYED_WHEN_SET] = None
+    """The library that computes the solvation correction (``anysolv``).
+
+    No default, and required whenever ``solvent`` is set: a default would make a second
+    library change what every existing config means."""
+
+    solvation_model: Annotated[str | None, KEYED_WHEN_SET] = None
+    """That library's model; unset means the library's ChemRefine default (AnySolv's
+    ``compact``). The default is written into the validated options, so the cache key
+    names the model whether or not the YAML did.
+
+    ``auto`` asks for the library's best model whose weights the step's environment has
+    (AnySolv: ``moe``, else ``compact``). It is chosen once per step before the run, in that
+    environment, and the run continues with the model chosen: the cache key, the jobs and
+    the step's ``_cache/resolved_options.json`` all name it. A later run that can choose a
+    better model recomputes the step with it. One that could only choose a worse model than
+    the recorded one (the MoE weights have gone) is refused before anything is submitted,
+    rather than replacing the step's results with a lesser model's."""
+
+    solvent: Annotated[str | None, KEYED_WHEN_SET] = None
+    """The solvent, by a name in the library's own table (``water``, ``thf``, …). Checked by
+    the library, which holds the table, when the step's calculator is built."""
+
+    solvation_weights: Annotated[str | None, KEYED_WHEN_SET] = None
+    """A weights file for a model the library downloads separately (AnySolv's ``moe``),
+    looked at before the library's own places. Unset, the library looks in those alone.
+
+    A path like ``model_path``: relative values resolve against the config file's directory
+    (:data:`chemrefine.config.STEP_OPTION_PATHS`), and the key holds its basename and its
+    bytes, so replacing the file recomputes the step."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fill_default_model(cls, data: Any) -> Any:
+        """Write the library's default model in when a solvated step names none."""
+        from chemrefine.engines.mlip.solvation import registered_solvation, solvation_library
+
+        if not isinstance(data, dict):
+            return data
+        solvation = data.get("solvation")
+        if solvation in registered_solvation() and not data.get("solvation_model"):
+            data = {**data, "solvation_model": solvation_library(solvation).default_model}
+        return data
+
+    @model_validator(mode="after")
+    def _solvation_is_consistent(self) -> Self:
+        """Refuse a solvent without a library, a library without a solvent, or an unknown either."""
+        from chemrefine.engines.mlip.solvation import solvation_problem
+
+        problem = solvation_problem(
+            self.solvation, self.solvation_model, self.solvent, self.solvation_weights
+        )
+        if problem:
+            raise ValueError(problem)
+        return self
+
+
+class MlipOptions(SolvationKnobs, EngineOptions):
     """Validated knobs for the MLIP backend.
 
     Two axes, mapped the same way across libraries (the mace↔fairchem
@@ -119,8 +193,14 @@ class MlipOptions(EngineOptions):
     refuse it."""
 
 
-CALCULATOR_KNOBS: tuple[str, ...] = ("model_name", "task_name", "device", "model_path")
-"""The four fields that select and place a calculator — the one list consumers iterate.
+CALCULATOR_KNOBS: tuple[str, ...] = (
+    "model_name",
+    "task_name",
+    "device",
+    "model_path",
+    *_SOLVATION_KNOBS,
+)
+"""The fields that select, place and solvate a calculator — the one list consumers iterate.
 
 Spelled once, beside the model that declares the fields, so the direct engine's template
 placeholders and the ExtOpt server's CLI table enumerate the same knobs; the model stays
@@ -169,6 +249,21 @@ class MlipTrainOptions(MlipOptions):
     def _no_template_knobs(self) -> Self:
         """Refuse ``extra``: this engine renders no ``step{N}.py`` for it to reach."""
         refuse_template_knobs(self.extra)
+        return self
+
+    @model_validator(mode="after")
+    def _no_solvation(self) -> Self:
+        """Refuse the solvation knobs: a training step fits a model and evaluates none.
+
+        Inherited from :class:`SolvationKnobs` with the rest of :class:`MlipOptions`; accepted,
+        they would be read by nothing, and a fine-tune on gas-phase labels would look like a
+        solvated one in the config.
+        """
+        if set_knobs := [name for name in _SOLVATION_KNOBS if getattr(self, name)]:
+            raise ValueError(
+                f"{', '.join(set_knobs)}: mlip-train fits a model on its labels and runs none, "
+                f"so a solvation correction has nothing to apply to"
+            )
         return self
 
     gpus: int = Field(1, ge=1)

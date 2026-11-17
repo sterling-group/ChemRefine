@@ -140,7 +140,7 @@ def sha1_fingerprints_only(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def _restore_engine_registries() -> Iterator[None]:
-    """Snapshot the engine (and MLIP backend) registries; restore them after every test.
+    """Snapshot the engine, MLIP backend and solvation registries; restore them after each test.
 
     Both are process-global dicts a test may extend with a scratch plugin, and the suite
     holds *exact* membership invariants over them from another file
@@ -152,14 +152,18 @@ def _restore_engine_registries() -> Iterator[None]:
     """
     from chemrefine.engines.api import ENGINES
     from chemrefine.engines.mlip import registry
+    from chemrefine.engines.mlip.solvation import _registry as solvation
 
     engines_before = dict(ENGINES)
     backends_before = dict(registry._BACKENDS)
+    solvation_before = dict(solvation._LIBRARIES)
     yield
     ENGINES.clear()
     ENGINES.update(engines_before)
     registry._BACKENDS.clear()
     registry._BACKENDS.update(backends_before)
+    solvation._LIBRARIES.clear()
+    solvation._LIBRARIES.update(solvation_before)
 
 
 @pytest.fixture(scope="session")

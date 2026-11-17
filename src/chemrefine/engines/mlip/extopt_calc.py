@@ -40,6 +40,10 @@ _FLAG_HELP = {
     "task_name": "MLIP method / head — selects the library (a registered task name)",
     "device": "Compute device for the MLIP model",
     "model_path": "Local checkpoint to load instead of --model, with the --task-name library",
+    "solvation": "Implicit-solvation library whose correction is added to the MLIP",
+    "solvation_model": "Model of the --solvation library",
+    "solvent": "Solvent for the --solvation correction, by a name in that library's table",
+    "solvation_weights": "Weights file for a --solvation-model the library downloads",
 }
 """CLI presentation only; names and defaults come from the options model."""
 
@@ -56,12 +60,20 @@ class MlipExtOptCalculator(ComputeBackend):
         task_name: str,
         device: str,
         model_path: str | None = None,
+        solvation: str | None = None,
+        solvation_model: str | None = None,
+        solvent: str | None = None,
+        solvation_weights: str | None = None,
     ) -> None:
         self._calculator = MlipCalculator(
             model_name=model_name or "",
             task_name=task_name,
             device=device,
             model_path=model_path,
+            solvation=solvation,
+            solvation_model=solvation_model,
+            solvent=solvent,
+            solvation_weights=solvation_weights,
         )
 
     @classmethod

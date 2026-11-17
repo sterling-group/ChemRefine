@@ -47,6 +47,11 @@ class MlipEngine(MlipBackend, ScriptEngine[MlipOptions]):
         "    # the wrapper passes them where those libraries read.\n"
         "    charge=$CHARGE,\n"
         "    multiplicity=$MULTIPLICITY,\n"
+        "    # An implicit-solvent correction when the step sets `solvation`; empty is gas phase.\n"
+        '    solvation="$SOLVATION",\n'
+        '    solvation_model="$SOLVATION_MODEL",\n'
+        '    solvent="$SOLVENT",\n'
+        '    solvation_weights="$SOLVATION_WEIGHTS",\n'
         ")\n"
         'atoms = mlip.optimize(read("$XYZ_PATH"), fmax=0.03)\n'
         "\n"
